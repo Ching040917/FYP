@@ -15,11 +15,13 @@ from docx import Document
 from app.services.layout_violation import LayoutViolation
 
 
-# Pattern A: Narrative form  ->  Smith (2020)
-# - Single capitalized word as author (surname only, no et al. handling here)
+# Pattern A: Narrative form  ->  Smith (2020)  or  Taylor & Green (2018)  or  Smith and Jones (2019)
+# - One or more capitalized surnames joined by '&' or the word 'and'.
+# - Group 1 captures the full chain; primary surname = first token before '&'/'and'.
 # - Optional comma + page/locator after year, e.g.  "Smith (2020, p. 12)"
 NARRATIVE_PATTERN = re.compile(
-    r"\b([A-Z][a-zA-ZÀ-ſ'\-]+)\s*\((\d{4}[a-z]?)(?:,\s*[^)]*)?\)"
+    r"\b([A-Z][a-zA-ZÀ-ſ'\-]+(?:\s*(?:&|and)\s+[A-Z][a-zA-ZÀ-ſ'\-]+)*)\s*"
+    r"\((\d{4}[a-z]?)(?:,\s*[^)]*)?\)"
 )
 
 # Pattern B: Parenthetical form  ->  (Smith, 2020)  or  (Smith & Jones, 2020)
@@ -78,12 +80,17 @@ def _scan_paragraphs_for_citations(
         for match in NARRATIVE_PATTERN.finditer(text):
             author = match.group(1)
             year = match.group(2)
-            key = (author.lower(), year, idx)
+            # Multi-author narrative cites (Taylor & Green, Smith and Jones)
+            # match the bibliography on the PRIMARY surname only — APA permits
+            # secondary authors not to appear independently in the reference list.
+            primary_author = re.split(r"\s+(?:&|and)\s+", author)[0]
+            key = (primary_author.lower(), year, idx)
             if key in seen_in_para:
                 continue
             seen_in_para.add(key)
             findings.append({
                 "author": author,
+                "primary_author": primary_author,
                 "year": year,
                 "paragraph_index": idx,
                 "snippet": match.group(0),
@@ -92,12 +99,16 @@ def _scan_paragraphs_for_citations(
         for match in PARENTHETICAL_PATTERN.finditer(text):
             author = match.group(1)
             year = match.group(2)
+            # Group 1 of PARENTHETICAL_PATTERN is the first surname only
+            # (subsequent authors live in optional non-capturing groups),
+            # so `author` is already the primary author — no split needed.
             key = (author.lower(), year, idx)
             if key in seen_in_para:
                 continue
             seen_in_para.add(key)
             findings.append({
                 "author": author,
+                "primary_author": author,
                 "year": year,
                 "paragraph_index": idx,
                 "snippet": match.group(0),
@@ -171,7 +182,11 @@ def run_citation_sensor(doc: Document, paragraphs: List[Dict[str, Any]]) -> List
 
     violations: List[LayoutViolation] = []
     for finding in findings:
-        if finding["author"].lower() not in references_index:
+        # Cross-reference: every in-text citation must trace to a References entry
+        # by its primary author surname (case-insensitive). Multi-author cites
+        # (Taylor & Green) match on the first surname only — APA permits the
+        # secondary author not to appear independently in the reference list.
+        if finding["primary_author"].lower() not in references_index:
             violations.append(_make_violation(
                 author=finding["author"],
                 year=finding["year"],

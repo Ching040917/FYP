@@ -240,3 +240,73 @@ def test_message_format_matches_spec():
     assert len(viols) == 1
     expected = "Citation 'Garcia (2018)' was found in text, but no matching entry was found in the References bibliography."
     assert viols[0].message == expected
+
+
+# ---------------------------------------------------------------------------
+# Multi-author narrative forms (Taylor & Green, Smith and Jones)
+# ---------------------------------------------------------------------------
+
+def test_narrative_multi_author_ampersand():
+    text = "Taylor & Green (2018) found that…"
+    matches = NARRATIVE_PATTERN.findall(text)
+    assert len(matches) == 1
+    assert matches[0][0] == "Taylor & Green"
+    assert matches[0][1] == "2018"
+
+
+def test_narrative_multi_author_word_and():
+    text = "Smith and Jones (2019) argue that…"
+    matches = NARRATIVE_PATTERN.findall(text)
+    assert len(matches) == 1
+    assert matches[0][0] == "Smith and Jones"
+    assert matches[0][1] == "2019"
+
+
+def test_narrative_year_suffix_still_detected():
+    text = "Doe (2020a) shows that…"
+    matches = NARRATIVE_PATTERN.findall(text)
+    assert len(matches) == 1
+    assert matches[0][0] == "Doe"
+    assert matches[0][1] == "2020a"
+
+
+def test_cross_ref_multi_author_uses_primary():
+    """Multi-author narrative cite resolves to bibliography via primary surname."""
+    doc = Document()
+    doc.add_paragraph("Taylor & Green (2018) explored the topic.")
+    doc.add_paragraph("References")
+    doc.add_paragraph("Taylor, A. B. (2018). Title. Press.")
+    paras = extract_paragraphs(doc)
+    viols = run_citation_sensor(doc, paras)
+    assert viols == []  # Taylor present, Green not required
+
+
+def test_cross_ref_missing_multi_author_violation():
+    """Missing primary author -> CITATION_MISMATCH at correct paragraph_index."""
+    doc = Document()
+    doc.add_paragraph("Body intro.")
+    doc.add_paragraph("Taylor & Green (2018) wrote about it.")
+    doc.add_paragraph("References")
+    doc.add_paragraph("Jones, A. (2019). Other things. Press.")
+    paras = extract_paragraphs(doc)
+    viols = run_citation_sensor(doc, paras)
+    assert len(viols) == 1
+    v = viols[0]
+    assert v.rule_code == "CITATION_MISMATCH"
+    assert v.severity == "MAJOR"
+    assert v.location["paragraph_index"] == 1
+
+
+def test_violation_shape_contract():
+    """Pin LayoutViolation shape so future refactors do not silently break it."""
+    from app.services.layout_violation import LayoutViolation
+    doc = Document()
+    doc.add_paragraph("Orphan (Garcia, 2018) text.")
+    paras = extract_paragraphs(doc)
+    viols = run_citation_sensor(doc, paras)
+    assert len(viols) == 1
+    assert isinstance(viols[0], LayoutViolation)
+    assert viols[0].rule_code == "CITATION_MISMATCH"
+    assert viols[0].severity == "MAJOR"
+    assert isinstance(viols[0].location, dict)
+    assert "paragraph_index" in viols[0].location

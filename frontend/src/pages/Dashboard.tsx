@@ -2,7 +2,7 @@ import { useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../services/api'
 import { useToast } from '../hooks/useToast'
-import { Upload, FileText, Loader2, CheckCircle, AlertCircle, BarChart2 } from 'lucide-react'
+import { Upload, FileText, Loader2, CheckCircle, AlertCircle, BarChart2, X } from 'lucide-react'
 
 export function Dashboard() {
   const navigate = useNavigate()
@@ -59,7 +59,7 @@ export function Dashboard() {
 
   return (
     <div className="flex-1 p-6 overflow-y-auto">
-      <div className="max-w-4xl mx-auto">
+      <div className="max-w-4xl mx-auto px-4 sm:px-6">
         <div className="mb-8">
           <h1 className="text-headline-lg font-bold text-on-background">Audit Dashboard</h1>
           <p className="text-body-md text-on-surface-variant mt-2">Upload a .docx file to check layout compliance and APA citations</p>
@@ -82,17 +82,20 @@ export function Dashboard() {
             />
             <label htmlFor="file-upload" className="cursor-pointer">
               {file ? (
-                <div className="flex flex-col items-center gap-3">
-                  <FileText className="w-12 h-12 text-primary" />
-                  <p className="text-body-lg font-medium text-on-surface">{file.name}</p>
-                  <p className="text-body-md text-on-surface-variant">{(file.size / 1024 / 1024).toFixed(2)} MB</p>
+                <div className="relative flex flex-col items-center gap-3">
                   <button
                     type="button"
-                    onClick={removeFile}
-                    className="text-sm text-error hover:underline"
+                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); removeFile() }}
+                    aria-label="Remove file"
+                    className="absolute top-2 right-2 p-1 rounded-full text-on-surface-variant hover:text-on-surface hover:bg-surface-bright transition z-10"
                   >
-                    Remove file
+                    <X className="w-4 h-4" />
                   </button>
+                  <FileText className="w-12 h-12 text-primary" />
+                  <p className="text-body-lg font-medium text-on-surface break-all text-center">
+                    <span aria-hidden="true">📄</span> Selected: {file.name}
+                  </p>
+                  <p className="text-body-md text-on-surface-variant">{(file.size / 1024 / 1024).toFixed(2)} MB</p>
                 </div>
               ) : (
                 <div className="flex flex-col items-center gap-3">
@@ -109,7 +112,9 @@ export function Dashboard() {
             <button
               type="submit"
               disabled={!file || uploading}
-              className="btn-primary flex items-center gap-2 min-w-[160px] justify-center"
+              className={`btn-primary flex items-center gap-2 min-w-[160px] justify-center ${
+                file && !uploading ? "animate-pulse-glow" : ""
+              }`}
             >
               {uploading ? (
                 <>
@@ -126,7 +131,7 @@ export function Dashboard() {
           </div>
         </form>
 
-        <div className="mt-8 grid gap-4 md:grid-cols-3">
+        <div className="mt-8 grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
           <div className="card p-4">
             <div className="flex items-center gap-3">
               <div className="p-2 bg-primary/10 rounded-lg">

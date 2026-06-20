@@ -1,6 +1,7 @@
 from fastapi import APIRouter, UploadFile, File, BackgroundTasks, HTTPException, Depends, Query
 from sqlalchemy.orm import Session
 from typing import List
+import logging
 import uuid
 
 from app.database import get_db
@@ -19,6 +20,7 @@ from app.services.ai_citation import async_ai_citation_task, extract_citation_te
 from app.services.document_parser import parse_document, extract_paragraphs
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 @router.post("/api/audit", response_model=AuditSubmitResponse)
@@ -108,6 +110,7 @@ async def audit_document(
         )
 
     except Exception as e:
+        logger.exception("Audit processing failed for audit_id=%s", audit.id)
         audit.status = "failed"
         db.commit()
         raise HTTPException(status_code=500, detail=f"Processing failed: {str(e)}")
@@ -118,6 +121,11 @@ async def get_audit(audit_id: str, db: Session = Depends(get_db)):
     audit = db.query(AuditRecord).filter(AuditRecord.id == audit_id).first()
     if not audit:
         raise HTTPException(status_code=404, detail="Audit not found")
+
+    logger.info(
+        "get_audit id=%s status=%s violations=%d",
+        audit_id, audit.status, len(audit.violations or []),
+    )
 
     # Update status to completed if AI task done (has citation issues)
     if audit.status == "processing" and audit.citation_issues:

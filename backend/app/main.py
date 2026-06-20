@@ -1,8 +1,17 @@
+import logging
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api import routes
 from app.database import init_db
+
+# Root logging config so module-level loggers (app.api.routes, app.services.ai_citation)
+# emit tracebacks and info lines to the server terminal.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
 
 app = FastAPI(
     title="Academic Compliance Auditor API",

@@ -1,4 +1,5 @@
 import json
+import logging
 import re
 from typing import List, Dict, Any, Optional
 from uuid import uuid4
@@ -7,6 +8,8 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.models.audit import CitationIssue
+
+logger = logging.getLogger(__name__)
 
 
 APA_CITATION_PROMPT = """You are an APA 7th edition citation format validator.
@@ -105,8 +108,10 @@ async def async_ai_citation_task(
             raw_response = await call_ollama_local(prompt)
         else:
             raw_response = await call_gemini_cloud(prompt)
-    except Exception:
-        # Network/timeout fallback
+    except Exception as e:
+        # Network/timeout fallback — log full traceback for server-side debugging,
+        # then proceed so parse_ai_json emits its standard non-standard fallback.
+        logger.error("AI model call failed for audit context: %s", e, exc_info=True)
         raw_response = ""
 
     issues_data = parse_ai_json(raw_response)

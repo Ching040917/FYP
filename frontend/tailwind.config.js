@@ -93,6 +93,15 @@ export default {
         'tonal-med': '0 4px 8px 0 rgb(0 0 0 / 0.08)',
         'tonal-high': '0 12px 24px 0 rgb(0 0 0 / 0.1)',
       },
+      keyframes: {
+        'pulse-glow': {
+          '0%, 100%': { boxShadow: '0 0 0 0 rgba(192, 193, 255, 0.55)' },
+          '50%':      { boxShadow: '0 0 0 10px rgba(192, 193, 255, 0.00)' },
+        },
+      },
+      animation: {
+        'pulse-glow': 'pulse-glow 3s ease-in-out infinite',
+      },
     },
   },
   plugins: [],
