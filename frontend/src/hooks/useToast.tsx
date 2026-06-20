@@ -1,4 +1,5 @@
 import { createContext, useContext, useState, ReactNode, useCallback } from 'react'
+import { CheckCircle, AlertCircle, AlertTriangle, Info } from 'lucide-react'
 
 interface Toast {
   id: string

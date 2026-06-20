@@ -1,11 +1,8 @@
-import { Outlet, NavLink, useLocation } from 'react-router-dom'
+import { Outlet } from 'react-router-dom'
 import { Sidebar } from './Sidebar'
 import { Header } from './Header'
 
 export function Layout() {
-  const location = useLocation()
-  const isMobile = typeof window !== 'undefined' && window.innerWidth < 1024
-
   return (
     <div className="min-h-screen bg-background flex">
       <Sidebar />

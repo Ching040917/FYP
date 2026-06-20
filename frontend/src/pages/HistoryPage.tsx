@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../services/api'
 import type { AuditListItem } from '../types/api'
-import { ArrowLeft, Loader2, FileText, CheckCircle, AlertCircle, Clock, Trash2, ChevronRight } from 'lucide-react'
+import { ArrowLeft, Loader2, FileText, AlertCircle, ChevronRight } from 'lucide-react'
 
 export function HistoryPage() {
   const navigate = useNavigate()
