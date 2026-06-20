@@ -91,3 +91,31 @@
   .animate-slide-in { animation: slide-in 0.3s ease-out; }
   .animate-slide-down { animation: slide-down 0.2s ease-out; }
 }
+
+/* Reference-port: slim custom scrollbar for audit lists / panels */
+.scroll-area-audit::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.scroll-area-audit::-webkit-scrollbar-track {
+  background: transparent;
+}
+.scroll-area-audit::-webkit-scrollbar-thumb {
+  background: #464554;
+  border-radius: 3px;
+}
+.scroll-area-audit::-webkit-scrollbar-thumb:hover {
+  background: #908fa0;
+}
+
+/* Recharts text colour override — dark theme */
+.recharts-cartesian-axis-tick-value,
+.recharts-polar-angle-axis-tick-value,
+.recharts-polar-radius-axis-tick-value {
+  fill: #c7c4d7;
+}
+.recharts-cartesian-grid line,
+.recharts-polar-grid-angle line,
+.recharts-polar-grid-concentric-polygon {
+  stroke: #464554;
+}

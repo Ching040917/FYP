@@ -1,4 +1,6 @@
 /** @type {import('tailwindcss').Config} */
+import tailwindcssAnimate from 'tailwindcss-animate'
+
 export default {
   content: [
     "./index.html",
@@ -8,6 +10,7 @@ export default {
   theme: {
     extend: {
       colors: {
+        // ───────── Existing M3-style tokens (kept for AuditPage/HistoryPage) ─────────
         surface: '#13131b',
         'surface-dim': '#13131b',
         'surface-bright': '#393841',
@@ -55,6 +58,34 @@ export default {
         background: '#13131b',
         'on-background': '#e4e1ed',
         'surface-variant': '#34343d',
+
+        // ───────── shadcn/ui "new-york" tokens (added for reference port) ─────────
+        card: '#1b1b23',
+        'card-foreground': '#e4e1ed',
+        popover: '#1f1f27',
+        'popover-foreground': '#e4e1ed',
+        muted: '#292932',
+        'muted-foreground': '#c7c4d7',
+        accent: '#fbbf24',
+        'accent-foreground': '#422006',
+        destructive: '#ffb4ab',
+        'destructive-foreground': '#690005',
+        border: '#464554',
+        input: '#0d0d15',
+        ring: '#c0c1ff',
+        'chart-1': '#c0c1ff',
+        'chart-2': '#4edea3',
+        'chart-3': '#ffb2b7',
+        'chart-4': '#fbbf24',
+        'chart-5': '#908fa0',
+        sidebar: '#0d0d15',
+        'sidebar-foreground': '#e4e1ed',
+        'sidebar-primary': '#c0c1ff',
+        'sidebar-primary-foreground': '#0d0096',
+        'sidebar-accent': '#292932',
+        'sidebar-accent-foreground': '#e4e1ed',
+        'sidebar-border': '#464554',
+        'sidebar-ring': '#c0c1ff',
       },
       fontFamily: {
         sans: ['Inter', 'system-ui', 'sans-serif'],
@@ -98,11 +129,27 @@ export default {
           '0%, 100%': { boxShadow: '0 0 0 0 rgba(192, 193, 255, 0.55)' },
           '50%':      { boxShadow: '0 0 0 10px rgba(192, 193, 255, 0.00)' },
         },
+        'fade-in':   { from: { opacity: '0' }, to: { opacity: '1' } },
+        'fade-out':  { from: { opacity: '1' }, to: { opacity: '0' } },
+        'zoom-in-95':{ from: { transform: 'scale(0.95)' }, to: { transform: 'scale(1)' } },
+        'zoom-out-95':{ from: { transform: 'scale(1)' }, to: { transform: 'scale(0.95)' } },
+        'slide-in-from-top-2':    { from: { transform: 'translateY(-8px)' }, to: { transform: 'translateY(0)' } },
+        'slide-in-from-bottom-2': { from: { transform: 'translateY(8px)' },  to: { transform: 'translateY(0)' } },
+        'slide-in-from-left-2':   { from: { transform: 'translateX(-8px)' }, to: { transform: 'translateX(0)' } },
+        'slide-in-from-right-2':  { from: { transform: 'translateX(8px)' },  to: { transform: 'translateX(0)' } },
       },
       animation: {
         'pulse-glow': 'pulse-glow 3s ease-in-out infinite',
+        'fade-in':    'fade-in 0.2s ease-out',
+        'fade-out':   'fade-out 0.2s ease-out',
+        'zoom-in-95': 'zoom-in-95 0.2s ease-out',
+        'zoom-out-95':'zoom-out-95 0.2s ease-out',
+        'slide-in-from-top-2':    'slide-in-from-top-2 0.2s ease-out',
+        'slide-in-from-bottom-2': 'slide-in-from-bottom-2 0.2s ease-out',
+        'slide-in-from-left-2':   'slide-in-from-left-2 0.2s ease-out',
+        'slide-in-from-right-2':  'slide-in-from-right-2 0.2s ease-out',
       },
     },
   },
-  plugins: [],
+  plugins: [tailwindcssAnimate],
 }

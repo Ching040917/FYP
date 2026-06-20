@@ -35,11 +35,15 @@ async function handleResponse<T>(response: Response): Promise<T> {
 }
 
 export const api = {
-  async auditDocument(file: File): Promise<AuditSubmitResponse> {
+  async auditDocument(
+    file: File,
+    options: { cloud?: boolean } = {},
+  ): Promise<AuditSubmitResponse> {
     const formData = new FormData()
     formData.append('file', file)
+    const url = options.cloud ? `${API_BASE}/audit?cloud=1` : `${API_BASE}/audit`
     const response = await fetchWithTimeout(
-      `${API_BASE}/audit`,
+      url,
       { method: 'POST', body: formData },
       UPLOAD_TIMEOUT_MS,
     )
