@@ -1,0 +1,54 @@
+import uuid
+from datetime import datetime
+from typing import Optional
+from sqlalchemy import Column, String, Integer, DateTime, ForeignKey, Text, Float
+from sqlalchemy.dialects.sqlite import JSON
+from sqlalchemy.orm import relationship
+
+from app.database import Base
+
+
+class AuditRecord(Base):
+    __tablename__ = "audit_records"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    filename = Column(String(255), nullable=False)
+    file_size = Column(Integer, nullable=False)
+    weighted_score = Column(Integer, default=0)
+    deploy_mode = Column(String(10), nullable=False, default="LOCAL")
+    status = Column(String(20), nullable=False, default="processing")
+    created_at = Column(DateTime, default=datetime.utcnow)
+    completed_at = Column(DateTime, nullable=True)
+
+    violations = relationship("Violation", back_populates="audit", cascade="all, delete-orphan")
+    citation_issues = relationship("CitationIssue", back_populates="audit", cascade="all, delete-orphan")
+
+
+class Violation(Base):
+    __tablename__ = "violations"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    audit_id = Column(String(36), ForeignKey("audit_records.id", ondelete="CASCADE"), nullable=False)
+    rule_code = Column(String(50), nullable=False)
+    severity = Column(String(10), nullable=False)  # MAJOR / MINOR
+    location = Column(JSON, nullable=True)
+    message = Column(Text, nullable=False)
+    expected_value = Column(Text, nullable=True)
+    actual_value = Column(Text, nullable=True)
+
+    audit = relationship("AuditRecord", back_populates="violations")
+
+
+class CitationIssue(Base):
+    __tablename__ = "citation_issues"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    audit_id = Column(String(36), ForeignKey("audit_records.id", ondelete="CASCADE"), nullable=False)
+    paragraph_index = Column(Integer, nullable=False)
+    text_snippet = Column(Text, nullable=False)
+    issue_type = Column(String(50), nullable=False)
+    message = Column(Text, nullable=False)
+    suggestion = Column(Text, nullable=True)
+    confidence = Column(Float, nullable=True)
+
+    audit = relationship("AuditRecord", back_populates="citation_issues")

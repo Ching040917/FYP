@@ -1,0 +1,93 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    @apply border-outline-variant;
+  }
+  body {
+    @apply bg-background text-on-background antialiased;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+}
+
+@layer components {
+  .card {
+    @apply bg-surface-container border border-outline-variant rounded-lg;
+  }
+  .card-elevated {
+    @apply bg-surface-container border border-outline-variant rounded-lg shadow-tonal-med;
+  }
+  .btn-primary {
+    @apply bg-primary text-on-primary px-4 py-2 rounded font-medium transition-colors
+           hover:bg-primary-container focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 focus:ring-offset-background;
+  }
+  .btn-ghost {
+    @apply bg-transparent border border-outline-variant text-on-surface px-4 py-2 rounded font-medium transition-colors
+           hover:bg-surface-container-high focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 focus:ring-offset-background;
+  }
+  .input-field {
+    @apply bg-surface-container-lowest border border-outline-variant text-on-surface px-3 py-2 rounded
+           placeholder:text-on-surface-variant
+           focus:border-primary focus:ring-1 focus:ring-primary focus:outline-none transition-colors;
+  }
+  .badge-success {
+    @apply bg-secondary/10 text-secondary px-2 py-0.5 rounded-full text-label-md;
+  }
+  .badge-error {
+    @apply bg-error/10 text-error px-2 py-0.5 rounded-full text-label-md;
+  }
+  .badge-warning {
+    @apply bg-amber-500/10 text-amber-500 px-2 py-0.5 rounded-full text-label-md;
+  }
+  .table-container {
+    @apply overflow-x-auto rounded-lg border border-outline-variant;
+  }
+  .data-table {
+    @apply w-full text-sm;
+  }
+  .data-table th {
+    @apply bg-surface-container-high text-on-surface-variant text-label-md px-3 py-2 text-left;
+  }
+  .data-table td {
+    @apply bg-surface px-3 py-2 border-t border-outline-variant;
+  }
+  .data-table tbody tr:nth-child(even) td {
+    @apply bg-surface-container-low;
+  }
+  .data-table tbody tr:hover td {
+    @apply bg-surface-container-high;
+  }
+}
+
+@layer utilities {
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: theme('colors.outline-variant') transparent;
+  }
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background-color: theme('colors.outline-variant');
+    border-radius: 3px;
+  }
+}
+
+@layer utilities {
+  @keyframes slide-in {
+    from { transform: translateX(100%); opacity: 0; }
+    to { transform: translateX(0); opacity: 1; }
+  }
+  @keyframes slide-down {
+    from { opacity: 0; transform: translateY(-8px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .animate-slide-in { animation: slide-in 0.3s ease-out; }
+  .animate-slide-down { animation: slide-down 0.2s ease-out; }
+}
