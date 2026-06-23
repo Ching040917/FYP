@@ -65,7 +65,7 @@ def parse_ai_json(raw_ai_text: str) -> List[Dict[str, Any]]:
 
 
 async def call_ollama_local(prompt: str) -> str:
-    """Call local Ollama model."""
+    """Call local Ollama model (Layer 1)."""
     try:
         import ollama
         client = ollama.AsyncClient(host=settings.OLLAMA_HOST)
@@ -80,9 +80,11 @@ async def call_ollama_local(prompt: str) -> str:
 
 
 async def call_gemini_cloud(prompt: str) -> str:
-    """Call Google Gemini 1.5 Flash API."""
+    """Call Google Gemini 1.5 Flash API (Layer 2)."""
     try:
         import google.generativeai as genai
+        if not settings.GEMINI_API_KEY:
+            raise RuntimeError("GEMINI_API_KEY not configured")
         genai.configure(api_key=settings.GEMINI_API_KEY)
         model = genai.GenerativeModel('gemini-1.5-flash')
         response = await model.generate_content_async(
@@ -98,21 +100,47 @@ async def async_ai_citation_task(
     text: str,
     audit_id: str,
     db: Session,
+    cloud: bool = False,
     paragraph_map: Optional[Dict[int, str]] = None
 ) -> List[Dict[str, Any]]:
-    """Background task: run AI citation check and persist results."""
+    """Background task: run AI citation check and persist results.
+
+    Layer 1 (default): Local Ollama (qwen2.5:3b)
+    Layer 2 (cloud=True): Google Gemini 1.5 Flash with defensive fallback to Layer 1
+    """
     prompt = APA_CITATION_PROMPT.format(text=text)
 
-    try:
-        if settings.DEPLOY_MODE == "LOCAL":
-            raw_response = await call_ollama_local(prompt)
-        else:
+    raw_response = ""
+
+    if cloud:
+        # Layer 2: Try cloud API first
+        try:
             raw_response = await call_gemini_cloud(prompt)
-    except Exception as e:
-        # Network/timeout fallback — log full traceback for server-side debugging,
-        # then proceed so parse_ai_json emits its standard non-standard fallback.
-        logger.error("AI model call failed for audit context: %s", e, exc_info=True)
-        raw_response = ""
+            logger.info("Cloud AI citation audit completed for audit_id=%s", audit_id)
+        except Exception as e:
+            # DEFENSIVE FALLBACK: Cloud failed → log error, fall back to local Ollama
+            logger.warning(
+                "Cloud AI citation failed for audit_id=%s, falling back to local Ollama: %s",
+                audit_id, e, exc_info=True
+            )
+            try:
+                raw_response = await call_ollama_local(prompt)
+                logger.info("Local Ollama fallback succeeded for audit_id=%s", audit_id)
+            except Exception as e2:
+                # Both layers failed — log full traceback, proceed with empty response
+                # so parse_ai_json emits its standard non-standard fallback
+                logger.error(
+                    "Both cloud and local AI failed for audit_id=%s: %s",
+                    audit_id, e2, exc_info=True
+                )
+                raw_response = ""
+    else:
+        # Layer 1: Local Ollama only
+        try:
+            raw_response = await call_ollama_local(prompt)
+        except Exception as e:
+            logger.error("Local Ollama call failed for audit_id=%s: %s", audit_id, e, exc_info=True)
+            raw_response = ""
 
     issues_data = parse_ai_json(raw_response)
 

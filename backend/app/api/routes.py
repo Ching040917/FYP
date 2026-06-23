@@ -1,6 +1,6 @@
 from fastapi import APIRouter, UploadFile, File, BackgroundTasks, HTTPException, Depends, Query
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Optional
 import logging
 import uuid
 
@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 async def audit_document(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
+    cloud: bool = Query(False, description="Enable cloud AI citation audit (Gemini)"),
     db: Session = Depends(get_db),
 ):
     # Validate file type
@@ -38,13 +39,16 @@ async def audit_document(
     if len(file_bytes) > settings.MAX_FILE_SIZE:
         raise HTTPException(status_code=400, detail="File size exceeds the 10MB security boundary.")
 
+    # Determine deploy mode: request flag overrides env default for this audit
+    deploy_mode = "CLOUD" if cloud else settings.DEPLOY_MODE
+
     # Create audit record with "processing" status
     audit = AuditRecord(
         id=str(uuid.uuid4()),
         filename=file.filename,
         file_size=len(file_bytes),
         weighted_score=0,
-        deploy_mode=settings.DEPLOY_MODE,
+        deploy_mode=deploy_mode,
         status="processing",
     )
     db.add(audit)
@@ -93,12 +97,13 @@ async def audit_document(
         paragraphs = extract_paragraphs(doc)
         citation_text = extract_citation_text(paragraphs)
 
-        # Dispatch background AI task
+        # Dispatch background AI task with cloud flag
         background_tasks.add_task(
             async_ai_citation_task,
             citation_text,
             audit.id,
             db,
+            cloud,  # Pass cloud flag for layer-2 routing
         )
 
         return AuditSubmitResponse(

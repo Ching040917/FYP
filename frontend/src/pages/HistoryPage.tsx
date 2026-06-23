@@ -1,120 +1,99 @@
-import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { api } from '../services/api'
-import type { AuditListItem } from '../types/api'
-import { ArrowLeft, Loader2, FileText, AlertCircle, ChevronRight } from 'lucide-react'
+import { ArrowLeft, FileText, Clock } from 'lucide-react'
+import { Button } from '../components/ui/button'
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+} from '../components/ui/card'
+import { Badge } from '../components/ui/badge'
 
 export function HistoryPage() {
   const navigate = useNavigate()
-  const [audits, setAudits] = useState<AuditListItem[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-
-  const fetchAudits = async () => {
-    try {
-      const data = await api.listAudits(50)
-      setAudits(data)
-    } catch (err: any) {
-      setError(err.message || 'Failed to load history')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  useEffect(() => {
-    fetchAudits()
-  }, [])
-
-  const getStatusBadge = (status: string) => {
-    switch (status) {
-      case 'completed':
-        return <span className="badge-success">Completed</span>
-      case 'failed':
-        return <span className="badge-error">Failed</span>
-      default:
-        return <span className="badge-warning">Processing</span>
-    }
-  }
-
-  const getScoreBadge = (score: number) => {
-    const color = score >= 80 ? 'text-secondary' : score >= 50 ? 'text-amber-500' : 'text-error'
-    return <span className={`font-mono text-lg font-bold ${color}`}>{score}</span>
-  }
-
-  if (loading) {
-    return (
-      <div className="flex-1 flex items-center justify-center">
-        <Loader2 className="w-8 h-8 animate-spin text-primary" />
-      </div>
-    )
-  }
 
   return (
-    <div className="flex-1 p-6 overflow-y-auto">
-      <div className="max-w-4xl mx-auto">
-        <div className="flex items-center gap-4 mb-8">
-          <button onClick={() => navigate('/')} className="btn-ghost p-2">
-            <ArrowLeft className="w-5 h-5" />
-          </button>
-          <h1 className="text-headline-lg font-bold text-on-background">Audit History</h1>
-        </div>
-
-        {error && (
-          <div className="mb-6 p-4 bg-error/10 border border-error/20 rounded-lg flex items-center gap-3 text-error">
-            <AlertCircle className="w-5 h-5 flex-shrink-0" />
-            <p className="text-body-md">{error}</p>
-          </div>
-        )}
-
-        {audits.length === 0 ? (
-          <div className="card-elevated p-12 text-center">
-            <FileText className="w-16 h-16 text-outline-variant mx-auto mb-4" />
-            <p className="text-body-lg text-on-surface-variant">No audits yet</p>
-            <p className="text-body-md text-on-surface-variant mt-1">Upload a .docx file to get started</p>
-            <button onClick={() => navigate('/')} className="btn-primary mt-6">
-              <ChevronRight className="w-5 h-5 ml-2" />
-              Start New Audit
-            </button>
-          </div>
-        ) : (
-          <div className="card-elevated overflow-hidden">
-            <div className="table-container">
-              <table className="data-table">
-                <thead>
-                  <tr>
-                    <th className="w-12"></th>
-                    <th>Filename</th>
-                    <th className="w-28">Score</th>
-                    <th className="w-36">Status</th>
-                    <th className="w-48">Date</th>
-                    <th className="w-12"></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {audits.map((audit) => (
-                    <tr key={audit.id} className="cursor-pointer hover:bg-surface-container-high" onClick={() => navigate(`/audit/${audit.id}`)}>
-                      <td>
-                        <FileText className="w-5 h-5 text-on-surface-variant mx-auto" />
-                      </td>
-                      <td className="font-medium text-on-surface truncate max-w-xs" title={audit.filename}>
-                        {audit.filename}
-                      </td>
-                      <td>{getScoreBadge(audit.weighted_score)}</td>
-                      <td>{getStatusBadge(audit.status)}</td>
-                      <td className="text-body-md text-on-surface-variant">
-                        {new Date(audit.created_at).toLocaleString()}
-                      </td>
-                      <td className="text-center">
-                        <ChevronRight className="w-5 h-5 text-on-surface-variant mx-auto" />
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+    <div className="min-h-screen flex flex-col bg-background text-foreground">
+      {/* Sticky header */}
+      <header className="sticky top-0 z-30 border-b border-border bg-background/85 backdrop-blur">
+        <div className="mx-auto flex max-w-[1440px] items-center justify-between gap-3 px-4 py-3 md:px-6">
+          <div className="flex items-center gap-2.5">
+            <div className="grid h-9 w-9 place-items-center rounded-md bg-primary/15 text-primary ring-1 ring-primary/30">
+              <FileText className="h-5 w-5" />
+            </div>
+            <div>
+              <div className="text-sm font-semibold tracking-tight">History Records</div>
+              <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                Academic Compliance Auditor
+              </div>
             </div>
           </div>
-        )}
-      </div>
+          <div className="flex items-center gap-2">
+            <Badge variant="outline" className="border-border text-muted-foreground">
+              <Clock className="mr-1 h-3 w-3" /> Coming Soon
+            </Badge>
+          </div>
+        </div>
+      </header>
+
+      {/* Hero */}
+      <section className="border-b border-border bg-gradient-to-b from-primary/5 to-transparent">
+        <div className="mx-auto max-w-[1440px] px-4 py-8 md:px-6 md:py-10">
+          <h1 className="max-w-3xl text-2xl font-bold tracking-tight md:text-3xl">
+            Audit History
+            <span className="text-primary"> (Coming Soon)</span>
+          </h1>
+          <p className="mt-3 max-w-2xl text-sm text-muted-foreground md:text-base">
+            Your past audit records will appear here. Each entry will show the compliance score,
+            status, and a link to the detailed violation report.
+          </p>
+        </div>
+      </section>
+
+      {/* Main content */}
+      <main className="mx-auto w-full max-w-[1440px] flex-1 px-4 py-6 md:px-6 md:py-8">
+        <div className="max-w-3xl mx-auto">
+          <Card className="border-border bg-card">
+            <CardHeader>
+              <CardTitle className="text-lg font-semibold">History Records</CardTitle>
+              <CardDescription>
+                This page is under active development. Check back soon!
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="flex min-h-[300px] flex-col items-center justify-center gap-4 text-center">
+              <div className="grid h-16 w-16 place-items-center rounded-md bg-primary/10 text-primary ring-1 ring-primary/30">
+                <FileText className="h-7 w-7" />
+              </div>
+              <div>
+                <div className="text-base font-semibold text-foreground">No history yet</div>
+                <p className="mt-1 max-w-md text-sm text-muted-foreground">
+                  Run your first audit from the Dashboard to populate this history.
+                </p>
+              </div>
+              <Button
+                variant="outline"
+                className="border-border text-muted-foreground"
+                onClick={() => navigate('/')}
+              >
+                <ArrowLeft className="mr-2 h-4 w-4" />
+                Back to Dashboard
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
+      </main>
+
+      {/* Footer */}
+      <footer className="mt-auto border-t border-border bg-background/60">
+        <div className="mx-auto max-w-[1440px] px-4 py-5 md:px-6">
+          <div className="flex flex-col items-start justify-between gap-3 text-xs text-muted-foreground md:flex-row md:items-center">
+            <div className="flex items-center gap-2">
+              <span>Auditra · Read-only formatting checker.</span>
+            </div>
+          </div>
+        </div>
+      </footer>
     </div>
   )
 }
