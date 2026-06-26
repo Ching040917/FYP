@@ -13,11 +13,13 @@ from app.schemas.audit import (
     AuditListResponse,
     ViolationResponse,
     CitationIssueResponse,
+    ScoreBreakdownResponse,
+    DocumentStatsResponse,
 )
 from app.services.layout_engine import run_static_rules_engine
-from app.services.scoring import calculate_weighted_score
+from app.services.scoring import calculate_weighted_score, calculate_weighted_score_detailed
 from app.services.ai_citation import async_ai_citation_task, extract_citation_text
-from app.services.document_parser import parse_document, extract_paragraphs
+from app.services.document_parser import parse_document, extract_paragraphs, extract_document_stats
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -56,9 +58,18 @@ async def audit_document(
     db.refresh(audit)
 
     try:
-        # Run static layout engine (synchronous)
+        # ---- Parse once, reuse for rules + stats ----
+        doc = parse_document(file_bytes)
+        paragraphs = extract_paragraphs(doc)
+
+        # ---- Static rules engine ----
         layout_violations = run_static_rules_engine(file_bytes)
-        weighted_score = calculate_weighted_score(layout_violations)
+
+        # ---- Authoritative scoring with per-category breakdown ----
+        score_result = calculate_weighted_score_detailed(layout_violations)
+
+        # ---- Document stats (single source of truth) ----
+        doc_stats = extract_document_stats(doc)
 
         # Persist violations
         for v in layout_violations:
@@ -75,7 +86,7 @@ async def audit_document(
             db.add(violation)
 
         # Update audit with score
-        audit.weighted_score = weighted_score
+        audit.weighted_score = score_result.total
         db.commit()
 
         # Prepare immediate response
@@ -92,9 +103,13 @@ async def audit_document(
             for v in audit.violations
         ]
 
+        breakdown_responses = [
+            ScoreBreakdownResponse(**b.to_dict())
+            for b in score_result.breakdown
+        ]
+        stats_response = DocumentStatsResponse(**doc_stats)
+
         # Extract citation text for AI analysis
-        doc = parse_document(file_bytes)
-        paragraphs = extract_paragraphs(doc)
         citation_text = extract_citation_text(paragraphs)
 
         # Dispatch background AI task with cloud flag
@@ -109,9 +124,13 @@ async def audit_document(
         return AuditSubmitResponse(
             status="Success",
             audit_id=audit.id,
-            weighted_compliance_score=weighted_score,
+            weighted_compliance_score=score_result.total,
             physical_layout_errors=violation_responses,
             ai_citation_tooltips=[],
+            score_breakdown=breakdown_responses,
+            document_stats=stats_response,
+            major_count=score_result.major_count,
+            minor_count=score_result.minor_count,
         )
 
     except Exception as e:
@@ -165,6 +184,29 @@ async def get_audit(audit_id: str, db: Session = Depends(get_db)):
         for c in audit.citation_issues
     ]
 
+    # Recompute breakdown on the fly from persisted violations (keeps the
+    # detail page in sync even if the AI task added citation findings later)
+    from app.services.layout_violation import LayoutViolation
+    reconstructed = [
+        LayoutViolation(
+            rule_code=v.rule_code,
+            severity=v.severity,
+            location=v.location or {},
+            message=v.message,
+            expected_value=v.expected_value,
+            actual_value=v.actual_value,
+        )
+        for v in audit.violations
+    ]
+    score_result = calculate_weighted_score_detailed(
+        reconstructed,
+        citation_tip_count=len(citation_responses) if audit.deploy_mode == "CLOUD" else 0,
+    )
+    breakdown_responses = [
+        ScoreBreakdownResponse(**b.to_dict())
+        for b in score_result.breakdown
+    ]
+
     return AuditResponse(
         id=audit.id,
         filename=audit.filename,
@@ -176,6 +218,12 @@ async def get_audit(audit_id: str, db: Session = Depends(get_db)):
         completed_at=audit.completed_at,
         violations=violation_responses,
         citation_issues=citation_responses,
+        score_breakdown=breakdown_responses,
+        document_stats=DocumentStatsResponse(
+            paragraphs=0, headings=0, tables=0, images=0, sections=0, words=0
+        ),  # stats not persisted on the record; submit response carries them
+        major_count=score_result.major_count,
+        minor_count=score_result.minor_count,
     )
 
 
@@ -196,3 +244,13 @@ async def list_audits(
         )
         for a in audits
     ]
+
+
+@router.delete("/api/audits/{audit_id}", status_code=204)
+async def delete_audit(audit_id: str, db: Session = Depends(get_db)):
+    audit = db.query(AuditRecord).filter(AuditRecord.id == audit_id).first()
+    if not audit:
+        raise HTTPException(status_code=404, detail="Audit not found")
+    db.delete(audit)
+    db.commit()
+    return None

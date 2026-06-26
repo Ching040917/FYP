@@ -27,12 +27,40 @@ class CitationIssueResponse(BaseModel):
     confidence: Optional[float] = None
 
 
+# NEW — per-category score breakdown row
+class ScoreBreakdownResponse(BaseModel):
+    category: str
+    label: str
+    major: int
+    minor: int
+    deduction: int
+    remaining: int
+
+
+# NEW — document-level stats for the dashboard hero
+class DocumentStatsResponse(BaseModel):
+    paragraphs: int
+    headings: int
+    tables: int
+    images: int
+    sections: int
+    words: int
+
+
 class AuditSubmitResponse(BaseModel):
     status: str
     audit_id: str
     weighted_compliance_score: int
     physical_layout_errors: List[ViolationResponse]
     ai_citation_tooltips: List[CitationIssueResponse]
+    # NEW — kills the frontend adapter.ts residual hack
+    score_breakdown: List[ScoreBreakdownResponse] = []
+    # NEW — kills the frontend mammoth-based stats.ts
+    document_stats: DocumentStatsResponse = DocumentStatsResponse(
+        paragraphs=0, headings=0, tables=0, images=0, sections=0, words=0
+    )
+    major_count: int = 0
+    minor_count: int = 0
 
 
 class AuditResponse(BaseModel):
@@ -48,6 +76,13 @@ class AuditResponse(BaseModel):
     completed_at: Optional[datetime] = None
     violations: List[ViolationResponse] = []
     citation_issues: List[CitationIssueResponse] = []
+    # NEW — included here too so the polling detail page gets the same data
+    score_breakdown: List[ScoreBreakdownResponse] = []
+    document_stats: DocumentStatsResponse = DocumentStatsResponse(
+        paragraphs=0, headings=0, tables=0, images=0, sections=0, words=0
+    )
+    major_count: int = 0
+    minor_count: int = 0
 
 
 class AuditListResponse(BaseModel):

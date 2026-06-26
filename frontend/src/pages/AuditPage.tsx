@@ -210,7 +210,7 @@ export function AuditPage() {
           <div className="flex items-center justify-between gap-4 flex-wrap">
             <div>
               <h1 className="text-xl font-bold tracking-tight md:text-2xl">
-                Compliance Score: <span className={getScoreColor(audit.weighted_score)} font-mono>{audit.weighted_score}</span> / 100
+                Compliance Score: <span className={`${getScoreColor(audit.weighted_score)} font-mono`}>{audit.weighted_score}</span> / 100
               </h1>
               <p className="mt-1 text-sm text-muted-foreground">
                 Weighted score based on layout violations. Major violations deduct more heavily.

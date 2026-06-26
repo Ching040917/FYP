@@ -18,12 +18,38 @@ export interface CitationIssue {
   confidence: number | null
 }
 
+/** Per-category score breakdown row — mirrors backend ScoreBreakdownResponse. */
+export interface ScoreBreakdown {
+  category: string
+  label: string
+  major: number
+  minor: number
+  deduction: number
+  remaining: number
+}
+
+/** Document-level stats — mirrors backend DocumentStatsResponse. */
+export interface DocumentStats {
+  paragraphs: number
+  headings: number
+  tables: number
+  images: number
+  sections: number
+  words: number
+}
+
 export interface AuditSubmitResponse {
   status: string
   audit_id: string
   weighted_compliance_score: number
   physical_layout_errors: Violation[]
   ai_citation_tooltips: CitationIssue[]
+  /** NEW — authoritative per-category breakdown from backend (kills residual hack). */
+  score_breakdown?: ScoreBreakdown[]
+  /** NEW — document stats computed once on the backend (kills mammoth dep). */
+  document_stats?: DocumentStats
+  major_count?: number
+  minor_count?: number
 }
 
 export interface AuditResponse {
@@ -37,6 +63,10 @@ export interface AuditResponse {
   completed_at: string | null
   violations: Violation[]
   citation_issues: CitationIssue[]
+  score_breakdown?: ScoreBreakdown[]
+  document_stats?: DocumentStats
+  major_count?: number
+  minor_count?: number
 }
 
 export interface AuditListItem {

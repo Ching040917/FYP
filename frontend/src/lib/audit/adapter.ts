@@ -1,20 +1,17 @@
 /**
  * Adapter: backend wire shape (AuditSubmitResponse) → reference AuditResult.
  *
- * The backend exposes a flat Violation shape (rule_code, severity, location,
- * message, expected_value, actual_value) and a flat CitationIssue shape
- * (paragraph_index, text_snippet, issue_type, message, suggestion,
- * confidence). The reference Dashboard components consume a richer
- * LayoutError / CitationTip schema. This file is the single boundary that
- * keeps the two contract changes isolated.
+ * SIMPLIFIED: backend now returns `score_breakdown` and `document_stats`
+ * directly (per the scoring centralisation work). This file no longer
+ * re-derives scoring client-side — the residual hack that padded the
+ * citation_apa bucket is GONE.
  *
- * Backend is intentionally NOT touched — per the engine-protection rule.
+ * Backend is the single source of truth for scoring. The frontend just
+ * maps wire types to the dashboard's display types.
  */
 
-import type { AuditCategory, AuditResult, CitationTip, LayoutError } from '../../types/audit'
+import type { AuditCategory, AuditResult, CitationTip, LayoutError, DocumentStats } from '../../types/audit'
 import type { AuditSubmitResponse, CitationIssue, Violation } from '../../types/api'
-import type { DocumentStats } from '../../types/audit'
-import { calculateWeightedScore } from './scoring'
 
 /** Map backend rule_code to reference AuditCategory. Default = paragraph_typography. */
 export function categoryForRuleCode(ruleCode: string): AuditCategory {
@@ -79,54 +76,53 @@ function adaptCitation(c: CitationIssue): CitationTip {
   }
 }
 
+/** Map backend string category to frontend AuditCategory union. */
+function mapCategory(cat: string): AuditCategory {
+  const c = cat.toLowerCase()
+  if (c.includes('citation') || c.includes('apa')) return 'citation_apa'
+  if (c.includes('margin') || c.includes('page')) return 'page_margins'
+  if (c.includes('heading') || c.includes('hierarchy')) return 'heading_hierarchy'
+  if (c.includes('caption') || c.includes('media') || c.includes('image')) return 'media_captions'
+  if (c.includes('font_size') || c.includes('size')) return 'font_size'
+  if (c.includes('font')) return 'font_consistency'
+  if (c.includes('paragraph') || c.includes('line') || c.includes('spacing') || c.includes('align')) return 'paragraph_typography'
+  return 'paragraph_typography'
+}
+
 export interface AdaptInput {
   raw: AuditSubmitResponse
-  documentStats: DocumentStats
   auditedAt?: string
-  cloudEnabled: boolean
+}
+
+const ZERO_STATS: DocumentStats = {
+  paragraphs: 0, headings: 0, tables: 0, images: 0, sections: 0, words: 0,
 }
 
 export function adaptAuditResponse(input: AdaptInput): AuditResult {
-  const { raw, documentStats, auditedAt, cloudEnabled } = input
+  const { raw, auditedAt } = input
   const errors = raw.physical_layout_errors.map(adaptViolation)
 
-  // AI citation tips may not have arrived yet (background task async). We
-  // treat any tooltips returned in the immediate response + any carried via
-  // the `ai_citation_tooltips` array. If cloud mode was off, the server
-  // skipped the AI call — we still expose an empty array so the panel
-  // renders the "Cloud mode was off" locked state.
+  // AI citation tips — if cloud mode was off, the server skipped the AI
+  // call; we still expose an empty array so the panel renders the
+  // "Cloud mode was off" locked state.
   const tips = (raw.ai_citation_tooltips ?? []).map(adaptCitation)
-  const citationTipCount = cloudEnabled ? tips.length : 0
 
-  const scoreResult = calculateWeightedScore(errors, citationTipCount)
-
-  // Use the server's authoritative total; do NOT override with the
-  // client-recomputed value (different scoring paths can drift).
-  const total = raw.weighted_compliance_score
-  // Recompute breakdown only — that part is derived from the same
-  // error set so it stays consistent with the score's structure.
-  const breakdown = scoreResult.breakdown
-  // If our breakdown doesn't sum to the server total, surface the gap as
-  // an "uncategorised" residual on the citation_apa bucket.
-  const breakdownSum = breakdown.reduce((acc, b) => acc + b.deduction, 0)
-  const residual = Math.max(0, 100 - total - breakdownSum)
-  if (residual > 0) {
-    const i = breakdown.findIndex((b) => b.category === 'citation_apa')
-    if (i >= 0) {
-      breakdown[i] = {
-        ...breakdown[i],
-        deduction: breakdown[i].deduction + residual,
-        remaining: Math.max(0, breakdown[i].remaining - residual),
-      }
-    }
-  }
+  // Use backend-provided breakdown + stats directly (single source of truth).
+  // Fallback to empty array / zero stats if backend didn't send them
+  // (backward compat with older backend versions).
+  // Map backend string category to frontend AuditCategory union.
+  const breakdown = (raw.score_breakdown ?? []).map(b => ({
+    ...b,
+    category: mapCategory(b.category),
+  }))
+  const documentStats = raw.document_stats ?? ZERO_STATS
 
   return {
     status: 'Success',
-    weighted_compliance_score: total,
+    weighted_compliance_score: raw.weighted_compliance_score,
     score_breakdown: breakdown,
-    major_count: scoreResult.majorCount,
-    minor_count: scoreResult.minorCount,
+    major_count: raw.major_count ?? errors.filter((e) => e.severity === 'major').length,
+    minor_count: raw.minor_count ?? errors.filter((e) => e.severity === 'minor').length,
     physical_layout_errors: errors,
     ai_citation_tooltips: tips,
     document_stats: documentStats,

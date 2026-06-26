@@ -124,12 +124,9 @@ def test_post_audit_persists_citation_mismatch_as_violation_row(client, docx_fac
 
 
 def test_post_audit_score_decrements_per_violation(client, docx_factory, monkeypatch):
-    # Override the scoring weights to be deterministic for this test.
-    import app.services.scoring as scoring
-    monkeypatch.setattr(scoring, "MAJOR_WEIGHT", 10)
-    monkeypatch.setattr(scoring, "MINOR_WEIGHT", 2)
-
-    # docx with 1 MAJOR (margin) and 1 MAJOR (citation) -> 100 - 10 - 10 = 80
+    # The new scoring engine uses per-category weights + caps (CATEGORY_META).
+    # 1 MAJOR margin (page_margins: 8pt) + 1 MAJOR citation (citation_apa: 5pt)
+    # -> 100 - 8 - 5 = 87
     body = ["Orphan (Garcia, 2018) text."]
     file_bytes = docx_factory(
         paragraphs=body, references=None,
@@ -140,7 +137,8 @@ def test_post_audit_score_decrements_per_violation(client, docx_factory, monkeyp
         files={"file": ("test.docx", file_bytes, "application/octet-stream")},
     )
     score = post.json()["weighted_compliance_score"]
-    assert score == 80
+    # 1 MARGIN_LEFT (MAJOR, page_margins weight=8) + 1 CITATION_MISMATCH (MAJOR, citation_apa weight=5)
+    assert score == 87
 
 
 def test_post_audit_unicode_filename_accepted(client, docx_factory):

@@ -1,10 +1,13 @@
 /**
- * Upload card — dropzone, file chip, cloud toggle, submit. Ported from
- * reference_project/src/components/audit/upload-card.tsx.
+ * Upload card — dropzone, file chip, cloud toggle, submit.
  *
- * The cloud toggle is visual-only on the wire: the backend's DEPLOY_MODE is
- * env-controlled. The `?cloud=1` query is sent so the affordance exists,
- * but the server currently ignores it (per the engine-protection rule).
+ * NEW: "Try with the sample thesis" button — fetches /samples/sample-thesis.docx
+ * and runs the audit automatically so reviewers can demo the dashboard
+ * in one click without preparing their own file.
+ *
+ * LAYOUT BUDGET: respects the parent's h-screen overflow-hidden shell.
+ * No min-h-screen, no blind h-full inside grids — uses max-h-* and flex-col
+ * so the card grows naturally with content and never overflows the viewport.
  */
 
 import * as React from 'react'
@@ -16,6 +19,7 @@ import {
   Loader2,
   Cloud,
   CloudOff,
+  Zap,
 } from 'lucide-react'
 import { Button } from '../ui/button'
 import {
@@ -31,25 +35,27 @@ import { Badge } from '../ui/badge'
 import { cn } from '../../lib/utils'
 import { api } from '../../services/api'
 import { useToast } from '../../hooks/useToast'
-import { extractDocumentStats } from '../../lib/audit/stats'
 import { adaptAuditResponse } from '../../lib/audit/adapter'
-import type { AuditResult, DocumentStats } from '../../types/audit'
+import type { AuditResult } from '../../types/audit'
 
 const MAX_SIZE_MB = 10
 const MAX_SIZE_BYTES = MAX_SIZE_MB * 1024 * 1024
-
-const ZERO_STATS: DocumentStats = {
-  paragraphs: 0, headings: 0, tables: 0, images: 0, sections: 0, words: 0,
-}
+const SAMPLE_PATH = '/samples/sample-thesis.docx'
 
 export interface UploadCardProps {
   /** Called when the audit completes successfully */
   onResult: (result: AuditResult) => void
   /** Optional reset signal — clears inline result when starting a new upload */
   onReset?: () => void
+  /**
+   * Increment this number to trigger an automatic sample-document audit.
+   * Lets a parent LandingHero CTA drive the upload card without lifting
+   * internal state up.
+   */
+  trySampleSignal?: number
 }
 
-export function UploadCard({ onResult, onReset }: UploadCardProps) {
+export function UploadCard({ onResult, onReset, trySampleSignal = 0 }: UploadCardProps) {
   const { showToast } = useToast()
   const [file, setFile] = React.useState<File | null>(null)
   const [cloudEnabled, setCloudEnabled] = React.useState(false)
@@ -81,32 +87,31 @@ export function UploadCard({ onResult, onReset }: UploadCardProps) {
     if (f) selectFile(f)
   }
 
-  const onUpload = async () => {
+  const runAudit = React.useCallback(
+    async (target: File) => {
+      setIsUploading(true)
+      try {
+        const raw = await api.auditDocument(target, { cloud: cloudEnabled })
+        const result = adaptAuditResponse({ raw })
+        showToast(
+          `Audit complete. Score: ${result.weighted_compliance_score}/100 · ${result.major_count} major · ${result.minor_count} minor`,
+          'success',
+        )
+        onResult(result)
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : 'Unknown error during upload.'
+        showToast(`Audit failed. ${message}`, 'error')
+      } finally {
+        setIsUploading(false)
+      }
+    },
+    [cloudEnabled, onResult, showToast],
+  )
+
+  const onUpload = () => {
     if (!file) return
-    setIsUploading(true)
-    try {
-      // Compute stats + adapter in parallel with the upload round-trip.
-      const [stats, raw] = await Promise.all([
-        extractDocumentStats(file).catch(() => ZERO_STATS),
-        api.auditDocument(file, { cloud: cloudEnabled }),
-      ])
-      const result = adaptAuditResponse({
-        raw,
-        documentStats: stats,
-        cloudEnabled,
-      })
-      showToast(
-        `Audit complete. Score: ${result.weighted_compliance_score}/100 · ${result.major_count} major · ${result.minor_count} minor`,
-        'success',
-      )
-      onResult(result)
-    } catch (err) {
-      const message =
-        err instanceof Error ? err.message : 'Unknown error during upload.'
-      showToast(`Audit failed. ${message}`, 'error')
-    } finally {
-      setIsUploading(false)
-    }
+    void runAudit(file)
   }
 
   const clearFile = () => {
@@ -114,6 +119,41 @@ export function UploadCard({ onResult, onReset }: UploadCardProps) {
     if (inputRef.current) inputRef.current.value = ''
     onReset?.()
   }
+
+  /**
+   * Auto-load the bundled sample thesis and immediately audit it.
+   * Triggered by the parent incrementing `trySampleSignal` OR by the
+   * "Try with the sample thesis" button below.
+   */
+  const loadAndAuditSample = React.useCallback(async () => {
+    try {
+      const res = await fetch(SAMPLE_PATH)
+      if (!res.ok) throw new Error(`Sample fetch failed: ${res.status}`)
+      const blob = await res.blob()
+      const sampleFile = new File([blob], 'sample-thesis.docx', {
+        type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      })
+      selectFile(sampleFile)
+      // Small delay so the file-chip state paints before the spinner
+      await new Promise((r) => setTimeout(r, 100))
+      await runAudit(sampleFile)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unknown error.'
+      showToast(`Could not load sample. ${message}`, 'error')
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runAudit, showToast])
+
+  // Re-run only when the parent increments the signal
+  const lastSignalRef = React.useRef(trySampleSignal)
+  React.useEffect(() => {
+    if (trySampleSignal > lastSignalRef.current) {
+      lastSignalRef.current = trySampleSignal
+      void loadAndAuditSample()
+    } else {
+      lastSignalRef.current = trySampleSignal
+    }
+  }, [trySampleSignal, loadAndAuditSample])
 
   return (
     <Card className="border-border bg-card">
@@ -169,6 +209,19 @@ export function UploadCard({ onResult, onReset }: UploadCardProps) {
           />
         </div>
 
+        {/* Try sample — secondary CTA */}
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="w-full border-border bg-input/30 text-foreground hover:bg-muted/40 hover:text-foreground"
+          disabled={isUploading}
+          onClick={() => void loadAndAuditSample()}
+        >
+          <Zap className="mr-2 h-3.5 w-3.5 text-secondary" />
+          Try with the sample thesis
+        </Button>
+
         {/* Selected file chip */}
         {file && (
           <div className="flex items-center justify-between gap-3 rounded-md border border-border bg-input/40 px-3 py-2.5">
@@ -195,7 +248,7 @@ export function UploadCard({ onResult, onReset }: UploadCardProps) {
           </div>
         )}
 
-        {/* Cloud toggle — visual-only; backend DEPLOY_MODE stays env-controlled */}
+        {/* Cloud toggle */}
         <div className="flex items-start justify-between gap-3 rounded-md border border-border bg-input/20 px-3 py-2.5">
           <div className="flex items-start gap-2.5">
             {cloudEnabled ? (
@@ -209,7 +262,6 @@ export function UploadCard({ onResult, onReset }: UploadCardProps) {
               </Label>
               <p className="text-xs text-muted-foreground">
                 Off by default. When on, paragraph text is sent to the AI for APA 7 checks.
-                Reserved for future deployments; current build always uses local Ollama.
               </p>
             </div>
           </div>
