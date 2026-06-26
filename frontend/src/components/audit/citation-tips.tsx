@@ -28,7 +28,7 @@ export function CitationTips({
   const tips = result.ai_citation_tooltips
 
   return (
-    <Card className="border-border bg-card flex h-full flex-col">
+    <Card className="border-border bg-card flex flex-col">
       <CardHeader className="pb-3">
         <div className="flex items-center justify-between gap-2">
           <div>
@@ -49,7 +49,7 @@ export function CitationTips({
           </Badge>
         </div>
       </CardHeader>
-      <CardContent className="flex-1 p-0">
+      <CardContent className="flex-1 min-h-0 p-0">
         {!cloudWasEnabled ? (
           <LockedState />
         ) : tips.length === 0 ? (

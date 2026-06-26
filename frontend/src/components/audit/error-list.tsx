@@ -57,7 +57,7 @@ export function ErrorList({
   })
 
   return (
-    <Card className="border-border bg-card flex h-full flex-col">
+    <Card className="border-border bg-card flex flex-col">
       <CardHeader className="pb-3">
         <div className="flex items-center justify-between gap-2">
           <div>
@@ -101,7 +101,7 @@ export function ErrorList({
           </Select>
         </div>
       </CardHeader>
-      <CardContent className="flex-1 p-0">
+      <CardContent className="flex-1 min-h-0 p-0">
         <ScrollArea className="scroll-area-audit h-[480px] px-4 pb-4">
           {filtered.length === 0 ? (
             <div className="flex h-32 items-center justify-center text-xs text-muted-foreground">
