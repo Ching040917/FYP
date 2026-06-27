@@ -122,7 +122,7 @@ export function Dashboard() {
       </section>
 
       {/* ────────────────────────── Main ────────────────────────── */}
-      <main className="mx-auto w-full max-w-[1440px] flex-1 px-4 py-6 md:px-6 md:py-8">
+      <main className="mx-auto w-full max-w-[1440px] px-4 py-6 md:px-6 md:py-8">
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
           {/* Left rail — upload + spec */}
           <div className="lg:col-span-5 xl:col-span-4">

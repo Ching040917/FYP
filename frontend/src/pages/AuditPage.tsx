@@ -229,7 +229,7 @@ export function AuditPage() {
       </section>
 
       {/* Main content */}
-      <main className="mx-auto w-full max-w-[1440px] flex-1 px-4 py-6 md:px-6 md:py-8">
+      <main className="mx-auto w-full max-w-[1440px] px-4 py-6 md:px-6 md:py-8">
         <div className="grid gap-6 lg:grid-cols-3">
           <div className="lg:col-span-2 space-y-6">
             <Card className="border-border bg-card">

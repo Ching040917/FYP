@@ -64,6 +64,15 @@ export const api = {
     return handleResponse<AuditListItem[]>(response)
   },
 
+  async deleteAudit(auditId: string): Promise<{ status: string; audit_id: string; filename: string }> {
+    const response = await fetchWithTimeout(
+      `${API_BASE}/audit/${auditId}`,
+      { method: 'DELETE' },
+      UPLOAD_TIMEOUT_MS,
+    )
+    return handleResponse(response)
+  },
+
   async healthCheck(): Promise<{ status: string }> {
     const response = await fetch('/health')
     return handleResponse<{ status: string }>(response)

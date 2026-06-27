@@ -244,3 +244,23 @@ async def list_audits(
         )
         for a in audits
     ]
+
+
+@router.delete("/api/audit/{audit_id}")
+async def delete_audit(audit_id: str, db: Session = Depends(get_db)):
+    """Delete a single audit record and all its child violations + citation issues.
+
+    The cascade="all, delete-orphan" on the Violation and CitationIssue
+    relationships means SQLAlchemy automatically deletes the children when
+    the parent AuditRecord is deleted.
+    """
+    audit = db.query(AuditRecord).filter(AuditRecord.id == audit_id).first()
+    if not audit:
+        raise HTTPException(status_code=404, detail="Audit not found")
+
+    filename = audit.filename
+    db.delete(audit)
+    db.commit()
+
+    logger.info("Deleted audit id=%s filename=%s", audit_id, filename)
+    return {"status": "deleted", "audit_id": audit_id, "filename": filename}

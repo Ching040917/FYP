@@ -17,7 +17,7 @@
  *   - Reveal-on-scroll IntersectionObserver → useEffect
  */
 
-import { useEffect, useRef } from 'react'
+import { useEffect } from 'react'
 import { Link } from 'react-router-dom'
 
 const SHIELD_LOGO = (
@@ -27,51 +27,6 @@ const SHIELD_LOGO = (
 )
 
 export function Landing() {
-  const scoreRingRef = useRef<SVGCircleElement | null>(null)
-  const scoreNumRef = useRef<HTMLSpanElement | null>(null)
-
-  // Animated score gauge on the dashboard preview
-  useEffect(() => {
-    const ring = scoreRingRef.current
-    const num = scoreNumRef.current
-    if (!ring || !num) return
-
-    const circumference = 2 * Math.PI * 20 // r=20
-    const target = 84
-    let current = 0
-    let raf = 0
-
-    const animate = () => {
-      const step = () => {
-        current += 1
-        if (current > target) current = target
-        num.textContent = String(current)
-        const offset = circumference - (current / 100) * circumference
-        ring.setAttribute('stroke-dashoffset', String(offset))
-        if (current < target) raf = requestAnimationFrame(step)
-      }
-      step()
-    }
-
-    const observer = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((entry) => {
-          if (entry.isIntersecting) {
-            animate()
-            observer.disconnect()
-          }
-        })
-      },
-      { threshold: 0.3 },
-    )
-    observer.observe(ring)
-
-    return () => {
-      observer.disconnect()
-      cancelAnimationFrame(raf)
-    }
-  }, [])
-
   // Reveal-on-scroll for .reveal elements
   useEffect(() => {
     const els = document.querySelectorAll('.reveal')
@@ -227,165 +182,86 @@ export function Landing() {
           <div className="text-center max-w-2xl mx-auto mb-xl">
             <p className="text-sm uppercase tracking-widest text-primary font-medium mb-sm">The dashboard</p>
             <h2 className="text-3xl md:text-4xl font-semibold tracking-tight mb-md">Every error in context, every fix one click away.</h2>
-            <p className="text-on-surface-variant text-lg">Upload a draft. The left panel shows the document with errors highlighted at the line. The right panel gives you structured fixes.</p>
+            <p className="text-on-surface-variant text-lg">Upload a draft. Get a weighted compliance score, per-category breakdown charts, a clickable error list, and AI-generated fix tooltips — all in one dashboard.</p>
           </div>
 
-          {/* Dashboard window mockup */}
-          <div className="window-frame">
+          {/* Real screenshot inside a browser-style window frame.
+              The image loads from /dashboard-preview.png.
+              To update: take a screenshot of your running dashboard at /dashboard
+              and save it as frontend/public/dashboard-preview.png */}
+          <Link
+            to="/dashboard"
+            className="block window-frame hover:border-primary/40 transition-colors group"
+          >
             {/* Window chrome */}
             <div className="h-9 bg-surface-container border-b border-outline-variant flex items-center px-md gap-sm">
               <span className="w-2.5 h-2.5 rounded-full bg-[#ff5f57]" />
               <span className="w-2.5 h-2.5 rounded-full bg-[#febc2e]" />
               <span className="w-2.5 h-2.5 rounded-full bg-[#28c840]" />
-              <span className="ml-md text-xs text-on-surface-variant font-mono">academic-compliance.local — Compliance Check</span>
+              <span className="ml-md text-xs text-on-surface-variant font-mono">
+                localhost:5173/dashboard
+              </span>
+              <span className="ml-auto material-symbols-outlined text-base text-on-surface-variant group-hover:text-primary transition-colors">
+                open_in_new
+              </span>
             </div>
 
-            {/* Top bar */}
-            <div className="h-16 bg-surface-container border-b border-outline-variant flex items-center justify-between px-md">
-              <div className="flex items-center gap-md">
-                <div className="w-7 h-7 rounded bg-primary/15 border border-primary/30 flex items-center justify-center">
-                  {SHIELD_LOGO}
+            {/* Screenshot image — falls back to a styled placeholder if the
+                image file doesn't exist yet. */}
+            <div className="relative bg-background overflow-hidden">
+              <img
+                src="/dashboard-preview.png"
+                alt="Academic Compliance Auditor dashboard showing compliance score, charts, and error list"
+                className="w-full block"
+                onError={(e) => {
+                  // Hide the broken image and show the placeholder div
+                  e.currentTarget.style.display = 'none'
+                  const placeholder = e.currentTarget.nextElementSibling as HTMLElement | null
+                  if (placeholder) placeholder.style.display = 'flex'
+                }}
+              />
+              {/* Placeholder shown if /dashboard-preview.png is missing */}
+              <div
+                className="hidden flex-col items-center justify-center gap-md py-20 px-md text-center"
+              >
+                <div className="w-16 h-16 rounded-xl bg-primary/10 border border-primary/30 flex items-center justify-center">
+                  <span className="material-symbols-outlined text-primary text-2xl">monitor</span>
                 </div>
-                <span className="text-on-surface font-medium">Academic Compliance Portal</span>
-              </div>
-              <div className="flex items-center gap-md">
-                {/* Score gauge */}
-                <div className="relative w-12 h-12">
-                  <svg className="w-12 h-12" viewBox="0 0 48 48">
-                    <circle cx="24" cy="24" r="20" fill="none" stroke="#34343d" strokeWidth="3" />
-                    <circle
-                      ref={scoreRingRef}
-                      className="progress-ring__circle"
-                      cx="24" cy="24" r="20" fill="none"
-                      stroke="#4edea3" strokeWidth="3" strokeLinecap="round"
-                      strokeDasharray="125.66" strokeDashoffset="125.66"
-                    />
-                  </svg>
-                  <div className="absolute inset-0 flex items-center justify-center">
-                    <span ref={scoreNumRef} className="text-sm font-mono font-semibold text-secondary">0</span>
-                  </div>
+                <div>
+                  <p className="text-on-surface font-semibold text-lg">Live Dashboard Preview</p>
+                  <p className="text-on-surface-variant text-sm mt-sm max-w-md">
+                    Click to open the real interactive dashboard. Upload a .docx, run an audit,
+                    and see the compliance score, charts, and error breakdown in action.
+                  </p>
                 </div>
-                <span className="text-sm text-on-surface-variant hidden sm:inline">SCORE</span>
-                <span className="material-symbols-outlined text-on-surface-variant cursor-pointer hover:text-on-surface hidden sm:inline">notifications</span>
-                <span className="material-symbols-outlined text-on-surface-variant cursor-pointer hover:text-on-surface hidden sm:inline">help</span>
-                <div className="w-8 h-8 rounded-full bg-tertiary/20 border border-tertiary/30 flex items-center justify-center">
-                  <span className="material-symbols-outlined text-tertiary text-base">person</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Body: sidebar + main + assistant */}
-            <div className="grid grid-cols-[180px_1fr_320px] min-h-[560px] max-md:grid-cols-1">
-              {/* Left sidebar */}
-              <aside className="bg-surface-container border-r border-outline-variant p-md max-md:hidden">
-                <div className="mb-md">
-                  <p className="text-on-surface font-medium text-sm">Lead Auditor</p>
-                  <p className="text-xs text-on-surface-variant">Department of Research</p>
-                </div>
-                <button className="w-full mb-sm flex items-center justify-center gap-xs px-md py-sm rounded bg-primary text-on-primary text-sm font-medium hover:opacity-90 transition-opacity">
-                  <span className="material-symbols-outlined text-base">add</span>
-                  New Audit
-                </button>
-                <button className="w-full mb-md flex items-center justify-center gap-xs px-md py-sm rounded bg-secondary text-on-secondary text-sm font-medium hover:opacity-90 transition-opacity">
-                  <span className="material-symbols-outlined text-base">rule</span>
-                  Compliance Check
-                </button>
-                <nav className="space-y-xs">
-                  <a className="flex items-center gap-sm px-sm py-xs rounded text-on-surface-variant hover:bg-surface-container-high text-sm transition-colors">
-                    <span className="material-symbols-outlined text-base">history</span>
-                    History
-                  </a>
-                  <a className="flex items-center gap-sm px-sm py-xs rounded text-on-surface-variant hover:bg-surface-container-high text-sm transition-colors">
-                    <span className="material-symbols-outlined text-base">database</span>
-                    Regulatory DB
-                  </a>
-                  <a className="flex items-center gap-sm px-sm py-xs rounded text-on-surface-variant hover:bg-surface-container-high text-sm transition-colors">
-                    <span className="material-symbols-outlined text-base">monitoring</span>
-                    Analytics
-                  </a>
-                </nav>
-              </aside>
-
-              {/* Main document */}
-              <main className="bg-background p-lg overflow-auto">
-                <div className="flex items-start gap-md">
-                  {/* Line numbers */}
-                  <div className="text-right font-mono text-xs text-on-surface-variant pt-xs select-none">
-                    {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => (
-                      <div key={n} className="h-6">{n}</div>
-                    ))}
-                  </div>
-                  <div className="flex-1 font-sans">
-                    <h2 className="text-2xl font-semibold mb-md text-on-surface">Chapter 4: Methodology and Analysis</h2>
-                    <p className="text-on-surface leading-relaxed mb-md">The primary dataset was collected over a three-month period utilizing a stratified random sampling approach. Participant demographics were recorded, ensuring representation across all targeted socioeconomic strata.</p>
-                    {/* Highlighted paragraph */}
-                    <p className="text-on-surface leading-relaxed mb-md p-sm rounded border-l-2 border-error bg-error/5">
-                      However, an alternative methodology was proposed by Smith (2022) but was not fully integrated into the initial framework due to time constraints and lack of available literature regarding its long-term efficacy in similar cohort studies.
-                    </p>
-                    <p className="text-on-surface leading-relaxed">Further analysis revealed a statistically significant correlation between the independent variables, supporting the primary hypothesis formulated during the preliminary review phase.</p>
-                  </div>
-                </div>
-              </main>
-
-              {/* Right assistant */}
-              <aside className="bg-surface-container border-l border-outline-variant p-md overflow-auto">
-                <div className="flex items-center justify-between mb-md">
-                  <div className="flex items-center gap-xs">
-                    <span className="material-symbols-outlined text-primary text-base">auto_awesome</span>
-                    <span className="font-medium text-on-surface text-sm">Citation Assistant</span>
-                  </div>
-                  <span className="px-sm py-xs rounded text-xs bg-tertiary/15 text-tertiary border border-tertiary/30">3 Issues</span>
-                </div>
-
-                {/* Major violation */}
-                <div className="violation-card rounded-lg bg-error/5 border-l-2 border-error p-sm mb-sm">
-                  <div className="flex items-center justify-between mb-xs">
-                    <span className="text-[10px] font-medium uppercase tracking-wider text-error bg-error/15 px-sm py-xs rounded">Major Violation</span>
-                    <span className="text-xs font-mono text-on-surface-variant">Line 6-7</span>
-                  </div>
-                  <h4 className="text-sm font-semibold text-on-surface mb-xs">Missing Citation & Formatting</h4>
-                  <p className="text-xs text-on-surface-variant leading-relaxed mb-sm">&ldquo;Smith (2022)&rdquo; is mentioned in text but missing from the bibliography. The paragraph structure also deviates from APA 7th ed. guidelines for long quotes.</p>
-                  <div className="bg-surface-container-high rounded p-sm mb-sm">
-                    <p className="text-[10px] uppercase tracking-wider text-primary mb-xs flex items-center gap-xs">
-                      <span className="material-symbols-outlined text-xs">smart_toy</span>
-                      AI Fix Suggestion
-                    </p>
-                    <code className="text-[11px] font-mono text-on-surface leading-relaxed block">Insert Citation › Add New Source. Ensure author name is spelled exactly as &lsquo;Smith, J.&rsquo;</code>
-                  </div>
-                  <button className="w-full text-xs py-xs rounded bg-primary text-on-primary font-medium hover:opacity-90 transition-opacity">Apply Format Fix</button>
-                </div>
-
-                {/* Minor violation */}
-                <div className="rounded-lg bg-tertiary/5 border-l-2 border-tertiary p-sm">
-                  <div className="flex items-center justify-between mb-xs">
-                    <span className="text-[10px] font-medium uppercase tracking-wider text-tertiary bg-tertiary/15 px-sm py-xs rounded">Minor Violation</span>
-                    <span className="text-xs font-mono text-on-surface-variant">Line 12</span>
-                  </div>
-                  <h4 className="text-sm font-semibold text-on-surface mb-xs">Passive Voice Overuse</h4>
-                  <p className="text-xs text-on-surface-variant leading-relaxed">Academic guidelines recommend active voice for clarity. &ldquo;Further analysis revealed...&rdquo; could be restructured.</p>
-                </div>
-              </aside>
-            </div>
-
-            {/* Footer */}
-            <div className="h-10 bg-surface-container border-t border-outline-variant flex items-center justify-between px-md text-xs text-on-surface-variant">
-              <div className="flex items-center gap-md">
-                <span className="flex items-center gap-xs">
-                  <span className="w-1.5 h-1.5 rounded-full bg-outline" />
-                  Optional Cloud Mode
+                <span className="inline-flex items-center gap-xs px-lg py-sm rounded bg-primary text-on-primary font-medium text-sm">
+                  <span className="material-symbols-outlined text-base">play_arrow</span>
+                  Open live dashboard
                 </span>
-                <span className="font-mono text-outline">(Disabled)</span>
-              </div>
-              <span className="font-mono hidden sm:inline">© 2024 Academic Compliance Systems. All rights reserved.</span>
-              <div className="flex items-center gap-xs">
-                <span className="w-1.5 h-1.5 rounded-full bg-secondary" />
-                <span className="text-secondary">Local AI Core: Online</span>
-                <span className="font-mono ml-xs text-outline hidden sm:inline">(Ollama Qwen2.5-3B)</span>
               </div>
             </div>
+          </Link>
+
+          {/* Feature highlights below the screenshot */}
+          <div className="mt-xl grid grid-cols-1 sm:grid-cols-3 gap-md max-w-4xl mx-auto">
+            <PreviewFeature
+              icon="speed"
+              title="Weighted score"
+              description="0–100 compliance score with per-category caps. Major violations cost 8pts, minors 1–2pts."
+            />
+            <PreviewFeature
+              icon="insights"
+              title="Radar + bar charts"
+              description="Visualise deductions by category. Spot which rule scope is dragging your score down."
+            />
+            <PreviewFeature
+              icon="auto_fix_high"
+              title="AI fix tooltips"
+              description="Every APA citation issue comes with a structured fix suggestion from the AI engine."
+            />
           </div>
 
-          {/* CTA below mockup — links to the live dashboard */}
+          {/* CTA below — links to the live dashboard */}
           <div className="mt-xl text-center">
             <Link
               to="/dashboard"
@@ -658,6 +534,18 @@ function Stat({ value, tone, label }: { value: string; tone: 'primary' | 'second
     <div className="p-md rounded-lg border border-outline-variant bg-surface-container">
       <div className={`text-3xl font-semibold font-mono ${tone === 'primary' ? 'text-primary' : 'text-secondary'}`}>{value}</div>
       <div className="text-xs uppercase tracking-wider text-on-surface-variant mt-xs">{label}</div>
+    </div>
+  )
+}
+
+function PreviewFeature({ icon, title, description }: { icon: string; title: string; description: string }) {
+  return (
+    <div className="p-md rounded-xl border border-outline-variant bg-surface-container text-center">
+      <div className="w-10 h-10 mx-auto rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center mb-sm">
+        <span className="material-symbols-outlined text-primary text-base">{icon}</span>
+      </div>
+      <h4 className="text-sm font-semibold text-on-surface mb-xs">{title}</h4>
+      <p className="text-xs text-on-surface-variant leading-relaxed">{description}</p>
     </div>
   )
 }

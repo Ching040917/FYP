@@ -25,6 +25,8 @@ import {
   ShieldCheck,
   Lock,
   Cloud,
+  Trash2,
+  X,
 } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import {
@@ -49,6 +51,8 @@ export function HistoryPage() {
   const [state, setState] = useState<LoadState>('loading')
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [refreshing, setRefreshing] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<AuditListItem | null>(null)
+  const [deleting, setDeleting] = useState(false)
 
   const fetchAudits = useCallback(async () => {
     setState('loading')
@@ -76,6 +80,28 @@ export function HistoryPage() {
     setRefreshing(true)
     await fetchAudits()
     setRefreshing(false)
+  }
+
+  const handleDelete = async (audit: AuditListItem) => {
+    setDeleting(true)
+    try {
+      await api.deleteAudit(audit.id)
+      setAudits((prev) => prev.filter((a) => a.id !== audit.id))
+      setDeleteTarget(null)
+      showToast(`Deleted audit: ${audit.filename}`, 'success')
+      // If we deleted the last audit, switch to empty state
+      setAudits((prev) => {
+        if (prev.length === 0) setState('empty')
+        return prev
+      })
+    } catch (err: any) {
+      const msg = err instanceof TimeoutError
+        ? 'Request timed out. Is the backend running?'
+        : err.message || 'Failed to delete audit.'
+      showToast(`Delete failed. ${msg}`, 'error')
+    } finally {
+      setDeleting(false)
+    }
   }
 
   return (
@@ -138,7 +164,7 @@ export function HistoryPage() {
       </section>
 
       {/* ────────────────────────── Main ────────────────────────── */}
-      <main className="mx-auto w-full max-w-[1440px] flex-1 px-4 py-6 md:px-6 md:py-8">
+      <main className="mx-auto w-full max-w-[1440px] px-4 py-6 md:px-6 md:py-8">
         {state === 'loading' && <LoadingSkeleton />}
 
         {state === 'error' && (
@@ -154,7 +180,21 @@ export function HistoryPage() {
         )}
 
         {state === 'success' && (
-          <HistoryTable audits={audits} onView={(id) => navigate(`/audit/${id}`)} />
+          <HistoryTable
+            audits={audits}
+            onView={(id) => navigate(`/audit/${id}`)}
+            onDelete={(a) => setDeleteTarget(a)}
+          />
+        )}
+
+        {/* Delete confirmation dialog */}
+        {deleteTarget && (
+          <DeleteDialog
+            audit={deleteTarget}
+            deleting={deleting}
+            onConfirm={() => handleDelete(deleteTarget)}
+            onCancel={() => setDeleteTarget(null)}
+          />
         )}
       </main>
 
@@ -189,9 +229,11 @@ export function HistoryPage() {
 function HistoryTable({
   audits,
   onView,
+  onDelete,
 }: {
   audits: AuditListItem[]
   onView: (id: string) => void
+  onDelete: (audit: AuditListItem) => void
 }) {
   return (
     <Card className="border-border bg-card">
@@ -202,7 +244,7 @@ function HistoryTable({
               Past Audits ({audits.length})
             </CardTitle>
             <CardDescription className="text-xs text-muted-foreground">
-              Most recent first · click any row to view the full detail report
+              Most recent first · click any row to view the full detail report · trash icon to delete
             </CardDescription>
           </div>
         </div>
@@ -214,36 +256,40 @@ function HistoryTable({
           <div className="col-span-2">Score</div>
           <div className="col-span-2">Status</div>
           <div className="col-span-2">Submitted</div>
-          <div className="col-span-1 text-right">Action</div>
+          <div className="col-span-1 text-right">Actions</div>
         </div>
 
         {/* Rows */}
         <ul className="divide-y divide-border">
           {audits.map((a) => (
-            <li key={a.id}>
-              <button
-                type="button"
-                onClick={() => onView(a.id)}
-                className="grid w-full grid-cols-1 gap-2 px-4 py-3 text-left transition-colors hover:bg-input/30 md:grid-cols-12 md:items-center md:gap-3"
-              >
-                {/* Filename */}
-                <div className="col-span-5 flex min-w-0 items-center gap-2.5">
+            <li key={a.id} className="group">
+              <div className="grid w-full grid-cols-1 gap-2 px-4 py-3 transition-colors hover:bg-input/30 md:grid-cols-12 md:items-center md:gap-3">
+                {/* Filename — clickable to view */}
+                <button
+                  type="button"
+                  onClick={() => onView(a.id)}
+                  className="col-span-5 flex min-w-0 items-center gap-2.5 text-left"
+                >
                   <FileText className="h-4 w-4 shrink-0 text-primary" />
                   <div className="min-w-0">
-                    <div className="truncate text-sm font-medium text-foreground">
+                    <div className="truncate text-sm font-medium text-foreground hover:text-primary transition-colors">
                       {a.filename}
                     </div>
                     <div className="font-mono text-[10px] text-muted-foreground">
                       {a.id.slice(0, 8)}…
                     </div>
                   </div>
-                </div>
+                </button>
 
-                {/* Score */}
-                <div className="col-span-2 flex items-center gap-2">
+                {/* Score — clickable to view */}
+                <button
+                  type="button"
+                  onClick={() => onView(a.id)}
+                  className="col-span-2 flex items-center gap-2 text-left"
+                >
                   <ScoreBadge score={a.weighted_score} />
                   <span className="md:hidden text-xs text-muted-foreground">/ 100</span>
-                </div>
+                </button>
 
                 {/* Status */}
                 <div className="col-span-2">
@@ -256,14 +302,27 @@ function HistoryTable({
                   <span>{formatDate(a.created_at)}</span>
                 </div>
 
-                {/* Action */}
-                <div className="col-span-1 flex justify-end">
-                  <span className="inline-flex items-center gap-1 text-xs font-medium text-primary">
+                {/* Actions: View + Delete */}
+                <div className="col-span-1 flex items-center justify-end gap-1">
+                  <button
+                    type="button"
+                    onClick={() => onView(a.id)}
+                    className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-medium text-primary transition-colors hover:bg-primary/10"
+                    aria-label={`View ${a.filename}`}
+                  >
                     View
                     <ArrowRight className="h-3 w-3" />
-                  </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onDelete(a)}
+                    className="inline-flex items-center justify-center rounded p-1.5 text-muted-foreground transition-colors hover:bg-rose-500/10 hover:text-rose-400"
+                    aria-label={`Delete ${a.filename}`}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
                 </div>
-              </button>
+              </div>
             </li>
           ))}
         </ul>
@@ -451,5 +510,98 @@ function ErrorState({
         </div>
       </CardContent>
     </Card>
+  )
+}
+
+/* ----------------------------- Delete confirmation dialog ----------------------------- */
+
+function DeleteDialog({
+  audit,
+  deleting,
+  onConfirm,
+  onCancel,
+}: {
+  audit: AuditListItem
+  deleting: boolean
+  onConfirm: () => void
+  onCancel: () => void
+}) {
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+      onClick={onCancel}
+    >
+      <Card
+        className="w-full max-w-md border-rose-500/30 bg-card"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <CardContent className="p-6 space-y-4">
+          <div className="flex items-start gap-3">
+            <div className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-rose-500/15 text-rose-400 ring-1 ring-rose-500/30">
+              <Trash2 className="h-5 w-5" />
+            </div>
+            <div className="flex-1">
+              <h3 className="text-base font-semibold text-foreground">Delete this audit?</h3>
+              <p className="mt-1 text-sm text-muted-foreground">
+                This will permanently delete the audit record and all its violations + citation
+                issues from the database. This action cannot be undone.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={onCancel}
+              className="text-muted-foreground hover:text-foreground transition-colors"
+              aria-label="Close dialog"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+
+          {/* Audit summary */}
+          <div className="rounded-md border border-border bg-input/20 px-3 py-2.5 space-y-1">
+            <div className="flex items-center gap-2">
+              <FileText className="h-3.5 w-3.5 text-primary" />
+              <span className="truncate text-sm font-medium text-foreground">{audit.filename}</span>
+            </div>
+            <div className="flex items-center gap-3 text-xs text-muted-foreground">
+              <span className="font-mono">{audit.id.slice(0, 8)}…</span>
+              <span>Score: {audit.weighted_score}/100</span>
+              <span>{formatDate(audit.created_at)}</span>
+            </div>
+          </div>
+
+          {/* Actions */}
+          <div className="flex justify-end gap-2 pt-2">
+            <Button
+              type="button"
+              variant="outline"
+              className="border-border text-foreground"
+              onClick={onCancel}
+              disabled={deleting}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              className="bg-rose-600 text-white hover:bg-rose-700"
+              onClick={onConfirm}
+              disabled={deleting}
+            >
+              {deleting ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Deleting…
+                </>
+              ) : (
+                <>
+                  <Trash2 className="mr-2 h-4 w-4" />
+                  Delete audit
+                </>
+              )}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
   )
 }
