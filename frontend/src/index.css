@@ -119,3 +119,81 @@
 .recharts-polar-grid-concentric-polygon {
   stroke: #464554;
 }
+
+/* ===================================================================== */
+/* Landing page — decorative effects + animations                        */
+/* ===================================================================== */
+
+html { scroll-behavior: smooth; }
+
+.hero-glow {
+  background:
+    radial-gradient(ellipse 80% 50% at 50% -10%, rgba(192, 193, 255, 0.18), transparent 70%),
+    radial-gradient(ellipse 40% 30% at 80% 20%, rgba(78, 222, 163, 0.08), transparent 60%),
+    #13131b;
+}
+.grid-bg {
+  background-image:
+    linear-gradient(to right, rgba(192, 193, 255, 0.04) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(192, 193, 255, 0.04) 1px, transparent 1px);
+  background-size: 48px 48px;
+}
+
+.window-frame {
+  background: #1f1f27;
+  border: 1px solid #464554;
+  border-radius: 12px;
+  box-shadow:
+    0 1px 0 rgba(255,255,255,0.03) inset,
+    0 30px 80px -20px rgba(0,0,0,0.6),
+    0 8px 30px -10px rgba(192, 193, 255, 0.08);
+  overflow: hidden;
+}
+
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255, 180, 171, 0.0); }
+  50% { box-shadow: 0 0 0 4px rgba(255, 180, 171, 0.08); }
+}
+.violation-card { animation: pulse-glow 3s ease-in-out infinite; }
+
+.progress-ring__circle {
+  transition: stroke-dashoffset 1.5s cubic-bezier(0.4, 0, 0.2, 1);
+  transform: rotate(-90deg);
+  transform-origin: 50% 50%;
+}
+
+@keyframes drift {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+.marquee { animation: drift 30s linear infinite; }
+
+.reveal { opacity: 0; transform: translateY(20px); transition: opacity 0.7s ease, transform 0.7s ease; }
+.reveal.visible { opacity: 1; transform: translateY(0); }
+
+.focus-glow:focus-within {
+  border-color: #c0c1ff;
+  box-shadow: 0 0 0 3px rgba(192, 193, 255, 0.15);
+}
+
+.code-block {
+  background: #0d0d15;
+  border: 1px solid #34343d;
+  border-radius: 8px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+  line-height: 1.6;
+  color: #c7c4d7;
+}
+.tok-key { color: #c0c1ff; }
+.tok-fn { color: #4edea3; }
+.tok-str { color: #ffb2b7; }
+.tok-com { color: #6b6b80; font-style: italic; }
+.tok-num { color: #c0c1ff; }
+
+/* Material Symbols sizing helper — keeps the icon font crisp at small sizes */
+.material-symbols-outlined {
+  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+  line-height: 1;
+  vertical-align: middle;
+}

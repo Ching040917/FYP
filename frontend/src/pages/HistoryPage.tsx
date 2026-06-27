@@ -10,7 +10,7 @@
  */
 
 import { useEffect, useState, useCallback } from 'react'
-import { useNavigate, Link } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import {
   ArrowLeft,
   ArrowRight,
@@ -25,7 +25,6 @@ import {
   ShieldCheck,
   Lock,
   Cloud,
-  Trash2,
 } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import {
@@ -79,17 +78,6 @@ export function HistoryPage() {
     setRefreshing(false)
   }
 
-  const handleDelete = async (id: string) => {
-    if (!window.confirm('Delete this audit record?')) return
-    try {
-      await api.deleteAudit(id)
-      showToast('Audit deleted', 'success')
-      setAudits((prev) => prev.filter((a) => a.id !== id))
-    } catch (err: any) {
-      showToast(err.message || 'Failed to delete audit', 'error')
-    }
-  }
-
   return (
     <div className="min-h-screen flex flex-col bg-background text-foreground">
       {/* ────────────────────────── Header ────────────────────────── */}
@@ -100,7 +88,7 @@ export function HistoryPage() {
               variant="ghost"
               size="icon"
               className="h-8 w-8"
-              onClick={() => navigate('/')}
+              onClick={() => navigate('/dashboard')}
               aria-label="Back to Dashboard"
             >
               <ArrowLeft className="h-5 w-5" />
@@ -157,25 +145,21 @@ export function HistoryPage() {
           <ErrorState
             message={errorMsg}
             onRetry={handleRefresh}
-            onBackHome={() => navigate('/')}
+            onBackHome={() => navigate('/dashboard')}
           />
         )}
 
         {state === 'empty' && (
-          <EmptyState onBackHome={() => navigate('/')} />
+          <EmptyState onBackHome={() => navigate('/dashboard')} />
         )}
 
         {state === 'success' && (
-          <HistoryTable
-            audits={audits}
-            onView={(id) => navigate(`/audit/${id}`)}
-            onDelete={handleDelete}
-          />
+          <HistoryTable audits={audits} onView={(id) => navigate(`/audit/${id}`)} />
         )}
       </main>
 
       {/* ────────────────────────── Footer ────────────────────────── */}
-      <footer className="mt-auto border-t border-border bg-card p-4">
+      <footer className="mt-auto border-t border-border bg-background/60">
         <div className="mx-auto max-w-[1440px] px-4 py-5 md:px-6">
           <div className="flex flex-col items-start justify-between gap-3 text-xs text-muted-foreground md:flex-row md:items-center">
             <div className="flex items-center gap-2">
@@ -194,11 +178,6 @@ export function HistoryPage() {
               </span>
             </div>
           </div>
-          <nav className="mt-4 flex flex-wrap items-center gap-4 text-xs text-muted-foreground" aria-label="Footer navigation">
-            <Link to="/" className="hover:text-foreground transition-colors">Home</Link>
-            <Link to="/workspace" className="hover:text-foreground transition-colors">Workspace</Link>
-            <Link to="/history" className="hover:text-foreground transition-colors">History</Link>
-          </nav>
         </div>
       </footer>
     </div>
@@ -210,11 +189,9 @@ export function HistoryPage() {
 function HistoryTable({
   audits,
   onView,
-  onDelete,
 }: {
   audits: AuditListItem[]
   onView: (id: string) => void
-  onDelete: (id: string) => void
 }) {
   return (
     <Card className="border-border bg-card">
@@ -244,7 +221,11 @@ function HistoryTable({
         <ul className="divide-y divide-border">
           {audits.map((a) => (
             <li key={a.id}>
-              <div className="grid w-full grid-cols-1 gap-2 px-4 py-3 md:grid-cols-12 md:items-center md:gap-3">
+              <button
+                type="button"
+                onClick={() => onView(a.id)}
+                className="grid w-full grid-cols-1 gap-2 px-4 py-3 text-left transition-colors hover:bg-input/30 md:grid-cols-12 md:items-center md:gap-3"
+              >
                 {/* Filename */}
                 <div className="col-span-5 flex min-w-0 items-center gap-2.5">
                   <FileText className="h-4 w-4 shrink-0 text-primary" />
@@ -275,29 +256,14 @@ function HistoryTable({
                   <span>{formatDate(a.created_at)}</span>
                 </div>
 
-                {/* Actions */}
-                <div className="col-span-1 flex justify-end gap-2">
-                  <button
-                    type="button"
-                    onClick={() => onView(a.id)}
-                    className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:text-foreground transition-colors"
-                  >
+                {/* Action */}
+                <div className="col-span-1 flex justify-end">
+                  <span className="inline-flex items-center gap-1 text-xs font-medium text-primary">
                     View
                     <ArrowRight className="h-3 w-3" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      onDelete(a.id)
-                    }}
-                    className="inline-flex items-center justify-center p-1.5 text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 rounded transition-colors"
-                    aria-label="Delete audit"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </button>
+                  </span>
                 </div>
-              </div>
+              </button>
             </li>
           ))}
         </ul>

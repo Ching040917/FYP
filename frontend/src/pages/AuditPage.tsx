@@ -150,7 +150,7 @@ export function AuditPage() {
           <div className="text-center max-w-md">
             <AlertTriangle className="w-12 h-12 text-error mx-auto mb-4" />
             <p className="text-body-lg text-error mb-4">{error || 'Audit not found'}</p>
-            <Button onClick={() => navigate('/')}>Back to Dashboard</Button>
+            <Button onClick={() => navigate('/dashboard')}>Back to Dashboard</Button>
           </div>
         </main>
       </div>
@@ -169,7 +169,7 @@ export function AuditPage() {
               variant="ghost"
               size="icon"
               className="h-8 w-8"
-              onClick={() => navigate('/')}
+              onClick={() => navigate('/dashboard')}
               aria-label="Back to Dashboard"
             >
               <ArrowLeft className="h-5 w-5" />

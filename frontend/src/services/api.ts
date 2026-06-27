@@ -41,7 +41,7 @@ export const api = {
   ): Promise<AuditSubmitResponse> {
     const formData = new FormData()
     formData.append('file', file)
-    const url = options.cloud ? `${API_BASE}/audit?cloud=true` : `${API_BASE}/audit`
+    const url = options.cloud ? `${API_BASE}/audit?cloud=1` : `${API_BASE}/audit`
     const response = await fetchWithTimeout(
       url,
       { method: 'POST', body: formData },
@@ -67,16 +67,6 @@ export const api = {
   async healthCheck(): Promise<{ status: string }> {
     const response = await fetch('/health')
     return handleResponse<{ status: string }>(response)
-  },
-
-  async deleteAudit(auditId: string): Promise<void> {
-    const response = await fetch(`${API_BASE}/audits/${auditId}`, {
-      method: 'DELETE',
-    })
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({ detail: 'Failed to delete audit' }))
-      throw new Error(error.detail || `HTTP ${response.status}`)
-    }
   },
 }
 

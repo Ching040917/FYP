@@ -92,7 +92,10 @@ export function UploadCard({ onResult, onReset, trySampleSignal = 0 }: UploadCar
       setIsUploading(true)
       try {
         const raw = await api.auditDocument(target, { cloud: cloudEnabled })
-        const result = adaptAuditResponse({ raw })
+        const result = adaptAuditResponse({
+          raw,
+          cloudEnabled,
+        })
         showToast(
           `Audit complete. Score: ${result.weighted_compliance_score}/100 · ${result.major_count} major · ${result.minor_count} minor`,
           'success',

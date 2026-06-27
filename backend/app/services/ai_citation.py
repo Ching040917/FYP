@@ -1,4 +1,3 @@
-import asyncio
 import json
 import logging
 import re
@@ -81,23 +80,18 @@ async def call_ollama_local(prompt: str) -> str:
 
 
 async def call_gemini_cloud(prompt: str) -> str:
-    """Call Google Gemini 1.5 Flash API (Layer 2) with 30s hard timeout."""
+    """Call Google Gemini 1.5 Flash API (Layer 2)."""
     try:
         import google.generativeai as genai
         if not settings.GEMINI_API_KEY:
             raise RuntimeError("GEMINI_API_KEY not configured")
         genai.configure(api_key=settings.GEMINI_API_KEY)
         model = genai.GenerativeModel('gemini-1.5-flash')
-        response = await asyncio.wait_for(
-            model.generate_content_async(
-                prompt,
-                generation_config={"temperature": 0.1, "max_output_tokens": 2048}
-            ),
-            timeout=30.0
+        response = await model.generate_content_async(
+            prompt,
+            generation_config={"temperature": 0.1, "max_output_tokens": 2048}
         )
         return response.text or ""
-    except asyncio.TimeoutError:
-        raise RuntimeError("Gemini call timed out after 30s")
     except Exception as e:
         raise RuntimeError(f"Gemini call failed: {e}")
 

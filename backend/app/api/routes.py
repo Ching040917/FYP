@@ -244,13 +244,3 @@ async def list_audits(
         )
         for a in audits
     ]
-
-
-@router.delete("/api/audits/{audit_id}", status_code=204)
-async def delete_audit(audit_id: str, db: Session = Depends(get_db)):
-    audit = db.query(AuditRecord).filter(AuditRecord.id == audit_id).first()
-    if not audit:
-        raise HTTPException(status_code=404, detail="Audit not found")
-    db.delete(audit)
-    db.commit()
-    return None

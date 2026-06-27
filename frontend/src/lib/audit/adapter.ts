@@ -76,22 +76,10 @@ function adaptCitation(c: CitationIssue): CitationTip {
   }
 }
 
-/** Map backend string category to frontend AuditCategory union. */
-function mapCategory(cat: string): AuditCategory {
-  const c = cat.toLowerCase()
-  if (c.includes('citation') || c.includes('apa')) return 'citation_apa'
-  if (c.includes('margin') || c.includes('page')) return 'page_margins'
-  if (c.includes('heading') || c.includes('hierarchy')) return 'heading_hierarchy'
-  if (c.includes('caption') || c.includes('media') || c.includes('image')) return 'media_captions'
-  if (c.includes('font_size') || c.includes('size')) return 'font_size'
-  if (c.includes('font')) return 'font_consistency'
-  if (c.includes('paragraph') || c.includes('line') || c.includes('spacing') || c.includes('align')) return 'paragraph_typography'
-  return 'paragraph_typography'
-}
-
 export interface AdaptInput {
   raw: AuditSubmitResponse
   auditedAt?: string
+  cloudEnabled: boolean
 }
 
 const ZERO_STATS: DocumentStats = {
@@ -99,7 +87,7 @@ const ZERO_STATS: DocumentStats = {
 }
 
 export function adaptAuditResponse(input: AdaptInput): AuditResult {
-  const { raw, auditedAt } = input
+  const { raw, auditedAt, cloudEnabled } = input
   const errors = raw.physical_layout_errors.map(adaptViolation)
 
   // AI citation tips — if cloud mode was off, the server skipped the AI
@@ -110,11 +98,7 @@ export function adaptAuditResponse(input: AdaptInput): AuditResult {
   // Use backend-provided breakdown + stats directly (single source of truth).
   // Fallback to empty array / zero stats if backend didn't send them
   // (backward compat with older backend versions).
-  // Map backend string category to frontend AuditCategory union.
-  const breakdown = (raw.score_breakdown ?? []).map(b => ({
-    ...b,
-    category: mapCategory(b.category),
-  }))
+  const breakdown = raw.score_breakdown ?? []
   const documentStats = raw.document_stats ?? ZERO_STATS
 
   return {
