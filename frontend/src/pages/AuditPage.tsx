@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { api } from '../services/api'
 import { useToast } from '../hooks/useToast'
-import { ArrowLeft, CheckCircle, Loader2, ChevronDown, AlertTriangle, Info, Clock } from 'lucide-react'
+import { CheckCircle, Loader2, ChevronDown, AlertTriangle, Info, Clock } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import {
   Card,
@@ -11,6 +11,8 @@ import {
   CardTitle,
 } from '../components/ui/card'
 import { Badge } from '../components/ui/badge'
+import { AppNav } from '../components/layout/AppNav'
+import { AppFooter } from '../components/layout/AppFooter'
 import type { AuditResponse, Violation, CitationIssue } from '../types/api'
 
 // Poll every 2s; give up after 5 minutes (150 attempts).
@@ -112,21 +114,11 @@ export function AuditPage() {
   if (loading) {
     return (
       <div className="min-h-screen flex flex-col bg-background text-foreground">
-        <header className="sticky top-0 z-30 border-b border-border bg-background/85 backdrop-blur">
-          <div className="mx-auto flex max-w-[1440px] items-center justify-between gap-3 px-4 py-3 md:px-6">
-            <div className="flex items-center gap-2.5">
-              <div className="grid h-9 w-9 place-items-center rounded-md bg-primary/15 text-primary ring-1 ring-primary/30">
-                <CheckCircle className="h-5 w-5" />
-              </div>
-              <div>
-                <div className="text-sm font-semibold tracking-tight">Audit Results</div>
-              </div>
-            </div>
-          </div>
-        </header>
+        <AppNav current="audit" title="Audit Results" subtitle="Loading…" backTo="/dashboard" />
         <main className="flex-1 flex items-center justify-center">
           <Loader2 className="w-8 h-8 animate-spin text-primary" />
         </main>
+        <AppFooter />
       </div>
     )
   }
@@ -134,18 +126,7 @@ export function AuditPage() {
   if (error || !audit) {
     return (
       <div className="min-h-screen flex flex-col bg-background text-foreground">
-        <header className="sticky top-0 z-30 border-b border-border bg-background/85 backdrop-blur">
-          <div className="mx-auto flex max-w-[1440px] items-center justify-between gap-3 px-4 py-3 md:px-6">
-            <div className="flex items-center gap-2.5">
-              <div className="grid h-9 w-9 place-items-center rounded-md bg-primary/15 text-primary ring-1 ring-primary/30">
-                <CheckCircle className="h-5 w-5" />
-              </div>
-              <div>
-                <div className="text-sm font-semibold tracking-tight">Audit Results</div>
-              </div>
-            </div>
-          </div>
-        </header>
+        <AppNav current="audit" title="Audit Results" subtitle="Error" backTo="/dashboard" />
         <main className="flex-1 flex items-center justify-center p-6">
           <div className="text-center max-w-md">
             <AlertTriangle className="w-12 h-12 text-error mx-auto mb-4" />
@@ -153,6 +134,7 @@ export function AuditPage() {
             <Button onClick={() => navigate('/dashboard')}>Back to Dashboard</Button>
           </div>
         </main>
+        <AppFooter />
       </div>
     )
   }
@@ -161,48 +143,12 @@ export function AuditPage() {
 
   return (
     <div className="min-h-screen flex flex-col bg-background text-foreground">
-      {/* Sticky header */}
-      <header className="sticky top-0 z-30 border-b border-border bg-background/85 backdrop-blur">
-        <div className="mx-auto flex max-w-[1440px] items-center justify-between gap-3 px-4 py-3 md:px-6">
-          <div className="flex items-center gap-2.5">
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8"
-              onClick={() => navigate('/dashboard')}
-              aria-label="Back to Dashboard"
-            >
-              <ArrowLeft className="h-5 w-5" />
-            </Button>
-            <div className="flex items-center gap-2.5">
-              <div className="grid h-9 w-9 place-items-center rounded-md bg-primary/15 text-primary ring-1 ring-primary/30">
-                <CheckCircle className="h-5 w-5" />
-              </div>
-              <div>
-                <div className="text-sm font-semibold tracking-tight">Audit Results</div>
-                <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
-                  {audit.filename}
-                </div>
-              </div>
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <Badge variant="outline" className="border-border text-muted-foreground">
-              {isProcessing ? (
-                <>
-                  <Loader2 className="mr-1 h-3 w-3 animate-spin" />
-                  Processing
-                </>
-              ) : (
-                <span className="capitalize">{audit.status}</span>
-              )}
-            </Badge>
-            <Badge variant="outline" className="border-border text-muted-foreground">
-              {audit.deploy_mode}
-            </Badge>
-          </div>
-        </div>
-      </header>
+      <AppNav
+        current="audit"
+        title="Audit Results"
+        subtitle={audit.filename}
+        backTo="/dashboard"
+      />
 
       {/* Hero */}
       <section className="border-b border-border bg-gradient-to-b from-primary/5 to-transparent">
@@ -217,6 +163,19 @@ export function AuditPage() {
               </p>
             </div>
             <div className="flex items-center gap-3">
+              <Badge variant="outline" className="border-border text-muted-foreground">
+                {isProcessing ? (
+                  <>
+                    <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                    Processing
+                  </>
+                ) : (
+                  <span className="capitalize">{audit.status}</span>
+                )}
+              </Badge>
+              <Badge variant="outline" className="border-border text-muted-foreground">
+                {audit.deploy_mode}
+              </Badge>
               <Badge variant="outline" className="border-error/30 bg-error/10 text-error">
                 {audit.violations.filter(v => v.severity === 'MAJOR').length} Major
               </Badge>
@@ -458,15 +417,7 @@ export function AuditPage() {
       </main>
 
       {/* Footer */}
-      <footer className="mt-auto border-t border-border bg-background/60">
-        <div className="mx-auto max-w-[1440px] px-4 py-5 md:px-6">
-          <div className="flex flex-col items-start justify-between gap-3 text-xs text-muted-foreground md:flex-row md:items-center">
-            <div className="flex items-center gap-2">
-              <span>Auditra · Read-only formatting checker.</span>
-            </div>
-          </div>
-        </div>
-      </footer>
+      <AppFooter />
     </div>
   )
 }

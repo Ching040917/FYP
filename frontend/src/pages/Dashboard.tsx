@@ -17,11 +17,13 @@
 
 import * as React from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ShieldCheck, FileSearch, Lock, Cloud, Sparkles, ArrowRight, History } from 'lucide-react'
+import { ArrowRight, FileSearch } from 'lucide-react'
 import { UploadCard } from '../components/audit/upload-card'
 import { ScoreDashboard } from '../components/audit/score-dashboard'
 import { ErrorList, ErrorDetail } from '../components/audit/error-list'
 import { CitationTips } from '../components/audit/citation-tips'
+import { AppNav } from '../components/layout/AppNav'
+import { AppFooter } from '../components/layout/AppFooter'
 import {
   Card,
   CardContent,
@@ -29,7 +31,6 @@ import {
   CardTitle,
   CardDescription,
 } from '../components/ui/card'
-import { Badge } from '../components/ui/badge'
 import { Button } from '../components/ui/button'
 import type { AuditResult, LayoutError } from '../types/audit'
 
@@ -53,55 +54,11 @@ export function Dashboard() {
 
   return (
     <div className="min-h-screen flex flex-col bg-background text-foreground">
-      {/* ────────────────────────── Header ────────────────────────── */}
-      <header className="sticky top-0 z-30 border-b border-border bg-background/85 backdrop-blur">
-        <div className="mx-auto flex max-w-[1440px] items-center justify-between gap-3 px-4 py-3 md:px-6">
-          <button
-            type="button"
-            onClick={() => navigate('/')}
-            className="flex items-center gap-2.5 outline-none"
-            aria-label="Back to landing page"
-          >
-            <div className="grid h-9 w-9 place-items-center rounded-md bg-primary/15 text-primary ring-1 ring-primary/30">
-              <ShieldCheck className="h-5 w-5" />
-            </div>
-            <div className="text-left">
-              <div className="text-sm font-semibold tracking-tight">Auditra</div>
-              <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
-                Academic Compliance Auditor
-              </div>
-            </div>
-          </button>
-          <div className="hidden items-center gap-2 md:flex">
-            <Badge
-              variant="outline"
-              className="border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
-            >
-              <Lock className="mr-1 h-3 w-3" /> Local-First
-            </Badge>
-            <Badge variant="outline" className="border-border text-muted-foreground">
-              <FileSearch className="mr-1 h-3 w-3" /> Hybrid Engine
-            </Badge>
-            <Badge
-              variant="outline"
-              className="border-primary/30 bg-primary/10 text-primary"
-            >
-              <Sparkles className="mr-1 h-3 w-3" /> APA 7 Ready
-            </Badge>
-          </div>
-          {/* History navigation — visible on all breakpoints */}
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="border-border text-muted-foreground hover:text-foreground"
-            onClick={() => navigate('/history')}
-          >
-            <History className="mr-2 h-3.5 w-3.5" />
-            <span className="hidden sm:inline">History</span>
-          </Button>
-        </div>
-      </header>
+      <AppNav
+        current="dashboard"
+        title="Dashboard"
+        subtitle="Academic Compliance Auditor"
+      />
 
       {/* ────────────────────────── Hero ────────────────────────── */}
       <section className="border-b border-border bg-gradient-to-b from-primary/5 to-transparent">
@@ -168,27 +125,7 @@ export function Dashboard() {
       </main>
 
       {/* ────────────────────────── Footer ────────────────────────── */}
-      <footer className="mt-auto border-t border-border bg-background/60">
-        <div className="mx-auto max-w-[1440px] px-4 py-5 md:px-6">
-          <div className="flex flex-col items-start justify-between gap-3 text-xs text-muted-foreground md:flex-row md:items-center">
-            <div className="flex items-center gap-2">
-              <ShieldCheck className="h-3.5 w-3.5 text-primary" />
-              <span>
-                Auditra · Read-only formatting checker. Your file is parsed in-memory and
-                never modified.
-              </span>
-            </div>
-            <div className="flex items-center gap-3">
-              <span className="flex items-center gap-1">
-                <Lock className="h-3 w-3" /> Local by default
-              </span>
-              <span className="flex items-center gap-1">
-                <Cloud className="h-3 w-3" /> Cloud opt-in
-              </span>
-            </div>
-          </div>
-        </div>
-      </footer>
+      <AppFooter />
     </div>
   )
 }

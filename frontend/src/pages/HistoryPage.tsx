@@ -22,9 +22,6 @@ import {
   CheckCircle2,
   XCircle,
   History,
-  ShieldCheck,
-  Lock,
-  Cloud,
   Trash2,
   X,
 } from 'lucide-react'
@@ -37,6 +34,8 @@ import {
   CardDescription,
 } from '../components/ui/card'
 import { Badge } from '../components/ui/badge'
+import { AppNav } from '../components/layout/AppNav'
+import { AppFooter } from '../components/layout/AppFooter'
 import { api, TimeoutError } from '../services/api'
 import { useToast } from '../hooks/useToast'
 import type { AuditListItem } from '../types/api'
@@ -106,36 +105,30 @@ export function HistoryPage() {
 
   return (
     <div className="min-h-screen flex flex-col bg-background text-foreground">
-      {/* ────────────────────────── Header ────────────────────────── */}
-      <header className="sticky top-0 z-30 border-b border-border bg-background/85 backdrop-blur">
-        <div className="mx-auto flex max-w-[1440px] items-center justify-between gap-3 px-4 py-3 md:px-6">
-          <div className="flex items-center gap-2.5">
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8"
-              onClick={() => navigate('/dashboard')}
-              aria-label="Back to Dashboard"
-            >
-              <ArrowLeft className="h-5 w-5" />
-            </Button>
-            <div className="flex items-center gap-2.5">
-              <div className="grid h-9 w-9 place-items-center rounded-md bg-primary/15 text-primary ring-1 ring-primary/30">
-                <History className="h-5 w-5" />
-              </div>
-              <div>
-                <div className="text-sm font-semibold tracking-tight">Audit History</div>
-                <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
-                  Academic Compliance Auditor
-                </div>
-              </div>
+      <AppNav
+        current="history"
+        title="Audit History"
+        subtitle="Academic Compliance Auditor"
+        backTo="/dashboard"
+      />
+
+      {/* ────────────────────────── Hero ────────────────────────── */}
+      <section className="border-b border-border bg-gradient-to-b from-primary/5 to-transparent">
+        <div className="mx-auto max-w-[1440px] px-4 py-8 md:px-6 md:py-10">
+          <div className="flex items-start justify-between gap-4 flex-wrap">
+            <div>
+              <h1 className="max-w-3xl text-2xl font-bold tracking-tight md:text-3xl">
+                Audit History
+              </h1>
+              <p className="mt-3 max-w-2xl text-sm text-muted-foreground md:text-base">
+                Every audit you run is persisted to the local SQLite database. Click any record to
+                view its full violation breakdown, AI citation findings, and document metadata.
+              </p>
             </div>
-          </div>
-          <div className="flex items-center gap-2">
             <Button
               variant="outline"
               size="sm"
-              className="border-border text-muted-foreground"
+              className="border-border text-muted-foreground hover:text-foreground"
               onClick={handleRefresh}
               disabled={refreshing || state === 'loading'}
             >
@@ -147,19 +140,6 @@ export function HistoryPage() {
               Refresh
             </Button>
           </div>
-        </div>
-      </header>
-
-      {/* ────────────────────────── Hero ────────────────────────── */}
-      <section className="border-b border-border bg-gradient-to-b from-primary/5 to-transparent">
-        <div className="mx-auto max-w-[1440px] px-4 py-8 md:px-6 md:py-10">
-          <h1 className="max-w-3xl text-2xl font-bold tracking-tight md:text-3xl">
-            Audit History
-          </h1>
-          <p className="mt-3 max-w-2xl text-sm text-muted-foreground md:text-base">
-            Every audit you run is persisted to the local SQLite database. Click any record to
-            view its full violation breakdown, AI citation findings, and document metadata.
-          </p>
         </div>
       </section>
 
@@ -199,27 +179,7 @@ export function HistoryPage() {
       </main>
 
       {/* ────────────────────────── Footer ────────────────────────── */}
-      <footer className="mt-auto border-t border-border bg-background/60">
-        <div className="mx-auto max-w-[1440px] px-4 py-5 md:px-6">
-          <div className="flex flex-col items-start justify-between gap-3 text-xs text-muted-foreground md:flex-row md:items-center">
-            <div className="flex items-center gap-2">
-              <ShieldCheck className="h-3.5 w-3.5 text-primary" />
-              <span>
-                Auditra · Read-only formatting checker. Your file is parsed in-memory and
-                never modified.
-              </span>
-            </div>
-            <div className="flex items-center gap-3">
-              <span className="flex items-center gap-1">
-                <Lock className="h-3 w-3" /> Local by default
-              </span>
-              <span className="flex items-center gap-1">
-                <Cloud className="h-3 w-3" /> Cloud opt-in
-              </span>
-            </div>
-          </div>
-        </div>
-      </footer>
+      <AppFooter />
     </div>
   )
 }
