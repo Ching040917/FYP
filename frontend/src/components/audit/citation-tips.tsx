@@ -28,7 +28,7 @@ export function CitationTips({
   const tips = result.ai_citation_tooltips
 
   return (
-    <Card className="border-border bg-card flex h-full flex-col">
+    <Card className="border-border bg-card flex flex-col">
       <CardHeader className="pb-3">
         <div className="flex items-center justify-between gap-2">
           <div>
@@ -55,7 +55,7 @@ export function CitationTips({
         ) : tips.length === 0 ? (
           <EmptyState />
         ) : (
-          <ScrollArea className="scroll-area-audit h-[480px] px-4 pb-4">
+          <ScrollArea className="scroll-area-audit min-h-[360px] px-4 pb-4">
             <ul className="space-y-2">
               {tips.map((t, i) => (
                 <li key={i}>
@@ -107,7 +107,7 @@ function CitationCard({ tip }: { tip: CitationTip }) {
 
 function LockedState() {
   return (
-    <div className="flex h-[480px] flex-col items-center justify-center gap-3 px-6 text-center">
+    <div className="flex min-h-[360px] flex-col items-center justify-center gap-3 px-6 text-center">
       <div className="grid h-12 w-12 place-items-center rounded-full bg-muted/40 text-muted-foreground">
         <Lock className="h-5 w-5" />
       </div>
@@ -123,7 +123,7 @@ function LockedState() {
 
 function EmptyState() {
   return (
-    <div className="flex h-[480px] flex-col items-center justify-center gap-3 px-6 text-center">
+    <div className="flex min-h-[360px] flex-col items-center justify-center gap-3 px-6 text-center">
       <div className="grid h-12 w-12 place-items-center rounded-full bg-emerald-500/10 text-emerald-300 ring-1 ring-emerald-500/30">
         <CheckCircle2 className="h-5 w-5" />
       </div>

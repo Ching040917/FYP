@@ -57,7 +57,7 @@ export function ErrorList({
   })
 
   return (
-    <Card className="border-border bg-card flex h-full flex-col">
+    <Card className="border-border bg-card flex flex-col">
       <CardHeader className="pb-3">
         <div className="flex items-center justify-between gap-2">
           <div>
@@ -102,7 +102,7 @@ export function ErrorList({
         </div>
       </CardHeader>
       <CardContent className="flex-1 p-0">
-        <ScrollArea className="scroll-area-audit h-[480px] px-4 pb-4">
+        <ScrollArea className="scroll-area-audit min-h-[360px] px-4 pb-4">
           {filtered.length === 0 ? (
             <div className="flex h-32 items-center justify-center text-xs text-muted-foreground">
               No errors match the current filter.
@@ -192,7 +192,7 @@ export function ErrorList({
 export function ErrorDetail({ error }: { error: LayoutError | null }) {
   if (!error) {
     return (
-      <Card className="border-border bg-card flex h-full items-center justify-center">
+      <Card className="border-border bg-card flex items-center justify-center">
         <CardContent className="py-12 text-center">
           <div className="text-sm text-muted-foreground">
             Select an error from the left to inspect its details and suggested fix.

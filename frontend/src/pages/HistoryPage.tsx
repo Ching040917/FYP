@@ -104,7 +104,7 @@ export function HistoryPage() {
   }
 
   return (
-    <div className="min-h-screen flex flex-col bg-background text-foreground">
+    <div className="min-h-screen bg-background text-foreground">
       <AppNav
         current="history"
         title="Audit History"

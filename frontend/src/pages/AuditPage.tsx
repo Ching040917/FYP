@@ -113,9 +113,9 @@ export function AuditPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex flex-col bg-background text-foreground">
+      <div className="min-h-screen bg-background text-foreground">
         <AppNav current="audit" title="Audit Results" subtitle="Loading…" backTo="/dashboard" />
-        <main className="flex-1 flex items-center justify-center">
+        <main className="flex items-center justify-center min-h-[60vh]">
           <Loader2 className="w-8 h-8 animate-spin text-primary" />
         </main>
         <AppFooter />
@@ -125,9 +125,9 @@ export function AuditPage() {
 
   if (error || !audit) {
     return (
-      <div className="min-h-screen flex flex-col bg-background text-foreground">
+      <div className="min-h-screen bg-background text-foreground">
         <AppNav current="audit" title="Audit Results" subtitle="Error" backTo="/dashboard" />
-        <main className="flex-1 flex items-center justify-center p-6">
+        <main className="flex items-center justify-center min-h-[60vh] p-6">
           <div className="text-center max-w-md">
             <AlertTriangle className="w-12 h-12 text-error mx-auto mb-4" />
             <p className="text-body-lg text-error mb-4">{error || 'Audit not found'}</p>
@@ -142,7 +142,7 @@ export function AuditPage() {
   const isProcessing = audit.status === 'processing'
 
   return (
-    <div className="min-h-screen flex flex-col bg-background text-foreground">
+    <div className="min-h-screen bg-background text-foreground">
       <AppNav
         current="audit"
         title="Audit Results"
