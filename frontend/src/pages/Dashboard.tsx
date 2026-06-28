@@ -1,18 +1,13 @@
 /**
- * Auditra — Academic Compliance Auditor (single-page app)
+ * Auditra — Academic Compliance Auditor
  *
- * Ported from reference_project/src/app/page.tsx. Layout mirrors DESIGN.md
- * (Corporate Modern dark):
- *   ┌─ Header (logo + brand + 3 outlined badges: Local-First / Hybrid / APA 7)
- *   ├─ Hero (1-line value prop + lead copy)
- *   ├─ Upload card + Spec card  |  Score dashboard (when a result is present)
- *   │                              ├─ Score hero + radar + per-category bars
- *   │                              ├─ Error list (left)  +  Error detail (right)
- *   │                              └─ AI citation tips (right)
- *   └─ Footer (privacy note, FR-5)
- *
- * Backend `/api/audit` is unchanged — wire payload is mapped to reference
- * AuditResult shape via lib/audit/adapter.ts.
+ * Dashboard.tsx exports:
+ *   - DashboardContent: the reusable content area (upload card + spec card +
+ *     score dashboard + error list + citation tips). Used by both the
+ *     /dashboard route AND embedded directly on the Landing page so visitors
+ *     see the real, live, interactive dashboard without an iframe.
+ *   - Dashboard: the full page wrapper (AppNav + hero + DashboardContent +
+ *     AppFooter). Used by the /dashboard route.
  */
 
 import * as React from 'react'
@@ -34,7 +29,14 @@ import {
 import { Button } from '../components/ui/button'
 import type { AuditResult, LayoutError } from '../types/audit'
 
-export function Dashboard() {
+/**
+ * DashboardContent — the reusable dashboard body.
+ *
+ * Contains: upload card + spec card (left rail) and the score dashboard /
+ * error list / citation tips (right). No nav, no footer, no page chrome.
+ * Embedded directly on the Landing page so visitors see the real dashboard.
+ */
+export function DashboardContent() {
   const navigate = useNavigate()
   const [result, setResult] = React.useState<AuditResult | null>(null)
   const [cloudWasEnabled, setCloudWasEnabled] = React.useState(false)
@@ -42,7 +44,7 @@ export function Dashboard() {
 
   const handleResult = (r: AuditResult) => {
     setResult(r)
-    setCloudWasEnabled(true) // the only path to setResult is via UploadCard which already toggled cloud
+    setCloudWasEnabled(true)
     setSelected(r.physical_layout_errors[0] ?? null)
   }
 
@@ -52,6 +54,57 @@ export function Dashboard() {
     setCloudWasEnabled(false)
   }
 
+  return (
+    <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
+      {/* Left rail — upload + spec */}
+      <div className="lg:col-span-5 xl:col-span-4">
+        <UploadCard onResult={handleResult} onReset={handleReset} />
+        <SpecCard />
+      </div>
+
+      {/* Right — dashboard or empty state */}
+      <div className="lg:col-span-7 xl:col-span-8 space-y-4">
+        {result ? (
+          <>
+            <ScoreDashboard result={result} />
+            <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+              <ErrorList
+                result={result}
+                selectedId={selected?.id}
+                onSelect={(e) => setSelected(e)}
+              />
+              <div className="space-y-4">
+                <ErrorDetail error={selected} />
+                <CitationTips result={result} cloudWasEnabled={cloudWasEnabled} />
+              </div>
+            </div>
+            {result.audit_id && (
+              <div className="flex justify-end">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="border-border text-muted-foreground"
+                  onClick={() => navigate(`/audit/${result.audit_id}`)}
+                >
+                  View full audit
+                  <ArrowRight className="ml-2 h-4 w-4" />
+                </Button>
+              </div>
+            )}
+          </>
+        ) : (
+          <EmptyDashboard />
+        )}
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Dashboard — the full /dashboard page.
+ * AppNav + hero + DashboardContent + AppFooter.
+ */
+export function Dashboard() {
   return (
     <div className="min-h-screen bg-background text-foreground">
       <AppNav
@@ -80,48 +133,7 @@ export function Dashboard() {
 
       {/* ────────────────────────── Main ────────────────────────── */}
       <main className="mx-auto w-full max-w-[1440px] px-4 py-6 md:px-6 md:py-8">
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
-          {/* Left rail — upload + spec */}
-          <div className="lg:col-span-5 xl:col-span-4">
-            <UploadCard onResult={handleResult} onReset={handleReset} />
-            <SpecCard />
-          </div>
-
-          {/* Right — dashboard or empty state */}
-          <div className="lg:col-span-7 xl:col-span-8 space-y-4">
-            {result ? (
-              <>
-                <ScoreDashboard result={result} />
-                <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-                  <ErrorList
-                    result={result}
-                    selectedId={selected?.id}
-                    onSelect={(e) => setSelected(e)}
-                  />
-                  <div className="space-y-4">
-                    <ErrorDetail error={selected} />
-                    <CitationTips result={result} cloudWasEnabled={cloudWasEnabled} />
-                  </div>
-                </div>
-                {result.audit_id && (
-                  <div className="flex justify-end">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="border-border text-muted-foreground"
-                      onClick={() => navigate(`/audit/${result.audit_id}`)}
-                    >
-                      View full audit
-                      <ArrowRight className="ml-2 h-4 w-4" />
-                    </Button>
-                  </div>
-                )}
-              </>
-            ) : (
-              <EmptyDashboard />
-            )}
-          </div>
-        </div>
+        <DashboardContent />
       </main>
 
       {/* ────────────────────────── Footer ────────────────────────── */}

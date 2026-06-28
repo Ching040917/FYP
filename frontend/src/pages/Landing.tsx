@@ -19,6 +19,7 @@
 
 import { useEffect } from 'react'
 import { Link } from 'react-router-dom'
+import { DashboardContent } from './Dashboard'
 
 const SHIELD_LOGO = (
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#c0c1ff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" className="w-5 h-5">
@@ -176,23 +177,19 @@ export function Landing() {
         </div>
       </section>
 
-      {/* ============ DASHBOARD PREVIEW ============ */}
+      {/* ============ DASHBOARD PREVIEW — LIVE EMBEDDED ============ */}
       <section id="dashboard" className="py-20 md:py-28 bg-surface-container-lowest">
         <div className="max-w-[1440px] mx-auto px-md">
           <div className="text-center max-w-2xl mx-auto mb-xl">
             <p className="text-sm uppercase tracking-widest text-primary font-medium mb-sm">The dashboard</p>
             <h2 className="text-3xl md:text-4xl font-semibold tracking-tight mb-md">Every error in context, every fix one click away.</h2>
-            <p className="text-on-surface-variant text-lg">Upload a draft. Get a weighted compliance score, per-category breakdown charts, a clickable error list, and AI-generated fix tooltips — all in one dashboard.</p>
+            <p className="text-on-surface-variant text-lg">This is the real, live dashboard — not a screenshot. Upload a .docx or try the sample, run an audit, and see the compliance score, charts, and error breakdown right here.</p>
           </div>
 
-          {/* Real screenshot inside a browser-style window frame.
-              The image loads from /dashboard-preview.png.
-              To update: take a screenshot of your running dashboard at /dashboard
-              and save it as frontend/public/dashboard-preview.png */}
-          <Link
-            to="/dashboard"
-            className="block window-frame hover:border-primary/40 transition-colors group"
-          >
+          {/* Live dashboard embedded directly (no iframe).
+              DashboardContent is the same component used on /dashboard —
+              fully interactive: upload, audit, charts, error list, citation tips. */}
+          <div className="window-frame">
             {/* Window chrome */}
             <div className="h-9 bg-surface-container border-b border-outline-variant flex items-center px-md gap-sm">
               <span className="w-2.5 h-2.5 rounded-full bg-[#ff5f57]" />
@@ -201,48 +198,22 @@ export function Landing() {
               <span className="ml-md text-xs text-on-surface-variant font-mono">
                 localhost:5173/dashboard
               </span>
-              <span className="ml-auto material-symbols-outlined text-base text-on-surface-variant group-hover:text-primary transition-colors">
-                open_in_new
-              </span>
-            </div>
-
-            {/* Screenshot image — falls back to a styled placeholder if the
-                image file doesn't exist yet. */}
-            <div className="relative bg-background overflow-hidden">
-              <img
-                src="/dashboard-preview.png"
-                alt="Academic Compliance Auditor dashboard showing compliance score, charts, and error list"
-                className="w-full block"
-                onError={(e) => {
-                  // Hide the broken image and show the placeholder div
-                  e.currentTarget.style.display = 'none'
-                  const placeholder = e.currentTarget.nextElementSibling as HTMLElement | null
-                  if (placeholder) placeholder.style.display = 'flex'
-                }}
-              />
-              {/* Placeholder shown if /dashboard-preview.png is missing */}
-              <div
-                className="hidden flex-col items-center justify-center gap-md py-20 px-md text-center"
+              <Link
+                to="/dashboard"
+                className="ml-auto inline-flex items-center gap-xs text-xs text-on-surface-variant hover:text-primary transition-colors"
               >
-                <div className="w-16 h-16 rounded-xl bg-primary/10 border border-primary/30 flex items-center justify-center">
-                  <span className="material-symbols-outlined text-primary text-2xl">monitor</span>
-                </div>
-                <div>
-                  <p className="text-on-surface font-semibold text-lg">Live Dashboard Preview</p>
-                  <p className="text-on-surface-variant text-sm mt-sm max-w-md">
-                    Click to open the real interactive dashboard. Upload a .docx, run an audit,
-                    and see the compliance score, charts, and error breakdown in action.
-                  </p>
-                </div>
-                <span className="inline-flex items-center gap-xs px-lg py-sm rounded bg-primary text-on-primary font-medium text-sm">
-                  <span className="material-symbols-outlined text-base">play_arrow</span>
-                  Open live dashboard
-                </span>
-              </div>
+                <span className="material-symbols-outlined text-base">open_in_new</span>
+                <span className="hidden sm:inline">Open in full page</span>
+              </Link>
             </div>
-          </Link>
 
-          {/* Feature highlights below the screenshot */}
+            {/* The real dashboard content — fully interactive */}
+            <div className="bg-background p-md md:p-lg">
+              <DashboardContent />
+            </div>
+          </div>
+
+          {/* Feature highlights below the live dashboard */}
           <div className="mt-xl grid grid-cols-1 sm:grid-cols-3 gap-md max-w-4xl mx-auto">
             <PreviewFeature
               icon="speed"
@@ -268,7 +239,7 @@ export function Landing() {
               className="inline-flex items-center gap-xs px-lg py-sm rounded bg-primary text-on-primary font-medium hover:opacity-90 transition-opacity"
             >
               <span className="material-symbols-outlined">play_arrow</span>
-              Open the live dashboard
+              Open the dashboard in full page
             </Link>
           </div>
         </div>
