@@ -1,8 +1,9 @@
-from fastapi import APIRouter, UploadFile, File, BackgroundTasks, HTTPException, Depends, Query
+from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Query
 from sqlalchemy.orm import Session
-from typing import List, Optional
+from typing import List
 import logging
 import uuid
+from datetime import datetime
 
 from app.database import get_db
 from app.config import settings
@@ -27,7 +28,6 @@ logger = logging.getLogger(__name__)
 
 @router.post("/api/audit", response_model=AuditSubmitResponse)
 async def audit_document(
-    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     cloud: bool = Query(False, description="Enable cloud AI citation audit (Gemini)"),
     db: Session = Depends(get_db),
@@ -103,36 +103,46 @@ async def audit_document(
             for v in audit.violations
         ]
 
+        # ---- Synchronous AI citation check (replaces background_tasks) ----
+        citation_text = extract_citation_text(paragraphs)
+        issue_dicts = await async_ai_citation_task(
+            citation_text,
+            audit.id,
+            db,
+            cloud,  # dual-engine opt-in: Ollama default, Gemini when True
+        )
+
+        # Mark audit completed now that AI pass is done
+        audit.status = "completed"
+        audit.completed_at = datetime.utcnow()
+        db.commit()
+        db.refresh(audit)
+
+        # Build response payloads — use issue_dicts directly (matches
+        # CitationIssueResponse shape exactly; see ai_citation.py return)
+        citation_responses = [CitationIssueResponse(**row) for row in issue_dicts]
+
         breakdown_responses = [
             ScoreBreakdownResponse(**b.to_dict())
             for b in score_result.breakdown
         ]
         stats_response = DocumentStatsResponse(**doc_stats)
 
-        # Extract citation text for AI analysis
-        citation_text = extract_citation_text(paragraphs)
-
-        # Dispatch background AI task with cloud flag
-        background_tasks.add_task(
-            async_ai_citation_task,
-            citation_text,
-            audit.id,
-            db,
-            cloud,  # Pass cloud flag for layer-2 routing
-        )
-
         return AuditSubmitResponse(
             status="Success",
             audit_id=audit.id,
             weighted_compliance_score=score_result.total,
             physical_layout_errors=violation_responses,
-            ai_citation_tooltips=[],
+            ai_citation_tooltips=citation_responses,
             score_breakdown=breakdown_responses,
             document_stats=stats_response,
             major_count=score_result.major_count,
             minor_count=score_result.minor_count,
         )
 
+    except HTTPException:
+        # Re-raise validation errors (400 from .docx/size) untouched
+        raise
     except Exception as e:
         logger.exception("Audit processing failed for audit_id=%s", audit.id)
         audit.status = "failed"
