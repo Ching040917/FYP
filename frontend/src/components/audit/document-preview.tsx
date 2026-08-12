@@ -29,6 +29,10 @@ export interface DocumentPreviewProps {
   /** True when the blocks endpoint failed — distinct from the historical null state. */
   loadError: boolean
   onSelectViolation: (id: string) => void
+  /** Fill the parent region instead of the fixed max height (desktop split). */
+  fitRegion?: boolean
+  /** When false (inactive tab), skip scroll-to-block; re-runs on activation. */
+  active?: boolean
 }
 
 export function DocumentPreview({
@@ -38,6 +42,8 @@ export function DocumentPreview({
   isLoading,
   loadError,
   onSelectViolation,
+  fitRegion = false,
+  active,
 }: DocumentPreviewProps) {
   const containerRef = React.useRef<HTMLDivElement>(null)
   const blockRefs = React.useRef<Map<number, HTMLElement>>(new Map())
@@ -67,8 +73,11 @@ export function DocumentPreview({
     [violations, blocks],
   )
 
-  // Scroll into view when selection changes — resolve the block by index.
+  // Scroll the linked block into view when selection changes (or when this
+  // preview becomes the active view). Scrolls ONLY the preview container —
+  // never the page — and never moves keyboard focus.
   React.useEffect(() => {
+    if (active === false) return
     if (!selectedViolationId || orderedBlocks === null) return
     const v = violations.find((vi) => vi.id === selectedViolationId)
     if (!v) return
@@ -77,15 +86,17 @@ export function DocumentPreview({
     if (!orderedBlocks.some((b) => b.index === idx)) return
 
     const el = blockRefs.current.get(idx)
-    if (!el || !containerRef.current) return
+    const container = containerRef.current
+    if (!el || !container) return
 
     // Smooth scroll only when user has not requested reduced motion.
     const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-    el.scrollIntoView({
+    const top = el.offsetTop - (container.clientHeight - el.clientHeight) / 2
+    container.scrollTo({
+      top: Math.max(0, top),
       behavior: prefersReducedMotion ? 'auto' : 'smooth',
-      block: 'center',
     })
-  }, [selectedViolationId, violations, orderedBlocks])
+  }, [selectedViolationId, violations, orderedBlocks, active])
 
   if (isLoading) {
     return <PreviewSkeleton />
@@ -104,8 +115,8 @@ export function DocumentPreview({
   }
 
   return (
-    <div className="flex flex-col gap-3">
-      <header className="flex items-center justify-between">
+    <div className={cn('flex flex-col gap-3', fitRegion && 'h-full min-h-0')}>
+      <header className="flex shrink-0 items-center justify-between">
         <h2 className="text-component-title text-foreground flex items-center gap-2">
           <ScrollText className="h-4 w-4 text-primary" aria-hidden="true" />
           Document preview
@@ -121,8 +132,11 @@ export function DocumentPreview({
         ref={containerRef}
         role="region"
         aria-label="Document preview"
-        className="relative overflow-y-auto rounded-md border border-border bg-card p-1 scrollbar-thin"
-        style={{ maxHeight: '480px' }}
+        className={cn(
+          'relative overflow-y-auto rounded-md border border-border bg-card p-1 scrollbar-thin',
+          fitRegion && 'min-h-0 flex-1',
+        )}
+        style={fitRegion ? undefined : { maxHeight: '480px' }}
       >
         {orderedBlocks!.map((block) => {
           const viols = indexedViolations.get(block.index)
@@ -212,14 +226,16 @@ export function DocumentPreview({
         })}
       </div>
 
-      <p className="text-[11px] text-muted-foreground">
-        This preview shows extracted document content for finding location. Layout may differ from
-        Microsoft Word.
-      </p>
-      <p className="text-[11px] text-muted-foreground">
-        To reopen document previews from audit history, extracted document text is stored in the
-        local audit database. The original Word file is not stored or modified.
-      </p>
+      <div className="shrink-0 space-y-3">
+        <p className="text-[11px] text-muted-foreground">
+          This preview shows extracted document content for finding location. Layout may differ
+          from Microsoft Word.
+        </p>
+        <p className="text-[11px] text-muted-foreground">
+          To reopen document previews from audit history, extracted document text is stored in the
+          local audit database. The original Word file is not stored or modified.
+        </p>
+      </div>
     </div>
   )
 }

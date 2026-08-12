@@ -47,23 +47,38 @@ export function ErrorList({
   result,
   selectedId,
   onSelect,
+  className,
+  categoryFilter,
+  onCategoryFilterChange,
 }: {
   result: Pick<AuditResult, 'physical_layout_errors'>
   selectedId?: string | null
   onSelect?: (e: LayoutError) => void
+  className?: string
+  /** Controlled category filter — shared with the category overview. */
+  categoryFilter?: AuditCategory | 'all'
+  onCategoryFilterChange?: (category: AuditCategory | 'all') => void
 }) {
   const [severityFilter, setSeverityFilter] = React.useState<ViolationSeverity | 'all'>('all')
-  const [categoryFilter, setCategoryFilter] = React.useState<AuditCategory | 'all'>('all')
+  const [localCategoryFilter, setLocalCategoryFilter] = React.useState<AuditCategory | 'all'>('all')
+
+  const categoryFilterValue = categoryFilter ?? localCategoryFilter
+
+  const handleCategoryChange = (value: string) => {
+    const next = value as AuditCategory | 'all'
+    if (onCategoryFilterChange) onCategoryFilterChange(next)
+    else setLocalCategoryFilter(next)
+  }
 
   const filtered = result.physical_layout_errors.filter((e) => {
     if (severityFilter !== 'all' && e.severity !== severityFilter) return false
-    if (categoryFilter !== 'all' && e.category !== categoryFilter) return false
+    if (categoryFilterValue !== 'all' && e.category !== categoryFilterValue) return false
     return true
   })
 
   return (
-    <Card className="border-border bg-card flex flex-col">
-      <CardHeader className="pb-3">
+    <Card className={cn('border-border bg-card flex flex-col', className)}>
+      <CardHeader className="shrink-0 pb-3">
         <div className="flex items-center justify-between gap-2">
           <div>
             <CardTitle className="text-base font-semibold flex items-center gap-2">
@@ -91,8 +106,8 @@ export function ErrorList({
             </SelectContent>
           </Select>
           <Select
-            value={categoryFilter}
-            onValueChange={(v) => setCategoryFilter(v as AuditCategory | 'all')}
+            value={categoryFilterValue}
+            onValueChange={handleCategoryChange}
           >
             <SelectTrigger size="sm" className="w-[160px] text-xs">
               <SelectValue />
@@ -106,8 +121,8 @@ export function ErrorList({
           </Select>
         </div>
       </CardHeader>
-      <CardContent className="flex-1 p-0">
-        <ScrollArea className="scroll-area-audit min-h-[360px] px-1 pb-2">
+      <CardContent className="min-h-0 flex-1 overflow-hidden p-0">
+        <ScrollArea className="scroll-area-audit min-h-[360px] px-1 pb-2 lg:h-full lg:min-h-0">
           {filtered.length === 0 ? (
             <div className="flex h-32 items-center justify-center px-4 text-xs text-muted-foreground">
               No findings match the current filter.
