@@ -2,21 +2,19 @@
  * Auditra — Academic Compliance Auditor
  *
  * Dashboard.tsx exports:
- *   - DashboardContent: the reusable content area (upload card + spec card +
- *     score dashboard + error list + citation tips). Used by both the
- *     /dashboard route AND embedded directly on the Landing page so visitors
- *     see the real, live, interactive dashboard without an iframe.
- *   - Dashboard: the full page wrapper (AppNav + hero + DashboardContent +
- *     AppFooter). Used by the /dashboard route.
+ *   - DashboardContent: the reusable dashboard body (upload + spec summary
+ *     on the left, compliance summary or guidance on the right). Used by
+ *     the /dashboard route AND embedded directly on the Landing page.
+ *   - Dashboard: the full /dashboard page (skip link, AppNav, editorial
+ *     header, DashboardContent, AppFooter).
+ *
+ * Build 4: concise audit-entry + result-summary page. Full findings
+ * evidence lives in the Audit Workspace (/audit/:id) — not duplicated here.
  */
 
 import * as React from 'react'
-import { useNavigate } from 'react-router-dom'
-import { ArrowRight, FileSearch } from 'lucide-react'
 import { UploadCard } from '../components/audit/upload-card'
-import { ScoreDashboard } from '../components/audit/score-dashboard'
-import { ErrorList, ErrorDetail } from '../components/audit/error-list'
-import { CitationTips } from '../components/audit/citation-tips'
+import { ComplianceSummary } from '../components/audit/compliance-summary'
 import { AppNav } from '../components/layout/AppNav'
 import { AppFooter } from '../components/layout/AppFooter'
 import {
@@ -26,74 +24,39 @@ import {
   CardTitle,
   CardDescription,
 } from '../components/ui/card'
-import { Button } from '../components/ui/button'
-import type { AuditResult, LayoutError } from '../types/audit'
+import type { AuditResult } from '../types/audit'
 
 /**
  * DashboardContent — the reusable dashboard body.
- *
- * Contains: upload card + spec card (left rail) and the score dashboard /
- * error list / citation tips (right). No nav, no footer, no page chrome.
- * Embedded directly on the Landing page so visitors see the real dashboard.
+ * No nav, no footer, no page chrome (the Landing page embeds it as-is).
  */
 export function DashboardContent() {
-  const navigate = useNavigate()
   const [result, setResult] = React.useState<AuditResult | null>(null)
-  const [cloudWasEnabled, setCloudWasEnabled] = React.useState(false)
-  const [selected, setSelected] = React.useState<LayoutError | null>(null)
 
-  const handleResult = (r: AuditResult) => {
+  // AI-review status now travels with the audit result (ai_review_status /
+  // ai_provider), so the summary no longer needs request-time cloud state.
+  const handleResult = (r: AuditResult, _cloudEnabled: boolean) => {
     setResult(r)
-    setCloudWasEnabled(true)
-    setSelected(r.physical_layout_errors[0] ?? null)
   }
 
   const handleReset = () => {
     setResult(null)
-    setSelected(null)
-    setCloudWasEnabled(false)
   }
 
   return (
-    <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
-      {/* Left rail — upload + spec */}
-      <div className="lg:col-span-5 xl:col-span-4">
+    <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-2 xl:grid-cols-[5fr_7fr]">
+      {/* Intake — upload + specification */}
+      <div className="min-w-0 space-y-6">
         <UploadCard onResult={handleResult} onReset={handleReset} />
         <SpecCard />
       </div>
 
-      {/* Right — dashboard or empty state */}
-      <div className="lg:col-span-7 xl:col-span-8 space-y-4">
+      {/* Result — concise summary or guidance */}
+      <div className="min-w-0">
         {result ? (
-          <>
-            <ScoreDashboard result={result} />
-            <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-              <ErrorList
-                result={result}
-                selectedId={selected?.id}
-                onSelect={(e) => setSelected(e)}
-              />
-              <div className="space-y-4">
-                <ErrorDetail error={selected} />
-                <CitationTips result={result} cloudWasEnabled={cloudWasEnabled} />
-              </div>
-            </div>
-            {result.audit_id && (
-              <div className="flex justify-end">
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="border-border text-muted-foreground"
-                  onClick={() => navigate(`/audit/${result.audit_id}`)}
-                >
-                  View full audit
-                  <ArrowRight className="ml-2 h-4 w-4" />
-                </Button>
-              </div>
-            )}
-          </>
+          <ComplianceSummary result={result} />
         ) : (
-          <EmptyDashboard />
+          <InitialGuidance />
         )}
       </div>
     </div>
@@ -102,64 +65,70 @@ export function DashboardContent() {
 
 /**
  * Dashboard — the full /dashboard page.
- * AppNav + hero + DashboardContent + AppFooter.
  */
 export function Dashboard() {
   return (
     <div className="min-h-screen bg-background text-foreground">
+      <a className="skip-link" href="#dashboard-main">
+        Skip to dashboard content
+      </a>
       <AppNav
         current="dashboard"
         title="Dashboard"
         subtitle="Academic Compliance Auditor"
       />
 
-      {/* ────────────────────────── Hero ────────────────────────── */}
-      <section className="border-b border-border bg-gradient-to-b from-primary/5 to-transparent">
-        <div className="mx-auto max-w-[1440px] px-4 py-8 md:px-6 md:py-10">
-          <h1 className="max-w-3xl text-2xl font-bold tracking-tight md:text-3xl">
-            Audit your thesis formatting with a hybrid{' '}
-            <span className="text-primary">rules + AI</span> engine — locally, in seconds.
+      <main id="dashboard-main" className="mx-auto w-full max-w-[1440px] px-4 py-6 md:px-6 md:py-8">
+        <section className="border-b border-border pb-5">
+          <h1 className="font-serif text-page-title leading-[34px] text-foreground">
+            Audit Dashboard
           </h1>
-          <p className="mt-3 max-w-2xl text-sm text-muted-foreground md:text-base">
-            Upload a{' '}
-            <code className="rounded bg-muted/40 px-1 py-0.5 font-mono text-xs">.docx</code>{' '}
-            and Auditra will run six deterministic layout checks (margins, fonts, sizes,
-            paragraph typography, heading hierarchy, media captions) plus an optional APA 7
-            citation pass. Files never leave your browser unless you explicitly enable cloud
-            AI.
+          <p className="mt-2 max-w-2xl text-sm leading-[21px] text-muted-foreground">
+            Upload a .docx thesis draft to run supported formatting checks and review the
+            compliance summary. The full evidence report opens in the Audit Workspace.
           </p>
-        </div>
-      </section>
+          <p className="mt-1 text-[13px] leading-[19px] text-muted-foreground">
+            Documents are processed locally by default. The optional AI-assisted citation
+            review is opt-in.
+          </p>
+        </section>
 
-      {/* ────────────────────────── Main ────────────────────────── */}
-      <main className="mx-auto w-full max-w-[1440px] px-4 py-6 md:px-6 md:py-8">
-        <DashboardContent />
+        <div className="mt-6">
+          <DashboardContent />
+        </div>
       </main>
 
-      {/* ────────────────────────── Footer ────────────────────────── */}
       <AppFooter />
     </div>
   )
 }
 
-/* ----------------------------- Auxiliary cards ----------------------------- */
+/* ----------------------------- Specification summary ----------------------------- */
+
+// Spec values mirror the authoritative backend preset (backend/app/config.py
+// → PresetConfig). Hardcoded duplication is tracked as technical debt — a
+// preset API is out of scope for this Build. Keep this card in sync when
+// the preset changes.
 
 function SpecCard() {
   return (
-    <Card className="mt-4 border-border bg-card">
+    <Card className="border-border bg-card">
       <CardHeader className="pb-3">
-        <CardTitle className="text-sm font-semibold">Compliance Spec</CardTitle>
+        <CardTitle className="text-base font-semibold">Current formatting specification</CardTitle>
         <CardDescription>
-          Default &quot;University Thesis&quot; ruleset applied during audit.
+          Values reflect the configured default preset applied during audit.
         </CardDescription>
       </CardHeader>
-      <CardContent className="space-y-2 text-xs">
-        <SpecRow label="Body font" value="Times New Roman, 12pt" />
-        <SpecRow label="Heading font" value="Times New Roman, 12–16pt by level" />
-        <SpecRow label="Line spacing" value="Double (2.0×)" />
-        <SpecRow label="Body alignment" value="Justified" />
-        <SpecRow label="Page margins" value="1″ top / bottom / left / right" />
-        <SpecRow label="Citation style" value="APA 7th edition (opt-in AI)" />
+      <CardContent>
+        <dl className="space-y-1.5">
+          <SpecRow label="Body font" value="Times New Roman, 12pt" />
+          <SpecRow label="Heading font" value="Times New Roman, 12–16pt by level" />
+          <SpecRow label="Line spacing" value="1.5×" />
+          <SpecRow label="Body alignment" value="Justified" />
+          <SpecRow label="Left margin" value="1.5″" />
+          <SpecRow label="Top / right / bottom margin" value="1″" />
+          <SpecRow label="Citation style" value="APA 7th edition (opt-in AI)" />
+        </dl>
       </CardContent>
     </Card>
   )
@@ -167,41 +136,34 @@ function SpecCard() {
 
 function SpecRow({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex items-center justify-between gap-3 border-b border-border/50 pb-1.5 last:border-0 last:pb-0">
-      <span className="text-muted-foreground">{label}</span>
-      <span className="font-mono text-foreground">{value}</span>
+    <div className="flex items-baseline justify-between gap-3 border-b border-border/50 pb-1.5 last:border-0 last:pb-0">
+      <dt className="text-[13px] text-muted-foreground">{label}</dt>
+      <dd className="font-mono text-[13px] text-foreground">{value}</dd>
     </div>
   )
 }
 
-function EmptyDashboard() {
+/* ----------------------------- Initial guidance ----------------------------- */
+
+function InitialGuidance() {
   return (
-    <Card className="border-border bg-card flex min-h-[520px] flex-col items-center justify-center gap-4 px-6 text-center">
-      <div className="grid h-14 w-14 place-items-center rounded-md bg-primary/10 text-primary ring-1 ring-primary/30">
-        <FileSearch className="h-6 w-6" />
-      </div>
-      <div>
-        <div className="text-base font-semibold">No audit yet</div>
-        <p className="mt-1 max-w-md text-sm text-muted-foreground">
-          Drop a .docx file in the panel on the left. Auditra will compute the weighted
-          compliance score, surface layout errors by paragraph, and (optionally) flag APA
-          citation issues via the cloud AI engine.
-        </p>
-      </div>
-      <div className="grid w-full max-w-md grid-cols-3 gap-2 text-xs">
-        <Stat icon="ruler" label="6 rule scopes" />
-        <Stat icon="weight" label="Weighted score" />
-        <Stat icon="sparkles" label="APA 7 AI audit" />
-      </div>
+    <Card className="border-border bg-card">
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base font-semibold">No audit yet</CardTitle>
+        <CardDescription>
+          Start an audit to review the compliance summary here.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <ol className="list-decimal space-y-2 pl-5 text-sm leading-[21px] text-muted-foreground">
+          <li>Upload a .docx document using the panel on the left.</li>
+          <li>
+            The audit runs supported deterministic formatting checks (margins, fonts, sizes,
+            paragraph spacing, heading hierarchy, media captions).
+          </li>
+          <li>Review the compliance summary and open the full audit report for evidence.</li>
+        </ol>
+      </CardContent>
     </Card>
-  )
-}
-
-function Stat({ icon, label }: { icon: string; label: string }) {
-  return (
-    <div className="rounded-md border border-border bg-input/20 px-2 py-2 text-center">
-      <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{icon}</div>
-      <div className="mt-0.5 text-xs font-medium text-foreground">{label}</div>
-    </div>
   )
 }

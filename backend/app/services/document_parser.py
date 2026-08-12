@@ -132,6 +132,28 @@ def iter_paragraphs_with_context(doc: Document):
         yield para, prev, nxt
 
 
+def extract_document_blocks(doc: Document) -> List[Dict[str, Any]]:
+    """Ordered paragraph-only blocks for the Evidence-Linked Document Preview.
+
+    Derived from extract_paragraphs so each block's `order`/`index` align
+    exactly with the paragraph_index values findings already carry. Empty
+    paragraphs are preserved for index fidelity. No run-level data, tables,
+    images, page numbers, HTML, file bytes, or raw XML. This is a preview
+    surface — document text must never be logged.
+    """
+    blocks = []
+    for para in extract_paragraphs(doc):
+        blocks.append({
+            "order": para["index"],
+            "type": "paragraph",
+            "index": para["index"],
+            "text": para["text"],
+            "style_name": para["style_name"],
+            "heading_level": get_heading_level(para["style_name"]),
+        })
+    return blocks
+
+
 def extract_document_stats(doc: Document) -> Dict[str, int]:
     """Compute document-level statistics for the dashboard hero panel.
 

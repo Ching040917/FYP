@@ -19,8 +19,13 @@ from app.schemas.audit import (
 )
 from app.services.layout_engine import run_static_rules_engine
 from app.services.scoring import calculate_weighted_score, calculate_weighted_score_detailed
-from app.services.ai_citation import async_ai_citation_task, extract_citation_text
-from app.services.document_parser import parse_document, extract_paragraphs, extract_document_stats
+from app.services.ai_citation import async_ai_citation_task
+from app.services.document_parser import (
+    parse_document,
+    extract_paragraphs,
+    extract_document_stats,
+    extract_document_blocks,
+)
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -71,6 +76,20 @@ async def audit_document(
         # ---- Document stats (single source of truth) ----
         doc_stats = extract_document_stats(doc)
 
+        # Persist stats with the record so GET /api/audit/{id} can serve them
+        # instead of zeros. Older records (no columns populated) stay NULL.
+        audit.paragraph_count = doc_stats["paragraphs"]
+        audit.heading_count = doc_stats["headings"]
+        audit.table_count = doc_stats["tables"]
+        audit.image_count = doc_stats["images"]
+        audit.section_count = doc_stats["sections"]
+        audit.word_count = doc_stats["words"]
+
+        # Evidence-Linked Document Preview: ordered paragraph-only blocks.
+        # Stored as JSON on the parent row (automatic cascade on delete).
+        # The original DOCX is never stored; block text is never logged.
+        audit.document_blocks = extract_document_blocks(doc)
+
         # Persist violations
         for v in layout_violations:
             violation = Violation(
@@ -103,14 +122,39 @@ async def audit_document(
             for v in audit.violations
         ]
 
-        # ---- Synchronous AI citation check (replaces background_tasks) ----
-        citation_text = extract_citation_text(paragraphs)
-        issue_dicts = await async_ai_citation_task(
-            citation_text,
-            audit.id,
-            db,
-            cloud,  # dual-engine opt-in: Ollama default, Gemini when True
+        # ---- Deterministic-first AI citation guidance (Build 7F) ----
+        # Collect only confirmed CITATION_MISMATCH findings from the
+        # deterministic sensor. AI provides correction guidance only —
+        # it never adds, removes, or reclassifies findings.
+        # A request-local finding_key (UUID) is attached to each finding
+        # so the provider can uniquely identify every item — even when
+        # multiple findings share the same paragraph_index.
+        citation_findings = []
+        for v in layout_violations:
+            if v.rule_code == "CITATION_MISMATCH":
+                paragraph_index = v.location.get("paragraph_index") if v.location else None
+                citation_findings.append({
+                    "finding_key": str(uuid.uuid4()),
+                    "paragraph_index": paragraph_index,
+                    "rule_code": v.rule_code,
+                    "severity": v.severity,
+                    "snippet": v.actual_value or "",
+                    "message": v.message,
+                    "expected_value": v.expected_value,
+                    "actual_value": v.actual_value,
+                })
+
+        ai_result = await async_ai_citation_task(
+            audit_id=audit.id,
+            db=db,
+            cloud=cloud,
+            citation_findings=citation_findings,
         )
+
+        # Persist AI execution summary so GET retrieval stays truthful.
+        audit.ai_review_status = ai_result.status
+        audit.ai_provider = ai_result.provider
+        db.commit()
 
         # Mark audit completed now that AI pass is done
         audit.status = "completed"
@@ -120,7 +164,7 @@ async def audit_document(
 
         # Build response payloads — use issue_dicts directly (matches
         # CitationIssueResponse shape exactly; see ai_citation.py return)
-        citation_responses = [CitationIssueResponse(**row) for row in issue_dicts]
+        citation_responses = [CitationIssueResponse(**row) for row in ai_result.suggestions]
 
         breakdown_responses = [
             ScoreBreakdownResponse(**b.to_dict())
@@ -138,6 +182,8 @@ async def audit_document(
             document_stats=stats_response,
             major_count=score_result.major_count,
             minor_count=score_result.minor_count,
+            ai_review_status=ai_result.status,
+            ai_provider=ai_result.provider,
         )
 
     except HTTPException:
@@ -208,10 +254,7 @@ async def get_audit(audit_id: str, db: Session = Depends(get_db)):
         )
         for v in audit.violations
     ]
-    score_result = calculate_weighted_score_detailed(
-        reconstructed,
-        citation_tip_count=len(citation_responses) if audit.deploy_mode == "CLOUD" else 0,
-    )
+    score_result = calculate_weighted_score_detailed(reconstructed)
     breakdown_responses = [
         ScoreBreakdownResponse(**b.to_dict())
         for b in score_result.breakdown
@@ -230,10 +273,17 @@ async def get_audit(audit_id: str, db: Session = Depends(get_db)):
         citation_issues=citation_responses,
         score_breakdown=breakdown_responses,
         document_stats=DocumentStatsResponse(
-            paragraphs=0, headings=0, tables=0, images=0, sections=0, words=0
-        ),  # stats not persisted on the record; submit response carries them
+            paragraphs=audit.paragraph_count,
+            headings=audit.heading_count,
+            tables=audit.table_count,
+            images=audit.image_count,
+            sections=audit.section_count,
+            words=audit.word_count,
+        ),
         major_count=score_result.major_count,
         minor_count=score_result.minor_count,
+        ai_review_status=audit.ai_review_status,
+        ai_provider=audit.ai_provider,
     )
 
 
@@ -254,6 +304,27 @@ async def list_audits(
         )
         for a in audits
     ]
+
+
+@router.get("/api/audit/{audit_id}/document-blocks")
+async def get_audit_document_blocks(audit_id: str, db: Session = Depends(get_db)):
+    """Read-only Evidence-Linked Document Preview blocks (Build 8B).
+
+    Distinguishes:
+      - blocks available  → {"audit_id": ..., "blocks": [...]}
+      - historical audit  → {"audit_id": ..., "blocks": null} (no preview data)
+      - audit not found   → 404
+
+    Stored data is validated defensively: anything that is not a list is
+    treated as unavailable rather than surfaced as a broken document.
+    Block text is never logged.
+    """
+    audit = db.query(AuditRecord).filter(AuditRecord.id == audit_id).first()
+    if not audit:
+        raise HTTPException(status_code=404, detail="Audit not found")
+
+    blocks = audit.document_blocks if isinstance(audit.document_blocks, list) else None
+    return {"audit_id": audit_id, "blocks": blocks}
 
 
 @router.delete("/api/audit/{audit_id}")

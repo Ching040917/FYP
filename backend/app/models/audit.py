@@ -20,6 +20,29 @@ class AuditRecord(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     completed_at = Column(DateTime, nullable=True)
 
+    # Document statistics computed at audit time and persisted. Nullable —
+    # records created before these columns existed have NULL values, and the
+    # API/UI must treat NULL as "stats unavailable", never as zero counts.
+    paragraph_count = Column(Integer, nullable=True)
+    heading_count = Column(Integer, nullable=True)
+    table_count = Column(Integer, nullable=True)
+    image_count = Column(Integer, nullable=True)
+    section_count = Column(Integer, nullable=True)
+    word_count = Column(Integer, nullable=True)
+
+    # AI-assisted citation review execution summary (Build 7D). Nullable —
+    # historical records have NULL, meaning "status not recorded". NULL must
+    # never be presented as "review ran" or "review unavailable".
+    ai_review_status = Column(String(40), nullable=True)
+    ai_provider = Column(String(40), nullable=True)
+
+    # Evidence-Linked Document Preview (Build 8B): ordered paragraph-only
+    # blocks as JSON. Nullable — historical records predate the column and
+    # the preview must report "unavailable", never an empty document. The
+    # original DOCX is never stored. Lives on the parent row so audit
+    # deletion removes it automatically. Never log block text.
+    document_blocks = Column(JSON, nullable=True)
+
     violations = relationship("Violation", back_populates="audit", cascade="all, delete-orphan")
     citation_issues = relationship("CitationIssue", back_populates="audit", cascade="all, delete-orphan")
 

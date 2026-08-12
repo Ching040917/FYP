@@ -28,7 +28,7 @@ export interface ScoreBreakdown {
   remaining: number
 }
 
-/** Document-level stats — mirrors backend DocumentStatsResponse. */
+/** Document-level stats — mirrors backend DocumentStatsResponse (submit path: always populated). */
 export interface DocumentStats {
   paragraphs: number
   headings: number
@@ -37,6 +37,13 @@ export interface DocumentStats {
   sections: number
   words: number
 }
+
+/**
+ * Stats as served by GET /api/audit/{id}. Fields are null for records whose
+ * stats were never persisted (created before backend persistence existed).
+ * Render as "unavailable" — never as factual zero counts.
+ */
+export type AuditDocumentStats = { [K in keyof DocumentStats]: number | null }
 
 export interface AuditSubmitResponse {
   status: string
@@ -50,6 +57,9 @@ export interface AuditSubmitResponse {
   document_stats?: DocumentStats
   major_count?: number
   minor_count?: number
+  /** NEW — AI-assisted citation review execution summary (Build 7D). Null = status not recorded. */
+  ai_review_status?: string | null
+  ai_provider?: string | null
 }
 
 export interface AuditResponse {
@@ -64,9 +74,13 @@ export interface AuditResponse {
   violations: Violation[]
   citation_issues: CitationIssue[]
   score_breakdown?: ScoreBreakdown[]
-  document_stats?: DocumentStats
+  /** May contain null fields for records with unpersisted stats. */
+  document_stats?: AuditDocumentStats
   major_count?: number
   minor_count?: number
+  /** NEW — AI-assisted citation review execution summary (Build 7D). Null = status not recorded. */
+  ai_review_status?: string | null
+  ai_provider?: string | null
 }
 
 export interface AuditListItem {
@@ -75,4 +89,17 @@ export interface AuditListItem {
   weighted_score: number
   status: string
   created_at: string
+}
+
+/** Structured paragraph block from GET /api/audit/{id}/document-blocks — mirrors backend extract_document_blocks. */
+export interface DocumentBlock {
+  /** Document order — use for ordering, never array position. */
+  order: number
+  /** Block kind — backend currently emits "paragraph" only. */
+  type: string
+  /** Paragraph identity — equals the paragraph_index findings carry. */
+  index: number
+  text: string
+  style_name: string | null
+  heading_level: number | null
 }

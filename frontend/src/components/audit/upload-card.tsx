@@ -19,7 +19,7 @@ import {
   Loader2,
   Cloud,
   CloudOff,
-  Zap,
+  Info,
 } from 'lucide-react'
 import { Button } from '../ui/button'
 import {
@@ -43,8 +43,12 @@ const MAX_SIZE_BYTES = MAX_SIZE_MB * 1024 * 1024
 const SAMPLE_PATH = '/samples/sample-thesis.docx'
 
 export interface UploadCardProps {
-  /** Called when the audit completes successfully */
-  onResult: (result: AuditResult) => void
+  /**
+   * Called when the audit completes successfully. The second argument is
+   * the cloud-AI state the audit actually ran with — the source of truth
+   * for whether AI-assisted findings may be presented.
+   */
+  onResult: (result: AuditResult, cloudEnabled: boolean) => void
   /** Optional reset signal — clears inline result when starting a new upload */
   onReset?: () => void
   /**
@@ -94,13 +98,12 @@ export function UploadCard({ onResult, onReset, trySampleSignal = 0 }: UploadCar
         const raw = await api.auditDocument(target, { cloud: cloudEnabled })
         const result = adaptAuditResponse({
           raw,
-          cloudEnabled,
         })
         showToast(
           `Audit complete. Score: ${result.weighted_compliance_score}/100 · ${result.major_count} major · ${result.minor_count} minor`,
           'success',
         )
-        onResult(result)
+        onResult(result, cloudEnabled)
       } catch (err) {
         const message =
           err instanceof Error ? err.message : 'Unknown error during upload.'
@@ -162,16 +165,12 @@ export function UploadCard({ onResult, onReset, trySampleSignal = 0 }: UploadCar
     <Card className="border-border bg-card">
       <CardHeader className="pb-4">
         <div className="flex items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <div className="grid h-10 w-10 place-items-center rounded-md bg-primary/10 text-primary ring-1 ring-primary/30">
-              <ShieldCheck className="h-5 w-5" />
-            </div>
-            <div>
-              <CardTitle className="text-lg font-semibold">Upload Document</CardTitle>
-              <CardDescription>
-                Drop your .docx thesis or report here. Local-only by default.
-              </CardDescription>
-            </div>
+          <div>
+            <CardTitle className="text-base font-semibold">Start an audit</CardTitle>
+            <CardDescription>
+              Upload a .docx thesis or report for supported formatting checks. Deterministic
+              validation runs locally by default.
+            </CardDescription>
           </div>
           <Badge
             variant="outline"
@@ -182,35 +181,39 @@ export function UploadCard({ onResult, onReset, trySampleSignal = 0 }: UploadCar
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
-        {/* Drop zone */}
-        <div
+        {/* Drop zone — label-wrapped file input: keyboard and pointer accessible */}
+        <label
           onDragOver={(e) => {
             e.preventDefault()
             setIsDragging(true)
           }}
           onDragLeave={() => setIsDragging(false)}
           onDrop={onDrop}
-          onClick={() => inputRef.current?.click()}
           className={cn(
-            'relative flex min-h-[148px] cursor-pointer flex-col items-center justify-center gap-2 rounded-md border border-dashed px-6 py-8 text-center transition-colors',
+            'relative flex min-h-[148px] cursor-pointer flex-col items-center justify-center gap-2 rounded-md border border-dashed px-6 py-8 text-center transition-colors focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2 focus-within:ring-offset-background',
             isDragging
               ? 'border-primary bg-primary/5'
-              : 'border-border bg-input hover:bg-input/70 hover:border-primary/50',
+              : 'border-border bg-input hover:border-primary/50 hover:bg-input/70',
           )}
         >
-          <Upload className="h-6 w-6 text-muted-foreground" />
-          <div className="text-sm font-medium">
-            {isDragging ? 'Drop the file to upload' : 'Drag & drop your .docx here'}
-          </div>
-          <div className="text-xs text-muted-foreground">or click to browse</div>
           <input
             ref={inputRef}
             type="file"
             accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-            className="hidden"
+            className="sr-only"
             onChange={(e) => selectFile(e.target.files?.[0] ?? null)}
           />
-        </div>
+          <Upload className="h-6 w-6 text-muted-foreground" aria-hidden="true" />
+          <div className="text-sm font-medium">
+            {isDragging ? 'Drop the file to upload' : 'Drag & drop your .docx here'}
+          </div>
+          <div className="text-xs text-muted-foreground">or click to browse</div>
+        </label>
+
+        <p className="text-[13px] leading-[19px] text-muted-foreground">
+          Supported formatting checks: margins, fonts, font sizes, paragraph spacing, heading
+          hierarchy, and media captions.
+        </p>
 
         {/* Try sample — secondary CTA */}
         <Button
@@ -221,7 +224,7 @@ export function UploadCard({ onResult, onReset, trySampleSignal = 0 }: UploadCar
           disabled={isUploading}
           onClick={() => void loadAndAuditSample()}
         >
-          <Zap className="mr-2 h-3.5 w-3.5 text-secondary" />
+          <FileText className="mr-2 h-3.5 w-3.5 text-primary" aria-hidden="true" />
           Try with the sample thesis
         </Button>
 
@@ -251,20 +254,22 @@ export function UploadCard({ onResult, onReset, trySampleSignal = 0 }: UploadCar
           </div>
         )}
 
-        {/* Cloud toggle */}
+        {/* Optional AI-assisted citation review */}
         <div className="flex items-start justify-between gap-3 rounded-md border border-border bg-input/20 px-3 py-2.5">
           <div className="flex items-start gap-2.5">
             {cloudEnabled ? (
-              <Cloud className="mt-0.5 h-4 w-4 text-primary" />
+              <Cloud className="mt-0.5 h-4 w-4 text-primary" aria-hidden="true" />
             ) : (
-              <CloudOff className="mt-0.5 h-4 w-4 text-muted-foreground" />
+              <CloudOff className="mt-0.5 h-4 w-4 text-muted-foreground" aria-hidden="true" />
             )}
             <div>
               <Label htmlFor="cloud-toggle" className="text-sm font-medium cursor-pointer">
-                Cloud AI citation audit
+                Optional AI-assisted citation review
               </Label>
-              <p className="text-xs text-muted-foreground">
-                Off by default. When on, paragraph text is sent to the AI for APA 7 checks.
+              <p className="mt-0.5 flex items-start gap-1 text-xs leading-[16px] text-muted-foreground">
+                <Info className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
+                Off by default. When on, citation paragraphs are sent to the cloud AI for APA 7
+                suggestions. Deterministic formatting checks run the same either way.
               </p>
             </div>
           </div>
@@ -290,8 +295,8 @@ export function UploadCard({ onResult, onReset, trySampleSignal = 0 }: UploadCar
             </>
           ) : (
             <>
-              <ShieldCheck className="mr-2 h-4 w-4" />
-              Run Compliance Audit
+              <ShieldCheck className="mr-2 h-4 w-4" aria-hidden="true" />
+              Run compliance audit
             </>
           )}
         </Button>

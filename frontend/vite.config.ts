@@ -7,7 +7,9 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/api': {
-        target: 'http://localhost:8000',
+        // 127.0.0.1, not localhost: Node resolves localhost to ::1 first on
+        // Windows, while uvicorn binds 127.0.0.1 only — causing proxy hangs.
+        target: 'http://127.0.0.1:8000',
         changeOrigin: true,
       },
     },

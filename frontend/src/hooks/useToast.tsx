@@ -53,7 +53,7 @@ function ToastItem({ toast, onDismiss }: { toast: Toast; onDismiss: (id: string)
   const typeStyles = {
     success: 'bg-secondary/90 text-on-secondary border-secondary',
     error: 'bg-error/90 text-on-error border-error',
-    warning: 'bg-amber-500/90 text-white border-amber-500',
+    warning: 'bg-warning/90 text-white border-warning',
     info: 'bg-primary/90 text-on-primary border-primary',
   }
 
@@ -70,7 +70,7 @@ function ToastItem({ toast, onDismiss }: { toast: Toast; onDismiss: (id: string)
     >
       {icons[toast.type]}
       <p className="text-body-md flex-1">{toast.message}</p>
-      <button onClick={() => onDismiss(toast.id)} className="text-current opacity-70 hover:opacity-100">
+      <button type="button" onClick={() => onDismiss(toast.id)} className="text-current opacity-70 hover:opacity-100">
         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
       </button>
     </div>

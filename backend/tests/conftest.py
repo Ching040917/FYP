@@ -4,6 +4,14 @@ Uses an in-memory SQLite engine, a no-op background AI task, and a
 `make_docx_bytes()` factory for building valid .docx payloads in tests.
 """
 import io
+import os
+
+# Isolate tests from the real development database BEFORE any app module is
+# imported and creates a SQLAlchemy engine. pydantic-settings gives the env
+# var priority over backend/.env, so app.database.engine becomes an in-memory
+# engine instead of targeting backend/audit.db.
+os.environ["DATABASE_URL"] = "sqlite:///:memory:"
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -94,9 +102,19 @@ def client_with_small_cap(test_engine, small_file_cap, mock_ai_task, mock_init_d
 
 @pytest.fixture
 def mock_ai_task(monkeypatch):
-    """No-op the background AI task so tests never hit the network."""
+    """No-op the AI citation task so tests never hit the network.
+
+    Returns a completed, empty local result — the default deterministic
+    outcome for tests that do not care about AI specifics.
+    """
+    from app.services.ai_citation import AiCitationResult
+
     async def _no_op(*args, **kwargs):
-        return []
+        return AiCitationResult(
+            status="COMPLETED_NO_SUGGESTIONS",
+            provider="LOCAL_OLLAMA",
+            suggestions=[],
+        )
     monkeypatch.setattr(api_routes, "async_ai_citation_task", _no_op)
     return _no_op
 

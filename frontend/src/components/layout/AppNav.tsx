@@ -51,7 +51,7 @@ export function AppNav({ current, title, subtitle, backTo }: AppNavProps) {
             <div className="text-left">
               <div className="text-sm font-semibold tracking-tight text-on-surface">{title}</div>
               {subtitle && (
-                <div className="text-[10px] uppercase tracking-wider text-on-surface-variant">
+                <div className="text-[11px] uppercase tracking-wider text-on-surface-variant">
                   {subtitle}
                 </div>
               )}

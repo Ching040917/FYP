@@ -10,8 +10,31 @@
  * maps wire types to the dashboard's display types.
  */
 
-import type { AuditCategory, AuditResult, CitationTip, LayoutError, DocumentStats } from '../../types/audit'
+import type { AuditCategory, AuditResult, CitationTip, LayoutError, DocumentStats, ScoreCategory, AiReviewStatus, AiProvider } from '../../types/audit'
 import type { AuditSubmitResponse, CitationIssue, Violation } from '../../types/api'
+
+/** All canonical audit categories, used to validate backend-sent values. */
+const AUDIT_CATEGORY_VALUES: readonly AuditCategory[] = [
+  'font_consistency',
+  'font_size',
+  'paragraph_typography',
+  'page_margins',
+  'heading_hierarchy',
+  'media_captions',
+  'citation_apa',
+]
+
+/**
+ * Map a backend category key to the ScoreCategory union. Backend sends the
+ * canonical keys (scoring.py CATEGORY_META); any unknown value maps to the
+ * presentation-only `'unknown'` bucket so unknown rows stay visible and are
+ * never mislabelled as a known category (e.g. paragraph_typography).
+ */
+export function normalizeScoreCategory(raw: string): ScoreCategory {
+  return (AUDIT_CATEGORY_VALUES as readonly string[]).includes(raw)
+    ? (raw as AuditCategory)
+    : 'unknown'
+}
 
 /** Map backend rule_code to reference AuditCategory. Default = paragraph_typography. */
 export function categoryForRuleCode(ruleCode: string): AuditCategory {
@@ -26,6 +49,38 @@ export function categoryForRuleCode(ruleCode: string): AuditCategory {
     return 'paragraph_typography'
   }
   return 'paragraph_typography'
+}
+
+const AI_STATUS_VALUES: readonly AiReviewStatus[] = [
+  'COMPLETED_WITH_SUGGESTIONS',
+  'COMPLETED_NO_SUGGESTIONS',
+  'UNAVAILABLE',
+]
+
+const AI_PROVIDER_VALUES: readonly AiProvider[] = [
+  'LOCAL_OLLAMA',
+  'CLOUD_GEMINI',
+  'CLOUD_FALLBACK_LOCAL',
+]
+
+/** Normalize a backend AI review status. Unknown values → 'UNKNOWN' (never success). */
+export function normalizeAiReviewStatus(raw: string | null | undefined): AiReviewStatus | null {
+  if (!raw) return null
+  return (AI_STATUS_VALUES as readonly string[]).includes(raw) ? (raw as AiReviewStatus) : 'UNKNOWN'
+}
+
+/** Normalize a backend AI provider path. Unknown values → 'UNKNOWN'. */
+export function normalizeAiProvider(raw: string | null | undefined): AiProvider | null {
+  if (!raw) return null
+  return (AI_PROVIDER_VALUES as readonly string[]).includes(raw) ? (raw as AiProvider) : 'UNKNOWN'
+}
+
+/** Human-readable provider description for AI-review status lines. */
+export function aiProviderLabel(provider: AiProvider | null | undefined): string {
+  if (provider === 'LOCAL_OLLAMA') return 'local Ollama'
+  if (provider === 'CLOUD_GEMINI') return 'cloud AI (Gemini)'
+  if (provider === 'CLOUD_FALLBACK_LOCAL') return 'cloud AI with local fallback'
+  return 'AI'
 }
 
 /** Convert SHOUTY_SNAKE_CASE to Title Case for human display. */
@@ -79,7 +134,6 @@ function adaptCitation(c: CitationIssue): CitationTip {
 export interface AdaptInput {
   raw: AuditSubmitResponse
   auditedAt?: string
-  cloudEnabled: boolean
 }
 
 const ZERO_STATS: DocumentStats = {
@@ -87,18 +141,21 @@ const ZERO_STATS: DocumentStats = {
 }
 
 export function adaptAuditResponse(input: AdaptInput): AuditResult {
-  const { raw, auditedAt, cloudEnabled } = input
+  const { raw, auditedAt } = input
   const errors = raw.physical_layout_errors.map(adaptViolation)
 
-  // AI citation tips — if cloud mode was off, the server skipped the AI
-  // call; we still expose an empty array so the panel renders the
-  // "Cloud mode was off" locked state.
+  // AI citation tips — the backend persists validated AI-assisted
+  // suggestions; execution status is carried separately in ai_review_status.
   const tips = (raw.ai_citation_tooltips ?? []).map(adaptCitation)
 
   // Use backend-provided breakdown + stats directly (single source of truth).
   // Fallback to empty array / zero stats if backend didn't send them
-  // (backward compat with older backend versions).
-  const breakdown = raw.score_breakdown ?? []
+  // (backward compat with older backend versions). The category key is
+  // normalized to the AuditCategory union so the display types stay sound.
+  const breakdown = (raw.score_breakdown ?? []).map((b) => ({
+    ...b,
+    category: normalizeScoreCategory(b.category),
+  }))
   const documentStats = raw.document_stats ?? ZERO_STATS
 
   return {
@@ -112,5 +169,7 @@ export function adaptAuditResponse(input: AdaptInput): AuditResult {
     document_stats: documentStats,
     audited_at: auditedAt ?? new Date().toISOString(),
     audit_id: raw.audit_id,
+    ai_review_status: normalizeAiReviewStatus(raw.ai_review_status),
+    ai_provider: normalizeAiProvider(raw.ai_provider),
   }
 }

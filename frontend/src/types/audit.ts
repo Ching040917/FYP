@@ -1,6 +1,6 @@
 /**
  * Shared audit domain types — ported from reference_project/src/types/audit.ts.
- * Mirrors the shape the in-page ScoreDashboard / ErrorList / CitationTips consume.
+ * Mirrors the shape the in-page workspace components consume.
  * Wire-level types live in ../types/api.ts (separate; not modified here).
  */
 
@@ -14,6 +14,15 @@ export type AuditCategory =
   | 'heading_hierarchy'
   | 'media_captions'
   | 'citation_apa'
+
+/**
+ * Score-breakdown category. The 7 known categories plus a presentation-only
+ * `'unknown'` bucket for backend categories the UI doesn't recognise yet.
+ * Kept separate from AuditCategory so layout errors (always mapped to a known
+ * category) never take the unknown bucket, and so the closed AuditCategory
+ * union in scoring.ts stays intact.
+ */
+export type ScoreCategory = AuditCategory | 'unknown'
 
 export interface LayoutError {
   id: string
@@ -35,8 +44,26 @@ export interface CitationTip {
   confidence: 'high' | 'medium' | 'low'
 }
 
+/**
+ * AI-assisted citation review execution status (Build 7D). Unknown future
+ * backend values normalize to 'UNKNOWN' — never to a successful state.
+ * null on a domain result means "status not recorded".
+ */
+export type AiReviewStatus =
+  | 'COMPLETED_WITH_SUGGESTIONS'
+  | 'COMPLETED_NO_SUGGESTIONS'
+  | 'UNAVAILABLE'
+  | 'UNKNOWN'
+
+/** Provider path that actually executed the AI-assisted review. */
+export type AiProvider =
+  | 'LOCAL_OLLAMA'
+  | 'CLOUD_GEMINI'
+  | 'CLOUD_FALLBACK_LOCAL'
+  | 'UNKNOWN'
+
 export interface ScoreBreakdown {
-  category: AuditCategory
+  category: ScoreCategory
   label: string
   major: number
   minor: number
@@ -67,4 +94,7 @@ export interface AuditResult {
   audit_id?: string
   filename?: string
   message?: string
+  /** AI-assisted citation review execution summary; null = not recorded. */
+  ai_review_status?: AiReviewStatus | null
+  ai_provider?: AiProvider | null
 }

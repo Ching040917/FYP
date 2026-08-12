@@ -6,65 +6,116 @@
   * {
     @apply border-outline-variant;
   }
+  /* Smooth scrolling only when the user has not asked to reduce motion. */
+  @media (prefers-reduced-motion: no-preference) {
+    html {
+      scroll-behavior: smooth;
+    }
+  }
   body {
-    @apply bg-background text-on-background antialiased;
-    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    @apply bg-background text-foreground font-sans antialiased;
+    font-size: 14px;
+    line-height: 21px;
+  }
+  ::selection {
+    background-color: #e8ecf4; /* selected */
+    color: #1f2328;            /* ink */
+  }
+  /* Global focus fallback for native elements (links, inputs, etc.).
+     shadcn primitives carry their own data-slot rings — skip them here
+     so indicators are not doubled. */
+  :focus-visible:not([data-slot]) {
+    outline: 2px solid #1e3a5f; /* ring */
+    outline-offset: 2px;
+  }
+  /* Skip-link: visually hidden until focused. Add <a class="skip-link" href="#main"> to pages. */
+  .skip-link {
+    position: absolute;
+    left: -9999px;
+    top: auto;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+  }
+  .skip-link:focus-visible {
+    position: fixed;
+    left: 8px;
+    top: 8px;
+    z-index: 100;
+    width: auto;
+    height: auto;
+    padding: 8px 12px;
+    background: #ffffff;
+    color: #1f2328;
+    border: 1px solid #d9dce1;
+    border-radius: 4px;
+    font-size: 13px;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
   }
 }
 
 @layer components {
   .card {
-    @apply bg-surface-container border border-outline-variant rounded-lg;
+    @apply bg-card border border-border rounded-md;
   }
   .card-elevated {
-    @apply bg-surface-container border border-outline-variant rounded-lg shadow-tonal-med;
+    @apply bg-card border border-border rounded-md shadow-tonal-low;
   }
   .btn-primary {
-    @apply bg-primary text-on-primary px-4 py-2 rounded font-medium transition-colors
-           hover:bg-primary-container focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 focus:ring-offset-background;
+    @apply bg-primary text-primary-foreground px-4 py-2 rounded font-medium transition-colors
+           hover:bg-primary-container focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background;
   }
   .btn-ghost {
-    @apply bg-transparent border border-outline-variant text-on-surface px-4 py-2 rounded font-medium transition-colors
-           hover:bg-surface-container-high focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 focus:ring-offset-background;
+    @apply bg-transparent border border-border text-foreground px-4 py-2 rounded font-medium transition-colors
+           hover:bg-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background;
   }
   .input-field {
-    @apply bg-surface-container-lowest border border-outline-variant text-on-surface px-3 py-2 rounded
-           placeholder:text-on-surface-variant
-           focus:border-primary focus:ring-1 focus:ring-primary focus:outline-none transition-colors;
+    @apply bg-white border border-border text-foreground px-3 py-2 rounded
+           placeholder:text-muted-foreground
+           focus:border-ring focus:ring-1 focus:ring-ring focus:outline-none transition-colors;
   }
   .badge-success {
-    @apply bg-secondary/10 text-secondary px-2 py-0.5 rounded-full text-label-md;
+    @apply bg-secondary/10 text-secondary px-2 py-0.5 rounded text-label-md;
   }
   .badge-error {
-    @apply bg-error/10 text-error px-2 py-0.5 rounded-full text-label-md;
+    @apply bg-error/10 text-error px-2 py-0.5 rounded text-label-md;
   }
   .badge-warning {
-    @apply bg-amber-500/10 text-amber-500 px-2 py-0.5 rounded-full text-label-md;
+    @apply bg-warning/10 text-warning px-2 py-0.5 rounded text-label-md;
   }
   .table-container {
-    @apply overflow-x-auto rounded-lg border border-outline-variant;
+    @apply overflow-x-auto rounded-md border border-border;
   }
   .data-table {
     @apply w-full text-sm;
   }
   .data-table th {
-    @apply bg-surface-container-high text-on-surface-variant text-label-md px-3 py-2 text-left;
+    @apply bg-muted text-muted-foreground text-label-md px-3 py-2 text-left;
   }
   .data-table td {
-    @apply bg-surface px-3 py-2 border-t border-outline-variant;
+    @apply bg-card px-3 py-2 border-t border-border;
   }
   .data-table tbody tr:nth-child(even) td {
-    @apply bg-surface-container-low;
+    @apply bg-background;
   }
   .data-table tbody tr:hover td {
-    @apply bg-surface-container-high;
+    @apply bg-muted;
   }
 }
 
 @layer utilities {
   .scrollbar-thin {
     scrollbar-width: thin;
-    scrollbar-color: theme('colors.outline-variant') transparent;
+    scrollbar-color: theme('colors.border') transparent;
   }
   .scrollbar-thin::-webkit-scrollbar {
     width: 6px;
@@ -74,7 +125,7 @@
     background: transparent;
   }
   .scrollbar-thin::-webkit-scrollbar-thumb {
-    background-color: theme('colors.outline-variant');
+    background-color: theme('colors.border');
     border-radius: 3px;
   }
 }
@@ -92,7 +143,7 @@
   .animate-slide-down { animation: slide-down 0.2s ease-out; }
 }
 
-/* Reference-port: slim custom scrollbar for audit lists / panels */
+/* Quiet custom scrollbar for audit lists / panels */
 .scroll-area-audit::-webkit-scrollbar {
   width: 6px;
   height: 6px;
@@ -101,99 +152,21 @@
   background: transparent;
 }
 .scroll-area-audit::-webkit-scrollbar-thumb {
-  background: #464554;
+  background: #d9dce1; /* rule */
   border-radius: 3px;
 }
 .scroll-area-audit::-webkit-scrollbar-thumb:hover {
-  background: #908fa0;
+  background: #8a9299;
 }
 
-/* Recharts text colour override — dark theme */
+/* Recharts text/grid fallback colours — light theme */
 .recharts-cartesian-axis-tick-value,
 .recharts-polar-angle-axis-tick-value,
 .recharts-polar-radius-axis-tick-value {
-  fill: #c7c4d7;
+  fill: #5f666e; /* ink muted */
 }
 .recharts-cartesian-grid line,
 .recharts-polar-grid-angle line,
 .recharts-polar-grid-concentric-polygon {
-  stroke: #464554;
-}
-
-/* ===================================================================== */
-/* Landing page — decorative effects + animations                        */
-/* ===================================================================== */
-
-html { scroll-behavior: smooth; }
-
-.hero-glow {
-  background:
-    radial-gradient(ellipse 80% 50% at 50% -10%, rgba(192, 193, 255, 0.18), transparent 70%),
-    radial-gradient(ellipse 40% 30% at 80% 20%, rgba(78, 222, 163, 0.08), transparent 60%),
-    #13131b;
-}
-.grid-bg {
-  background-image:
-    linear-gradient(to right, rgba(192, 193, 255, 0.04) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(192, 193, 255, 0.04) 1px, transparent 1px);
-  background-size: 48px 48px;
-}
-
-.window-frame {
-  background: #1f1f27;
-  border: 1px solid #464554;
-  border-radius: 12px;
-  box-shadow:
-    0 1px 0 rgba(255,255,255,0.03) inset,
-    0 30px 80px -20px rgba(0,0,0,0.6),
-    0 8px 30px -10px rgba(192, 193, 255, 0.08);
-  overflow: hidden;
-}
-
-@keyframes pulse-glow {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(255, 180, 171, 0.0); }
-  50% { box-shadow: 0 0 0 4px rgba(255, 180, 171, 0.08); }
-}
-.violation-card { animation: pulse-glow 3s ease-in-out infinite; }
-
-.progress-ring__circle {
-  transition: stroke-dashoffset 1.5s cubic-bezier(0.4, 0, 0.2, 1);
-  transform: rotate(-90deg);
-  transform-origin: 50% 50%;
-}
-
-@keyframes drift {
-  from { transform: translateX(0); }
-  to { transform: translateX(-50%); }
-}
-.marquee { animation: drift 30s linear infinite; }
-
-.reveal { opacity: 0; transform: translateY(20px); transition: opacity 0.7s ease, transform 0.7s ease; }
-.reveal.visible { opacity: 1; transform: translateY(0); }
-
-.focus-glow:focus-within {
-  border-color: #c0c1ff;
-  box-shadow: 0 0 0 3px rgba(192, 193, 255, 0.15);
-}
-
-.code-block {
-  background: #0d0d15;
-  border: 1px solid #34343d;
-  border-radius: 8px;
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 13px;
-  line-height: 1.6;
-  color: #c7c4d7;
-}
-.tok-key { color: #c0c1ff; }
-.tok-fn { color: #4edea3; }
-.tok-str { color: #ffb2b7; }
-.tok-com { color: #6b6b80; font-style: italic; }
-.tok-num { color: #c0c1ff; }
-
-/* Material Symbols sizing helper — keeps the icon font crisp at small sizes */
-.material-symbols-outlined {
-  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
-  line-height: 1;
-  vertical-align: middle;
+  stroke: #d9dce1; /* rule */
 }

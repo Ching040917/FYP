@@ -1,633 +1,308 @@
 /**
- * Landing page — the marketing/intro page for the Academic Compliance Auditor.
+ * Landing page — concise editorial entry point (Build 6).
  *
- * Ported from a standalone HTML mockup to a React page component. Uses the
- * existing Material 3 design tokens (surface-container, on-surface-variant,
- * outline-variant, primary, secondary, tertiary) already configured in
- * tailwind.config.js. Decorative effects (hero glow, grid bg, window frame,
- * marquee, reveal-on-scroll) live in index.css.
+ * Presents the Academic Compliance Auditor as a local-first, read-only
+ * academic document inspection tool. No live dashboard embeds, no
+ * marketing statistics, no decorative animation. The static product
+ * preview is example data and never touches the backend.
  *
- * Navigation:
- *   - In-page anchors (#features, #how, #architecture, #privacy) use plain
- *     <a> tags — same-page scroll works natively.
- *   - App routes (/dashboard, /history) use react-router-dom <Link>.
- *
- * Animations:
- *   - Score ring IntersectionObserver → useEffect
- *   - Reveal-on-scroll IntersectionObserver → useEffect
+ * Landmarks: one header, one main (#landing-main), one footer; one skip
+ * link. Heading hierarchy: one h1, h2 per section.
  */
 
-import { useEffect } from 'react'
 import { Link } from 'react-router-dom'
-import { DashboardContent } from './Dashboard'
+import {
+  ArrowRight,
+  ClipboardCheck,
+  FileText,
+  History,
+  ListChecks,
+  ListTree,
+  Quote,
+  Ruler,
+  ShieldCheck,
+  Upload,
+} from 'lucide-react'
+import { StaticAuditPreview } from '../components/landing/static-audit-preview'
+import type { LucideIcon } from 'lucide-react'
 
 const SHIELD_LOGO = (
-  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#c0c1ff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" className="w-5 h-5">
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
     <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /><path d="M9 12l2 2 4-4" />
   </svg>
 )
 
 export function Landing() {
-  // Reveal-on-scroll for .reveal elements
-  useEffect(() => {
-    const els = document.querySelectorAll('.reveal')
-    if (!('IntersectionObserver' in window)) {
-      els.forEach((el) => el.classList.add('visible'))
-      return
-    }
-    const observer = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((entry) => {
-          if (entry.isIntersecting) {
-            entry.target.classList.add('visible')
-            observer.unobserve(entry.target)
-          }
-        })
-      },
-      { threshold: 0.1 },
-    )
-    els.forEach((el) => observer.observe(el))
-    return () => observer.disconnect()
-  }, [])
-
   return (
-    <div className="bg-background text-on-surface font-sans antialiased">
-      {/* ============ TOP NAV ============ */}
-      <header className="fixed top-0 left-0 right-0 z-50 bg-surface-container/80 backdrop-blur-md border-b border-outline-variant">
-        <div className="max-w-[1440px] mx-auto px-md h-16 flex items-center justify-between">
-          <a href="#top" className="flex items-center gap-md">
-            <div className="w-8 h-8 rounded-md bg-primary/15 border border-primary/30 flex items-center justify-center">
+    <div className="min-h-screen bg-background text-foreground">
+      <a className="skip-link" href="#landing-main">
+        Skip to main content
+      </a>
+
+      {/* ────────────── Header ────────────── */}
+      <header className="border-b border-border bg-card">
+        <div className="mx-auto flex h-16 max-w-4xl items-center justify-between gap-4 px-4 md:px-6">
+          <Link to="/" className="flex items-center gap-2.5">
+            <div className="grid h-8 w-8 place-items-center rounded-md bg-primary/15 text-primary ring-1 ring-primary/30">
               {SHIELD_LOGO}
             </div>
-            <span className="font-semibold text-on-surface tracking-tight">Academic Compliance Auditor</span>
-          </a>
-          <nav className="hidden md:flex items-center gap-lg text-sm text-on-surface-variant">
-            <a href="#features" className="hover:text-on-surface transition-colors">Features</a>
-            <a href="#dashboard" className="hover:text-on-surface transition-colors">Dashboard</a>
-            <a href="#how" className="hover:text-on-surface transition-colors">How it works</a>
-            <a href="#architecture" className="hover:text-on-surface transition-colors">Architecture</a>
-            <a href="#privacy" className="hover:text-on-surface transition-colors">Privacy</a>
+            <span className="text-sm font-semibold tracking-tight text-foreground">
+              Academic Compliance Auditor
+            </span>
+          </Link>
+          <nav className="flex items-center gap-4 text-sm text-muted-foreground">
+            <a href="#checks" className="transition-colors hover:text-foreground">Checks</a>
+            <a href="#how" className="transition-colors hover:text-foreground">How it works</a>
+            <a href="#privacy" className="transition-colors hover:text-foreground">Privacy</a>
+            <a href="#scope" className="hidden transition-colors hover:text-foreground sm:inline">Scope</a>
           </nav>
-          <div className="flex items-center gap-sm">
-            <Link
-              to="/dashboard"
-              className="hidden sm:inline-flex items-center gap-xs px-md py-xs rounded border border-outline-variant text-on-surface-variant hover:text-on-surface hover:border-primary/50 transition-colors text-sm"
-            >
-              <span className="material-symbols-outlined text-base">play_arrow</span>
-              Live demo
-            </Link>
-            <Link
-              to="/dashboard"
-              className="inline-flex items-center gap-xs px-md py-sm rounded bg-primary text-on-primary font-medium text-sm hover:opacity-90 transition-opacity"
-            >
-              <span className="material-symbols-outlined text-base">download</span>
-              Open the app
-            </Link>
-          </div>
         </div>
       </header>
 
-      {/* ============ HERO ============ */}
-      <section id="top" className="hero-glow relative pt-32 pb-20 md:pt-40 md:pb-28 overflow-hidden">
-        <div className="absolute inset-0 grid-bg opacity-40 pointer-events-none" />
-        <div className="relative max-w-[1440px] mx-auto px-md">
-          <div className="max-w-3xl mx-auto text-center">
-            <div className="inline-flex items-center gap-xs px-md py-xs rounded-full border border-outline-variant bg-surface-container text-sm text-on-surface-variant mb-md">
-              <span className="w-1.5 h-1.5 rounded-full bg-secondary animate-pulse" />
-              Local-first · Privacy-preserving · APA 7th precise
-            </div>
-            <h1 className="text-4xl md:text-6xl font-semibold tracking-tight leading-[1.05] mb-md">
-              Audit your thesis <span className="text-primary">before</span> the deadline does it for you.
-            </h1>
-            <p className="text-lg md:text-xl text-on-surface-variant max-w-2xl mx-auto mb-lg leading-relaxed">
-              A local-first web app that scans <span className="font-mono text-secondary">.docx</span> files for layout compliance, heading hierarchy, and APA 7th citation accuracy — in seconds, with zero data leaving your machine.
-            </p>
-            <div className="flex flex-wrap items-center justify-center gap-sm">
-              <Link
-                to="/dashboard"
-                className="inline-flex items-center gap-xs px-lg py-sm rounded bg-primary text-on-primary font-medium hover:opacity-90 transition-opacity"
-              >
-                <span className="material-symbols-outlined">visibility</span>
-                See the dashboard
-              </Link>
-              <a
-                href="#architecture"
-                className="inline-flex items-center gap-xs px-lg py-sm rounded border border-outline-variant text-on-surface hover:border-primary/50 transition-colors"
-              >
-                <span className="material-symbols-outlined">schema</span>
-                Read the architecture
-              </a>
-            </div>
-
-            {/* Stat row */}
-            <div className="mt-xl grid grid-cols-2 md:grid-cols-4 gap-md max-w-3xl mx-auto">
-              <Stat value="<0.5s" tone="primary" label="Layout rule pass" />
-              <Stat value="100%" tone="secondary" label="Local by default" />
-              <Stat value="10MB" tone="primary" label="File size cap" />
-              <Stat value=".docx" tone="secondary" label="Only format supported" />
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* ============ FEATURES ============ */}
-      <section id="features" className="py-20 md:py-28">
-        <div className="max-w-[1440px] mx-auto px-md">
-          <div className="text-center max-w-2xl mx-auto mb-xl">
-            <p className="text-sm uppercase tracking-widest text-primary font-medium mb-sm">Three pillars</p>
-            <h2 className="text-3xl md:text-4xl font-semibold tracking-tight mb-md">Built for the last 48 hours of thesis season.</h2>
-            <p className="text-on-surface-variant text-lg">Every architectural choice exists to make late-stage formatting checks faster, safer, and more accurate than anything else on the market.</p>
-          </div>
-
-          <div className="grid md:grid-cols-3 gap-md">
-            <FeatureCard
-              tone="primary"
-              icon="shield_lock"
-              title="Local-first, always"
-              description="Your draft never leaves the machine. The default pipeline runs entirely against a local AI engine (Ollama + Qwen2.5-3B). The cloud is opt-in and disabled behind a UI toggle."
-              points={[
-                'Read-only memory buffer handling',
-                'Never rewrites your .docx',
-                'Cloud path locked behind consent',
-              ]}
-            />
-            <FeatureCard
-              tone="secondary"
-              icon="memory"
-              title="Dual-engine audit"
-              description="Layout checks run on a deterministic rules engine in under half a second. Citation checks run on a parallel AI track. They merge into one consistent report — no waiting."
-              points={[
-                'Async background task fan-out',
-                'JSON-defensive AI output parsing',
-                'Graceful fallback on model timeout',
-              ]}
-            />
-            <FeatureCard
-              tone="tertiary"
-              icon="analytics"
-              title="Weighted scoring"
-              description="Structural violations (page margins, heading gaps) weigh as Major Violations. Typography inconsistencies weigh as Minor. One typo won't tank your grade — but a missing H2 will."
-              points={[
-                'Score = 100 − weighted deductions',
-                'Per-line violation highlighting',
-                'AI-generated fix tooltips',
-              ]}
-            />
-          </div>
-        </div>
-      </section>
-
-      {/* ============ DASHBOARD PREVIEW — LIVE EMBEDDED ============ */}
-      <section id="dashboard" className="py-20 md:py-28 bg-surface-container-lowest">
-        <div className="max-w-[1440px] mx-auto px-md">
-          <div className="text-center max-w-2xl mx-auto mb-xl">
-            <p className="text-sm uppercase tracking-widest text-primary font-medium mb-sm">The dashboard</p>
-            <h2 className="text-3xl md:text-4xl font-semibold tracking-tight mb-md">Every error in context, every fix one click away.</h2>
-            <p className="text-on-surface-variant text-lg">This is the real, live dashboard — not a screenshot. Upload a .docx or try the sample, run an audit, and see the compliance score, charts, and error breakdown right here.</p>
-          </div>
-
-          {/* Live dashboard embedded directly (no iframe).
-              DashboardContent is the same component used on /dashboard —
-              fully interactive: upload, audit, charts, error list, citation tips. */}
-          <div className="window-frame">
-            {/* Window chrome */}
-            <div className="h-9 bg-surface-container border-b border-outline-variant flex items-center px-md gap-sm">
-              <span className="w-2.5 h-2.5 rounded-full bg-[#ff5f57]" />
-              <span className="w-2.5 h-2.5 rounded-full bg-[#febc2e]" />
-              <span className="w-2.5 h-2.5 rounded-full bg-[#28c840]" />
-              <span className="ml-md text-xs text-on-surface-variant font-mono">
-                localhost:5173/dashboard
-              </span>
-              <Link
-                to="/dashboard"
-                className="ml-auto inline-flex items-center gap-xs text-xs text-on-surface-variant hover:text-primary transition-colors"
-              >
-                <span className="material-symbols-outlined text-base">open_in_new</span>
-                <span className="hidden sm:inline">Open in full page</span>
-              </Link>
-            </div>
-
-            {/* The real dashboard content — fully interactive */}
-            <div className="bg-background p-md md:p-lg">
-              <DashboardContent />
-            </div>
-          </div>
-
-          {/* Feature highlights below the live dashboard */}
-          <div className="mt-xl grid grid-cols-1 sm:grid-cols-3 gap-md max-w-4xl mx-auto">
-            <PreviewFeature
-              icon="speed"
-              title="Weighted score"
-              description="0–100 compliance score with per-category caps. Major violations cost 8pts, minors 1–2pts."
-            />
-            <PreviewFeature
-              icon="insights"
-              title="Radar + bar charts"
-              description="Visualise deductions by category. Spot which rule scope is dragging your score down."
-            />
-            <PreviewFeature
-              icon="auto_fix_high"
-              title="AI fix tooltips"
-              description="Every APA citation issue comes with a structured fix suggestion from the AI engine."
-            />
-          </div>
-
-          {/* CTA below — links to the live dashboard */}
-          <div className="mt-xl text-center">
+      <main id="landing-main" className="mx-auto w-full max-w-4xl px-4 md:px-6">
+        {/* ────────────── Hero ────────────── */}
+        <section className="border-b border-border py-10 md:py-12">
+          <p className="text-[11px] font-medium uppercase tracking-wider text-primary">
+            Academic document audit
+          </p>
+          <h1 className="mt-3 font-serif text-page-title leading-[34px] text-foreground md:text-[34px] md:leading-[42px]">
+            Review your academic document before submission
+          </h1>
+          <p className="mt-4 max-w-2xl text-sm leading-[21px] text-muted-foreground md:text-base md:leading-[24px]">
+            The system checks supported formatting, document structure, captions, and basic
+            citation patterns in a .docx thesis draft — without rewriting your original Word
+            document. Deterministic formatting checks run locally by default; an optional
+            AI-assisted citation review is opt-in.
+          </p>
+          <div className="mt-6 flex flex-wrap items-center gap-3">
             <Link
               to="/dashboard"
-              className="inline-flex items-center gap-xs px-lg py-sm rounded bg-primary text-on-primary font-medium hover:opacity-90 transition-opacity"
+              className="inline-flex h-9 items-center gap-2 rounded-md bg-primary px-4 text-sm font-medium text-white transition-colors hover:bg-primary/90"
             >
-              <span className="material-symbols-outlined">play_arrow</span>
-              Open the dashboard in full page
-            </Link>
-          </div>
-        </div>
-      </section>
-
-      {/* ============ HOW IT WORKS ============ */}
-      <section id="how" className="py-20 md:py-28">
-        <div className="max-w-[1440px] mx-auto px-md">
-          <div className="text-center max-w-2xl mx-auto mb-xl">
-            <p className="text-sm uppercase tracking-widest text-primary font-medium mb-sm">How it works</p>
-            <h2 className="text-3xl md:text-4xl font-semibold tracking-tight mb-md">Three steps from draft to clean.</h2>
-          </div>
-
-          <div className="grid md:grid-cols-3 gap-md relative">
-            {/* Connecting line */}
-            <div className="hidden md:block absolute top-8 left-[16%] right-[16%] h-px bg-gradient-to-r from-primary/0 via-primary/40 to-primary/0 pointer-events-none" />
-
-            <Step
-              num={1}
-              tone="primary"
-              icon="upload_file"
-              title="Drop your .docx"
-              description="Drag it onto the upload zone. Strict validation rejects anything over 10 MB or any non-.docx file before it touches the parser."
-            />
-            <Step
-              num={2}
-              tone="secondary"
-              icon="bolt"
-              title="Dual-engine scan"
-              description="Layout rules run synchronously in <0.5s. AI citation checks fire as a background task. Both merge into one report."
-            />
-            <Step
-              num={3}
-              tone="tertiary"
-              icon="task_alt"
-              title="Click-to-fix"
-              description="Each violation has an AI-generated fix tooltip. Apply the ones you agree with. Re-run for a fresh score."
-            />
-          </div>
-        </div>
-      </section>
-
-      {/* ============ ARCHITECTURE ============ */}
-      <section id="architecture" className="py-20 md:py-28 bg-surface-container-lowest">
-        <div className="max-w-[1440px] mx-auto px-md">
-          <div className="grid lg:grid-cols-2 gap-xl items-center">
-            <div>
-              <p className="text-sm uppercase tracking-widest text-primary font-medium mb-sm">Under the hood</p>
-              <h2 className="text-3xl md:text-4xl font-semibold tracking-tight mb-md">A decoupled dual-engine architecture.</h2>
-              <p className="text-on-surface-variant leading-relaxed mb-md">
-                The frontend is React, the backend is FastAPI on ASGI. The document parser is <span className="font-mono text-secondary">python-docx</span> reading files directly into memory buffers — no Word client, no rewriting.
-              </p>
-              <p className="text-on-surface-variant leading-relaxed mb-lg">
-                The layout rules engine runs deterministically on the request thread. Citation verification dispatches to a background task against Ollama (default) or Gemini 1.5 Flash (opt-in). Output is JSON-defensive — bad AI responses degrade to a warning card, never a crash.
-              </p>
-
-              <div className="space-y-sm">
-                <ArchRow icon="check_circle" title="React + FastAPI" subtitle="Decoupled B/S architecture, ASGI async concurrency" />
-                <ArchRow icon="check_circle" title="python-docx" subtitle="In-memory OpenXML scan, no Word instance spawned" />
-                <ArchRow icon="check_circle" title="Ollama · Qwen2.5-3B" subtitle="Default local AI path · quantized for speed" />
-                <ArchRow icon="check_circle" title="Strategy-pattern rules" subtitle="Typographic checks composed as pluggable strategies" />
-              </div>
-            </div>
-
-            {/* Architecture diagram */}
-            <div className="space-y-sm">
-              {/* Frontend */}
-              <div className="code-block p-md">
-                <div className="flex items-center gap-sm mb-sm">
-                  <span className="material-symbols-outlined text-primary text-base">web</span>
-                  <span className="tok-key">Frontend</span>
-                  <span className="text-on-surface-variant">React.js · Virtual DOM · incremental updates</span>
-                </div>
-                <div className="text-center text-on-surface-variant">│ HTTP / Async JSON</div>
-              </div>
-
-              {/* Backend */}
-              <div className="code-block p-md">
-                <div className="flex items-center gap-sm mb-sm">
-                  <span className="material-symbols-outlined text-secondary text-base">dns</span>
-                  <span className="tok-key">Backend</span>
-                  <span className="text-on-surface-variant">FastAPI · ASGI · BackgroundTasks</span>
-                </div>
-                <div className="grid grid-cols-2 gap-sm mt-sm">
-                  <div className="rounded border border-primary/30 bg-primary/5 p-sm">
-                    <p className="text-xs tok-key mb-xs">Layout Rules Engine</p>
-                    <p className="text-[11px] text-on-surface-variant">Deterministic · &lt;0.5s</p>
-                  </div>
-                  <div className="rounded border border-secondary/30 bg-secondary/5 p-sm">
-                    <p className="text-xs tok-fn mb-xs">Ollama · Qwen2.5-3B</p>
-                    <p className="text-[11px] text-on-surface-variant">Async background task</p>
-                  </div>
-                </div>
-                <p className="text-[11px] text-on-surface-variant mt-sm italic">↳ optional cloud path: Gemini 1.5 Flash (UI-gated)</p>
-              </div>
-
-              {/* Parser */}
-              <div className="code-block p-md">
-                <div className="flex items-center gap-sm mb-xs">
-                  <span className="material-symbols-outlined text-tertiary text-base">description</span>
-                  <span className="tok-key">Document Parser</span>
-                  <span className="text-on-surface-variant">python-docx · in-memory</span>
-                </div>
-              </div>
-
-              {/* Code snippet */}
-              <div className="code-block p-md mt-sm">
-                <p className="text-xs text-on-surface-variant mb-sm flex items-center gap-xs">
-                  <span className="material-symbols-outlined text-base">code</span>
-                  main.py · /api/audit
-                </p>
-                <pre className="leading-relaxed overflow-x-auto">
-                  <span className="tok-com">{'# Async background task — long AI work without blocking'}</span>{'\n'}
-                  <span className="tok-key">{'async def'}</span> <span className="tok-fn">{'async_ai_citation_task'}</span>{'(sample_text, result_holder):'}{'\n'}
-                  {'    '}<span className="tok-key">{'if'}</span>{' ServerConfig.DEPLOY_MODE == '}<span className="tok-str">{'"LOCAL"'}</span>{':'}{'\n'}
-                  {'        response = ollama.generate('}{'\n'}
-                  {'            model='}<span className="tok-str">{"'qwen2.5:3b'"}</span>{','}{'\n'}
-                  {'            prompt='}<span className="tok-str">{'f"Verify APA 7th: {sample_text}"'}</span>{'\n'}
-                  {'        )'}{'\n'}
-                  {'    result_holder.extend('}<span className="tok-fn">{'parse_ai_json'}</span>{'(response['}<span className="tok-str">{"'response'"}</span>{']))'}
-                </pre>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* ============ PRIVACY ============ */}
-      <section id="privacy" className="py-20 md:py-28">
-        <div className="max-w-[1440px] mx-auto px-md">
-          <div className="rounded-2xl bg-surface-container border border-outline-variant p-lg md:p-xl relative overflow-hidden">
-            <div className="absolute top-0 right-0 w-96 h-96 bg-primary/5 rounded-full blur-3xl pointer-events-none" />
-            <div className="absolute bottom-0 left-0 w-72 h-72 bg-secondary/5 rounded-full blur-3xl pointer-events-none" />
-
-            <div className="relative grid lg:grid-cols-[1fr_1fr] gap-xl items-center">
-              <div>
-                <p className="text-sm uppercase tracking-widest text-secondary font-medium mb-sm">Privacy by default</p>
-                <h2 className="text-3xl md:text-4xl font-semibold tracking-tight mb-md">Your unpublished work stays unpublished.</h2>
-                <p className="text-on-surface-variant leading-relaxed mb-lg">
-                  Universities and supervisors handle sensitive research — sometimes embargoed, sometimes proprietary, sometimes both. We designed every layer of the stack around the assumption that <span className="text-on-surface font-medium">the network is hostile until proven otherwise</span>.
-                </p>
-                <div className="space-y-md">
-                  <PrivacyRow icon="visibility_off" title="Zero outbound by default" description="The local AI engine runs on your machine. Nothing is uploaded, transmitted, or logged." />
-                  <PrivacyRow icon="lock" title="Cloud is opt-in, not opt-out" description={<>The Gemini pipeline is locked behind an explicit UI toggle. The default deploy mode is <span className="font-mono text-secondary">LOCAL</span>.</>} />
-                  <PrivacyRow icon="edit_off" title="Read-only file handling" description="Files are loaded into memory buffers. Your original .docx is never touched, modified, or rewritten." />
-                </div>
-              </div>
-
-              {/* Honest limitations panel */}
-              <div className="rounded-xl bg-surface-container-lowest border border-outline-variant p-lg">
-                <div className="flex items-center gap-sm mb-md">
-                  <span className="material-symbols-outlined text-tertiary">info</span>
-                  <h3 className="text-lg font-semibold">Honest limitations</h3>
-                </div>
-                <p className="text-sm text-on-surface-variant mb-md">Because we care about trust more than marketing copy.</p>
-                <div className="space-y-md text-sm">
-                  <Limitation title="Complex Word styling" description="python-docx captures global styles and paragraph-level configs but may miss intricate run-level local font overrides." />
-                  <Limitation title="AI output is non-deterministic" description={<>Local models can hallucinate or return malformed JSON. Our <span className="font-mono text-secondary">parse_ai_json</span> utility catches these gracefully — they degrade to warning cards, not crashes.</>} />
-                  <Limitation title="One format only" description=".docx. No PDF, no LaTeX, no plagiarism DB lookups, no grammar rewriting." />
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* ============ TECH STACK MARQUEE ============ */}
-      <section className="py-md border-y border-outline-variant bg-surface-container overflow-hidden">
-        <div className="max-w-[1440px] mx-auto px-md mb-md">
-          <p className="text-center text-xs uppercase tracking-widest text-on-surface-variant">Powered by the boring, reliable stack</p>
-        </div>
-        <div className="flex overflow-hidden">
-          <div className="marquee flex gap-xl items-center whitespace-nowrap">
-            {TECH_STACK.concat(TECH_STACK).map((tech, i) => (
-              <span key={i} className="text-2xl font-semibold text-on-surface-variant/60">
-                {tech}
-                <span className="ml-xl">·</span>
-              </span>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* ============ CTA ============ */}
-      <section className="py-20 md:py-28">
-        <div className="max-w-3xl mx-auto px-md text-center">
-          <h2 className="text-3xl md:text-5xl font-semibold tracking-tight mb-md">Stop losing points to formatting.</h2>
-          <p className="text-lg text-on-surface-variant mb-lg">Built for thesis supervisors who refuse to spend 30% of grading time on typography. Built for students who can&rsquo;t afford another point deduction.</p>
-          <div className="flex flex-wrap items-center justify-center gap-sm">
-            <Link
-              to="/dashboard"
-              className="inline-flex items-center gap-xs px-lg py-sm rounded bg-primary text-on-primary font-medium hover:opacity-90 transition-opacity"
-            >
-              <span className="material-symbols-outlined">visibility</span>
-              Open the dashboard
+              <Upload className="h-4 w-4" aria-hidden="true" />
+              Start an audit
             </Link>
             <Link
               to="/history"
-              className="inline-flex items-center gap-xs px-lg py-sm rounded border border-outline-variant text-on-surface hover:border-primary/50 transition-colors"
+              className="inline-flex h-9 items-center gap-2 rounded-md border border-border px-4 text-sm font-medium text-foreground transition-colors hover:bg-accent"
             >
-              <span className="material-symbols-outlined">history</span>
+              <History className="h-4 w-4" aria-hidden="true" />
               View audit history
             </Link>
           </div>
-        </div>
-      </section>
+        </section>
 
-      {/* ============ FOOTER ============ */}
-      <footer className="border-t border-outline-variant bg-surface-container-lowest py-xl">
-        <div className="max-w-[1440px] mx-auto px-md">
-          <div className="grid md:grid-cols-4 gap-lg mb-lg">
-            <div className="md:col-span-2">
-              <div className="flex items-center gap-md mb-sm">
-                <div className="w-8 h-8 rounded-md bg-primary/15 border border-primary/30 flex items-center justify-center">
-                  {SHIELD_LOGO}
-                </div>
-                <span className="font-semibold text-on-surface">Academic Compliance Auditor</span>
+        {/* ────────────── Supported checks ────────────── */}
+        <section id="checks" className="border-b border-border py-10 md:py-12">
+          <h2 className="text-section-title text-foreground">Supported audit checks</h2>
+          <p className="mt-2 max-w-2xl text-[13px] leading-[19px] text-muted-foreground">
+            The audit covers formatting and structural rules enforced by the rules engine.
+            Citation-pattern review is AI-assisted and optional.
+          </p>
+          <dl className="mt-5 grid grid-cols-1 gap-x-8 gap-y-4 sm:grid-cols-2">
+            <CheckGroup
+              icon={Ruler}
+              title="Typography"
+              items={[
+                'Font family and font size (body and headings)',
+                'Line spacing and paragraph spacing',
+                'Paragraph alignment',
+              ]}
+            />
+            <CheckGroup
+              icon={FileText}
+              title="Page layout"
+              items={[
+                'Page margins (top, bottom, left, right)',
+              ]}
+            />
+            <CheckGroup
+              icon={ListTree}
+              title="Document structure"
+              items={['Heading hierarchy (H1–H6 levels)']}
+            />
+            <CheckGroup
+              icon={ListChecks}
+              title="Captions"
+              items={['Numbered captions for tables and figures']}
+            />
+            <CheckGroup
+              icon={Quote}
+              title="Basic citation patterns"
+              items={[
+                'AI-assisted in-text citation pattern review (optional, cloud opt-in)',
+              ]}
+            />
+            <CheckGroup
+              icon={ClipboardCheck}
+              title="Compliance summary"
+              items={[
+                'Weighted compliance score with per-category deductions',
+                'Category verdicts and correction guidance',
+              ]}
+            />
+          </dl>
+        </section>
+
+        {/* ────────────── Static product preview ────────────── */}
+        <section className="border-b border-border py-10 md:py-12">
+          <h2 className="text-section-title text-foreground">What a report looks like</h2>
+          <p className="mt-2 max-w-2xl text-[13px] leading-[19px] text-muted-foreground">
+            A completed report lists findings with expected and actual values, and opens
+            from the history page.
+          </p>
+          <div className="mt-5">
+            <StaticAuditPreview />
+          </div>
+        </section>
+
+        {/* ────────────── How it works ────────────── */}
+        <section id="how" className="border-b border-border py-10 md:py-12">
+          <h2 className="text-section-title text-foreground">How the audit works</h2>
+          <ol className="mt-5 list-decimal space-y-3 pl-5 text-sm leading-[21px] text-foreground">
+            <li>
+              <span className="font-medium">Upload a .docx document.</span>{' '}
+              <span className="text-muted-foreground">
+                Accepted files are .docx only, up to 10 MB. Documents are held in memory.
+              </span>
+            </li>
+            <li>
+              <span className="font-medium">Run deterministic formatting checks.</span>{' '}
+              <span className="text-muted-foreground">
+                Layout and structure rules run locally; the optional AI-assisted citation
+                review runs only when cloud mode is enabled for that audit.
+              </span>
+            </li>
+            <li>
+              <span className="font-medium">Review findings and correction guidance.</span>{' '}
+              <span className="text-muted-foreground">
+                Each finding shows expected and actual values with read-only guidance. The
+                original document is never modified.
+              </span>
+            </li>
+          </ol>
+        </section>
+
+        {/* ────────────── Local-first and read-only ────────────── */}
+        <section id="privacy" className="border-b border-border py-10 md:py-12">
+          <h2 className="text-section-title text-foreground">Local-first and read-only</h2>
+          <dl className="mt-5 grid grid-cols-1 gap-x-8 gap-y-4 sm:grid-cols-2">
+            <PrivacyRow
+              icon={ShieldCheck}
+              label="Local-first processing"
+              detail="Deterministic formatting checks run locally by default and do not require network access."
+            />
+            <PrivacyRow
+              icon={Upload}
+              label="Optional cloud assistance"
+              detail="The AI-assisted citation review is opt-in per audit, behind an explicit toggle."
+            />
+            <PrivacyRow
+              icon={FileText}
+              label="Read-only document review"
+              detail="Your .docx is loaded into memory and never overwritten or rewritten."
+            />
+            <PrivacyRow
+              icon={History}
+              label="Local audit history"
+              detail="Audit records are stored in a local database so previous reports can be reopened."
+            />
+          </dl>
+        </section>
+
+        {/* ────────────── Scope and limitations ────────────── */}
+        <section id="scope" className="border-b border-border py-10 md:py-12">
+          <h2 className="text-section-title text-foreground">Scope and limitations</h2>
+          <ul className="mt-5 list-disc space-y-2 pl-5 text-sm leading-[21px] text-muted-foreground">
+            <li>Supported format is .docx only — no PDF or LaTeX.</li>
+            <li>No plagiarism detection.</li>
+            <li>No full grammar correction.</li>
+            <li>No complete reference-list verification.</li>
+            <li>No automatic document rewriting.</li>
+            <li>AI-assisted suggestions may require human review.</li>
+          </ul>
+        </section>
+
+        {/* ────────────── Final action ────────────── */}
+        <section className="py-10 md:py-12">
+          <h2 className="text-section-title text-foreground">Start an audit</h2>
+          <p className="mt-2 max-w-2xl text-[13px] leading-[19px] text-muted-foreground">
+            Open the Dashboard to upload a document and review the compliance summary.
+          </p>
+          <div className="mt-5 flex flex-wrap gap-3">
+            <Link
+              to="/dashboard"
+              className="inline-flex h-9 items-center gap-2 rounded-md bg-primary px-4 text-sm font-medium text-white transition-colors hover:bg-primary/90"
+            >
+              Open Dashboard
+              <ArrowRight className="h-4 w-4" aria-hidden="true" />
+            </Link>
+            <Link
+              to="/history"
+              className="inline-flex h-9 items-center gap-2 rounded-md border border-border px-4 text-sm font-medium text-foreground transition-colors hover:bg-accent"
+            >
+              View audit history
+            </Link>
+          </div>
+        </section>
+      </main>
+
+      {/* ────────────── Footer ────────────── */}
+      <footer className="border-t border-border bg-card">
+        <div className="mx-auto flex max-w-4xl flex-col items-start justify-between gap-4 px-4 py-6 md:flex-row md:items-center md:px-6">
+          <div className="flex items-center gap-2.5">
+            <div className="grid h-8 w-8 place-items-center rounded-md bg-primary/15 text-primary ring-1 ring-primary/30">
+              {SHIELD_LOGO}
+            </div>
+            <div>
+              <div className="text-sm font-semibold text-foreground">Academic Compliance Auditor</div>
+              <div className="text-[11px] uppercase tracking-wider text-muted-foreground">
+                Local-first .docx auditing
               </div>
-              <p className="text-sm text-on-surface-variant max-w-md leading-relaxed">
-                A privacy-preserving, local-first auditing platform built for the high-stakes environment of academic work. Detection, location, and suggestions only — never rewriting.
-              </p>
-            </div>
-            <div>
-              <p className="text-xs uppercase tracking-wider text-on-surface-variant mb-sm">Product</p>
-              <ul className="space-y-xs text-sm">
-                <li><a href="#features" className="text-on-surface-variant hover:text-on-surface transition-colors">Features</a></li>
-                <li><a href="#dashboard" className="text-on-surface-variant hover:text-on-surface transition-colors">Dashboard</a></li>
-                <li><a href="#how" className="text-on-surface-variant hover:text-on-surface transition-colors">How it works</a></li>
-                <li><Link to="/history" className="text-on-surface-variant hover:text-on-surface transition-colors">History</Link></li>
-              </ul>
-            </div>
-            <div>
-              <p className="text-xs uppercase tracking-wider text-on-surface-variant mb-sm">Resources</p>
-              <ul className="space-y-xs text-sm">
-                <li><a href="#architecture" className="text-on-surface-variant hover:text-on-surface transition-colors">Architecture</a></li>
-                <li><a href="#privacy" className="text-on-surface-variant hover:text-on-surface transition-colors">Privacy</a></li>
-                <li><Link to="/dashboard" className="text-on-surface-variant hover:text-on-surface transition-colors">Live demo</Link></li>
-              </ul>
             </div>
           </div>
-          <div className="pt-md border-t border-outline-variant flex flex-col md:flex-row items-center justify-between gap-sm text-xs text-on-surface-variant">
-            <p className="font-mono">© 2024 Academic Compliance Systems. All rights reserved.</p>
-            <p className="font-mono flex items-center gap-xs">
-              <span className="w-1.5 h-1.5 rounded-full bg-secondary" />
-              Local AI Core: Online · Ollama Qwen2.5-3B
-            </p>
+          <div className="flex items-center gap-4 text-sm text-muted-foreground">
+            <Link to="/dashboard" className="transition-colors hover:text-foreground">Dashboard</Link>
+            <Link to="/history" className="transition-colors hover:text-foreground">History</Link>
           </div>
+        </div>
+        <div className="border-t border-border/60 px-4 py-3 md:px-6">
+          <p className="mx-auto max-w-4xl text-[11px] text-muted-foreground">
+            © 2024 Academic Compliance Systems. Audit records are stored locally; the original
+            document is never modified.
+          </p>
         </div>
       </footer>
     </div>
   )
 }
 
-/* ----------------------------- Sub-components ----------------------------- */
+/* ----------------------------- Section pieces ----------------------------- */
 
-const TECH_STACK = [
-  'React', 'FastAPI', 'python-docx', 'Ollama',
-  'Qwen2.5-3B', 'Gemini 1.5 Flash', 'Tailwind', 'Inter', 'JetBrains Mono',
-]
-
-function Stat({ value, tone, label }: { value: string; tone: 'primary' | 'secondary'; label: string }) {
+function CheckGroup({ icon: Icon, title, items }: { icon: LucideIcon; title: string; items: string[] }) {
   return (
-    <div className="p-md rounded-lg border border-outline-variant bg-surface-container">
-      <div className={`text-3xl font-semibold font-mono ${tone === 'primary' ? 'text-primary' : 'text-secondary'}`}>{value}</div>
-      <div className="text-xs uppercase tracking-wider text-on-surface-variant mt-xs">{label}</div>
-    </div>
-  )
-}
-
-function PreviewFeature({ icon, title, description }: { icon: string; title: string; description: string }) {
-  return (
-    <div className="p-md rounded-xl border border-outline-variant bg-surface-container text-center">
-      <div className="w-10 h-10 mx-auto rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center mb-sm">
-        <span className="material-symbols-outlined text-primary text-base">{icon}</span>
-      </div>
-      <h4 className="text-sm font-semibold text-on-surface mb-xs">{title}</h4>
-      <p className="text-xs text-on-surface-variant leading-relaxed">{description}</p>
-    </div>
-  )
-}
-
-function FeatureCard({
-  tone,
-  icon,
-  title,
-  description,
-  points,
-}: {
-  tone: 'primary' | 'secondary' | 'tertiary'
-  icon: string
-  title: string
-  description: string
-  points: string[]
-}) {
-  const toneClasses = {
-    primary: 'bg-primary/10 border-primary/20 text-primary',
-    secondary: 'bg-secondary/10 border-secondary/20 text-secondary',
-    tertiary: 'bg-tertiary/10 border-tertiary/20 text-tertiary',
-  } as const
-
-  return (
-    <div className="reveal p-lg rounded-xl bg-surface-container border border-outline-variant hover:border-primary/40 transition-colors">
-      <div className={`w-12 h-12 rounded-lg border flex items-center justify-center mb-md ${toneClasses[tone]}`}>
-        <span className="material-symbols-outlined">{icon}</span>
-      </div>
-      <h3 className="text-xl font-semibold mb-sm">{title}</h3>
-      <p className="text-on-surface-variant text-sm leading-relaxed mb-md">{description}</p>
-      <ul className="space-y-xs text-sm">
-        {points.map((p) => (
-          <li key={p} className="flex items-start gap-xs text-on-surface-variant">
-            <span className="material-symbols-outlined text-secondary text-base">check_circle</span>
-            {p}
-          </li>
+    <div>
+      <dt className="flex items-center gap-2 text-sm font-semibold text-foreground">
+        <Icon className="h-4 w-4 text-primary" aria-hidden="true" />
+        {title}
+      </dt>
+      <dd className="mt-1.5 space-y-1 text-[13px] leading-[19px] text-muted-foreground">
+        {items.map((item) => (
+          <p key={item}>{item}</p>
         ))}
-      </ul>
+      </dd>
     </div>
   )
 }
 
-function Step({
-  num,
-  tone,
-  icon,
-  title,
-  description,
-}: {
-  num: number
-  tone: 'primary' | 'secondary' | 'tertiary'
-  icon: string
-  title: string
-  description: string
-}) {
-  const toneClasses = {
-    primary: 'bg-primary/15 border-primary/40 text-primary',
-    secondary: 'bg-secondary/15 border-secondary/40 text-secondary',
-    tertiary: 'bg-tertiary/15 border-tertiary/40 text-tertiary',
-  } as const
-  const badgeBg = {
-    primary: 'bg-primary text-on-primary',
-    secondary: 'bg-secondary text-on-secondary',
-    tertiary: 'bg-tertiary text-on-tertiary',
-  } as const
-
+function PrivacyRow({ icon: Icon, label, detail }: { icon: LucideIcon; label: string; detail: string }) {
   return (
-    <div className="reveal text-center">
-      <div className={`relative mx-auto w-16 h-16 rounded-full border-2 flex items-center justify-center mb-md ${toneClasses[tone]}`}>
-        <span className="material-symbols-outlined text-2xl">{icon}</span>
-        <span className={`absolute -top-1 -right-1 w-6 h-6 rounded-full text-xs font-mono font-semibold flex items-center justify-center ${badgeBg[tone]}`}>
-          {num}
-        </span>
-      </div>
-      <h3 className="text-lg font-semibold mb-sm">{title}</h3>
-      <p className="text-sm text-on-surface-variant leading-relaxed">{description}</p>
-    </div>
-  )
-}
-
-function ArchRow({ icon, title, subtitle }: { icon: string; title: string; subtitle: string }) {
-  return (
-    <div className="flex items-start gap-sm">
-      <span className="material-symbols-outlined text-primary mt-0.5">{icon}</span>
-      <div>
-        <p className="font-medium text-on-surface text-sm">{title}</p>
-        <p className="text-xs text-on-surface-variant">{subtitle}</p>
-      </div>
-    </div>
-  )
-}
-
-function PrivacyRow({ icon, title, description }: { icon: string; title: string; description: React.ReactNode }) {
-  return (
-    <div className="flex items-start gap-md">
-      <div className="w-10 h-10 rounded bg-secondary/10 border border-secondary/30 flex items-center justify-center shrink-0">
-        <span className="material-symbols-outlined text-secondary">{icon}</span>
-      </div>
-      <div>
-        <p className="font-semibold text-on-surface">{title}</p>
-        <p className="text-sm text-on-surface-variant">{description}</p>
-      </div>
-    </div>
-  )
-}
-
-function Limitation({ title, description }: { title: string; description: React.ReactNode }) {
-  return (
-    <div className="border-l-2 border-outline pl-sm">
-      <p className="text-on-surface font-medium mb-xs">{title}</p>
-      <p className="text-xs text-on-surface-variant">{description}</p>
+    <div>
+      <dt className="flex items-center gap-2 text-sm font-semibold text-foreground">
+        <Icon className="h-4 w-4 text-primary" aria-hidden="true" />
+        {label}
+      </dt>
+      <dd className="mt-1.5 text-[13px] leading-[19px] text-muted-foreground">{detail}</dd>
     </div>
   )
 }

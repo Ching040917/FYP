@@ -1,9 +1,5 @@
 /**
- * AppFooter — unified footer used on every page.
- *
- * This is the EXACT same footer as the Landing page (copied verbatim from
- * Landing.tsx lines 478-524). Every page uses this same footer so the
- * footer looks identical across Landing, Dashboard, History, and Audit detail.
+ * AppFooter — unified footer shared by Dashboard, Audit, and History.
  *
  * The footer is a normal block element (no fixed/sticky/absolute positioning).
  * It flows naturally after the main content. The page wrapper uses
@@ -11,10 +7,9 @@
  * sits at the very end — no overlap, no floating, no gap.
  */
 import { Link } from 'react-router-dom'
-import { ShieldCheck } from 'lucide-react'
 
 const SHIELD_LOGO = (
-  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#c0c1ff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5">
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5 text-primary">
     <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
     <path d="M9 12l2 2 4-4" />
   </svg>
@@ -47,18 +42,17 @@ export function AppFooter() {
           <div>
             <p className="text-xs uppercase tracking-wider text-on-surface-variant mb-sm">Resources</p>
             <ul className="space-y-xs text-sm">
-              <li><Link to="/" className="text-on-surface-variant hover:text-on-surface transition-colors">Architecture</Link></li>
-              <li><Link to="/" className="text-on-surface-variant hover:text-on-surface transition-colors">Privacy</Link></li>
-              <li><Link to="/dashboard" className="text-on-surface-variant hover:text-on-surface transition-colors">Live demo</Link></li>
+              <li><Link to="/#how" className="text-on-surface-variant hover:text-on-surface transition-colors">How it works</Link></li>
+              <li><Link to="/#privacy" className="text-on-surface-variant hover:text-on-surface transition-colors">Privacy</Link></li>
+              <li><Link to="/#scope" className="text-on-surface-variant hover:text-on-surface transition-colors">Scope and limitations</Link></li>
             </ul>
           </div>
         </div>
         <div className="pt-md border-t border-outline-variant flex flex-col md:flex-row items-center justify-between gap-sm text-xs text-on-surface-variant">
-          <p className="font-mono">© 2024 Academic Compliance Systems. All rights reserved.</p>
-          <p className="font-mono flex items-center gap-xs">
-            <span className="w-1.5 h-1.5 rounded-full bg-secondary" />
-            Local AI Core: Online · Ollama Qwen2.5-3B
+          <p className="font-mono">
+            © {new Date().getFullYear()} Academic Compliance Systems. All rights reserved.
           </p>
+          <p className="font-mono">Local-first processing · read-only document review</p>
         </div>
       </div>
     </footer>

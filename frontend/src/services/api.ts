@@ -1,4 +1,4 @@
-import type { AuditSubmitResponse, AuditResponse, AuditListItem } from '../types/api'
+import type { AuditSubmitResponse, AuditResponse, AuditListItem, DocumentBlock } from '../types/api'
 
 const API_BASE = '/api'
 
@@ -76,6 +76,15 @@ export const api = {
   async healthCheck(): Promise<{ status: string }> {
     const response = await fetch('/health')
     return handleResponse<{ status: string }>(response)
+  },
+
+  async getDocumentBlocks(auditId: string): Promise<{ audit_id: string; blocks: DocumentBlock[] | null }> {
+    const response = await fetchWithTimeout(
+      `${API_BASE}/audit/${auditId}/document-blocks`,
+      {},
+      POLL_TIMEOUT_MS,
+    )
+    return handleResponse<{ audit_id: string; blocks: DocumentBlock[] | null }>(response)
   },
 }
 
