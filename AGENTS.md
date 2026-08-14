@@ -80,20 +80,21 @@ React frontend (:5173) ──HTTP──► FastAPI backend (:8000) ──reads�
                                     │
                     ┌───────────────┴──────────────┐
                     ▼                               ▼
-          Layout Rules Engine                AI Citation Engine
-          (python-docx, deterministic)       Ollama (qwen3.5:4b) ← default
-          <0.5s, synchronous                  Gemini 1.5 Flash ← UI-gated opt-in
+          Layout Rules Engine                Citation Sensor (deterministic)
+          (python-docx, deterministic)       + AI Guidance (correction only)
+                                             Ollama (qwen3.5:4b) ← default
+                                             Gemini 1.5 Flash ← UI-gated opt-in
 ```
 
 **Key flow** (`POST /api/audit`):
 1. Validate `.docx` extension + 10 MB cap → 400 on violation
 2. Run `run_static_rules_engine` synchronously → layout violations + score
-3. Run `async_ai_citation_task` synchronously (not BackgroundTasks anymore) → citation issues
+3. Run `async_ai_citation_task` synchronously → AI correction guidance for the deterministic citation sensor's confirmed findings (AI never detects, adds, removes, or scores findings)
 4. Both results returned in single response
 
 **Dual-engine rule**: Cloud path is **disabled by default** (`DEPLOY_MODE=LOCAL`). The `cloud` query param on `/api/audit` flips it for that request only. Never auto-enable cloud.
 
-**AI output boundary**: `parse_ai_json` + `_sanitize_issues` is the defensive layer. Drops unknown `issue_type` values, confidence < 0.6, and snippets not found in source. Never let AI crash the request.
+**AI output boundary**: `_validate_source_type` + `_sanitise_reason` + `_validate_guidance_confidence` is the defensive layer for AI guidance. Never let AI crash the request.
 
 ## Hard Constraints (from PRD.md)
 
@@ -127,8 +128,7 @@ All env vars in `backend/.env` (copy from `.env.example`):
 
 - `base_score = 100`, deduct per violation.
 - `MAJOR` violations (margins, heading hierarchy) weight heavier than `MINOR` (typography).
-- Detailed breakdown in `app/services/scoring.py` → `calculate_weighted_score_detailed()`.
-- Frontend mirror of scoring in `frontend/src/lib/audit/scoring.ts`.
+- Backend scoring is authoritative: `calculate_weighted_score_detailed()` in `app/services/scoring.py`. The frontend consumes `score_breakdown` directly via `frontend/src/lib/audit/adapter.ts` — the legacy client-side `scoring.ts` mirror is not used for authoritative results.
 
 ## Evidence-Linked Document Preview (Builds 8B–8E)
 
@@ -160,27 +160,27 @@ source document. Read-only, paragraph-level scope only.
 
 | Path | Component |
 |------|-----------|
-| `/` | `Landing` (marketing + embedded dashboard) |
+| `/` | `Landing` (marketing + static `StaticAuditPreview` — example data, no live backend calls) |
 | `/dashboard` | `Dashboard` (upload + results) |
 | `/history` | `HistoryPage` |
 | `/audit/:auditId` | `AuditPage` (detail + polling) |
 
-`DashboardContent` is reused on both `/dashboard` and `/` — don't duplicate upload logic.
+`DashboardContent` belongs to `/dashboard` only. The Landing page uses the static preview — do not embed the live dashboard there.
 
 ## Design System
 
-Source of truth: `stitch_academic_compliance_auditor/.../DESIGN.md` and the prototype at `.../academic_compliance_auditor_dashboard/code.html`.
+Active source of truth: `frontend/tailwind.config.js` (Manuscript Review Desk palette, Build 2) and the implemented React components. Light-first design — do not apply dark-mode tokens from older docs.
 
-- Dark mode, deep-space palette: Indigo primary `#c0c1ff`, Emerald success `#4edea3`, Rose error `#ffb4ab`.
-- `darkMode: "class"` in `tailwind.config.js` — toggle via class on `<html>`.
-- Tonal layering, not shadows. Cards = `surface-container` with 1px `outline-variant` border.
-- Font: Inter (UI), JetBrains Mono (IDs, reference codes).
-- Logo: 24×24 SVG shield at `academic_compliance_auditor_logo/code.html`.
+- Light-first "Manuscript Review Desk": paper background `#F7F7F4`, ink foreground `#1F2328`, navy primary `#1E3A5F`, green success `#1F7A4D`, red destructive `#B3261E`.
+- `darkMode: "class"` is configured in `tailwind.config.js` but the app is light-first; legacy M3 aliases (surface-container etc.) are light mappings only.
+- System UI font stack + serif headings (Georgia/Times-style); monospace for IDs/values is the system mono stack — no Inter or JetBrains Mono.
+- Tonal layering, not shadows. Cards = white surface with 1px `border-border` rule.
+- Logo: inline 24×24 SVG shield-with-checkmark (see `frontend/src/pages/Landing.tsx`).
 
 ## Known Limitations
 
 - `python-docx` does not fully capture Word font inheritance and run-level overrides. Global styles + paragraph-level checks only. Inline run overrides may slip past.
-- AI models can hallucinate or return malformed JSON. The `parse_ai_json` fallback + `_sanitize_issues` guard is the first-class boundary, not a corner case.
+- AI models can hallucinate or return malformed JSON. The `_validate_source_type` + `_sanitise_reason` + `_validate_guidance_confidence` defensive layer is the first-class boundary, not a corner case.
 
 ## Files of Interest
 
@@ -195,4 +195,4 @@ Source of truth: `stitch_academic_compliance_auditor/.../DESIGN.md` and the prot
 | `backend/tests/test_document_blocks_api.py` | Blocks persistence, contract, deletion, migration tests |
 | `frontend/src/services/api.ts` | HTTP client wrapper |
 | `frontend/src/components/audit/document-preview.tsx` | Preview UI: mapping, highlighting, states, disclosure |
-| `frontend/src/lib/audit/` | Frontend scoring/stats mirroring backend |
+| `frontend/src/lib/audit/` | Frontend types + adapter consuming backend `score_breakdown` and `document_stats` (backend authoritative) |

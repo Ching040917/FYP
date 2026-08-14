@@ -2,6 +2,7 @@ node_modules/
 reference_project/
 
 .opencode/
+.dsh/
 .pytest_cache/
 .serena/
 
