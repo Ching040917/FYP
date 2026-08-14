@@ -90,7 +90,7 @@ class Settings(BaseSettings):
     MAX_FILE_SIZE: int = 10 * 1024 * 1024  # 10 MB
     GEMINI_API_KEY: str = ""
     OLLAMA_HOST: str = "http://localhost:11434"
-    OLLAMA_MODEL: str = "qwen2.5:3b"
+    OLLAMA_MODEL: str = "qwen3.5:4b"
     DATABASE_URL: str = "sqlite:///./audit.db"
 
     # SUC Preset (default)
