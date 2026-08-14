@@ -705,6 +705,24 @@ function getParagraphIndex(v: Violation | null): number | null {
   return typeof n === 'number' && n >= 0 ? n : null
 }
 
+/**
+ * Split a stored guidance suggestion into the personalised correction and
+ * the shared reference material. Backend suggestions are assembled as
+ * "Recommended correction\n<reason>" followed by the generic "What to
+ * verify" checklist, "APA 7 formatting example" templates, and placeholder
+ * warning. Showing the correction per finding while rendering the shared
+ * blocks once (collapsible) avoids repeating identical templates for every
+ * citation finding in the same paragraph.
+ */
+function splitGuidanceSuggestion(suggestion: string | null): { correction: string; shared: string | null } {
+  if (!suggestion) return { correction: '', shared: null }
+  const sections = suggestion.split(/\n\n+/)
+  const correction = (sections[0] ?? '').replace(/^Recommended correction\s*\n/, '').trim()
+  const shared = sections.slice(1).join('\n\n').trim()
+  if (!correction) return { correction: suggestion, shared: null }
+  return { correction, shared: shared || null }
+}
+
 function CitationSection({
   audit,
   isProcessing,
@@ -775,9 +793,28 @@ function CitationSection({
             “{matchedIssue.text_snippet}”
           </blockquote>
         )}
-        <p className="mt-2 whitespace-pre-wrap break-words rounded border border-border bg-input/20 px-3 py-2 text-[13px] leading-[21px] text-foreground">
-          {matchedIssue.suggestion}
-        </p>
+        {(() => {
+          const { correction, shared } = splitGuidanceSuggestion(matchedIssue.suggestion)
+          return (
+            <>
+              {correction && (
+                <p className="mt-2 whitespace-pre-wrap break-words rounded border border-border bg-input/20 px-3 py-2 text-[13px] leading-[21px] text-foreground">
+                  {correction}
+                </p>
+              )}
+              {shared && (
+                <details className="mt-2 rounded-md border border-border bg-card">
+                  <summary className="cursor-pointer select-none px-3 py-2 text-[13px] font-medium text-foreground">
+                    APA templates and verification checklist
+                  </summary>
+                  <div className="whitespace-pre-wrap break-words border-t border-border px-3 py-2 text-[13px] leading-[21px] text-muted-foreground">
+                    {shared}
+                  </div>
+                </details>
+              )}
+            </>
+          )
+        })()}
         <p className="mt-2 flex items-start gap-2 text-[13px] leading-[19px] text-muted-foreground">
           <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
           Completed via {aiProviderLabel(provider)}. Guidance is AI-assisted and requires human

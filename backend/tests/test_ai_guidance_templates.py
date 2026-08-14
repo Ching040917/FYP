@@ -20,6 +20,8 @@ from app.services.ai_citation import (
     AI_STATUS_WITH_SUGGESTIONS,
     _validate_source_type,
     _sanitise_reason,
+    _reject_subjective_reason,
+    _build_personalised_correction,
     build_apa_suggestion,
     async_ai_citation_task,
 )
@@ -83,6 +85,184 @@ def test_reason_sanitisation():
     assert _sanitise_reason(42) is None
     long = "x" * 800
     assert len(_sanitise_reason(long)) == 700
+
+
+# ---------------------------------------------------------------------------
+# Neutral wording — subjective/accusatory guidance is rejected
+# ---------------------------------------------------------------------------
+
+def test_neutral_reason_kept():
+    reason = "No matching References entry was found. Add a matching reference entry and verify the source details."
+    assert _reject_subjective_reason(reason) == reason
+
+
+@pytest.mark.parametrize("phrase", [
+    "This is an academic integrity violation.",
+    "This citation error is misconduct.",
+    "This mistake risks losing credibility.",
+    "A citation mismatch damages your credibility.",
+    "You must create the missing citation now.",
+    "Please create a citation for this source.",
+    "Create citations for every source you use.",
+])
+def test_subjective_reason_rejected(phrase):
+    assert _reject_subjective_reason(f"Reason text. {phrase} More text.") is None
+
+
+def test_subjective_reason_not_case_sensitive():
+    assert _reject_subjective_reason("ACADEMIC INTEGRITY matters here.") is None
+
+
+def test_reference_entry_phrasing_present_in_prompt():
+    """Guidance must say 'reference entry', never 'create citation'."""
+    prompt = ai_citation.CITATION_GUIDANCE_PROMPT
+    assert "reference entry" in prompt
+    assert "create the missing citation" in prompt  # listed as forbidden
+    assert "create a citation" in prompt
+
+
+async def test_subjective_guidance_dropped_from_results(ai_session, monkeypatch):
+    """Subjective reason is rejected end-to-end — no suggestion persisted."""
+    findings = [_finding(0)]
+
+    async def _fake(prompt):
+        return json.dumps([
+            {"finding_key": findings[0]["finding_key"],
+             "reason": "This is an academic integrity violation.",
+             "source_type": "book", "confidence": 0.9},
+        ])
+
+    monkeypatch.setattr(ai_citation, "call_ollama_local", _fake)
+
+    out = await async_ai_citation_task(
+        audit_id="tpl-5", db=ai_session, cloud=False, citation_findings=findings)
+    ai_session.commit()
+    assert out.suggestions == []
+    assert out.status == "COMPLETED_NO_SUGGESTIONS"
+
+
+def test_shared_template_blocks_identical_across_findings():
+    """Same-paragraph findings share one template/checklist block, distinct reasons.
+
+    The stored suggestions differ only in the personalised correction;
+    the shared verification checklist + templates are byte-identical so the
+    UI can render them once instead of duplicating per finding.
+    """
+    sug_a = build_apa_suggestion("Correct the Garcia (2018) entry.", "journal_article")
+    sug_b = build_apa_suggestion("Correct the Lee (2021) entry.", "journal_article")
+
+    def _split(sug):
+        sections = sug.split("\n\n")
+        correction = sections[0].replace("Recommended correction\n", "")
+        shared = "\n\n".join(sections[1:])
+        return correction, shared
+
+    corr_a, shared_a = _split(sug_a)
+    corr_b, shared_b = _split(sug_b)
+    assert corr_a != corr_b, "personalised corrections must stay distinct"
+    assert shared_a == shared_b, "shared checklist + templates must not be duplicated per finding"
+    assert "Garcia" not in shared_a and "Lee" not in shared_b
+
+
+# ---------------------------------------------------------------------------
+# Deterministic personalised correction wording
+# ---------------------------------------------------------------------------
+
+def test_correction_states_no_matching_entry_with_author_year():
+    corr = _build_personalised_correction("Garcia", "2018")
+    assert corr.startswith(
+        "No matching References entry was found for Garcia (2018) in this document."
+    )
+    assert "in this document" in corr
+
+
+def test_correction_includes_verify_and_add_actions():
+    corr = _build_personalised_correction("Garcia", "2018")
+    assert "Verify the original source details" in corr
+    assert "add the corresponding APA 7 reference entry" in corr
+
+
+def test_correction_includes_correct_or_remove_alternative():
+    corr = _build_personalised_correction("Garcia", "2018")
+    assert "refers to the wrong source" in corr
+    assert "correct or remove it instead" in corr
+
+
+def test_correction_never_names_other_authors():
+    garcia = _build_personalised_correction("Garcia", "2018")
+    lee = _build_personalised_correction("Lee", "2021")
+    assert "Garcia" in garcia and "Lee" not in garcia
+    assert "Lee" in lee and "Garcia" not in lee
+
+
+@pytest.mark.parametrize("bad", [
+    "No matching reference exists.",
+    "You must add a missing reference entry.",
+    "Create the missing citation.",
+    "This is an academic integrity violation.",
+])
+def test_correction_excludes_absolute_and_subjective_wording(bad):
+    corr = _build_personalised_correction("Garcia", "2018")
+    assert bad.lower() not in corr.lower()
+    for phrase in ("academic integrity", "credibility", "misconduct"):
+        assert phrase not in corr.lower()
+
+
+async def test_garcia_and_lee_same_paragraph_get_distinct_deterministic_guidance(ai_session, monkeypatch):
+    """Same-paragraph Garcia + Lee findings map to separate deterministic corrections."""
+    findings = [_finding(21, "Garcia", "2018"), _finding(21, "Lee", "2021")]
+
+    async def _fake(prompt):
+        return json.dumps([
+            {"finding_key": findings[0]["finding_key"], "reason": "Neutral reason A.", "source_type": "unknown", "confidence": 0.9},
+            {"finding_key": findings[1]["finding_key"], "reason": "Neutral reason B.", "source_type": "unknown", "confidence": 0.9},
+        ])
+
+    monkeypatch.setattr(ai_citation, "call_ollama_local", _fake)
+
+    out = await async_ai_citation_task(
+        audit_id="tpl-6", db=ai_session, cloud=False, citation_findings=findings)
+    ai_session.commit()
+
+    assert out.status == AI_STATUS_WITH_SUGGESTIONS
+    assert len(out.suggestions) == 2
+    sug_garcia = out.suggestions[0]["suggestion"]
+    sug_lee = out.suggestions[1]["suggestion"]
+    assert "Garcia (2018)" in sug_garcia and "Lee" not in sug_garcia
+    assert "Lee (2021)" in sug_lee and "Garcia" not in sug_lee
+    assert "in this document" in sug_garcia and "in this document" in sug_lee
+    assert out.suggestions[0]["paragraph_index"] == 21
+    assert out.suggestions[1]["paragraph_index"] == 21
+
+
+def test_score_recalculated_without_false_positive():
+    """Fixture score: removing the false Smith finding leaves 2 mismatches.
+
+    citation_apa MAJOR weight = 5, so 2 mismatches deduct 10 → score 90.
+    (With the false Smith finding it would have been 3 × 5 = 15 → 85.)
+    """
+    from app.services.scoring import calculate_weighted_score_detailed
+    from docx import Document
+    from app.services.citation_sensor import run_citation_sensor
+    from app.services.document_parser import extract_paragraphs
+
+    doc = Document()
+    doc.add_paragraph("Smith (2020) reported the first finding.")
+    doc.add_paragraph("However, Garcia (2018) and Lee (2021) disagreed.")
+    doc.add_paragraph("References")
+    doc.add_paragraph("1. Smith, J. (2020). On things. Press.")
+    doc.add_paragraph("2. Jones, A. (2019). Other things. Press.")
+    doc.add_paragraph("Appendix A: Manifest")
+    doc.add_paragraph("Manifest lists Smith (2020) and Garcia (2018) as verified sources.")
+
+    paras = extract_paragraphs(doc)
+    viols = run_citation_sensor(doc, paras)
+    assert len(viols) == 2
+    result = calculate_weighted_score_detailed(viols)
+    assert result.total == 90
+    apa = next(b for b in result.breakdown if b.category == "citation_apa")
+    assert apa.major == 2
+    assert apa.deduction == 10
 
 
 # ---------------------------------------------------------------------------
@@ -283,4 +463,7 @@ def test_post_assembles_structured_guidance(client, docx_factory, monkeypatch):
     assert "APA 7 formatting example" in sug
     assert BOOK_TEMPLATE in sug
     assert WARNING in sug
-    assert "Garcia" not in sug, "model reason must not fabricate source details into templates"
+    # Deterministic correction names the source; templates never fabricate details.
+    assert "No matching References entry was found for Garcia (2018) in this document." in sug
+    shared = "\n\n".join(sug.split("\n\n")[1:])
+    assert "Garcia" not in shared, "model reason must not fabricate source details into templates"

@@ -33,12 +33,36 @@ PARENTHETICAL_PATTERN = re.compile(
     r"(?:,\s*[^)]*)?\)"
 )
 
-# Section headers that mark the start of a reference list.
-# Match whole paragraph (case-insensitive, trimmed).
+# Section header words that mark the start of a reference list.
+# Strict whole-paragraph match (case-insensitive, trimmed) — the paragraph
+# text must be exactly one of these after numeric-prefix normalization.
+# "References are listed below" is never a header.
 REFERENCES_HEADER_PATTERN = re.compile(
-    r"^\s*(references|bibliography|works\s+cited|reference\s+list)\s*$",
+    r"^(references|bibliography|works\s+cited|reference\s+list)$",
     re.IGNORECASE,
 )
+
+# Leading numbered-section prefix on a heading, e.g. "6 ", "6. ", "6.1 ".
+# Removed from a heading candidate before the strict header match.
+_NUMERIC_SECTION_PREFIX = re.compile(r"^\d+(?:\.\d+)*\.?\s+")
+
+# Appendix headings terminate the reference-entry block: everything from
+# an Appendix heading onward is not part of the bibliography.
+APPENDIX_HEADER_PATTERN = re.compile(r"^appendix\b", re.IGNORECASE)
+
+
+def _is_references_header(text: str) -> bool:
+    """True when a paragraph is a References/Bibliography section header.
+
+    Accepts bare headers ("References", "REFERENCES") and numbered heading
+    forms ("6 References", "6. References", "6.1 References"). Only
+    leading whitespace and one numeric section prefix are normalized away
+    before the exact header match — body text such as "References are
+    listed below" is never accepted, and no substring matching is used.
+    """
+    candidate = (text or "").strip()
+    candidate = _NUMERIC_SECTION_PREFIX.sub("", candidate)
+    return bool(REFERENCES_HEADER_PATTERN.match(candidate))
 
 
 def _make_violation(
@@ -61,18 +85,36 @@ def _make_violation(
     )
 
 
+def _find_references_start(paragraphs: List[Dict[str, Any]]) -> Optional[int]:
+    """Return the index of the first paragraph that is a References header.
+
+    Returns None when no header exists — the safe default is to treat the
+    whole document as body text (every citation is then an orphan).
+    """
+    for para in paragraphs:
+        if _is_references_header(para.get("text")):
+            return para["index"]
+    return None
+
+
 def _scan_paragraphs_for_citations(
     paragraphs: List[Dict[str, Any]],
+    stop_at: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
     """Walk paragraphs, run both regex patterns, collect (author, year, idx, snippet).
 
     Multiple matches in one paragraph are allowed (different works in same paragraph).
+    Scanning stops at the References section (stop_at): reference entries and any
+    appendix/manifest text after the header are bibliography data, not body
+    citations — scanning them fabricates duplicate or false findings.
     """
     findings: List[Dict[str, Any]] = []
     seen_in_para: Set[tuple] = set()  # de-dupe (author, year, para_idx)
 
     for para in paragraphs:
         idx = para.get("index")
+        if stop_at is not None and idx >= stop_at:
+            continue
         text = para.get("text", "") or ""
         if not text:
             continue
@@ -117,7 +159,10 @@ def _scan_paragraphs_for_citations(
     return findings
 
 
-def _extract_references_block(paragraphs: List[Dict[str, Any]]) -> str:
+def _extract_references_block(
+    paragraphs: List[Dict[str, Any]],
+    start_idx: Optional[int] = None,
+) -> str:
     """Return concatenated text from the References section onward.
 
     Detection rule: first paragraph whose trimmed text matches a known
@@ -127,13 +172,8 @@ def _extract_references_block(paragraphs: List[Dict[str, Any]]) -> str:
     If no header is found, returns empty string — sensor then treats
     every citation as orphan, which is the safe default.
     """
-    start_idx: Optional[int] = None
-    for para in paragraphs:
-        text = (para.get("text") or "").strip()
-        if REFERENCES_HEADER_PATTERN.match(text):
-            start_idx = para["index"]
-            break
-
+    if start_idx is None:
+        start_idx = _find_references_start(paragraphs)
     if start_idx is None:
         return ""
 
@@ -141,28 +181,54 @@ def _extract_references_block(paragraphs: List[Dict[str, Any]]) -> str:
     for para in paragraphs:
         if para.get("index", -1) >= start_idx:
             text = (para.get("text") or "").strip()
-            if text:
-                parts.append(text)
+            if not text:
+                continue
+            # An Appendix heading ends the bibliography: reference entries
+            # live between the References header and the first appendix.
+            if APPENDIX_HEADER_PATTERN.match(text):
+                break
+            parts.append(text)
     return "\n".join(parts)
+
+
+# First alphabetic run of a reference line — the surname. Hyphens and
+# apostrophes are kept so hyphenated/O'Brien surnames match their in-text
+# forms.
+_SURNAME_RUN = re.compile(r"[A-Za-zÀ-ſ][A-Za-zÀ-ſ'\-]*")
+
+
+def _extract_surname_token(line: str) -> Optional[str]:
+    """First alphabetic token of a reference entry, junk-stripped.
+
+    APA entries start with the surname, optionally prefixed by list
+    numbering or bullets ("1. Smith, J. (2020)..."). The first alphabetic
+    run of the line is the surname: leading numerals, bullets, and
+    punctuation are skipped entirely, so numbered reference lists resolve
+    to "Smith" instead of being dropped from the index (which would turn a
+    valid citation into a false CITATION_MISMATCH).
+    """
+    match = _SURNAME_RUN.search(line)
+    if not match:
+        return None
+    return match.group(0)
 
 
 def _build_references_index(references_text: str) -> Set[str]:
     """Build a set of normalized surname tokens present in the References block.
 
-    Strategy: take the first whitespace-delimited token of each non-empty
-    line. This works for the common APA layout where each entry starts with
-    "Surname, F. M."  Surnames are lowercased for case-insensitive matching.
+    Strategy: take the first token of each non-empty line, skipping any
+    leading numbering/bullets — this works for common APA layouts
+    ("Surname, F. M." and "1. Surname, F. M."). Surnames are lowercased
+    for case-insensitive matching.
     """
     index: Set[str] = set()
     for line in references_text.splitlines():
         line = line.strip()
         if not line:
             continue
-        first_token = line.split(",")[0].split()[0] if line else ""
-        # Strip leading non-alphabetic junk
-        first_token = re.sub(r"^[^A-Za-zÀ-ſ']+", "", first_token)
-        if first_token:
-            index.add(first_token.lower())
+        surname = _extract_surname_token(line)
+        if surname:
+            index.add(surname.lower())
     return index
 
 
@@ -173,11 +239,12 @@ def run_citation_sensor(doc: Document, paragraphs: List[Dict[str, Any]]) -> List
     document's References/Bibliography block. Each orphan citation becomes
     a MAJOR Violation with rule_code 'CITATION_MISMATCH'.
     """
-    findings = _scan_paragraphs_for_citations(paragraphs)
+    ref_start = _find_references_start(paragraphs)
+    findings = _scan_paragraphs_for_citations(paragraphs, stop_at=ref_start)
     if not findings:
         return []
 
-    references_text = _extract_references_block(paragraphs)
+    references_text = _extract_references_block(paragraphs, start_idx=ref_start)
     references_index = _build_references_index(references_text)
 
     violations: List[LayoutViolation] = []

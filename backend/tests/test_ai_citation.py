@@ -416,7 +416,7 @@ async def test_suggestion_maps_to_correct_finding(ai_session, monkeypatch):
     assert out.status == AI_STATUS_WITH_SUGGESTIONS
     assert len(out.suggestions) == 2
     assert out.suggestions[0]["paragraph_index"] == 0
-    assert "Add Smith 2020 ref." in out.suggestions[0]["suggestion"]
+    assert "No matching References entry was found for Smith (2020) in this document." in out.suggestions[0]["suggestion"]
     assert out.suggestions[1]["paragraph_index"] == 3
 
 
@@ -452,9 +452,9 @@ async def test_reordered_provider_output_maps_correctly(ai_session, monkeypatch)
     assert out.status == AI_STATUS_WITH_SUGGESTIONS
     assert len(out.suggestions) == 2
     assert out.suggestions[0]["paragraph_index"] == 0
-    assert "Fix Alpha." in out.suggestions[0]["suggestion"]
+    assert "No matching References entry was found for Alpha (2021) in this document." in out.suggestions[0]["suggestion"]
     assert out.suggestions[1]["paragraph_index"] == 2
-    assert "Fix Beta." in out.suggestions[1]["suggestion"]
+    assert "No matching References entry was found for Beta (2019) in this document." in out.suggestions[1]["suggestion"]
 
 
 # ---------------------------------------------------------------------------
@@ -793,9 +793,9 @@ async def test_same_paragraph_findings_get_distinct_guidance(ai_session, monkeyp
     assert out.status == AI_STATUS_WITH_SUGGESTIONS
     assert len(out.suggestions) == 2
     assert out.suggestions[0]["paragraph_index"] == 5
-    assert "Add Smith 2020 ref." in out.suggestions[0]["suggestion"]
+    assert "No matching References entry was found for Smith (2020) in this document." in out.suggestions[0]["suggestion"]
     assert out.suggestions[1]["paragraph_index"] == 5
-    assert "Add Jones 2019 ref." in out.suggestions[1]["suggestion"]
+    assert "No matching References entry was found for Jones (2019) in this document." in out.suggestions[1]["suggestion"]
 
 
 async def test_reordered_output_maps_by_finding_key(ai_session, monkeypatch):
@@ -829,11 +829,11 @@ async def test_reordered_output_maps_by_finding_key(ai_session, monkeypatch):
     assert len(out.suggestions) == 3
     # Order in result follows finding order, not response order
     assert out.suggestions[0]["paragraph_index"] == 0
-    assert "Fix Alpha." in out.suggestions[0]["suggestion"]
+    assert "No matching References entry was found for Alpha (2021) in this document." in out.suggestions[0]["suggestion"]
     assert out.suggestions[1]["paragraph_index"] == 2
-    assert "Fix Beta." in out.suggestions[1]["suggestion"]
+    assert "No matching References entry was found for Beta (2019) in this document." in out.suggestions[1]["suggestion"]
     assert out.suggestions[2]["paragraph_index"] == 5
-    assert "Fix Gamma." in out.suggestions[2]["suggestion"]
+    assert "No matching References entry was found for Gamma (2017) in this document." in out.suggestions[2]["suggestion"]
 
 
 async def test_duplicate_finding_key_accepted_at_most_once(ai_session, monkeypatch):
@@ -865,7 +865,7 @@ async def test_duplicate_finding_key_accepted_at_most_once(ai_session, monkeypat
     assert out.status == AI_STATUS_WITH_SUGGESTIONS
     assert len(out.suggestions) == 1
     assert out.suggestions[0]["paragraph_index"] == 0
-    assert "fix A" in out.suggestions[0]["suggestion"]
+    assert "No matching References entry was found for A (2020) in this document." in out.suggestions[0]["suggestion"]
 
 
 async def test_unknown_finding_key_ignored(ai_session, monkeypatch):

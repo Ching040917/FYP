@@ -9,3 +9,4 @@ reference_project/
 __pycache__/
 *.py[cod]
 .pytest_cache/
+backend/audit.db

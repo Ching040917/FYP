@@ -76,6 +76,17 @@ For each finding, provide:
   guidance is; use 0.9-1.0 when the fix is straightforward, lower only
   when the correction is ambiguous.
 
+WORDING RULES — the mismatch is a formatting defect, never a moral
+judgement. Use neutral, corrective wording only:
+- Say "no matching References entry was found" or "the citation has no
+  matching entry in the References section".
+- Say "add a matching reference entry" or "add the missing reference
+  entry" — never "create the missing citation" or "create a citation".
+- Say "verify the source details" and "correct or remove the in-text
+  citation if it refers to the wrong source".
+NEVER use subjective or accusatory wording such as "academic integrity
+violation", "misconduct", "losing credibility", or "credibility".
+
 Do NOT invent bibliographic details such as author initials, titles,
 journal names, publishers, volumes, issues, page ranges, DOIs, URLs, or
 publication dates. Do NOT write reference entries yourself. Do NOT
@@ -133,6 +144,80 @@ _APA_PLACEHOLDER_WARNING = (
     "Formatting example only. Replace all placeholders with verified source "
     "information before submission."
 )
+
+# Subjective / accusatory phrasing that must never reach the student.
+# Guidance that contains any of these is rejected outright — a formatting
+# mismatch is corrected with neutral wording, never a moral judgement.
+# Matched case-insensitively against the sanitized reason.
+_SUBJECTIVE_PHRASES = (
+    "academic integrity",
+    "misconduct",
+    "credibility",
+    "create the missing citation",
+    "create a missing citation",
+    "create a citation",
+    "create citations",
+)
+
+
+def _reject_subjective_reason(reason: Optional[str]) -> Optional[str]:
+    """Return the reason unchanged when neutral, or None when subjective.
+
+    The AI is instructed to use neutral wording, but instructions can be
+    ignored — this is the hard boundary. Any reason containing a
+    subjective/accusatory phrase (academic integrity, misconduct,
+    credibility, "create the missing citation") is dropped so no guidance
+    is persisted for that finding.
+    """
+    if not reason:
+        return reason
+    lowered = reason.lower()
+    if any(phrase in lowered for phrase in _SUBJECTIVE_PHRASES):
+        return None
+    return reason
+
+
+# Author/year embedded in the deterministic violation message, e.g.
+# "Citation 'Garcia (2018)' was found in text, ..." — matches the exact
+# format emitted by citation_sensor._make_violation.
+_FINDING_AUTHOR_YEAR = re.compile(r"^Citation '(.+?) \((\d{4}[a-z]?)\)'")
+
+
+def _extract_author_year(message: Optional[str]) -> tuple[Optional[str], Optional[str]]:
+    """Return (author, year) parsed from the deterministic violation message.
+
+    Falls back to (None, None) when the message is missing or malformed —
+    the caller then uses a generic correction without naming a source.
+    """
+    if not message:
+        return None, None
+    match = _FINDING_AUTHOR_YEAR.match(message.strip())
+    if not match:
+        return None, None
+    return match.group(1), match.group(2)
+
+
+def _build_personalised_correction(author: Optional[str], year: Optional[str]) -> str:
+    """Deterministically assemble the personalised correction sentence.
+
+    Application-owned wording, identical for every provider (Ollama,
+    Gemini, local fallback). Never names a source type, never invents
+    bibliographic details, and always includes the remove/correct
+    alternative. The AI reason is validated but never persisted into this
+    sentence — absolute phrasing ("No matching reference exists") cannot
+    reach the student.
+    """
+    if author and year:
+        target = f"{author} ({year})"
+    else:
+        target = "this citation"
+    return (
+        f"No matching References entry was found for {target} in this "
+        "document. Verify the original source details and add the "
+        "corresponding APA 7 reference entry. If the in-text citation "
+        "refers to the wrong source or is no longer required, correct or "
+        "remove it instead."
+    )
 
 
 def _validate_source_type(raw: Any) -> str:
@@ -421,9 +506,16 @@ async def async_ai_citation_task(
             continue
         suggestion = None
         reason = _sanitise_reason(item.get("reason"))
+        reason = _reject_subjective_reason(reason)
         if reason is not None:
+            # Deterministic personalised correction — the model reason is
+            # validated but never persisted verbatim. Application-owned
+            # wording guarantees neutral, complete guidance on every
+            # provider path (Ollama / Gemini / local fallback).
+            author, year = _extract_author_year(finding.get("message", ""))
+            correction = _build_personalised_correction(author, year)
             source_type = _validate_source_type(item.get("source_type"))
-            suggestion = build_apa_suggestion(reason, source_type)
+            suggestion = build_apa_suggestion(correction, source_type)
         if suggestion is None:
             continue
         confidence = _validate_guidance_confidence(item.get("confidence"))

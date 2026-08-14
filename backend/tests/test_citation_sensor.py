@@ -310,3 +310,175 @@ def test_violation_shape_contract():
     assert viols[0].severity == "MAJOR"
     assert isinstance(viols[0].location, dict)
     assert "paragraph_index" in viols[0].location
+
+
+# ---------------------------------------------------------------------------
+# False-positive regression: numbered reference lists + appendix/manifest
+# ---------------------------------------------------------------------------
+
+def test_numbered_reference_entry_matches_narrative_citation():
+    """Smith (2020) with a numbered reference '1. Smith, J. (2020)' must NOT flag.
+
+    Regression: first-token index building dropped entries prefixed by list
+    numbering, turning a valid citation into a false CITATION_MISMATCH.
+    """
+    doc = Document()
+    doc.add_paragraph("Smith (2020) reported the first finding.")
+    doc.add_paragraph("References")
+    doc.add_paragraph("1. Smith, J. (2020). On things. Press.")
+    doc.add_paragraph("2. Jones, A. (2019). Other things. Press.")
+    paras = extract_paragraphs(doc)
+    viols = run_citation_sensor(doc, paras)
+    assert viols == []
+
+
+def test_bulleted_reference_entry_matches():
+    doc = Document()
+    doc.add_paragraph("Smith (2020) reported the first finding.")
+    doc.add_paragraph("References")
+    doc.add_paragraph("- Smith, J. (2020). On things. Press.")
+    paras = extract_paragraphs(doc)
+    viols = run_citation_sensor(doc, paras)
+    assert viols == []
+
+
+def test_hyphenated_and_apostrophe_surnames_normalize():
+    """Initials, punctuation, and case normalize safely for matching."""
+    doc = Document()
+    doc.add_paragraph("Smith-Jones (2020) reported it. O'Brien (2019) replied.")
+    doc.add_paragraph("References")
+    doc.add_paragraph("SMITH-JONES, A. (2020). On things. Press.")
+    doc.add_paragraph("O'Brien, P. (2019). Other things. Press.")
+    paras = extract_paragraphs(doc)
+    viols = run_citation_sensor(doc, paras)
+    assert viols == []
+
+
+def test_garcia_and_lee_same_paragraph_separate_mismatches():
+    """Two missing authors in one paragraph stay two distinct violations."""
+    doc = Document()
+    doc.add_paragraph("Smith (2020) reported the first finding.")
+    doc.add_paragraph("However, Garcia (2018) and Lee (2021) disagreed.")
+    doc.add_paragraph("References")
+    doc.add_paragraph("Smith, J. (2020). On things. Press.")
+    paras = extract_paragraphs(doc)
+    viols = run_citation_sensor(doc, paras)
+    assert len(viols) == 2
+    authors = {v.message.split("'")[1].split(" (")[0] for v in viols}
+    assert authors == {"Garcia", "Lee"}
+    assert all(v.location["paragraph_index"] == 1 for v in viols)
+
+
+def test_appendix_manifest_text_not_scanned_as_citations():
+    """Paragraphs after the References header must not create findings."""
+    doc = Document()
+    doc.add_paragraph("Smith (2020) reported the first finding.")
+    doc.add_paragraph("However, Garcia (2018) and Lee (2021) disagreed.")
+    doc.add_paragraph("References")
+    doc.add_paragraph("Smith, J. (2020). On things. Press.")
+    doc.add_paragraph("Appendix A: Manifest")
+    doc.add_paragraph("Manifest lists Smith (2020) and Garcia (2018) as verified sources.")
+    paras = extract_paragraphs(doc)
+    viols = run_citation_sensor(doc, paras)
+    # Only the two body-paragraph mismatches; the manifest's Garcia mention
+    # must NOT produce a third violation.
+    assert len(viols) == 2
+    assert all(v.location["paragraph_index"] == 1 for v in viols)
+    assert {v.message.split("'")[1].split(" (")[0] for v in viols} == {"Garcia", "Lee"}
+
+
+def test_fixture_shape_smith_valid_garcia_lee_mismatch():
+    """Full fixture expectation: Smith resolves, Garcia + Lee flagged once each."""
+    doc = Document()
+    doc.add_paragraph("Smith (2020) reported the first finding.")
+    doc.add_paragraph("However, Garcia (2018) and Lee (2021) disagreed.")
+    doc.add_paragraph("References")
+    doc.add_paragraph("1. Smith, J. (2020). On things. Press.")
+    doc.add_paragraph("2. Jones, A. (2019). Other things. Press.")
+    doc.add_paragraph("Appendix A: Manifest")
+    doc.add_paragraph("Manifest lists Smith (2020) and Garcia (2018) as verified sources.")
+    paras = extract_paragraphs(doc)
+    viols = run_citation_sensor(doc, paras)
+    assert len(viols) == 2
+    assert {v.message.split("'")[1].split(" (")[0] for v in viols} == {"Garcia", "Lee"}
+
+
+# ---------------------------------------------------------------------------
+# References-heading boundary: numbered heading forms + appendix termination
+# ---------------------------------------------------------------------------
+
+def _doc_with_header(header_text, body_cite="Smith (2020) wrote about it.",
+                     ref_entry="Smith, J. (2020). On things. Press."):
+    doc = Document()
+    doc.add_paragraph(body_cite)
+    doc.add_paragraph(header_text)
+    doc.add_paragraph(ref_entry)
+    return doc
+
+
+@pytest.mark.parametrize("header", [
+    "References",
+    "REFERENCES",
+    "6 References",
+    "6. References",
+    "6.1 References",
+    "6.1.2 References",
+])
+def test_references_heading_forms_recognized(header):
+    """Bare, uppercase, and numbered heading forms all bound the section."""
+    doc = _doc_with_header(header)
+    paras = extract_paragraphs(doc)
+    viols = run_citation_sensor(doc, paras)
+    assert viols == []
+
+
+@pytest.mark.parametrize("misleading", [
+    "References are listed below",
+    "6 References are listed below",
+    "See References section",
+    "Reference list items",
+])
+def test_misleading_references_body_text_not_a_header(misleading):
+    """Prose mentioning 'References' must not be treated as the section start."""
+    doc = _doc_with_header(misleading)
+    paras = extract_paragraphs(doc)
+    viols = run_citation_sensor(doc, paras)
+    # No real header → reference index empty → Smith is an orphan
+    assert len(viols) == 1
+    assert "Smith" in viols[0].message
+
+
+def test_numbered_heading_smith_resolves_garcia_lee_mismatch():
+    """Fixture 2 shape: '6 References' Heading 1, Smith entry, appendices."""
+    doc = Document()
+    doc.add_paragraph("Smith (2020) reported the first finding.")
+    doc.add_paragraph("However, Garcia (2018) and Lee (2021) disagreed.")
+    doc.add_paragraph("6 References")
+    doc.add_paragraph("Smith, J. (2020). On things. Press.")
+    doc.add_paragraph("Appendix A: Expected Detection Manifest")
+    doc.add_paragraph("Manifest lists Smith (2020) and Garcia (2018) as verified sources.")
+    paras = extract_paragraphs(doc)
+    viols = run_citation_sensor(doc, paras)
+    authors = {v.message.split("'")[1].split(" (")[0] for v in viols}
+    assert authors == {"Garcia", "Lee"}
+    assert len(viols) == 2
+
+
+def test_appendix_heading_terminates_reference_collection():
+    """Reference entries after an Appendix heading are not indexed.
+
+    Jones (2019) is cited in the body but its 'entry' lives after the
+    Appendix heading — without termination it would be indexed and Jones
+    would (wrongly) resolve. With termination Jones stays an orphan.
+    """
+    doc = Document()
+    doc.add_paragraph("Smith (2020) and Jones (2019) wrote about it.")
+    doc.add_paragraph("References")
+    doc.add_paragraph("Smith, J. (2020). On things. Press.")
+    doc.add_paragraph("Appendix A: Extra Material")
+    doc.add_paragraph("Jones, A. (2019). Should not be indexed as a reference entry.")
+    paras = extract_paragraphs(doc)
+    viols = run_citation_sensor(doc, paras)
+    assert len(viols) == 1
+    assert "Jones" in viols[0].message
+    assert "Smith" not in viols[0].message
