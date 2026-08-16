@@ -335,12 +335,17 @@ def test_grouped_minors_preserve_all_findings(client, test_engine):
     resp = _export(client, audit_id)
     assert resp.status_code == 200
     text = _pdf_text(resp.content)
-    # Should see grouped header
-    assert "FONT_CONSISTENCY - 10 finding(s)" in text
-    # Appendix contains full detail for each finding (triggered by len(minor) >= 8)
-    assert "Detailed Findings Appendix" in text
-    assert text.count("Finding 1") >= 1
-    assert text.count("Finding 10") >= 1
+    # Group panel: G### id + friendly rule name + severity/count header
+    assert "G001" in text
+    assert "Font Consistency" in text
+    assert "Minor · 10 finding(s)" in text
+    # Appendix is a compact register (not verbose Finding N tables)
+    assert "Appendix" in text
+    assert "Findings Register" in text
+    assert "F001" in text
+    assert "F010" in text
+    # All 10 findings present exactly once in appendix (secondary rule code per row)
+    assert text.count("FONT_CONSISTENCY") >= 10
 
 
 def test_major_findings_remain_individual(client, test_engine):
@@ -394,3 +399,213 @@ def test_score_and_deductions_unchanged(client, docx_factory):
     # Verify category labels still present
     assert "Page Margins" in text
     assert "APA Citations" in text
+
+
+# ---------------------------------------------------------------------------
+# Report structure improvements (Build 9A)
+# ---------------------------------------------------------------------------
+
+def test_citation_required_action_uses_correct_wording(client, test_engine):
+    """CITATION_MISMATCH must not generate 'Change citation entry from X to Y'."""
+    violations = [
+        {"rule_code": "CITATION_MISMATCH", "severity": "MAJOR",
+         "location": {"paragraph_index": 0},
+         "message": "Citation 'Garcia (2018)' was found in text, but no matching entry was found.",
+         "expected_value": "Matching References entry", "actual_value": "Garcia (2018)"},
+        {"rule_code": "CITATION_MISMATCH", "severity": "MAJOR",
+         "location": {"paragraph_index": 3},
+         "message": "Citation 'Lee (2020)' was found in text, but no matching entry was found.",
+         "expected_value": "Matching References entry", "actual_value": "Lee (2020)"},
+    ]
+    audit_id = _seed_audit(
+        test_engine, status="completed", weighted_score=85,
+        violations=violations,
+    )
+    text = _pdf_text(_export(client, audit_id).content)
+    assert "Change citation entry" not in text
+    assert "Add a matching References entry for Garcia (2018), or correct or remove" in text
+    assert "Add a matching References entry for Lee (2020), or correct or remove" in text
+
+
+def test_space_before_separate_groups_by_expected_value(client, test_engine):
+    """SPACE_BEFORE with 0pt and 12pt expectations must be separate groups."""
+    violations = (
+        [
+            {"rule_code": "SPACE_BEFORE", "severity": "MINOR",
+             "location": {"paragraph_index": i},
+             "message": f"Space before {i}pt != required 0pt",
+             "expected_value": "0pt", "actual_value": f"{i}pt"}
+            for i in (2, 6, 18)
+        ]
+        + [
+            {"rule_code": "SPACE_BEFORE", "severity": "MINOR",
+             "location": {"paragraph_index": 40 + i},
+             "message": f"Space before {6+i}pt != required 12pt",
+             "expected_value": "12pt", "actual_value": f"{6+i}pt"}
+            for i in range(3)
+        ]
+    )
+    audit_id = _seed_audit(
+        test_engine, status="completed", weighted_score=80,
+        violations=violations,
+    )
+    text = _pdf_text(_export(client, audit_id).content)
+    # Two distinct groups, each with correct friendly-name header
+    assert "G001" in text
+    assert "G002" in text
+    assert text.count("Space Before") >= 8  # 2 group headers + 6 appendix rows
+    # Each group shows its own required value in the comparison row
+    assert "Required" in text
+    assert "0pt" in text
+    assert "12pt" in text
+    # Appendix has all 6 findings (secondary rule code per row)
+    assert text.count("SPACE_BEFORE") >= 6
+
+
+def test_consistent_id_format_in_pdf(client, test_engine):
+    """P### for major, G### for minor groups/singletons, F### for appendix."""
+    violations = [
+        {"rule_code": "MARGIN_LEFT", "severity": "MAJOR",
+         "location": {"section_index": 0}, "message": "Wrong margin",
+         "expected_value": "1.5in", "actual_value": "1.0in"},
+        {"rule_code": "FONT_SIZE", "severity": "MINOR",
+         "location": {"paragraph_index": 0}, "message": "Wrong size",
+         "expected_value": "12pt", "actual_value": "14pt"},
+        {"rule_code": "FONT_SIZE", "severity": "MINOR",
+         "location": {"paragraph_index": 1}, "message": "Wrong size",
+         "expected_value": "12pt", "actual_value": "11pt"},
+    ]
+    audit_id = _seed_audit(
+        test_engine, status="completed", weighted_score=80,
+        violations=violations,
+    )
+    text = _pdf_text(_export(client, audit_id).content)
+    assert "P001" in text       # first major
+    assert "G001" in text      # FONT_SIZE group (same rule+expected, 2 findings)
+    assert "F001" in text      # appendix entry for MARGIN_LEFT
+    assert "F002" in text      # appendix entry for FONT_SIZE para 1
+    assert "F003" in text      # appendix entry for FONT_SIZE para 2
+
+
+def test_appendix_is_compact_table(client, test_engine):
+    """Appendix must be a table (ID/Severity/Rule/Location/Actual/Expected), not full finding blocks."""
+    violations = [
+        {"rule_code": "FONT_SIZE", "severity": "MINOR",
+         "location": {"paragraph_index": i}, "message": f"Font size wrong {i}",
+         "expected_value": "12pt", "actual_value": f"{10+i}pt"}
+        for i in range(5)
+    ]
+    audit_id = _seed_audit(
+        test_engine, status="completed", weighted_score=80,
+        violations=violations,
+    )
+    text = _pdf_text(_export(client, audit_id).content)
+    assert "Findings Register" in text
+    # Compact columns present
+    assert "Friendly Rule" in text
+    assert "ID" in text
+    assert "Severity" in text
+    assert "Actual" in text
+    assert "Expected" in text
+    # No verbose "Finding N" header rows in appendix
+    assert text.count("Finding ") == 0
+
+
+def test_group_panel_structure(client, test_engine):
+    """Minor groups render as info panels: header, comparison, locations, action."""
+    violations = [
+        {"rule_code": "LINE_SPACING", "severity": "MINOR",
+         "location": {"paragraph_index": i}, "message": "Spacing wrong",
+         "expected_value": "1.5", "actual_value": "1.0"}
+        for i in range(3)
+    ]
+    audit_id = _seed_audit(test_engine, status="completed", weighted_score=80,
+                           violations=violations)
+    text = _pdf_text(_export(client, audit_id).content)
+    assert "G001" in text
+    assert "Line Spacing" in text
+    assert "Minor · 3 finding(s)" in text
+    assert "Required" in text
+    assert "Observed" in text
+    assert "Affected Locations" in text
+    assert "Required Action" in text
+
+
+def test_consecutive_paragraph_locations_compacted_into_ranges(client, test_engine):
+    """Consecutive paragraphs collapse to a range; run indexes are preserved."""
+    violations = [
+        {"rule_code": "FONT_SIZE", "severity": "MINOR",
+         "location": {"paragraph_index": i, "run_index": i * 2},
+         "message": "Wrong size", "expected_value": "12pt", "actual_value": "14pt"}
+        for i in range(5)
+    ]
+    audit_id = _seed_audit(test_engine, status="completed", weighted_score=80,
+                           violations=violations)
+    text = _pdf_text(_export(client, audit_id).content)
+    assert "Paragraphs 1-5 (Run 1, Run 3, Run 5, Run 7, Run 9)" in text
+
+
+def test_appendix_lands_on_new_landscape_page_split_by_severity(client, test_engine):
+    """Appendix starts on a fresh landscape page, Major then Minor sections."""
+    violations = [
+        {"rule_code": "MARGIN_LEFT", "severity": "MAJOR",
+         "location": {"section_index": 0}, "message": "Wrong margin",
+         "expected_value": "1.5in", "actual_value": "1.0in"},
+    ] + [
+        {"rule_code": "FONT_SIZE", "severity": "MINOR",
+         "location": {"paragraph_index": i}, "message": "Wrong size",
+         "expected_value": "12pt", "actual_value": "14pt"}
+        for i in range(3)
+    ]
+    audit_id = _seed_audit(test_engine, status="completed", weighted_score=75,
+                           violations=violations)
+    resp = _export(client, audit_id)
+    assert resp.status_code == 200
+    from pypdf import PdfReader
+    pages = PdfReader(io.BytesIO(resp.content)).pages
+    assert len(pages) >= 2
+    last = pages[-1]
+    assert last.mediabox.width > last.mediabox.height  # landscape appendix page
+    text = _pdf_text(resp.content)
+    assert "Major Findings" in text
+    assert "Minor Findings" in text
+    assert "Friendly Rule" in text
+
+
+def test_citation_guidance_preserved_for_garcia_and_lee(client, test_engine):
+    """Separate Garcia and Lee guidance items remain distinct in the PDF."""
+    suggestion = (
+        "Recommended correction\n"
+        "Add the missing reference entry.\n\n"
+        "What to verify\n- Author name and initials\n\n"
+        "APA 7 formatting example\nJournal article:\nAuthor, A. (Year).\n\n"
+        "Formatting example only."
+    )
+    violations = [
+        {"rule_code": "CITATION_MISMATCH", "severity": "MAJOR",
+         "location": {"paragraph_index": 0},
+         "message": "Citation 'Garcia (2018)' was found in text, but no matching entry was found.",
+         "expected_value": "Matching References entry", "actual_value": "Garcia (2018)"},
+        {"rule_code": "CITATION_MISMATCH", "severity": "MAJOR",
+         "location": {"paragraph_index": 2},
+         "message": "Citation 'Lee (2020)' was found in text, but no matching entry was found.",
+         "expected_value": "Matching References entry", "actual_value": "Lee (2020)"},
+    ]
+    citations = [
+        {"paragraph_index": 0, "text_snippet": "Garcia (2018) states",
+         "issue_type": "CITATION_MISMATCH", "message": "No matching entry.",
+         "suggestion": suggestion, "confidence": 0.9},
+        {"paragraph_index": 2, "text_snippet": "Lee (2020) argues",
+         "issue_type": "CITATION_MISMATCH", "message": "No matching entry.",
+         "suggestion": suggestion, "confidence": 0.8},
+    ]
+    audit_id = _seed_audit(
+        test_engine, status="completed", weighted_score=85,
+        violations=violations, citations=citations,
+    )
+    text = _pdf_text(_export(client, audit_id).content)
+    assert "Garcia (2018)" in text
+    assert "Lee (2020)" in text
+    # Shared APA material appears once
+    assert text.count("Verify every corrected citation against this checklist:") == 1
+    assert text.count("Journal article:") == 1
