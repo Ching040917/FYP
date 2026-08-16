@@ -1,8 +1,8 @@
 import { useEffect, useState, useCallback, useRef, type ReactNode, type KeyboardEvent } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { api } from '../services/api'
+import { api, downloadBlob } from '../services/api'
 import { useToast } from '../hooks/useToast'
-import { CheckCircle2, ChevronDown, Filter, Info, Loader2, MapPin, Quote, ShieldAlert, X, XCircle } from 'lucide-react'
+import { CheckCircle2, ChevronDown, Download, Filter, Info, Loader2, MapPin, Quote, ShieldAlert, X, XCircle } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Badge } from '../components/ui/badge'
 import { AppNav } from '../components/layout/AppNav'
@@ -73,6 +73,23 @@ export function AuditPage() {
   const [categoryFilter, setCategoryFilter] = useState<AuditCategory | 'all'>('all')
   const [categoryOpen, setCategoryOpen] = useState(false)
   const categoryPanelRef = useRef<HTMLDivElement>(null)
+
+  // PDF export — one clear action; guarded against duplicate clicks.
+  const [exporting, setExporting] = useState(false)
+
+  const handleExport = async () => {
+    if (!auditId || exporting) return
+    setExporting(true)
+    try {
+      const { blob, filename } = await api.exportAuditPdf(auditId)
+      downloadBlob(blob, filename ?? `compliance-report-${auditId.slice(0, 8)}.pdf`)
+      showToast('PDF report downloaded.', 'success')
+    } catch (err: any) {
+      showToast(err?.message || 'Could not download the PDF report. Please try again.', 'error')
+    } finally {
+      setExporting(false)
+    }
+  }
 
   // Tablet drawer (1024–1279) — Finding Detail in a modal right drawer.
   const [drawerOpen, setDrawerOpen] = useState(false)
@@ -360,6 +377,32 @@ export function AuditPage() {
                   )}
                 </div>
               )}
+
+              {/* Export PDF — completed: enabled; processing: disabled with a
+                  clear tooltip; failed: enabled so the backend decides (409 when
+                  there is nothing meaningful to export). */}
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={handleExport}
+                disabled={exporting || isProcessing}
+                title={
+                  isProcessing
+                    ? 'The PDF is available once the audit finishes processing.'
+                    : exporting
+                      ? 'Preparing your PDF…'
+                      : 'Download this audit report as a PDF'
+                }
+                aria-busy={exporting}
+              >
+                {exporting ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                ) : (
+                  <Download className="h-3.5 w-3.5" aria-hidden="true" />
+                )}
+                {exporting ? 'Preparing PDF…' : 'Export PDF'}
+              </Button>
             </section>
 
             {isProcessing && <ProcessingBanner pollAttempts={pollAttempts} />}

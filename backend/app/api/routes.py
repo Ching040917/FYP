@@ -1,4 +1,4 @@
-from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Query
+from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Query, Response
 from sqlalchemy.orm import Session
 from typing import List
 import logging
@@ -26,6 +26,7 @@ from app.services.document_parser import (
     extract_document_stats,
     extract_document_blocks,
 )
+from app.services.pdf_report import generate_audit_pdf, build_export_filename
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -325,6 +326,45 @@ async def get_audit_document_blocks(audit_id: str, db: Session = Depends(get_db)
 
     blocks = audit.document_blocks if isinstance(audit.document_blocks, list) else None
     return {"audit_id": audit_id, "blocks": blocks}
+
+
+@router.get("/api/audit/{audit_id}/export-pdf")
+async def export_audit_pdf(audit_id: str, db: Session = Depends(get_db)):
+    """Download the audit report as a PDF (Phase 1, backend only).
+
+    Deterministic and offline: reads persisted findings/stats only — never
+    calls Ollama or Gemini, never touches the original document bytes.
+    """
+    audit = db.query(AuditRecord).filter(AuditRecord.id == audit_id).first()
+    if not audit:
+        raise HTTPException(status_code=404, detail="Audit not found")
+
+    if audit.status == "processing":
+        raise HTTPException(
+            status_code=409,
+            detail="This audit is still being processed. Please try again shortly.",
+        )
+    if audit.status == "failed" and not (audit.violations or audit.citation_issues):
+        raise HTTPException(
+            status_code=409,
+            detail="This audit failed and produced no findings, so there is nothing to export.",
+        )
+
+    try:
+        pdf_bytes = generate_audit_pdf(audit, list(audit.violations), list(audit.citation_issues))
+    except Exception:
+        logger.exception("PDF export failed for audit_id=%s", audit_id)
+        raise HTTPException(
+            status_code=500,
+            detail="Could not generate the PDF report. Please try again.",
+        )
+
+    filename = build_export_filename(audit.filename)
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.delete("/api/audit/{audit_id}")
