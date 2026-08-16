@@ -3,6 +3,10 @@ import react from '@vitejs/plugin-react'
 
 export default defineConfig({
   plugins: [react()],
+  build: {
+    // pdfjs-dist 5.x requires ES2022 syntax in the browser bundle.
+    target: 'es2022',
+  },
   server: {
     port: 5173,
     proxy: {

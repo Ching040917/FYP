@@ -105,6 +105,30 @@ export const api = {
     const blob = await response.blob()
     return { blob, filename: parseContentDispositionFilename(response.headers.get('content-disposition')) }
   },
+
+  /**
+   * Fetch a persisted rendered PDF preview. Never throws for HTTP errors —
+   * returns a discriminated result so the viewer can map 404/409/410 to
+   * truthful fallback states. status === 0 means network/timeout failure.
+   */
+  async getRenderedPreview(
+    auditId: string,
+  ): Promise<{ ok: true; blob: Blob } | { ok: false; status: number; detail: string }> {
+    try {
+      const response = await fetchWithTimeout(
+        `${API_BASE}/audit/${auditId}/rendered-preview`,
+        {},
+        UPLOAD_TIMEOUT_MS,
+      )
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ detail: '' }))
+        return { ok: false, status: response.status, detail: typeof error.detail === 'string' ? error.detail : '' }
+      }
+      return { ok: true, blob: await response.blob() }
+    } catch (err: any) {
+      return { ok: false, status: 0, detail: err?.message ?? 'Network error' }
+    }
+  },
 }
 
 /**

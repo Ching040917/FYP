@@ -487,6 +487,7 @@ export function AuditPage() {
                     loadError={blocksError}
                     onSelectViolation={setSelectedId}
                     active={mobileView === 'document'}
+                    renderedPreviewAuditId={audit.status === 'processing' ? null : audit.id}
                   />
                   <div className="flex flex-wrap items-center gap-2">
                     {selectedViolation && (
@@ -547,6 +548,7 @@ export function AuditPage() {
                       setDrawerOpen(true)
                     }}
                     fitRegion
+                    renderedPreviewAuditId={audit.status === 'processing' ? null : audit.id}
                   />
                 </div>
               </div>
@@ -576,6 +578,7 @@ export function AuditPage() {
                     loadError={blocksError}
                     onSelectViolation={setSelectedId}
                     fitRegion
+                    renderedPreviewAuditId={audit.status === 'processing' ? null : audit.id}
                   />
                 </div>
                 <div

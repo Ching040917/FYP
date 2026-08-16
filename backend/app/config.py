@@ -93,6 +93,11 @@ class Settings(BaseSettings):
     OLLAMA_MODEL: str = "qwen3.5:4b"
     DATABASE_URL: str = "sqlite:///./audit.db"
 
+    # Rendered PDF preview storage (Build 1). Empty string means the
+    # platform default: %LOCALAPPDATA%\AcademicComplianceAuditor\rendered-previews.
+    # Tests and dev set this to a temp dir.
+    PREVIEW_STORAGE_DIR: str = ""
+
     # SUC Preset (default)
     PRESET: PresetConfig = PresetConfig()
 

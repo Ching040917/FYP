@@ -20,6 +20,7 @@ import * as React from 'react'
 import { AlertOctagon, AlertTriangle, Check, FileText, Loader2, ScrollText } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import type { DocumentBlock, Violation } from '../../types/api'
+import { RenderedPreview, type RenderedPreviewState } from './rendered-preview'
 
 export interface DocumentPreviewProps {
   blocks: DocumentBlock[] | null
@@ -33,6 +34,11 @@ export interface DocumentPreviewProps {
   fitRegion?: boolean
   /** When false (inactive tab), skip scroll-to-block; re-runs on activation. */
   active?: boolean
+  /**
+   * When set, the rendered PDF preview is the primary document view and the
+   * extracted-text preview is the automatic fallback (Build 4).
+   */
+  renderedPreviewAuditId?: string | null
 }
 
 export function DocumentPreview({
@@ -44,9 +50,24 @@ export function DocumentPreview({
   onSelectViolation,
   fitRegion = false,
   active,
+  renderedPreviewAuditId = null,
 }: DocumentPreviewProps) {
   const containerRef = React.useRef<HTMLDivElement>(null)
   const blockRefs = React.useRef<Map<number, HTMLElement>>(new Map())
+
+  // Rendered-preview mode: primary when available, text is the fallback.
+  const hasRendered = !!renderedPreviewAuditId
+  const [view, setView] = React.useState<'rendered' | 'text'>('rendered')
+  const [renderedState, setRenderedState] = React.useState<RenderedPreviewState>('loading')
+  const renderedAvailable = renderedState === 'available'
+
+  React.useEffect(() => {
+    setView('rendered')
+    setRenderedState('loading')
+  }, [renderedPreviewAuditId])
+
+  const hideRendered = hasRendered && renderedAvailable && view === 'text'
+  const hideText = hasRendered && renderedAvailable && view === 'rendered'
 
   // Defensive ordering: copy before sorting, never mutate API data.
   const orderedBlocks = React.useMemo(
@@ -121,13 +142,52 @@ export function DocumentPreview({
           <ScrollText className="h-4 w-4 text-primary" aria-hidden="true" />
           Document preview
         </h2>
-        {locatableCount > 0 && (
-          <span className="text-[11px] text-muted-foreground">
-            {locatableCount} finding{locatableCount > 1 ? 's' : ''} located in document
-          </span>
-        )}
+        <div className="flex items-center gap-2">
+          {locatableCount > 0 && (
+            <span className="text-[11px] text-muted-foreground">
+              {locatableCount} finding{locatableCount > 1 ? 's' : ''} located in document
+            </span>
+          )}
+          {hasRendered && renderedAvailable && (
+            <div
+              role="group"
+              aria-label="Preview mode"
+              className="inline-flex rounded-md border border-border bg-input/20 p-0.5"
+            >
+              <ModeButton active={view === 'rendered'} onClick={() => setView('rendered')}>
+                Rendered pages
+              </ModeButton>
+              <ModeButton active={view === 'text'} onClick={() => setView('text')}>
+                Extracted text
+              </ModeButton>
+            </div>
+          )}
+        </div>
       </header>
 
+      {/* Rendered PDF viewer — primary when available; hidden (kept mounted)
+          while the user reads extracted text. */}
+      {hasRendered && (
+        <div
+          className={cn(
+            'flex min-h-0 flex-col',
+            fitRegion && renderedAvailable && view === 'rendered' && 'flex-1',
+            hideRendered && 'hidden',
+          )}
+        >
+          <RenderedPreview auditId={renderedPreviewAuditId} onStateChange={setRenderedState} fitRegion={fitRegion} />
+        </div>
+      )}
+
+      {/* Extracted-text preview — automatic fallback whenever the rendered
+          PDF is loading, unavailable, or explicitly selected. */}
+      <div
+        className={cn(
+          'flex min-h-0 flex-col gap-3',
+          fitRegion && (!renderedAvailable || view === 'text') && 'flex-1',
+          hideText && 'hidden',
+        )}
+      >
       <div
         ref={containerRef}
         role="region"
@@ -236,7 +296,36 @@ export function DocumentPreview({
           local audit database. The original Word file is not stored or modified.
         </p>
       </div>
+      </div>
     </div>
+  )
+}
+
+/** Small segmented-mode button for the Rendered pages / Extracted text switch. */
+function ModeButton({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean
+  onClick: () => void
+  children: React.ReactNode
+}) {
+  return (
+    <button
+      type="button"
+      aria-pressed={active}
+      onClick={onClick}
+      className={cn(
+        'rounded px-2.5 py-1 text-[13px] transition-colors',
+        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary',
+        active
+          ? 'bg-card font-medium text-foreground ring-1 ring-border'
+          : 'text-muted-foreground hover:text-foreground',
+      )}
+    >
+      {children}
+    </button>
   )
 }
 

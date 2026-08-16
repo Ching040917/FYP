@@ -2,6 +2,7 @@ from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Query, 
 from sqlalchemy.orm import Session
 from typing import List
 import logging
+import time
 import uuid
 from datetime import datetime
 
@@ -26,10 +27,29 @@ from app.services.document_parser import (
     extract_document_stats,
     extract_document_blocks,
 )
+from app.services.docx_pdf_converter import convert_docx_to_pdf, DocxConversionError
+from app.services import preview_storage
 from app.services.pdf_report import generate_audit_pdf, build_export_filename
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+# Converter error categories -> persisted safe preview categories.
+# Only the allowed non-sensitive set may ever reach the database.
+_CONVERTER_ERROR_MAP = {
+    "libreoffice_unavailable": "libreoffice_missing",
+    "invalid_docx": "conversion_failed",
+    "timeout": "timeout",
+    "conversion_failed": "conversion_failed",
+    "invalid_pdf": "conversion_failed",
+}
+
+
+def _preview_error_category(exc: Exception) -> str:
+    """Map any preview failure to one safe persisted category."""
+    if isinstance(exc, DocxConversionError):
+        return _CONVERTER_ERROR_MAP.get(exc.category, "conversion_failed")
+    return "persistence_failed"
 
 
 @router.post("/api/audit", response_model=AuditSubmitResponse)
@@ -63,7 +83,43 @@ async def audit_document(
     db.commit()
     db.refresh(audit)
 
+    # True once *we* wrote the rendered preview file — the only case where
+    # cleanup (removal) is ours to perform.
+    preview_pdf_written = False
+
     try:
+        # ---- Rendered PDF preview (Build 2): best-effort, never fails the audit ----
+        # Reuses the in-memory DOCX bytes; converts and persists atomically.
+        # Any failure marks the preview UNAVAILABLE with a safe category and
+        # the audit continues normally. The original DOCX is never stored.
+        preview_started = time.perf_counter()
+        try:
+            pdf_bytes = convert_docx_to_pdf(file_bytes)
+            meta = preview_storage.store_pdf(audit.id, pdf_bytes)
+            preview_pdf_written = True
+            audit.rendered_preview_status = preview_storage.PREVIEW_STATUS_AVAILABLE
+            audit.rendered_preview_sha256 = meta.sha256
+            audit.rendered_preview_size = meta.size
+            audit.rendered_preview_pages = meta.pages
+            audit.rendered_preview_converted_at = meta.converted_at
+            audit.rendered_preview_error = None
+            logger.info(
+                "preview render audit=%s status=AVAILABLE duration_ms=%d pages=%d",
+                audit.id, int((time.perf_counter() - preview_started) * 1000), meta.pages,
+            )
+        except Exception as exc:
+            # Clean up only a file we created (e.g. store succeeded but a
+            # later step in this block failed); never touch pre-existing files.
+            if preview_pdf_written:
+                preview_storage.remove_preview(audit.id)
+            audit.rendered_preview_status = preview_storage.PREVIEW_STATUS_UNAVAILABLE
+            audit.rendered_preview_error = _preview_error_category(exc)
+            logger.info(
+                "preview render audit=%s status=UNAVAILABLE error=%s duration_ms=%d",
+                audit.id, audit.rendered_preview_error,
+                int((time.perf_counter() - preview_started) * 1000),
+            )
+
         # ---- Parse once, reuse for rules + stats ----
         doc = parse_document(file_bytes)
         paragraphs = extract_paragraphs(doc)
@@ -192,6 +248,12 @@ async def audit_document(
         raise
     except Exception as e:
         logger.exception("Audit processing failed for audit_id=%s", audit.id)
+        # PDF persisted but the audit transaction failed: remove the final
+        # file so no orphan remains; preserve the original failure behavior.
+        if preview_pdf_written:
+            preview_storage.remove_preview(audit.id)
+            audit.rendered_preview_status = preview_storage.PREVIEW_STATUS_UNAVAILABLE
+            audit.rendered_preview_error = "persistence_failed"
         audit.status = "failed"
         db.commit()
         raise HTTPException(status_code=500, detail=f"Processing failed: {str(e)}")
@@ -364,6 +426,90 @@ async def export_audit_pdf(audit_id: str, db: Session = Depends(get_db)):
         content=pdf_bytes,
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/api/audit/{audit_id}/rendered-preview")
+async def get_rendered_preview(audit_id: str, db: Session = Depends(get_db)):
+    """Serve a persisted rendered PDF preview (Build 3).
+
+    Read-only and offline: never triggers conversion, never touches the
+    original DOCX. The path is derived from the validated audit UUID only —
+    no filesystem path is ever accepted from the request. Every byte is
+    revalidated against the persisted metadata before serving.
+
+    Byte-range requests are NOT supported (full-body response). This is
+    reported rather than simulated: previews are local files served once,
+    and the frontend loads them as Blobs, so ranges are unnecessary.
+
+    Error mapping:
+      404 — unknown audit, or NULL preview status (historical record)
+      409 — UNAVAILABLE status, or stored file fails hash/size/magic/page
+            revalidation
+      410 — metadata says AVAILABLE but the file is gone
+    """
+    audit = db.query(AuditRecord).filter(AuditRecord.id == audit_id).first()
+    if not audit:
+        raise HTTPException(status_code=404, detail="Audit not found")
+
+    # Paths derive only from canonical UUIDs — anything else is not found.
+    try:
+        preview_storage.validate_audit_id(audit_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Audit not found")
+
+    if audit.rendered_preview_status is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Rendered preview is unavailable for this older audit.",
+        )
+    if audit.rendered_preview_status != preview_storage.PREVIEW_STATUS_AVAILABLE:
+        category = audit.rendered_preview_error or "unknown"
+        logger.info("rendered preview audit=%s status=UNAVAILABLE error=%s", audit_id, category)
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "The page-rendered preview could not be created. "
+                "The extracted-text preview remains available."
+            ),
+            headers={"X-Preview-Error-Category": category},
+        )
+
+    try:
+        pdf_bytes = preview_storage.read_validated_pdf(
+            audit_id,
+            expected_sha256=audit.rendered_preview_sha256,
+            expected_size=audit.rendered_preview_size,
+            expected_pages=audit.rendered_preview_pages,
+        )
+    except FileNotFoundError:
+        logger.info("rendered preview audit=%s status=missing", audit_id)
+        raise HTTPException(
+            status_code=410,
+            detail=(
+                "The rendered preview is no longer available. "
+                "The extracted-text preview remains available."
+            ),
+        )
+    except ValueError:
+        logger.info("rendered preview audit=%s status=corrupt", audit_id)
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "The rendered preview is no longer available. "
+                "The extracted-text preview remains available."
+            ),
+        )
+
+    logger.info("rendered preview audit=%s status=served", audit_id)
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": 'inline; filename="preview.pdf"',
+            "X-Content-Type-Options": "nosniff",
+            "Cache-Control": "private, no-store",
+        },
     )
 
 

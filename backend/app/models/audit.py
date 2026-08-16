@@ -43,6 +43,19 @@ class AuditRecord(Base):
     # deletion removes it automatically. Never log block text.
     document_blocks = Column(JSON, nullable=True)
 
+    # Rendered PDF preview metadata (Build 1). NULL = never attempted or
+    # historical record; "AVAILABLE" = rendered PDF present in storage;
+    # "UNAVAILABLE" = render attempted but failed. rendered_preview_error
+    # holds only a non-sensitive error category (libreoffice_missing,
+    # timeout, conversion_failed, persistence_failed, file_missing). The
+    # final PDF path is derived from the audit ID — no path is stored.
+    rendered_preview_status = Column(String(20), nullable=True)
+    rendered_preview_sha256 = Column(String(64), nullable=True)
+    rendered_preview_size = Column(Integer, nullable=True)
+    rendered_preview_pages = Column(Integer, nullable=True)
+    rendered_preview_converted_at = Column(DateTime, nullable=True)
+    rendered_preview_error = Column(String(50), nullable=True)
+
     violations = relationship("Violation", back_populates="audit", cascade="all, delete-orphan")
     citation_issues = relationship("CitationIssue", back_populates="audit", cascade="all, delete-orphan")
 
