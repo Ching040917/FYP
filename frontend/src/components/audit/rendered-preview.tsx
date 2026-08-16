@@ -19,6 +19,7 @@ import {
   ChevronLeft,
   ChevronRight,
   FileQuestion,
+  Info,
   Loader2,
   Maximize2,
   ZoomIn,
@@ -40,6 +41,12 @@ interface RenderedPreviewProps {
    * per request so repeated requests to the same page still apply.
    */
   pendingPage?: { page: number; seq: number } | null
+  /** Exact citation highlight rects (normalized 0..1, one per visual line). */
+  citationRects?: Array<{ page: number; x: number; y: number; width: number; height: number }> | null
+  /** Accessible label for the highlight (citation evidence text). */
+  citationLabel?: string | null
+  /** Truthful message when exact highlighting failed (page still shown). */
+  highlightMessage?: string | null
 }
 
 const ZOOM_MIN = 0.5
@@ -54,7 +61,14 @@ const FALLBACK_MESSAGES: Record<Exclude<RenderedPdfState['status'], 'loading' | 
   error: 'The rendered preview could not be loaded. The extracted-text preview remains available.',
 }
 
-export function RenderedPreview({ pdf, fitRegion = false, pendingPage = null }: RenderedPreviewProps) {
+export function RenderedPreview({
+  pdf,
+  fitRegion = false,
+  pendingPage = null,
+  citationRects = null,
+  citationLabel = null,
+  highlightMessage = null,
+}: RenderedPreviewProps) {
   const [pdfDoc, setPdfDoc] = React.useState<PDFDocumentProxy | null>(null)
   const [docLoading, setDocLoading] = React.useState(false)
   const [pageNum, setPageNum] = React.useState(1)
@@ -288,6 +302,22 @@ export function RenderedPreview({ pdf, fitRegion = false, pendingPage = null }: 
         </div>
       </div>
 
+      {/* Compact selected-evidence chip — neutral surface, subtle border,
+          icon + text (non-color indicator); ~30px tall, fits 375px. */}
+      {citationRects && citationRects.length > 0 && citationLabel && (
+        <span className="inline-flex w-fit shrink-0 items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-[12px] leading-[16px] text-foreground">
+          <Info className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+          Selected evidence
+          <span className="font-medium text-destructive">: {citationLabel}</span>
+        </span>
+      )}
+      {highlightMessage && (!citationRects || citationRects.length === 0) && (
+        <span className="inline-flex w-fit shrink-0 items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-[12px] leading-[16px] text-muted-foreground">
+          <Info className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+          {highlightMessage}
+        </span>
+      )}
+
       {/* Screen-reader status for page/zoom changes */}
       <p aria-live="polite" className="sr-only">
         Page {pageNum} of {numPages}, {zoomLabel}
@@ -307,11 +337,39 @@ export function RenderedPreview({ pdf, fitRegion = false, pendingPage = null }: 
         )}
       >
         <div className="flex min-h-full items-start justify-center">
-          <canvas
-            ref={canvasRef}
-            className="bg-white shadow-tonal-high"
-            aria-label={`Document page ${pageNum}`}
-          />
+          {/* Canvas wrapper: the overlay uses % of this box, so zoom,
+              fit-width, and resize keep the highlight aligned. */}
+          <div className="relative inline-block">
+            <canvas
+              ref={canvasRef}
+              className="bg-white shadow-tonal-high"
+              aria-label={`Document page ${pageNum}`}
+            />
+            {citationRects?.map((rect, i) =>
+              rect.page === pageNum ? (
+                <div
+                  key={i}
+                  aria-hidden="true"
+                  className="pointer-events-none absolute"
+                  style={{
+                    left: `${rect.x * 100}%`,
+                    top: `${(1 - rect.y - rect.height) * 100}%`,
+                    width: `${rect.width * 100}%`,
+                    height: `${rect.height * 100}%`,
+                  }}
+                >
+                  {/* Very pale rose fill — no outline, no strikethrough. */}
+                  <div className="absolute inset-0 rounded-[3px] bg-destructive/10" />
+                  {/* 2px dark-red underline, ~2px BELOW the text box —
+                      clears the glyph baseline and descenders. */}
+                  <div
+                    className="absolute bg-destructive"
+                    style={{ top: 'calc(100% + 2px)', left: 0, right: 0, height: '2px', borderRadius: 1 }}
+                  />
+                </div>
+              ) : null,
+            )}
+          </div>
         </div>
         {renderFailed && (
           <p className="mt-3 flex items-start gap-2 text-[13px] leading-[19px] text-muted-foreground">

@@ -12,7 +12,11 @@ from app.services.document_parser import (
     get_heading_level,
     iter_paragraphs_with_context,
 )
-from app.services.citation_sensor import run_citation_sensor
+from app.services.citation_sensor import (
+    run_citation_sensor,
+    _find_references_start,
+    APPENDIX_HEADER_PATTERN,
+)
 from app.config import settings
 
 
@@ -95,15 +99,130 @@ def _is_list_item(para_dict: Dict) -> bool:
     return bool(para_dict.get("is_list_item", False))
 
 
-def check_paragraph_typography(paragraphs: List[Dict], preset) -> List[LayoutViolation]:
+def _paragraph_visible_text(para: Dict) -> str:
+    """Visible text from actual text runs, trimmed.
+
+    Drawing/image runs, field-instruction runs, and empty runs contribute
+    nothing — a paragraph that only hosts an image (or only carries an
+    uncached field) has no visible text and is not body text.
+    """
+    return "".join((r.get("text") or "") for r in para.get("runs", [])).strip()
+
+
+def _style_has_numbering(style) -> bool:
+    """True when a style (or any of its base styles) carries list numbering.
+
+    Numbering inherited through the style chain (e.g. Word's List Bullet /
+    List Number styles) lives on the STYLE's <w:numPr>, not on the
+    paragraph — direct <w:numPr> detection alone misses those.
+    """
+    from docx.oxml.ns import qn
+
+    seen = set()
+    current = style
+    while current is not None and getattr(current, "style_id", None) not in seen:
+        seen.add(current.style_id)
+        pPr = current.element.pPr
+        if pPr is not None and pPr.find(qn("w:numPr")) is not None:
+            return True
+        current = current.base_style
+    return False
+
+
+def _references_span(paragraphs: List[Dict]):
+    """Index span of the References section, or None when undetected.
+
+    Reuses the citation sensor's References-header detection; the span ends
+    at the first Appendix heading (bibliography ends there), matching the
+    sensor's own boundary logic.
+    """
+    start = _find_references_start(paragraphs)
+    if start is None:
+        return None
+    end = len(paragraphs)
+    for para in paragraphs[start:]:
+        text = (para.get("text") or "").strip()
+        if text and APPENDIX_HEADER_PATTERN.match(text):
+            end = para.get("index", end)
+            break
+    return range(start, end)
+
+
+def _alignment_eligible(
+    para: Dict,
+    paragraph_obj,
+    preset,
+    references_span,
+) -> bool:
+    """ALIGNMENT applies only to eligible visible-text paragraphs.
+
+    Skipped (alignment is a design choice, not a body-text requirement):
+      - empty / field-only / image-only paragraphs (no visible text);
+      - semantic Caption-style paragraphs;
+      - manual caption text classified by the caption logic;
+      - Title and Subtitle styles;
+      - list items, including numbering inherited through the style chain;
+      - Reference-list entries inside the detected References section.
+
+    Headings and mixed text-and-image paragraphs remain eligible — headings
+    use their configured preset alignment, and mixed paragraphs validate
+    whenever visible text exists.
+    """
+    # 1/2/3. Empty, field-only, image-only: no visible text.
+    if not _paragraph_visible_text(para):
+        return False
+
+    style_name = (para.get("style_name") or "").lower()
+
+    # 6. Title / Subtitle styles.
+    if style_name.startswith(("title", "subtitle")):
+        return False
+
+    # 4. Semantic Caption style.
+    if "caption" in style_name:
+        return False
+
+    # 5. Manual caption text already classified by caption logic.
+    if preset.is_caption_text(para.get("text") or ""):
+        return False
+
+    # 7. Numbering inherited through the style chain.
+    if paragraph_obj is not None:
+        try:
+            style = paragraph_obj.style
+        except Exception:
+            style = None
+        if style is not None and _style_has_numbering(style):
+            return False
+
+    # 8. Reference-list entries inside the detected References section.
+    if references_span is not None and para.get("index", -1) in references_span:
+        return False
+
+    return True
+
+
+def check_paragraph_typography(
+    paragraphs: List[Dict],
+    preset,
+    doc: Optional[Document] = None,
+) -> List[LayoutViolation]:
     """FR-2.3: Paragraph typography — line spacing, spacing before/after, alignment.
 
-    List items (numbered/bulleted) are EXEMPT from the alignment rule —
-    they're legitimately left-aligned even when body text is justified.
+    ALIGNMENT applies only to eligible visible-text paragraphs (see
+    _alignment_eligible): empty, image-only, caption, title/subtitle, list,
+    and Reference-list paragraphs are skipped; ordinary body paragraphs
+    keep the justify requirement and headings keep their configured preset
+    alignment. Line-spacing and spacing-before/after checks are unchanged.
     """
     violations = []
+    references_span = _references_span(paragraphs)
 
-    for para in paragraphs:
+    # doc.paragraphs aligns 1:1 with extract_paragraphs output — pairing
+    # gives access to the paragraph style chain for inherited numbering.
+    paired = zip(paragraphs, doc.paragraphs) if doc is not None else ((p, None) for p in paragraphs)
+
+    for para, paragraph_obj in paired:
         style = para.get("style_name", "")
         level = get_heading_level(style)
         is_heading = level is not None
@@ -149,8 +268,11 @@ def check_paragraph_typography(paragraphs: List[Dict], preset) -> List[LayoutVio
                 actual_value=f"{actual_after}pt",
             ))
 
-        # Alignment — SKIP list items
+        # Alignment — only eligible visible-text paragraphs are validated:
+        # empty/image-only/caption/title/list/References paragraphs skip.
         if is_list:
+            continue
+        if not _alignment_eligible(para, paragraph_obj, preset, references_span):
             continue
 
         expected_align = preset.ALIGNMENT_HEADING if is_heading else preset.ALIGNMENT_BODY
@@ -520,7 +642,7 @@ def run_static_rules_engine(file_bytes: bytes) -> List[LayoutViolation]:
     all_violations = []
     all_violations.extend(check_font_consistency(paragraphs, preset))
     all_violations.extend(check_font_size(paragraphs, preset))
-    all_violations.extend(check_paragraph_typography(paragraphs, preset))
+    all_violations.extend(check_paragraph_typography(paragraphs, preset, doc=doc))
     all_violations.extend(check_page_margins(sections, preset))
     all_violations.extend(check_heading_hierarchy(paragraphs))
     all_violations.extend(check_media_captions(doc, paragraphs, preset))

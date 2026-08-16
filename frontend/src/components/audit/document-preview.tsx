@@ -48,6 +48,10 @@ export interface DocumentPreviewProps {
   pendingPage?: { page: number; seq: number } | null
   /** Concise navigation notice shown above the preview content. */
   notice?: string | null
+  /** Exact citation highlight rects + label + failure message (Build 6). */
+  citationRects?: Array<{ page: number; x: number; y: number; width: number; height: number }> | null
+  citationLabel?: string | null
+  highlightMessage?: string | null
 }
 
 export function DocumentPreview({
@@ -64,6 +68,9 @@ export function DocumentPreview({
   onPreviewModeChange,
   pendingPage = null,
   notice = null,
+  citationRects = null,
+  citationLabel = null,
+  highlightMessage = null,
 }: DocumentPreviewProps) {
   const containerRef = React.useRef<HTMLDivElement>(null)
   const blockRefs = React.useRef<Map<number, HTMLElement>>(new Map())
@@ -202,6 +209,9 @@ export function DocumentPreview({
             pdf={renderedPdf}
             fitRegion={fitRegion}
             pendingPage={pendingPage}
+            citationRects={citationRects}
+            citationLabel={citationLabel}
+            highlightMessage={highlightMessage}
           />
         </div>
       )}

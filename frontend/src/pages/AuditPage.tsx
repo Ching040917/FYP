@@ -15,6 +15,7 @@ import { gradeFor } from '../lib/audit/scoring'
 import { useFindingMapping } from '../hooks/use-finding-mapping'
 import { useRenderedPdf } from '../hooks/use-rendered-pdf.ts'
 import { classifyFindingTarget, resolveFindingNavigation } from '../lib/pdf/finding-navigation.ts'
+import { resolveCitationHighlight, type CitationRect } from '../lib/pdf/citation-highlight.ts'
 import { PendingNav, hasParagraphIdentity, type NavCommand } from '../lib/pdf/pending-navigation.ts'
 import { cn } from '../lib/utils'
 import type { AuditDocumentStats, AuditResponse, DocumentBlock, Violation } from '../types/api'
@@ -88,6 +89,16 @@ export function AuditPage() {
   const [pageCommand, setPageCommand] = useState<{ page: number; seq: number } | null>(null)
   const [locatingId, setLocatingId] = useState<string | null>(null)
   const [navNotice, setNavNotice] = useState<string | null>(null)
+  // Exact citation highlight (Build 6) — latest selected finding wins.
+  const [citationRects, setCitationRects] = useState<CitationRect[] | null>(null)
+  const [citationLabel, setCitationLabel] = useState<string | null>(null)
+  const [highlightMessage, setHighlightMessage] = useState<string | null>(null)
+
+  const clearCitationHighlight = useCallback(() => {
+    setCitationRects(null)
+    setCitationLabel(null)
+    setHighlightMessage(null)
+  }, [])
 
   const navigateToRenderedPage = (page: number) => {
     setPreviewMode('rendered')
@@ -118,7 +129,8 @@ export function AuditPage() {
   // It reappears only after a new genuine unavailable navigation result.
   useEffect(() => {
     if (previewMode === 'rendered') setNavNotice(null)
-  }, [previewMode])
+    if (previewMode === 'text') clearCitationHighlight() // overlay lives on rendered pages
+  }, [previewMode, clearCitationHighlight])
 
   // Reset navigation state when the audit changes.
   useEffect(() => {
@@ -127,7 +139,13 @@ export function AuditPage() {
     setPreviewMode('rendered')
     setLocatingId(null)
     setNavNotice(null)
-  }, [auditId])
+    clearCitationHighlight()
+  }, [auditId, clearCitationHighlight])
+
+  // PDF replaced: any highlight from the previous document is stale.
+  useEffect(() => {
+    clearCitationHighlight()
+  }, [renderedPdf?.bytes, clearCitationHighlight])
 
   // Execute (or fail) the retained navigation request when the mapping
   // settles — never before.
@@ -295,9 +313,25 @@ export function AuditPage() {
     const violation = violations.find((v) => v.id === e.id) ?? null
     if (!violation) return
     if (classifyFindingTarget(violation) === 'object') {
+      clearCitationHighlight()
       setNavNotice(OBJECT_NOTICE)
       return
     }
+    // Exact citation highlight: resolves (or clears) from the deterministic
+    // finding's own fields; failure keeps Rendered Pages active.
+    const hl = resolveCitationHighlight(
+      {
+        id: violation.id,
+        ruleCode: violation.rule_code,
+        message: violation.message,
+        actualValue: violation.actual_value,
+        location: violation.location,
+      },
+      mappingBundle,
+    )
+    setCitationRects(hl.rects)
+    setCitationLabel(hl.label)
+    setHighlightMessage(hl.message)
     pendingNavRef.current?.select(violation, mappingBundle?.byIndex, emitNav)
   }
 
@@ -611,6 +645,9 @@ export function AuditPage() {
                                         previewMode={previewMode}
                     onPreviewModeChange={setPreviewMode}
                     pendingPage={pageCommand}
+                    citationRects={citationRects}
+                    citationLabel={citationLabel}
+                    highlightMessage={highlightMessage}
                   />
                   <div className="flex flex-wrap items-center gap-2">
                     {selectedViolation && (
@@ -678,6 +715,9 @@ export function AuditPage() {
                                         previewMode={previewMode}
                     onPreviewModeChange={setPreviewMode}
                     pendingPage={pageCommand}
+                    citationRects={citationRects}
+                    citationLabel={citationLabel}
+                    highlightMessage={highlightMessage}
                   />
                 </div>
               </div>
@@ -714,6 +754,9 @@ export function AuditPage() {
                                         previewMode={previewMode}
                     onPreviewModeChange={setPreviewMode}
                     pendingPage={pageCommand}
+                    citationRects={citationRects}
+                    citationLabel={citationLabel}
+                    highlightMessage={highlightMessage}
                   />
                 </div>
                 <div

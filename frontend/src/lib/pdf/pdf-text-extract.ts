@@ -47,10 +47,14 @@ export async function extractPageText(pdfBytes: ArrayBuffer | Uint8Array): Promi
       const items = content.items.filter(
         (it): boolean => typeof (it as { str?: unknown }).str === 'string',
       ) as unknown as TextItemLike[]
+      const viewport = page.getViewport({ scale: 1 })
       raw.push({
         pageNumber: n,
         lines: reconstructLines(items as TextItemLike[]),
         headerFooterLines: new Set(),
+        items: items as TextItemLike[],
+        pageWidth: viewport.width,
+        pageHeight: viewport.height,
       })
     }
     const repeated = findRepeatedLines(raw)

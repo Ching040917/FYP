@@ -20,6 +20,9 @@ export type TextItemLike = {
   str: string
   transform: number[]
   hasEOL?: boolean
+  /** PDF-unit dimensions (highlight coordinate evidence). */
+  width?: number
+  height?: number
 }
 
 export type PageLine = { text: string; y: number }
@@ -29,6 +32,11 @@ export type PageText = {
   lines: PageLine[]
   /** Normalized line texts identified as repeated headers/footers. */
   headerFooterLines: Set<string>
+  /** Raw text items (highlight coordinate evidence). Optional. */
+  items?: TextItemLike[]
+  /** Page dimensions in PDF units at scale 1 (highlight normalization). */
+  pageWidth?: number
+  pageHeight?: number
 }
 
 export type BlockLike = { index: number; text: string }
