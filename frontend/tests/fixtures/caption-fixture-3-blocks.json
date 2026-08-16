@@ -1,0 +1,58 @@
+[
+ {
+  "order": 0,
+  "index": 0,
+  "text": "Chapter One",
+  "style_name": "Heading 1",
+  "heading_level": 1
+ },
+ {
+  "order": 1,
+  "index": 1,
+  "text": "Introduction paragraph establishing the layout of the caption fixture.",
+  "style_name": "Normal",
+  "heading_level": null
+ },
+ {
+  "order": 2,
+  "index": 2,
+  "text": "",
+  "style_name": "Normal",
+  "heading_level": null
+ },
+ {
+  "order": 3,
+  "index": 3,
+  "text": "Table 1: Sample results table",
+  "style_name": "Normal",
+  "heading_level": null
+ },
+ {
+  "order": 4,
+  "index": 4,
+  "text": "The narrative continues after the table on this page.",
+  "style_name": "Normal",
+  "heading_level": null
+ },
+ {
+  "order": 5,
+  "index": 5,
+  "text": "",
+  "style_name": "Normal",
+  "heading_level": null
+ },
+ {
+  "order": 6,
+  "index": 6,
+  "text": "Figure 1: Growth chart",
+  "style_name": "Normal",
+  "heading_level": null
+ },
+ {
+  "order": 7,
+  "index": 7,
+  "text": "Final concluding paragraph of the caption fixture.",
+  "style_name": "Normal",
+  "heading_level": null
+ }
+]

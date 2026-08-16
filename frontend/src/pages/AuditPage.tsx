@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef, type ReactNode, type KeyboardEvent } from 'react'
+import { useEffect, useState, useCallback, useMemo, useRef, type ReactNode, type KeyboardEvent } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { api, downloadBlob } from '../services/api'
 import { useToast } from '../hooks/useToast'
@@ -12,9 +12,19 @@ import { FindingDetail } from '../components/audit/finding-detail'
 import { DocumentPreview } from '../components/audit/document-preview'
 import { categoryForRuleCode, humanizeRuleCode, aiProviderLabel, normalizeAiProvider } from '../lib/audit/adapter'
 import { gradeFor } from '../lib/audit/scoring'
+import { useFindingMapping } from '../hooks/use-finding-mapping'
+import { useRenderedPdf } from '../hooks/use-rendered-pdf.ts'
+import { classifyFindingTarget, resolveFindingNavigation } from '../lib/pdf/finding-navigation.ts'
+import { PendingNav, hasParagraphIdentity, type NavCommand } from '../lib/pdf/pending-navigation.ts'
 import { cn } from '../lib/utils'
 import type { AuditDocumentStats, AuditResponse, DocumentBlock, Violation } from '../types/api'
 import type { AuditCategory, LayoutError } from '../types/audit'
+
+// Concise user-facing notices for non-navigable findings (Task 3).
+const OBJECT_NOTICE =
+  'Exact page location is not available for this finding. Review the finding details for its document location.'
+const TEXT_FALLBACK_NOTICE =
+  'Exact rendered-page location is unavailable. Showing the extracted-text location instead.'
 
 // Poll every 2s; give up after 5 minutes (150 attempts).
 const POLL_INTERVAL_MS = 2000
@@ -62,6 +72,89 @@ export function AuditPage() {
   const [blocksLoading, setBlocksLoading] = useState(false)
   const [blocksError, setBlocksError] = useState(false)
   const blocksFetchedRef = useRef(false)
+
+  // Finding-to-page navigation (mapping PoC): ONE owner of the rendered PDF
+  // bytes shared by the viewer AND the mapper (no duplicate fetch, no byte
+  // divergence); session-cached mapping from those exact bytes + blocks.
+  const gatedAuditId = audit && audit.status !== 'processing' ? audit.id : null
+  const renderedPdf = useRenderedPdf(gatedAuditId)
+  const { bundle: mappingBundle, status: mappingStatus } = useFindingMapping(
+    gatedAuditId,
+    blocks,
+    blocksError,
+    renderedPdf.status === 'available' ? renderedPdf.bytes : undefined,
+  )
+  const [previewMode, setPreviewMode] = useState<'rendered' | 'text'>('rendered')
+  const [pageCommand, setPageCommand] = useState<{ page: number; seq: number } | null>(null)
+  const [locatingId, setLocatingId] = useState<string | null>(null)
+  const [navNotice, setNavNotice] = useState<string | null>(null)
+
+  const navigateToRenderedPage = (page: number) => {
+    setPreviewMode('rendered')
+    setPageCommand((cur) => ({ page, seq: (cur?.seq ?? 0) + 1 }))
+  }
+
+  // Pending-navigation state machine: a finding selected while the mapping
+  // is still loading is retained and executed once it arrives.
+  const pendingNavRef = useRef<PendingNav | null>(null)
+  if (!pendingNavRef.current) pendingNavRef.current = new PendingNav()
+  const emitNav = useCallback((command: NavCommand) => {
+    if (command.kind === 'navigate') {
+      setLocatingId(null)
+      setNavNotice(null)
+      navigateToRenderedPage(command.page)
+    } else if (command.kind === 'text') {
+      setLocatingId(null)
+      setPreviewMode('text')
+      setNavNotice(TEXT_FALLBACK_NOTICE)
+    } else if (command.kind === 'locating') {
+      setLocatingId(command.findingId)
+      setNavNotice(null)
+    }
+  }, [navigateToRenderedPage])
+
+  // The fallback banner is only truthful while Extracted Text is active:
+  // any switch to Rendered Pages (manual or via a mapped finding) hides it.
+  // It reappears only after a new genuine unavailable navigation result.
+  useEffect(() => {
+    if (previewMode === 'rendered') setNavNotice(null)
+  }, [previewMode])
+
+  // Reset navigation state when the audit changes.
+  useEffect(() => {
+    pendingNavRef.current?.reset()
+    setPageCommand(null)
+    setPreviewMode('rendered')
+    setLocatingId(null)
+    setNavNotice(null)
+  }, [auditId])
+
+  // Execute (or fail) the retained navigation request when the mapping
+  // settles — never before.
+  useEffect(() => {
+    if (mappingStatus === 'ready' && mappingBundle) {
+      pendingNavRef.current?.onMappingReady(mappingBundle.byIndex, selectedId, emitNav)
+    } else if (mappingStatus === 'error') {
+      pendingNavRef.current?.onMappingFailed(selectedId, emitNav)
+    }
+  }, [mappingStatus, mappingBundle, selectedId, emitNav])
+
+  // User-facing location labels per finding (exact/approximate → page label,
+  // unavailable → paragraph label; never confidence terminology).
+  const locationLabels = useMemo(() => {
+    if (!audit) return null
+    const labels = new Map<string, string>()
+    for (const v of audit.violations) {
+      if (mappingBundle) {
+        const decision = resolveFindingNavigation(v, mappingBundle.byIndex)
+        if (decision.locationLabel) labels.set(v.id, decision.locationLabel)
+      } else if (mappingStatus === 'error' && hasParagraphIdentity(v)) {
+        const para = v.location?.paragraph_index as number
+        labels.set(v.id, `Paragraph ${para + 1} · Page unavailable`)
+      }
+    }
+    return labels
+  }, [mappingBundle, mappingStatus, audit])
 
   // Mobile/tablet workspace view — tabs below lg, side-by-side at lg+.
   const [mobileView, setMobileView] = useState<WorkspaceView>('findings')
@@ -159,6 +252,7 @@ export function AuditPage() {
   // Tablet (lg 1024–1279): selecting a finding opens the Detail drawer.
   const handleTabletSelect = (e: LayoutError) => {
     setSelectedId(e.id)
+    applyNavigation(e)
     setDrawerOpen(true)
   }
 
@@ -180,8 +274,31 @@ export function AuditPage() {
   // paragraph is available, otherwise Details — never an empty Document.
   const handleMobileSelect = (e: LayoutError) => {
     setSelectedId(e.id)
+    applyNavigation(e)
     const locatable = e.position > 0 && blocks !== null && blocks.length > 0
     setMobileView(locatable ? 'document' : 'details')
+  }
+
+  // Desktop (≥1280): selection only navigates the document pane.
+  const handleDesktopSelect = (e: LayoutError) => {
+    setSelectedId(e.id)
+    applyNavigation(e)
+  }
+
+  // Exact/approximate mapping → Rendered Pages + page navigation;
+  // completed unavailable mapping → extracted-text paragraph location;
+  // object findings (table/figure/section/margin) are never forced through
+  // the paragraph mapping and never switch the view — they show a concise
+  // notice instead. Selection uses the REAL violation (it carries
+  // location.paragraph_index) — the presentation LayoutError does not.
+  const applyNavigation = (e: LayoutError) => {
+    const violation = violations.find((v) => v.id === e.id) ?? null
+    if (!violation) return
+    if (classifyFindingTarget(violation) === 'object') {
+      setNavNotice(OBJECT_NOTICE)
+      return
+    }
+    pendingNavRef.current?.select(violation, mappingBundle?.byIndex, emitNav)
   }
 
   // Reset detail scroll to top when the selected finding changes — no focus
@@ -465,6 +582,8 @@ export function AuditPage() {
                       onSelect={handleMobileSelect}
                       categoryFilter={categoryFilter}
                       onCategoryFilterChange={setCategoryFilter}
+                      locationLabels={locationLabels}
+                      locatingId={locatingId}
                     />
                   )}
                 </div>
@@ -487,7 +606,11 @@ export function AuditPage() {
                     loadError={blocksError}
                     onSelectViolation={setSelectedId}
                     active={mobileView === 'document'}
-                    renderedPreviewAuditId={audit.status === 'processing' ? null : audit.id}
+                    renderedPdf={renderedPdf}
+                    notice={navNotice}
+                                        previewMode={previewMode}
+                    onPreviewModeChange={setPreviewMode}
+                    pendingPage={pageCommand}
                   />
                   <div className="flex flex-wrap items-center gap-2">
                     {selectedViolation && (
@@ -532,6 +655,8 @@ export function AuditPage() {
                       onSelect={handleTabletSelect}
                       categoryFilter={categoryFilter}
                       onCategoryFilterChange={setCategoryFilter}
+                      locationLabels={locationLabels}
+                      locatingId={locatingId}
                       className="lg:h-full lg:min-h-0 lg:flex-1 lg:overflow-hidden"
                     />
                   )}
@@ -548,7 +673,11 @@ export function AuditPage() {
                       setDrawerOpen(true)
                     }}
                     fitRegion
-                    renderedPreviewAuditId={audit.status === 'processing' ? null : audit.id}
+                    renderedPdf={renderedPdf}
+                    notice={navNotice}
+                                        previewMode={previewMode}
+                    onPreviewModeChange={setPreviewMode}
+                    pendingPage={pageCommand}
                   />
                 </div>
               </div>
@@ -562,9 +691,11 @@ export function AuditPage() {
                     <ErrorList
                       result={{ physical_layout_errors: mappedErrors }}
                       selectedId={selectedId}
-                      onSelect={(e) => setSelectedId(e.id)}
+                      onSelect={handleDesktopSelect}
                       categoryFilter={categoryFilter}
                       onCategoryFilterChange={setCategoryFilter}
+                      locationLabels={locationLabels}
+                      locatingId={locatingId}
                       className="lg:h-full lg:min-h-0 lg:flex-1 lg:overflow-hidden"
                     />
                   )}
@@ -578,7 +709,11 @@ export function AuditPage() {
                     loadError={blocksError}
                     onSelectViolation={setSelectedId}
                     fitRegion
-                    renderedPreviewAuditId={audit.status === 'processing' ? null : audit.id}
+                    renderedPdf={renderedPdf}
+                    notice={navNotice}
+                                        previewMode={previewMode}
+                    onPreviewModeChange={setPreviewMode}
+                    pendingPage={pageCommand}
                   />
                 </div>
                 <div

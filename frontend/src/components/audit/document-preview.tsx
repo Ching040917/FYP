@@ -20,7 +20,8 @@ import * as React from 'react'
 import { AlertOctagon, AlertTriangle, Check, FileText, Loader2, ScrollText } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import type { DocumentBlock, Violation } from '../../types/api'
-import { RenderedPreview, type RenderedPreviewState } from './rendered-preview'
+import { RenderedPreview } from './rendered-preview'
+import type { RenderedPdfState } from '../../hooks/use-rendered-pdf.ts'
 
 export interface DocumentPreviewProps {
   blocks: DocumentBlock[] | null
@@ -35,10 +36,18 @@ export interface DocumentPreviewProps {
   /** When false (inactive tab), skip scroll-to-block; re-runs on activation. */
   active?: boolean
   /**
-   * When set, the rendered PDF preview is the primary document view and the
-   * extracted-text preview is the automatic fallback (Build 4).
+   * Rendered PDF state + shared bytes (parent-owned). When set, the
+   * rendered preview is the primary document view and the extracted-text
+   * preview is the automatic fallback.
    */
-  renderedPreviewAuditId?: string | null
+  renderedPdf?: RenderedPdfState | null
+  /** Controlled preview mode (finding navigation switches it). */
+  previewMode?: 'rendered' | 'text'
+  onPreviewModeChange?: (mode: 'rendered' | 'text') => void
+  /** Finding-to-page navigation command forwarded to the rendered viewer. */
+  pendingPage?: { page: number; seq: number } | null
+  /** Concise navigation notice shown above the preview content. */
+  notice?: string | null
 }
 
 export function DocumentPreview({
@@ -50,21 +59,25 @@ export function DocumentPreview({
   onSelectViolation,
   fitRegion = false,
   active,
-  renderedPreviewAuditId = null,
+  renderedPdf = null,
+  previewMode,
+  onPreviewModeChange,
+  pendingPage = null,
+  notice = null,
 }: DocumentPreviewProps) {
   const containerRef = React.useRef<HTMLDivElement>(null)
   const blockRefs = React.useRef<Map<number, HTMLElement>>(new Map())
 
   // Rendered-preview mode: primary when available, text is the fallback.
-  const hasRendered = !!renderedPreviewAuditId
-  const [view, setView] = React.useState<'rendered' | 'text'>('rendered')
-  const [renderedState, setRenderedState] = React.useState<RenderedPreviewState>('loading')
-  const renderedAvailable = renderedState === 'available'
+  const hasRendered = renderedPdf != null
+  const [internalView, setInternalView] = React.useState<'rendered' | 'text'>('rendered')
+  const renderedAvailable = renderedPdf?.status === 'available'
 
-  React.useEffect(() => {
-    setView('rendered')
-    setRenderedState('loading')
-  }, [renderedPreviewAuditId])
+  const view = previewMode ?? internalView
+  const changeView = (mode: 'rendered' | 'text') => {
+    if (onPreviewModeChange) onPreviewModeChange(mode)
+    else setInternalView(mode)
+  }
 
   const hideRendered = hasRendered && renderedAvailable && view === 'text'
   const hideText = hasRendered && renderedAvailable && view === 'rendered'
@@ -154,16 +167,26 @@ export function DocumentPreview({
               aria-label="Preview mode"
               className="inline-flex rounded-md border border-border bg-input/20 p-0.5"
             >
-              <ModeButton active={view === 'rendered'} onClick={() => setView('rendered')}>
+              <ModeButton active={view === 'rendered'} onClick={() => changeView('rendered')}>
                 Rendered pages
               </ModeButton>
-              <ModeButton active={view === 'text'} onClick={() => setView('text')}>
+              <ModeButton active={view === 'text'} onClick={() => changeView('text')}>
                 Extracted text
               </ModeButton>
             </div>
           )}
         </div>
       </header>
+
+      {/* Concise navigation explanation (object findings / text fallback). */}
+      {notice && (
+        <p
+          role="status"
+          className="shrink-0 rounded-md border border-border bg-input/20 px-3 py-2 text-xs leading-[18px] text-muted-foreground"
+        >
+          {notice}
+        </p>
+      )}
 
       {/* Rendered PDF viewer — primary when available; hidden (kept mounted)
           while the user reads extracted text. */}
@@ -175,7 +198,11 @@ export function DocumentPreview({
             hideRendered && 'hidden',
           )}
         >
-          <RenderedPreview auditId={renderedPreviewAuditId} onStateChange={setRenderedState} fitRegion={fitRegion} />
+          <RenderedPreview
+            pdf={renderedPdf}
+            fitRegion={fitRegion}
+            pendingPage={pendingPage}
+          />
         </div>
       )}
 

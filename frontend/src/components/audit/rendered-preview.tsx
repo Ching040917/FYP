@@ -1,15 +1,13 @@
 /**
  * RenderedPreview — read-only PDF.js document viewer (Build 4, MVP).
  *
- * Loads the persisted rendered PDF from the secure endpoint
- * GET /api/audit/{audit_id}/rendered-preview and renders one page at a
- * time onto a canvas. This is a project-specific viewer built on the
- * PDF.js display APIs — not the stock PDF.js viewer.
+ * Renders one page at a time onto a canvas. The PDF bytes and load state
+ * come from the PARENT (useRenderedPdf in AuditPage) so the viewer and the
+ * finding-to-page mapper share the exact same response bytes and the same
+ * pdfjs configuration — no duplicate fetches, no lifecycle races.
  *
- * States reported upward via onStateChange:
+ * States (from the parent) reported as fallback panels here:
  *   loading | available | historical | unavailable | corrupt | missing | error
- * The parent keeps the extracted-text preview as the automatic fallback
- * and hides this viewer only when it is truly available.
  *
  * Resource discipline: the loading task, render tasks, and document are
  * released on unmount/replacement; obsolete renders are cancelled and a
@@ -26,36 +24,29 @@ import {
   ZoomIn,
   ZoomOut,
 } from 'lucide-react'
-import * as pdfjsLib from 'pdfjs-dist'
 import type { PDFDocumentLoadingTask, PDFDocumentProxy, PDFPageProxy, RenderTask } from 'pdfjs-dist'
-import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
+import { getPdfjs } from '../../lib/pdf/pdf-text-extract.ts'
+import type { RenderedPdfState } from '../../hooks/use-rendered-pdf.ts'
 import { cn } from '../../lib/utils'
-import { api } from '../../services/api'
-
-pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl
-
-export type RenderedPreviewState =
-  | 'loading'
-  | 'available'
-  | 'historical'
-  | 'unavailable'
-  | 'corrupt'
-  | 'missing'
-  | 'error'
+import { PageCommandConsumer } from '../../lib/pdf/pending-navigation.ts'
 
 interface RenderedPreviewProps {
-  auditId: string
-  /** Reports the current load state to the parent (fallback decisions). */
-  onStateChange?: (state: RenderedPreviewState) => void
+  /** PDF load state + bytes from the parent (shared with mapping). */
+  pdf: RenderedPdfState | null
   /** Fill the parent region instead of a fixed max height (desktop split). */
   fitRegion?: boolean
+  /**
+   * Imperative page navigation from finding selection. `seq` must change
+   * per request so repeated requests to the same page still apply.
+   */
+  pendingPage?: { page: number; seq: number } | null
 }
 
 const ZOOM_MIN = 0.5
 const ZOOM_MAX = 3
 const ZOOM_STEP_IN = 1.25
 const ZOOM_STEP_OUT = 0.8
-const FALLBACK_MESSAGES: Record<Exclude<RenderedPreviewState, 'loading' | 'available'>, string> = {
+const FALLBACK_MESSAGES: Record<Exclude<RenderedPdfState['status'], 'loading' | 'available' | 'idle'>, string> = {
   historical: 'Rendered preview is unavailable for this older audit.',
   unavailable: 'The page-rendered preview could not be created. The extracted-text preview remains available.',
   corrupt: 'The rendered preview is no longer available. The extracted-text preview remains available.',
@@ -63,10 +54,9 @@ const FALLBACK_MESSAGES: Record<Exclude<RenderedPreviewState, 'loading' | 'avail
   error: 'The rendered preview could not be loaded. The extracted-text preview remains available.',
 }
 
-export function RenderedPreview({ auditId, onStateChange, fitRegion = false }: RenderedPreviewProps) {
-  const [state, setState] = React.useState<RenderedPreviewState>('loading')
-  const [fallbackDetail, setFallbackDetail] = React.useState<string | null>(null)
+export function RenderedPreview({ pdf, fitRegion = false, pendingPage = null }: RenderedPreviewProps) {
   const [pdfDoc, setPdfDoc] = React.useState<PDFDocumentProxy | null>(null)
+  const [docLoading, setDocLoading] = React.useState(false)
   const [pageNum, setPageNum] = React.useState(1)
   const [numPages, setNumPages] = React.useState(0)
   // null = fit-to-width (recomputed from the container on demand)
@@ -74,6 +64,7 @@ export function RenderedPreview({ auditId, onStateChange, fitRegion = false }: R
   const [appliedScale, setAppliedScale] = React.useState<number | null>(null)
   const [renderFailed, setRenderFailed] = React.useState(false)
   const [fitTick, setFitTick] = React.useState(0)
+  const [navAnnounce, setNavAnnounce] = React.useState<string | null>(null)
 
   const canvasRef = React.useRef<HTMLCanvasElement>(null)
   const containerRef = React.useRef<HTMLDivElement>(null)
@@ -81,46 +72,36 @@ export function RenderedPreview({ auditId, onStateChange, fitRegion = false }: R
   const renderTaskRef = React.useRef<RenderTask | null>(null)
   const renderSeqRef = React.useRef(0)
   const fitWidthRef = React.useRef(0)
+  // One-shot finding navigation: consumed commands never replay.
+  const navConsumerRef = React.useRef(new PageCommandConsumer())
 
-  const report = React.useCallback(
-    (s: RenderedPreviewState) => {
-      setState(s)
-      onStateChange?.(s)
-    },
-    [onStateChange],
-  )
+  const available = pdf?.status === 'available' && pdf.bytes !== undefined
+  const status = pdf?.status ?? 'idle'
 
-  // ---- Load the document once per audit ----
+  // ---- Load the document from the shared bytes ----
   React.useEffect(() => {
     let cancelled = false
-    report('loading')
+    const bytes = pdf?.status === 'available' ? pdf.bytes : undefined
+    if (!bytes) {
+      setPdfDoc(null)
+      setNumPages(0)
+      setPageNum(1)
+      return
+    }
+    // PDF replaced: forget any consumed navigation command.
+    navConsumerRef.current.reset()
+    setDocLoading(true)
     setPdfDoc(null)
     setNumPages(0)
     setPageNum(1)
     setScale(null)
     setAppliedScale(null)
     setRenderFailed(false)
-    setFallbackDetail(null)
 
     const load = async () => {
-      const result = await api.getRenderedPreview(auditId)
-      if (cancelled) return
-      if (!result.ok) {
-        const mapped = mapFailure(result.status, result.detail)
-        setFallbackDetail(result.detail || FALLBACK_MESSAGES[mapped])
-        report(mapped)
-        return
-      }
-      let data: ArrayBuffer
       try {
-        data = await result.blob.arrayBuffer()
-      } catch {
-        if (!cancelled) report('error')
-        return
-      }
-      if (cancelled) return
-      try {
-        const task = pdfjsLib.getDocument({ data })
+        const pdfjs = await getPdfjs()
+        const task = pdfjs.getDocument({ data: bytes.slice(0) })
         loadingTaskRef.current = task
         const doc = await task.promise
         if (cancelled) {
@@ -129,9 +110,10 @@ export function RenderedPreview({ auditId, onStateChange, fitRegion = false }: R
         }
         setPdfDoc(doc)
         setNumPages(doc.numPages)
-        report('available')
       } catch {
-        if (!cancelled) report('corrupt')
+        // Parent reports 'corrupt' when extraction fails too; stay quiet here.
+      } finally {
+        if (!cancelled) setDocLoading(false)
       }
     }
     void load()
@@ -151,12 +133,8 @@ export function RenderedPreview({ auditId, onStateChange, fitRegion = false }: R
       }
       loadingTaskRef.current = null
     }
-  }, [auditId, report])
-
-  // ---- Keep the parent in sync when state changes without a new audit ----
-  React.useEffect(() => {
-    onStateChange?.(state)
-  }, [state, onStateChange])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pdf?.status === 'available' ? pdf?.bytes : undefined])
 
   // ---- Fit-width on container resize (only while in fit mode) ----
   React.useEffect(() => {
@@ -171,7 +149,7 @@ export function RenderedPreview({ auditId, onStateChange, fitRegion = false }: R
 
   // ---- Render the current page ----
   React.useEffect(() => {
-    if (!pdfDoc || state !== 'available') return
+    if (!pdfDoc) return
     let cancelled = false
     const seq = ++renderSeqRef.current
 
@@ -227,7 +205,7 @@ export function RenderedPreview({ auditId, onStateChange, fitRegion = false }: R
     return () => {
       cancelled = true
     }
-  }, [pdfDoc, pageNum, scale, state, fitTick])
+  }, [pdfDoc, pageNum, scale, fitTick])
 
   const zoomIn = () => setScale((cur) => Math.min(ZOOM_MAX, (cur ?? 1) * ZOOM_STEP_IN))
   const zoomOut = () => setScale((cur) => Math.max(ZOOM_MIN, (cur ?? 1) * ZOOM_STEP_OUT))
@@ -239,12 +217,32 @@ export function RenderedPreview({ auditId, onStateChange, fitRegion = false }: R
   const nextPage = () => setPageNum((p) => Math.min(numPages, p + 1))
   const prevPage = () => setPageNum((p) => Math.max(1, p - 1))
 
+  // Finding-to-page navigation: apply the command ONCE (seq-identified),
+  // then manual controls own the page. Scroll only inside this pane,
+  // announce through aria-live, respect reduced motion.
+  React.useEffect(() => {
+    if (!pdfDoc) return
+    const target = navConsumerRef.current.consume(pendingPage, numPages)
+    if (target === null || target === pageNum) return
+    setPageNum(target)
+    setNavAnnounce(`Navigated to page ${target} of ${numPages}`)
+    const el = containerRef.current
+    if (el) {
+      const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+      el.scrollTo({ top: 0, behavior: reduce ? 'auto' : 'smooth' })
+    }
+  }, [pendingPage, pdfDoc, numPages, pageNum])
+
   // ---- Non-available states: fallback panel only ----
-  if (state !== 'available') {
-    const message = fallbackDetail || FALLBACK_MESSAGES[state as Exclude<RenderedPreviewState, 'loading' | 'available'>]
+  if (!available) {
+    const isIdle = status === 'idle'
+    const message =
+      pdf?.detail && !isIdle
+        ? pdf.detail
+        : FALLBACK_MESSAGES[status as Exclude<RenderedPdfState['status'], 'loading' | 'available' | 'idle'>]
     return (
       <div className="space-y-3" role="region" aria-label="Rendered document preview">
-        {state === 'loading' ? (
+        {isIdle || status === 'loading' || docLoading ? (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" aria-hidden="true" />
             Loading rendered preview…
@@ -294,6 +292,11 @@ export function RenderedPreview({ auditId, onStateChange, fitRegion = false }: R
       <p aria-live="polite" className="sr-only">
         Page {pageNum} of {numPages}, {zoomLabel}
       </p>
+      {navAnnounce && (
+        <p aria-live="polite" className="sr-only">
+          {navAnnounce}
+        </p>
+      )}
 
       {/* Bounded internal scrolling; no page-level horizontal overflow */}
       <div
@@ -358,14 +361,4 @@ function ToolButton({
       <span className="sr-only">{label}</span>
     </button>
   )
-}
-
-function mapFailure(
-  status: number,
-  detail: string,
-): Exclude<RenderedPreviewState, 'loading' | 'available'> {
-  if (status === 404) return detail.includes('older audit') ? 'historical' : 'error'
-  if (status === 409) return detail.includes('could not be created') ? 'unavailable' : 'corrupt'
-  if (status === 410) return 'missing'
-  return 'error'
 }

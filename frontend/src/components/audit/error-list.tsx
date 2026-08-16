@@ -60,6 +60,8 @@ export function ErrorList({
   className,
   categoryFilter,
   onCategoryFilterChange,
+  locationLabels,
+  locatingId,
 }: {
   result: Pick<AuditResult, 'physical_layout_errors'>
   selectedId?: string | null
@@ -68,6 +70,10 @@ export function ErrorList({
   /** Controlled category filter — shared with the category overview. */
   categoryFilter?: AuditCategory | 'all'
   onCategoryFilterChange?: (category: AuditCategory | 'all') => void
+  /** User-facing location labels per finding id (Page N · Paragraph M). */
+  locationLabels?: ReadonlyMap<string, string> | null
+  /** Finding currently being located by the page mapper. */
+  locatingId?: string | null
 }) {
   const [severityFilter, setSeverityFilter] = React.useState<ViolationSeverity | 'all'>('all')
   const [localCategoryFilter, setLocalCategoryFilter] = React.useState<AuditCategory | 'all'>('all')
@@ -280,6 +286,17 @@ export function ErrorList({
                           >
                             {e.severity === 'major' ? 'Major' : 'Minor'}
                           </Badge>
+                          {locatingId === e.id ? (
+                            <span className="text-[11px] leading-none text-muted-foreground">
+                              Locating finding…
+                            </span>
+                          ) : (
+                            locationLabels?.get(e.id) && (
+                              <span className="text-[11px] leading-none text-muted-foreground">
+                                {locationLabels.get(e.id)}
+                              </span>
+                            )
+                          )}
                         </span>
                         {e.snippet && (
                           <span className="mt-1.5 line-clamp-2 block break-words font-mono text-[11px] leading-[18px] text-muted-foreground">

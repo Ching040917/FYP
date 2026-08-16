@@ -6,7 +6,10 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:map": "node --test tests/paragraph-mapping.test.ts",
+    "test:navigation": "node --test tests/finding-navigation.test.ts",
+    "test:all": "node --test"
   },
   "dependencies": {
     "@radix-ui/react-label": "^2.1.10",

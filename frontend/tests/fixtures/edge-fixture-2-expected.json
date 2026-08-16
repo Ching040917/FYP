@@ -1,0 +1,75 @@
+[
+ {
+  "index": 0,
+  "pageNumber": 1,
+  "pageRange": null
+ },
+ {
+  "index": 1,
+  "pageNumber": 1,
+  "pageRange": null
+ },
+ {
+  "index": 2,
+  "pageNumber": null,
+  "pageRange": null
+ },
+ {
+  "index": 3,
+  "pageNumber": null,
+  "pageRange": null
+ },
+ {
+  "index": 4,
+  "pageNumber": 2,
+  "pageRange": null
+ },
+ {
+  "index": 5,
+  "pageNumber": 2,
+  "pageRange": null
+ },
+ {
+  "index": 6,
+  "pageNumber": 2,
+  "pageRange": null
+ },
+ {
+  "index": 7,
+  "pageNumber": 2,
+  "pageRange": null
+ },
+ {
+  "index": 8,
+  "pageNumber": null,
+  "pageRange": null
+ },
+ {
+  "index": 9,
+  "pageNumber": 3,
+  "pageRange": [
+   3,
+   5
+  ]
+ },
+ {
+  "index": 10,
+  "pageNumber": 5,
+  "pageRange": null
+ },
+ {
+  "index": 11,
+  "pageNumber": null,
+  "pageRange": null
+ },
+ {
+  "index": 12,
+  "pageNumber": 6,
+  "pageRange": null
+ },
+ {
+  "index": 13,
+  "pageNumber": 6,
+  "pageRange": null
+ }
+]
