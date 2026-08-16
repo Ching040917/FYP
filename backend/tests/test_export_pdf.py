@@ -6,6 +6,7 @@ punctuation, AI-unavailable export, absence of document blocks, and
 non-mutation of persisted results.
 """
 import io
+import re
 import uuid
 
 from sqlalchemy.orm import sessionmaker
@@ -35,7 +36,8 @@ def _export(client, audit_id):
 
 def _pdf_text(pdf_bytes):
     from pypdf import PdfReader
-    return "\n".join(page.extract_text() or "" for page in PdfReader(io.BytesIO(pdf_bytes)).pages)
+    raw = "\n".join(page.extract_text() or "" for page in PdfReader(io.BytesIO(pdf_bytes)).pages)
+    return re.sub(r"\s+", " ", raw)
 
 
 def _seed_audit(test_engine, status="completed", violations=(), citations=(), **fields):
@@ -336,8 +338,7 @@ def test_grouped_minors_preserve_all_findings(client, test_engine):
     assert resp.status_code == 200
     text = _pdf_text(resp.content)
     # Group panel: G### id + friendly rule name + severity/count header
-    assert "G001" in text
-    assert "Font Consistency" in text
+    assert "G001 — Font Consistency" in text
     assert "Minor · 10 finding(s)" in text
     # Appendix is a compact register (not verbose Finding N tables)
     assert "Appendix" in text
@@ -365,9 +366,11 @@ def test_major_findings_remain_individual(client, test_engine):
         violations=violations,
     )
     text = _pdf_text(_export(client, audit_id).content)
-    # Each major finding gets its own table with "Finding N" header
-    assert "Finding 1" in text
-    assert "Finding 2" in text
+    # Each major finding gets its own panel with a P### header
+    assert "P001 — Left Margin" in text
+    assert "P002 — Heading Hierarchy" in text
+    assert "Finding 1" not in text
+    assert "Finding 2" not in text
 
 
 def test_specific_action_when_values_exist(client, test_engine):
@@ -522,13 +525,92 @@ def test_group_panel_structure(client, test_engine):
     audit_id = _seed_audit(test_engine, status="completed", weighted_score=80,
                            violations=violations)
     text = _pdf_text(_export(client, audit_id).content)
-    assert "G001" in text
-    assert "Line Spacing" in text
+    assert "G001 — Line Spacing" in text
     assert "Minor · 3 finding(s)" in text
     assert "Required" in text
     assert "Observed" in text
     assert "Affected Locations" in text
     assert "Required Action" in text
+
+
+def test_grouped_actions_are_plural_and_specific(client, test_engine):
+    """Group actions must be plural and carry the group's expected value."""
+    violations = (
+        [
+            {"rule_code": "FONT_SIZE", "severity": "MINOR",
+             "location": {"paragraph_index": i}, "message": "Wrong size",
+             "expected_value": "12pt", "actual_value": "14pt"}
+            for i in range(3)
+        ]
+        + [
+            {"rule_code": "ALIGNMENT", "severity": "MINOR",
+             "location": {"paragraph_index": 10 + i}, "message": "Not justified",
+             "expected_value": "justify", "actual_value": "left"}
+            for i in range(2)
+        ]
+        + [
+            {"rule_code": "SPACE_BEFORE", "severity": "MINOR",
+             "location": {"paragraph_index": 20 + i}, "message": "Space before wrong",
+             "expected_value": "0pt", "actual_value": "18pt"}
+            for i in range(2)
+        ]
+    )
+    audit_id = _seed_audit(test_engine, status="completed", weighted_score=80,
+                           violations=violations)
+    text = _pdf_text(_export(client, audit_id).content)
+    assert "Change the listed body-text runs to 12 pt. Review headings separately" in text
+    assert "Change the listed body paragraphs to justified alignment. Review heading alignment separately." in text
+    assert "Change the space before for the listed paragraphs to 0pt." in text
+    assert "this paragraph" not in text
+
+
+def test_singleton_heading_uses_g_id_with_friendly_name(client, test_engine):
+    """Singleton minors use 'G### — Friendly Name' headings, never 'Finding N'."""
+    audit_id = _seed_audit(
+        test_engine, status="completed", weighted_score=85,
+        violations=[{"rule_code": "FONT_CONSISTENCY", "severity": "MINOR",
+                     "location": {"paragraph_index": 0},
+                     "message": "Font mismatch",
+                     "expected_value": "Times New Roman", "actual_value": "Arial"}],
+    )
+    text = _pdf_text(_export(client, audit_id).content)
+    assert "G001 — Font Consistency" in text
+    assert "Minor · 1 finding(s)" in text
+    assert "Finding " not in text
+
+
+def test_section_order_majors_then_citation_then_minors(client, test_engine):
+    """Major findings, then citation guidance, then grouped minors, then stats/scope/appendix."""
+    violations = [
+        {"rule_code": "CITATION_MISMATCH", "severity": "MAJOR",
+         "location": {"paragraph_index": 0},
+         "message": "Citation 'Garcia (2018)' was found in text, but no matching entry was found.",
+         "expected_value": "Matching References entry", "actual_value": "Garcia (2018)"},
+        {"rule_code": "FONT_SIZE", "severity": "MINOR",
+         "location": {"paragraph_index": 1}, "message": "Wrong size",
+         "expected_value": "12pt", "actual_value": "14pt"},
+        {"rule_code": "FONT_SIZE", "severity": "MINOR",
+         "location": {"paragraph_index": 2}, "message": "Wrong size",
+         "expected_value": "12pt", "actual_value": "11pt"},
+    ]
+    citations = [
+        {"paragraph_index": 0, "text_snippet": "Garcia (2018) states",
+         "issue_type": "CITATION_MISMATCH", "message": "No matching entry.",
+         "suggestion": "Recommended correction\nAdd the missing reference entry.",
+         "confidence": 0.9},
+    ]
+    audit_id = _seed_audit(
+        test_engine, status="completed", weighted_score=80,
+        violations=violations, citations=citations,
+    )
+    text = _pdf_text(_export(client, audit_id).content)
+    order = ["Major Priority Findings", "Citation Guidance", "Grouped Minor Findings",
+             "Document Statistics", "Scope, Limitations and Privacy",
+             "Appendix — Findings Register"]
+    positions = [text.index(s) for s in order]
+    assert positions == sorted(positions), "sections out of order"
+    # Garcia guidance sits after the Major findings section
+    assert text.index("Garcia (2018)") > text.index("Major Priority Findings")
 
 
 def test_consecutive_paragraph_locations_compacted_into_ranges(client, test_engine):

@@ -1,4 +1,5 @@
 from typing import List, Dict, Any, Optional
+import re
 from docx import Document
 from docx.shared import Pt, Inches
 from docx.enum.text import WD_ALIGN_PARAGRAPH
@@ -250,7 +251,8 @@ def _extract_paragraph_text(p_elem) -> str:
 
     Uses .iter() to walk ALL descendants because <w:t> text elements are
     nested inside <w:r> runs — direct children of <w:p> are <w:pPr> and
-    <w:r>, not <w:t>.
+    <w:r>, not <w:t>. Field instruction text (<w:instrText>) is NOT <w:t>,
+    so SEQ field instructions never leak into the visible text.
     """
     text = ""
     for descendant in p_elem.iter():
@@ -259,12 +261,100 @@ def _extract_paragraph_text(p_elem) -> str:
     return text
 
 
+# --- Semantic caption detection (FR-2.6) ------------------------------------
+# A caption is VALID only when it carries Word semantics (Caption paragraph
+# style and/or a SEQ Table/Figure field). Plain text that merely looks like
+# "Table 2: ..." is a MANUAL caption. Labels are split by object type so a
+# table never accepts a figure label and vice versa.
+
+_CAPTION_STYLE_ID = "caption"
+
+_TABLE_LABEL_RE = re.compile(r"^\s*(?:table|tab\.|jadual|表)\s*\d+", re.IGNORECASE)
+_FIGURE_LABEL_RE = re.compile(
+    r"^\s*(?:figure|fig\.|chart|gambar|rajah|graf|图|图表)\s*\d+", re.IGNORECASE
+)
+
+MANUAL_CAPTION_ACTION = (
+    "Use Word's References → Insert Caption feature so the label and "
+    "numbering remain consistent."
+)
+
+
+def _paragraph_caption_semantics(p_elem, style_names) -> dict:
+    """Semantic caption signals of a <w:p>: Caption style, SEQ labels, flags.
+
+    `style_names`: {style_id: lowercase style name} resolved from the doc.
+    SEQ labels are collected from ALL <w:instrText> runs — Word splits field
+    instructions across multiple runs, e.g. " SEQ " + "Table \\* ARABIC ".
+    """
+    from docx.oxml.ns import qn
+
+    info = {"caption_style": False, "seq": set(), "heading": False, "list": False}
+    pPr = p_elem.find(qn("w:pPr"))
+    if pPr is not None:
+        if pPr.find(qn("w:numPr")) is not None:
+            info["list"] = True
+        pStyle = pPr.find(qn("w:pStyle"))
+        if pStyle is not None:
+            style_id = (pStyle.get(qn("w:val")) or "").lower()
+            style_name = style_names.get(style_id, "")
+            if style_id == _CAPTION_STYLE_ID or style_name == _CAPTION_STYLE_ID:
+                info["caption_style"] = True
+            if style_id.startswith("heading") or style_name.startswith("heading"):
+                info["heading"] = True
+    joined_instr = "".join(
+        (t.text or "") for t in p_elem.iter(qn("w:instrText"))
+    )
+    for m in re.finditer(r"\bSEQ\s+(\w+)", joined_instr, re.IGNORECASE):
+        info["seq"].add(m.group(1).lower())
+    return info
+
+
+def _caption_status(p_elem, label_re, seq_label, style_names) -> str:
+    """Classify an adjacent paragraph as 'valid', 'manual', or 'none'.
+
+    - valid:   label matches the object type AND (Caption style or matching
+               SEQ field). Headings and list items are never valid.
+    - manual:  text matches the label pattern but carries no Word semantics.
+    - none:    not a caption of this object type (e.g. wrong label, prose
+               without a number, or the object type's label is absent).
+    """
+    text = _extract_paragraph_text(p_elem)
+    if not text or not label_re.search(text):
+        return "none"
+    info = _paragraph_caption_semantics(p_elem, style_names)
+    if info["heading"] or info["list"]:
+        return "manual"
+    if info["caption_style"] or seq_label in info["seq"]:
+        return "valid"
+    return "manual"
+
+
+def _adjacent_caption_status(element, label_re, seq_label, style_names) -> str:
+    """Caption status from an element's sibling paragraphs (both directions).
+
+    VALID beats MANUAL; a valid caption on either side satisfies the rule.
+    """
+    status = "missing"
+    for direction in (element.getprevious, element.getnext):
+        sibling = direction()
+        if sibling is None or not sibling.tag.endswith("}p"):
+            continue
+        s = _caption_status(sibling, label_re, seq_label, style_names)
+        if s == "valid":
+            return "valid"
+        if s == "manual":
+            status = "manual"
+    return status
+
+
 def _find_image_context(doc: Document, image_rel) -> tuple:
-    """Find (host_paragraph_index, prev_text, next_text) for an image.
+    """Find (host_paragraph_index, prev_elem, next_elem) for an image.
 
     Walks the document body in order; when a paragraph contains a drawing
     whose r:embed matches the target image's rId, returns that paragraph's
-    index plus the text of its neighbours. Returns (-1, "", "") if not found.
+    index plus the XML elements of its neighbours (None if absent/missing).
+    Returns (-1, None, None) if not found.
     """
     from docx.oxml.ns import qn
 
@@ -282,10 +372,8 @@ def _find_image_context(doc: Document, image_rel) -> tuple:
                 embed = blip.get("{http://schemas.openxmlformats.org/officeDocument/2006/relationships}embed")
                 if embed and embed in doc.part.rels:
                     if doc.part.rels[embed].target_ref == image_rel.target_ref:
-                        prev_text = paragraphs[idx - 1].text if idx > 0 else ""
-                        next_text = paragraphs[idx + 1].text if idx < len(paragraphs) - 1 else ""
-                        return idx, prev_text, next_text
-    return -1, "", ""
+                        return idx, para._p.getprevious(), para._p.getnext()
+    return -1, None, None
 
 
 def _extract_image_alt_text(doc: Document, image_rel) -> str:
@@ -306,39 +394,44 @@ def _extract_image_alt_text(doc: Document, image_rel) -> str:
 def check_media_captions(doc: Document, paragraphs: List[Dict], preset) -> List[LayoutViolation]:
     """FR-2.6: Media captions — tables AND images must have captions.
 
-    Multilingual: uses preset.is_caption_text() which matches English,
-    Malay (Jadual/Gambar/Rajah/Graf), and Chinese (表/图) prefixes.
+    Adjacent captions are classified semantically:
+    - VALID:   Caption paragraph style and/or a matching SEQ Table/Figure
+               field, with a label matching the object type.
+    - MANUAL:  text matches 'Table N'/'Figure N' but no Word semantics —
+               flagged with MANUAL_CAPTION (MINOR).
+    - MISSING: no matching adjacent caption — TABLE_CAPTION_MISSING /
+               IMAGE_CAPTION_MISSING.
 
-    Bidirectional caption lookup: checks BOTH the preceding AND following
-    paragraph, because some style guides place table captions above and
-    figure captions below — we accept either position.
+    Multilingual labels (English, Malay Jadual/Gambar/Rajah/Graf, Chinese
+    表/图/图表) are preserved and split by object type. Headings, list
+    items, and table-cell text are never accepted as captions. No visual
+    appearance (colour, bold) is consulted. Both caption positions are
+    accepted (tables above, figures below, or the reverse).
 
     Image alt-text: every embedded image should carry a docPr@descr
     attribute for accessibility. Missing alt-text is a MINOR violation.
     """
     violations = []
+    style_names = {s.style_id: (s.name or "").lower() for s in doc.styles}
 
     # ---- Tables ----
     for table_idx, table in enumerate(doc.tables):
-        has_caption = False
-        tbl_element = table._tbl
-
-        # Check preceding paragraph
-        prev_elem = tbl_element.getprevious()
-        if prev_elem is not None and prev_elem.tag.endswith("}p"):
-            prev_text = _extract_paragraph_text(prev_elem)
-            if prev_text and preset.is_caption_text(prev_text):
-                has_caption = True
-
-        # Check following paragraph (bidirectional)
-        if not has_caption:
-            next_elem = tbl_element.getnext()
-            if next_elem is not None and next_elem.tag.endswith("}p"):
-                next_text = _extract_paragraph_text(next_elem)
-                if next_text and preset.is_caption_text(next_text):
-                    has_caption = True
-
-        if not has_caption:
+        status = _adjacent_caption_status(table._tbl, _TABLE_LABEL_RE, "table", style_names)
+        if status == "valid":
+            continue
+        if status == "manual":
+            violations.append(LayoutViolation(
+                rule_code="MANUAL_CAPTION",
+                severity="MINOR",
+                location={"table_index": table_idx},
+                message=(
+                    f"Table {table_idx + 1} has a manually typed caption. "
+                    f"{MANUAL_CAPTION_ACTION}"
+                ),
+                expected_value="Word caption (References → Insert Caption)",
+                actual_value="Manual 'Table N' text without Caption style or SEQ field",
+            ))
+        else:
             violations.append(LayoutViolation(
                 rule_code="TABLE_CAPTION_MISSING",
                 severity="MINOR",
@@ -361,12 +454,30 @@ def check_media_captions(doc: Document, paragraphs: List[Dict], preset) -> List[
 
         # Walk the document body to find the paragraph hosting this image,
         # then check its surrounding paragraphs for captions.
-        host_para_idx, prev_text, next_text = _find_image_context(doc, rel)
-        has_caption = (
-            (prev_text and preset.is_caption_text(prev_text)) or
-            (next_text and preset.is_caption_text(next_text))
-        )
-        if not has_caption:
+        host_para_idx, prev_elem, next_elem = _find_image_context(doc, rel)
+        status = "missing"
+        for elem in (prev_elem, next_elem):
+            if elem is None or not elem.tag.endswith("}p"):
+                continue
+            s = _caption_status(elem, _FIGURE_LABEL_RE, "figure", style_names)
+            if s == "valid":
+                status = "valid"
+                break
+            if s == "manual":
+                status = "manual"
+        if status == "manual":
+            violations.append(LayoutViolation(
+                rule_code="MANUAL_CAPTION",
+                severity="MINOR",
+                location={"image_index": image_idx - 1, "paragraph_index": host_para_idx},
+                message=(
+                    f"Image {image_idx} has a manually typed caption. "
+                    f"{MANUAL_CAPTION_ACTION}"
+                ),
+                expected_value="Word caption (References → Insert Caption)",
+                actual_value="Manual 'Figure N' text without Caption style or SEQ field",
+            ))
+        elif status == "missing":
             violations.append(LayoutViolation(
                 rule_code="IMAGE_CAPTION_MISSING",
                 severity="MINOR",

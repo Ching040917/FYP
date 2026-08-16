@@ -143,6 +143,7 @@ _REQUIRED_ACTIONS = {
     "TABLE_CAPTION_MISSING": "Add a caption above or below the table starting with 'Table N: '.",
     "IMAGE_CAPTION_MISSING": "Add a caption below the image starting with 'Figure N: '.",
     "IMAGE_ALT_TEXT_MISSING": "Add a concise alt-text description to the image for screen readers.",
+    "MANUAL_CAPTION": "Use Word's References → Insert Caption feature so the label and numbering remain consistent.",
     "CITATION_MISMATCH": "Add the matching APA 7 reference entry or correct the in-text citation.",
 }
 
@@ -161,6 +162,7 @@ _PROP_NAME = {
     "TABLE_CAPTION_MISSING": "table caption",
     "IMAGE_CAPTION_MISSING": "image caption",
     "IMAGE_ALT_TEXT_MISSING": "alt text",
+    "MANUAL_CAPTION": "caption",
     "CITATION_MISMATCH": "citation entry",
 }
 
@@ -179,6 +181,7 @@ _RULE_NAME = {
     "TABLE_CAPTION_MISSING": "Table Caption Missing",
     "IMAGE_CAPTION_MISSING": "Image Caption Missing",
     "IMAGE_ALT_TEXT_MISSING": "Image Alt-Text Missing",
+    "MANUAL_CAPTION": "Manual Caption",
     "CITATION_MISMATCH": "Citation Mismatch",
 }
 
@@ -299,33 +302,58 @@ def _kv_table(rows, label_width=38 * mm):
     return table
 
 
-def _finding_table(index, v) -> Table:
-    rows = [
-        ("Rule", v.rule_code),
-        ("Severity", v.severity),
-    ]
+_GROUP_ACTIONS = {
+    "FONT_SIZE": ("Change the listed body-text runs to 12 pt. Review headings separately "
+                  "according to the configured hierarchy."),
+    "ALIGNMENT": ("Change the listed body paragraphs to justified alignment. "
+                  "Review heading alignment separately."),
+}
+
+
+def _group_action(rule_code, exp_val) -> str:
+    """Plural, group-level Required Action text."""
+    if rule_code in ("SPACE_BEFORE", "SPACE_AFTER") and exp_val:
+        prop = "before" if rule_code == "SPACE_BEFORE" else "after"
+        return f"Change the space {prop} for the listed paragraphs to {exp_val}."
+    return _GROUP_ACTIONS.get(rule_code) or _REQUIRED_ACTIONS.get(
+        rule_code, "Review the finding and apply the required formatting.")
+
+
+def _panel(header_left, header_right, rows) -> Table:
+    """Navy-header info panel: labelled body rows, tinted action row, 1px border."""
+    body_width = _PAGE_W - 2 * _MARGIN
+    data = [[_p(header_left, size=9.5, font="Helvetica-Bold", color=colors.white),
+             _p(header_right, size=8.5, font="Helvetica-Bold", color=colors.white, alignment=2)],
+            *[[_p(k, size=8.5, font="Helvetica-Bold", color=MUTED), _p(v, size=9)]
+              for k, v in rows]]
+    last = len(data) - 1
+    table = Table(data, colWidths=[46 * mm, body_width - 46 * mm])
+    table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), NAVY),
+        ("BACKGROUND", (0, 1), (-1, last - 1), _PANEL_BG),
+        ("BACKGROUND", (0, last), (-1, last), _PANEL_ACTION_BG),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("TOPPADDING", (0, 0), (-1, -1), 3.5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 3.5),
+        ("LINEBELOW", (0, 0), (-1, last - 1), 0.4, colors.HexColor("#D8D5CB")),
+        ("BOX", (0, 0), (-1, -1), 0.6, _PANEL_BORDER),
+    ]))
+    return table
+
+
+def _priority_table(pid, v) -> Table:
+    """Individual Major finding panel: P### header, details, specific action."""
+    rows = []
     loc = location_text(v.location)
     if loc != "—":
         rows.append(("Location", loc))
-    rows.append(("Finding", v.message or ""))
+    rows.append(("Issue", v.message or ""))
     if v.expected_value:
         rows.append(("Expected", v.expected_value))
     if v.actual_value:
         rows.append(("Actual", v.actual_value))
     rows.append(("Required Action", required_action(v)))
-
-    data = [[_p(f"Finding {index + 1}", size=9, font="Helvetica-Bold", color=colors.white)],
-            *[[_p(k, size=8.5, font="Helvetica-Bold", color=MUTED), _p(v, size=9.5)] for k, v in rows]]
-    table = Table(data, colWidths=[38 * mm, _PAGE_W - 2 * _MARGIN - 38 * mm])
-    table.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), NAVY),
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 2.5),
-        ("TOPPADDING", (0, 0), (-1, -1), 2.5),
-        ("LINEBELOW", (0, 1), (-1, -2), 0.4, colors.HexColor("#D8D5CB")),
-        ("BOX", (0, 0), (-1, -1), 0.6, NAVY),
-    ]))
-    return table
+    return _panel(f"{pid} — {_rule_name(v.rule_code)}", v.severity, rows)
 
 
 def _location_summary(violations) -> str:
@@ -373,34 +401,17 @@ def _location_summary(violations) -> str:
     return ", ".join(parts) or "—"
 
 
-def _group_panel(gid, members, rule_code, exp_val) -> Table:
+def _group_panel(gid, members, rule_code, exp_val, action) -> Table:
     """Info panel for a grouped minor finding: header, comparison, locations, action."""
     names = sorted(set(str(v.actual_value) for v in members if v.actual_value))
-    action = _REQUIRED_ACTIONS.get(rule_code, "Review the finding and apply the required formatting.")
-    body_width = _PAGE_W - 2 * _MARGIN
-    data = [
-        [_p(f"{gid}  {_rule_name(rule_code)}", size=9.5, font="Helvetica-Bold", color=colors.white),
-         _p(f"Minor · {len(members)} finding(s)", size=8.5, font="Helvetica-Bold", color=colors.white,
-            alignment=2)],
-        [_p("Required", size=8.5, font="Helvetica-Bold", color=MUTED), _p(exp_val or "—", size=9)],
-        [_p("Observed", size=8.5, font="Helvetica-Bold", color=MUTED),
-         _p(" · ".join(names) or "—", size=9)],
-        [_p("Affected Locations", size=8.5, font="Helvetica-Bold", color=MUTED),
-         _p(_location_summary(members), size=9)],
-        [_p("Required Action", size=8.5, font="Helvetica-Bold", color=GREEN), _p(action, size=9)],
+    rows = [
+        ("Issue", members[0].message or ""),
+        ("Required", exp_val or "—"),
+        ("Observed", " · ".join(names) or "—"),
+        ("Affected Locations", _location_summary(members)),
+        ("Required Action", action),
     ]
-    table = Table(data, colWidths=[46 * mm, body_width - 46 * mm])
-    table.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), NAVY),
-        ("BACKGROUND", (0, 1), (-1, -1), _PANEL_BG),
-        ("BACKGROUND", (0, 4), (-1, 4), _PANEL_ACTION_BG),
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("TOPPADDING", (0, 0), (-1, -1), 3.5),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 3.5),
-        ("LINEBELOW", (0, 0), (-1, 3), 0.4, colors.HexColor("#D8D5CB")),
-        ("BOX", (0, 0), (-1, -1), 0.6, _PANEL_BORDER),
-    ]))
-    return table
+    return _panel(f"{gid} — {_rule_name(rule_code)}", f"Minor · {len(members)} finding(s)", rows)
 
 
 def _rule_cell(v) -> Paragraph:
@@ -433,8 +444,8 @@ def _appendix_table(entries) -> Table:
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
         ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, LIGHT]),
         ("GRID", (0, 0), (-1, -1), 0.3, colors.HexColor("#D8D5CB")),
-        ("TOPPADDING", (0, 0), (-1, -1), 3),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
         ("LEFTPADDING", (0, 0), (-1, -1), 3),
         ("RIGHTPADDING", (0, 0), (-1, -1), 3),
     ]))
@@ -567,8 +578,8 @@ def generate_audit_pdf(audit, violations, citation_issues) -> bytes:
     story.append(break_table)
     story.append(Spacer(1, 4 * mm))
 
-    # ---- Priority Findings ----
-    story.append(_section("Priority Findings"))
+    # ---- Major Priority Findings ----
+    story.append(_section("Major Priority Findings"))
     story.append(Spacer(1, 2 * mm))
     major = [v for v in violations if v.severity == "MAJOR"]
     minor = [v for v in violations if v.severity == "MINOR"]
@@ -583,34 +594,10 @@ def generate_audit_pdf(audit, violations, citation_issues) -> bytes:
         ))
         story.append(Spacer(1, 2 * mm))
 
-        # Major findings — individual tables with P### IDs
+        # Major findings — individual panels with P### IDs
         for i, v in enumerate(major):
-            story.append(_p(_p_id(i + 1), size=8.5, font="Helvetica-Bold", color=MUTED))
-            story.append(KeepTogether([_finding_table(i, v)]))
-            story.append(Spacer(1, 2 * mm))
-
-        # Minor findings — group by (rule_code, expected_value); singletons rendered individually
-        if minor:
-            groups = defaultdict(list)
-            for v in minor:
-                key = (v.rule_code, v.expected_value or "")
-                groups[key].append(v)
-
-            group_idx = 0
-            singleton_idx = 0
-            for (rule_code, exp_val), members in groups.items():
-                if len(members) == 1:
-                    # Singleton: rendered individually with G prefix (treated as priority)
-                    story.append(_p(f"{_g_id(group_idx + 1)}", size=8.5, font="Helvetica-Bold", color=MUTED))
-                    story.append(KeepTogether([_finding_table(singleton_idx, members[0])]))
-                    story.append(Spacer(1, 2 * mm))
-                    singleton_idx += 1
-                    group_idx += 1
-                else:
-                    # Grouped: structured info panel with header, comparison, locations, action
-                    story.append(KeepTogether([_group_panel(_g_id(group_idx + 1), members, rule_code, exp_val)]))
-                    story.append(Spacer(1, 4 * mm))
-                    group_idx += 1
+            story.append(KeepTogether([_priority_table(_p_id(i + 1), v)]))
+            story.append(Spacer(1, 3 * mm))
 
     # ---- Citation Guidance ----
     if citation_issues:
@@ -655,6 +642,26 @@ def generate_audit_pdf(audit, violations, citation_issues) -> bytes:
         for warning in shared_warnings:
             story.append(Spacer(1, 2 * mm))
             story.append(_p(f"Note: {warning}", size=8.5, color=MUTED))
+
+    # ---- Grouped Minor Findings ----
+    if minor:
+        story.append(Spacer(1, 3 * mm))
+        story.append(_section("Grouped Minor Findings"))
+        story.append(Spacer(1, 2 * mm))
+        groups = defaultdict(list)
+        for v in minor:
+            key = (v.rule_code, v.expected_value or "")
+            groups[key].append(v)
+
+        group_idx = 0
+        for (rule_code, exp_val), members in groups.items():
+            if len(members) == 1:
+                action = required_action(members[0])
+            else:
+                action = _group_action(rule_code, exp_val)
+            story.append(KeepTogether([_group_panel(_g_id(group_idx + 1), members, rule_code, exp_val, action)]))
+            story.append(Spacer(1, 4 * mm))
+            group_idx += 1
 
     # ---- Document Statistics ----
     story.append(Spacer(1, 3 * mm))
