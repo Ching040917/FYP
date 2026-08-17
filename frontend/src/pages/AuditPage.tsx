@@ -20,6 +20,7 @@ import { resolveFormattingHighlight, evidenceFamily } from '../lib/pdf/formattin
 import {
   OBJECT_RULES,
   resolveObjectSelection,
+  resolveTableNavigations,
   getObjectNavigation,
   dropObjectNavCache,
 } from '../lib/pdf/object-navigation.ts'
@@ -190,6 +191,24 @@ export function AuditPage() {
     }
   }, [mappingStatus, mappingBundle, selectedId, emitNav])
 
+  // Table findings resolve as a BATCH (collision-safe): table_index is the
+  // authoritative identity, uncaptioned tables map from surrounding blocks
+  // only, and no two indexes ever share one physical object.
+  const tableFindings = useMemo(() => {
+    if (!audit) return []
+    return audit.violations
+      .filter(
+        (v) =>
+          OBJECT_RULES.has(v.rule_code) &&
+          typeof v.location?.table_index === 'number',
+      )
+      .map((v) => ({ id: v.id, ruleCode: v.rule_code, location: v.location }))
+  }, [audit])
+  const tableNav = useMemo(
+    () => resolveTableNavigations(gatedAuditId, tableFindings, mappingBundle),
+    [gatedAuditId, tableFindings, mappingBundle],
+  )
+
   // User-facing location labels per finding (exact/approximate → page label,
   // unavailable → paragraph label; never confidence terminology).
   const locationLabels = useMemo(() => {
@@ -198,8 +217,14 @@ export function AuditPage() {
     for (const v of audit.violations) {
       if (OBJECT_RULES.has(v.rule_code) && mappingBundle) {
         // Table/Figure findings: `Page N · Table M` / `Table M · Page unavailable`
-        const objectNav = getObjectNavigation(gatedAuditId, { ruleCode: v.rule_code, location: v.location }, mappingBundle)
-        if (objectNav.label) labels.set(v.id, objectNav.label)
+        const loc = v.location ?? {}
+        if (typeof loc.table_index === 'number') {
+          const decision = tableNav.get(loc.table_index)
+          if (decision?.label) labels.set(v.id, decision.label)
+        } else {
+          const objectNav = getObjectNavigation(gatedAuditId, { ruleCode: v.rule_code, location: v.location }, mappingBundle)
+          if (objectNav.label) labels.set(v.id, objectNav.label)
+        }
         continue
       }
       if (mappingBundle) {
@@ -211,7 +236,7 @@ export function AuditPage() {
       }
     }
     return labels
-  }, [mappingBundle, mappingStatus, audit])
+  }, [mappingBundle, mappingStatus, audit, tableNav])
 
   // Mobile/tablet workspace view — tabs below lg, side-by-side at lg+.
   const [mobileView, setMobileView] = useState<WorkspaceView>('findings')
@@ -364,10 +389,24 @@ export function AuditPage() {
       // Object rules (Table/Figure): navigate to the reliably mapped page;
       // overlays stay mutually exclusive; no forced Extracted Text.
       if (OBJECT_RULES.has(violation.rule_code)) {
-        const objectSel = resolveObjectSelection(gatedAuditId, findingLike, mappingBundle)
-        setObjectStatus(objectSel.status)
-        if (objectSel.navigatePage !== null) {
-          navigateToRenderedPage(objectSel.navigatePage)
+        const loc = violation.location ?? {}
+        if (typeof loc.table_index === 'number') {
+          // Batch-resolved table decision (collision-safe identity)
+          const decision = tableNav.get(loc.table_index)
+          setObjectStatus(
+            decision && decision.mode !== 'none'
+              ? { label: decision.chipLabel, message: decision.message }
+              : null,
+          )
+          if (decision?.mode === 'rendered' && decision.pageNumber !== null) {
+            navigateToRenderedPage(decision.pageNumber)
+          }
+        } else {
+          const objectSel = resolveObjectSelection(gatedAuditId, findingLike, mappingBundle)
+          setObjectStatus(objectSel.status)
+          if (objectSel.navigatePage !== null) {
+            navigateToRenderedPage(objectSel.navigatePage)
+          }
         }
         setNavNotice(null)
         // stable: keep the current preview mode

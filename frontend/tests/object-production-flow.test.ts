@@ -105,7 +105,8 @@ test('figure finding: zero-based image_index=0 → Figure 1 via caption evidence
 })
 
 test('one-based conversion: table_index=2 renders as Table 3 (never Table 2)', () => {
-  // dedicated bundle: Table 3 caption lives on page 3
+  // dedicated bundle: Table 3 caption block lives on page 3; MANUAL_CAPTION
+  // carries its caption identity (caption identity never borrows numbering)
   const pages = [page(1, ['Intro.']), page(2, ['Body.']), page(3, ['Table 3: Final results'])]
   const blocks = [
     { index: 0, text: 'Intro.' },
@@ -114,7 +115,7 @@ test('one-based conversion: table_index=2 renders as Table 3 (never Table 2)', (
   ]
   const mapping = mapBlocksToPages(blocks, pages)
   const b = { byIndex: new Map(mapping.map((m) => [m.index, m])), pages, blocks }
-  const v = violation('TABLE_CAPTION_MISSING', { table_index: 2 })
+  const v = violation('MANUAL_CAPTION', { table_index: 2, paragraph_index: 2 })
   const sel = resolveObjectSelection(nextAudit(), v, b)
   assert.deepEqual(sel.status, { label: 'Table 3 · Page 3', message: null })
   assert.equal(sel.navigatePage, 3)

@@ -123,6 +123,17 @@ export function mapObjectFromBundle(
       }
       return { targetType: 'table', targetIndex: tableIndex, pageNumber: null, bbox: null, confidence: 'unavailable', evidenceMethod: 'caption-identity', ambiguityReason: 'caption-block-unmapped' }
     }
+    // TABLE_CAPTION_MISSING: caption is absent by definition — visible
+    // caption numbering is NEVER authoritative for it (a "Table 3" caption
+    // elsewhere belongs to another table). Map from DOCX object order and
+    // surrounding mapped blocks only.
+    if (ruleCode === 'TABLE_CAPTION_MISSING') {
+      const page = surroundingPage(bundle, captionAnchors(bundle), tableIndex, 0)
+      if (page !== null) {
+        return { targetType: 'table', targetIndex: tableIndex, pageNumber: page, bbox: null, confidence: 'exact', evidenceMethod: 'surrounding-blocks', ambiguityReason: null }
+      }
+      return { targetType: 'table', targetIndex: tableIndex, pageNumber: null, bbox: null, confidence: 'unavailable', evidenceMethod: 'surrounding-blocks', ambiguityReason: 'no-surrounding-evidence' }
+    }
     const page = captionPage(bundle, 'table', tableIndex)
     if (page !== null) {
       return { targetType: 'table', targetIndex: tableIndex, pageNumber: page, bbox: null, confidence: 'exact', evidenceMethod: 'caption', ambiguityReason: null }
@@ -155,6 +166,210 @@ function captionPage(bundle: BundleLike, type: 'table' | 'figure', index: number
     if (labelRe.test(text)) {
       const page = bundle.byIndex.get(block.index)?.pageNumber ?? null
       if (page !== null) return page
+    }
+  }
+  return null
+}
+
+// ---------------------------------------------------------------------------
+// surrounding-block evidence for uncaptioned tables (collision-safe)
+// ---------------------------------------------------------------------------
+
+/** Any visible table caption ("Table N"/"Tab. N"/"Jadual N"/"表N") — a
+ *  positional anchor: captions sit adjacent to their tables, so caption
+ *  blocks mark table positions in the document stream. */
+const CAPTION_ANCHOR_RE = /^\s*(?:table|tab\.|jadual|表)\s*\d+/i
+
+export function captionAnchors(bundle: BundleLike): number[] {
+  const anchors: number[] = []
+  for (const block of bundle.blocks ?? []) {
+    if (CAPTION_ANCHOR_RE.test(normalizeText(block.text))) anchors.push(block.index)
+  }
+  return anchors.sort((a, b) => a - b)
+}
+
+/**
+ * Page of an UNCAPTIONED table from DOCX object order + surrounding mapped
+ * blocks. `missingBefore` = number of uncaptioned tables before it (from the
+ * finding set), so the caption bracket follows table order, not caption
+ * numbering. Window = mapped blocks strictly between the bracketing caption
+ * anchors:
+ *   - all window blocks on one page → that page;
+ *   - a window spanning a page boundary → anchor to the previous caption's
+ *     page (the table directly follows the previous captioned table);
+ *   - otherwise (no anchor, no consensus, empty window) → null = unavailable.
+ * Never guesses; never borrows another table's caption page.
+ */
+export function surroundingPage(
+  bundle: BundleLike,
+  captions: number[],
+  tableIndex: number,
+  missingBefore: number,
+): number | null {
+  const m = captions.length
+  const cLt = tableIndex - missingBefore // captioned tables before this one
+  const left = m === 0 ? -1 : cLt > 0 ? (cLt <= m ? captions[cLt - 1] : captions[m - 1]) : -1
+  const right = cLt < m ? captions[cLt] : Number.POSITIVE_INFINITY
+  const windowPages: number[] = []
+  for (const block of bundle.blocks ?? []) {
+    if (block.index > left && block.index < right) {
+      const page = bundle.byIndex.get(block.index)?.pageNumber
+      if (page !== null && page !== undefined) windowPages.push(page)
+    }
+  }
+  if (windowPages.length === 0) return null
+  const unique = new Set(windowPages)
+  if (unique.size === 1) {
+    const [only] = unique
+    return only
+  }
+  if (cLt > 0 && cLt <= m) {
+    const prevPage = bundle.byIndex.get(captions[cLt - 1])?.pageNumber
+    if (prevPage !== null && prevPage !== undefined && unique.has(prevPage)) return prevPage
+  }
+  return null
+}
+
+// ---------------------------------------------------------------------------
+// batch table resolution (collision-safe, production path)
+// ---------------------------------------------------------------------------
+
+export interface TableFindingLike {
+  id?: string
+  ruleCode?: string | null
+  rule_code?: string | null
+  location?: Record<string, unknown> | null
+}
+
+function tableIndexOf(finding: TableFindingLike): number | null {
+  const idx = (finding.location ?? {})?.table_index
+  return typeof idx === 'number' ? idx : null
+}
+
+function tableRuleOf(finding: TableFindingLike): string | null {
+  return (finding.ruleCode ?? (finding as { rule_code?: string | null }).rule_code ?? '').toUpperCase()
+}
+
+function decisionForTable(
+  tableIndex: number,
+  page: number | null,
+  evidenceMethod: string | null,
+): ObjectNavigationDecision {
+  const label = `Table ${tableIndex + 1}`
+  if (page !== null) {
+    return {
+      mode: 'rendered',
+      pageNumber: page,
+      label: `Page ${page} · ${label}`,
+      chipLabel: `${label} · Page ${page}`,
+      message: null,
+      evidenceMethod,
+    }
+  }
+  return {
+    mode: 'stable',
+    pageNumber: null,
+    label: `${label} · Page unavailable`,
+    chipLabel: `${label} · Page unavailable`,
+    message: OBJECT_UNAVAILABLE_MESSAGE,
+    evidenceMethod,
+  }
+}
+
+/**
+ * Resolve ALL table findings of an audit as one batch so object identity
+ * stays collision-free:
+ *
+ *   - `location.table_index` is the authoritative identity; visible caption
+ *     numbering is never authoritative.
+ *   - MANUAL_CAPTION: persisted caption paragraph identity first, then
+ *     (legacy audits) the caption-text rule.
+ *   - TABLE_CAPTION_MISSING: caption absent by definition — surrounding
+ *     mapped blocks only, never another table's caption.
+ *   - Collision protection: if two different table indexes resolve from the
+ *     SAME caption identity/evidence block, the authoritative-adjacency one
+ *     (persisted identity) is retained and the other is recomputed from
+ *     independent surrounding-block evidence; insufficient evidence →
+ *     unavailable. Two indexes are never silently assigned one physical
+ *     object.
+ */
+export function resolveTableNavigations(
+  auditId: string | null,
+  findings: TableFindingLike[],
+  bundle: BundleLike | null | undefined,
+): Map<number, ObjectNavigationDecision> {
+  const result = new Map<number, ObjectNavigationDecision>()
+  if (!auditId || !bundle || findings.length === 0) return result
+
+  const captions = captionAnchors(bundle)
+  const indexed = findings
+    .map((f) => ({ f, idx: tableIndexOf(f) }))
+    .filter((x): x is { f: TableFindingLike; idx: number } => x.idx !== null)
+    .sort((a, b) => a.idx - b.idx)
+
+  // uncaptioned-table counts before each index (document order, not caption
+  // numbering)
+  const missingBefore = new Map<number, number>()
+  let missingSeen = 0
+  for (const { f, idx } of indexed) {
+    missingBefore.set(idx, missingSeen)
+    if (tableRuleOf(f) === 'TABLE_CAPTION_MISSING') missingSeen += 1
+  }
+
+  // first pass: per-finding evidence (block identity + page)
+  const evidence = new Map<number, { block: number | null; page: number | null; method: string | null; hasIdentity: boolean }>()
+  for (const { f, idx } of indexed) {
+    const rule = tableRuleOf(f)
+    const loc = f.location ?? {}
+    const pidx = typeof loc.paragraph_index === 'number' ? loc.paragraph_index : null
+    if (rule === 'MANUAL_CAPTION' && pidx !== null) {
+      const page = bundle.byIndex.get(pidx)?.pageNumber ?? null
+      evidence.set(idx, { block: pidx, page, method: 'caption-identity', hasIdentity: true })
+    } else if (rule === 'MANUAL_CAPTION') {
+      const block = captionBlockFor(bundle, captions, idx)
+      const page = block !== null ? (bundle.byIndex.get(block)?.pageNumber ?? null) : null
+      evidence.set(idx, { block, page, method: 'caption', hasIdentity: false })
+    } else if (rule === 'TABLE_CAPTION_MISSING') {
+      const page = surroundingPage(bundle, captions, idx, missingBefore.get(idx) ?? 0)
+      evidence.set(idx, { block: null, page, method: 'surrounding-blocks', hasIdentity: false })
+    }
+  }
+
+  // collision pass: shared evidence blocks (identity-backed wins; the other
+  // is recomputed from independent surrounding-block evidence)
+  const byBlock = new Map<number, number[]>()
+  for (const [idx, ev] of evidence) {
+    if (ev.block === null) continue
+    const list = byBlock.get(ev.block) ?? []
+    list.push(idx)
+    byBlock.set(ev.block, list)
+  }
+  for (const [, indexes] of byBlock) {
+    if (indexes.length < 2) continue
+    const identityIdx = indexes.find((i) => evidence.get(i)?.hasIdentity)
+    const victims = identityIdx !== undefined ? indexes.filter((i) => i !== identityIdx) : indexes.slice(1)
+    for (const victim of victims) {
+      const page = surroundingPage(bundle, captions, victim, missingBefore.get(victim) ?? 0)
+      evidence.set(victim, { block: null, page, method: 'surrounding-blocks', hasIdentity: false })
+    }
+  }
+
+  for (const [idx, ev] of evidence) {
+    result.set(idx, decisionForTable(idx, ev.page, ev.method))
+  }
+  return result
+}
+
+/** First caption block whose VISIBLE text carries `Table {index+1}`. */
+function captionBlockFor(
+  bundle: BundleLike,
+  captions: number[],
+  tableIndex: number,
+): number | null {
+  const labelRe = new RegExp(`^table\\s+${tableIndex + 1}(?![\\d])`, 'i')
+  for (const block of bundle.blocks ?? []) {
+    if (captions.includes(block.index) && labelRe.test(normalizeText(block.text))) {
+      return block.index
     }
   }
   return null
