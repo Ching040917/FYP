@@ -54,22 +54,32 @@ const firstRect = (rs: CitationRect[] | null): CitationRect => {
 // evidence extraction (deterministic fields only)
 // ---------------------------------------------------------------------------
 
-test('evidence extracted from violation message', () => {
+test('evidence extracted from violation message (canonical fallback, not source-faithful)', () => {
   const e = extractCitationEvidence(
     "Citation 'Garcia (2018)' was found in text, but no matching entry was found in the References bibliography.",
     null,
   )
-  assert.deepEqual(e, { text: 'Garcia (2018)', author: 'Garcia', year: '2018' })
+  assert.deepEqual(e, { text: 'Garcia (2018)', author: 'Garcia', year: '2018', sourceFaithful: false })
 })
 
-test('evidence falls back to actual_value snippet', () => {
-  const e = extractCitationEvidence(null, 'Lee (2021) argues that formatting matters.')
-  assert.equal(e?.text, 'Lee (2021)')
+test('evidence prefers the source-faithful actual_value span verbatim', () => {
+  // parenthetical: the exact matched span is preserved — never rewritten
+  // into the narrative form
+  const paren = extractCitationEvidence("Citation 'Garcia (2018)' was found in text", '(Garcia, 2018)')
+  assert.deepEqual(paren, { text: '(Garcia, 2018)', author: 'Garcia', year: '2018', sourceFaithful: true })
+  // narrative span stays narrative
+  const narr = extractCitationEvidence(null, 'Lee (2021)')
+  assert.deepEqual(narr, { text: 'Lee (2021)', author: 'Lee', year: '2021', sourceFaithful: true })
+  // multi-author and suffix forms keep the complete span
+  const multi = extractCitationEvidence(null, '(Smith & Jones, 2020a, p. 12)')
+  assert.deepEqual(multi, { text: '(Smith & Jones, 2020a, p. 12)', author: 'Smith & Jones', year: '2020a', sourceFaithful: true })
 })
 
 test('no evidence when both fields are unusable', () => {
   assert.equal(extractCitationEvidence(null, null), null)
   assert.equal(extractCitationEvidence('Font size mismatch', null), null)
+  // a truncated/junk actual value is never partially reconstructed
+  assert.equal(extractCitationEvidence(null, 'Lee (2021) argues that formatting matters.'), null)
 })
 
 // ---------------------------------------------------------------------------
@@ -139,11 +149,12 @@ test('normalizeText is reused for evidence matching', () => {
 // resolveCitationHighlight (selection-flow decision)
 // ---------------------------------------------------------------------------
 
-const bundle = (pages: PageText[], pageFor: (index: number) => number) => ({
+const bundle = (pages: PageText[], pageFor: (index: number) => number, blocks?: Array<{ index: number; text: string }>) => ({
   byIndex: new Map(
     pages.map((p, i) => [i, { index: i, pageNumber: pageFor(i), pageRange: null, paragraphOnPage: i + 1, confidence: 'exact' as const }]),
   ),
   pages,
+  blocks: blocks ?? pages.map((p, i) => ({ index: i, text: p.items?.[0]?.str ?? '' })),
 })
 
 const citationFinding = (id: string, paragraphIndex: number, message?: string, actual?: string) => ({
@@ -198,6 +209,110 @@ test('highlight page agrees with the navigation target page', () => {
   const b = bundle(pages, (i) => (i === 1 ? 2 : 1))
   const r = resolveCitationHighlight(citationFinding('lee', 1, "Citation 'Lee (2021)' was found in text, but no matching entry was found in the References bibliography."), b)
   assert.equal(firstRect(r.rects).page, 2) // indicator page == overlay page
+})
+
+// ---------------------------------------------------------------------------
+// source-faithful parenthetical evidence (confirmed browser defect)
+// ---------------------------------------------------------------------------
+
+test('parenthetical citation highlights the COMPLETE source span (parens + comma)', () => {
+  // the PDF contains `(Garcia, 2018)`; the finding exposes it verbatim
+  const p = page(3, [item('Results agree with (Garcia, 2018) elsewhere.', 100, 700)])
+  const r = matchCitationOnPage(p, '(Garcia, 2018)')
+  assert.ok(r && r.length === 1)
+  // rect covers the whole span including the opening paren and the comma:
+  // item = 40 chars at width 200; '(Garcia, 2018)' occupies chars 19..32
+  const rect = firstRect(r)
+  const x0 = (100 + (19 / 40) * 200) / 595
+  const x1 = (100 + (33 / 40) * 200) / 595
+  assert.ok(Math.abs(rect.x - x0) < 0.02)
+  assert.ok(Math.abs(rect.x + rect.width - x1) < 0.02)
+})
+
+test('resolveCitationHighlight prefers source-faithful parenthetical evidence', () => {
+  const pages = [page(3, [item('Results agree with (Garcia, 2018) elsewhere.', 100, 700)])]
+  const b = bundle(pages, () => 3)
+  const r = resolveCitationHighlight(citationFinding('f1', 0, undefined, '(Garcia, 2018)'), b)
+  assert.ok(r.rects && r.rects.length === 1)
+  assert.equal(r.label, '(Garcia, 2018)') // label is the source span, not the narrative
+  assert.equal(r.message, null)
+})
+
+test('narrative source evidence highlights exactly', () => {
+  const pages = [page(3, [item('Garcia (2018) argues that', 100, 700)])]
+  const b = bundle(pages, () => 3)
+  const r = resolveCitationHighlight(citationFinding('f1', 0, undefined, 'Garcia (2018)'), b)
+  assert.ok(r.rects && r.rects.length === 1)
+  assert.equal(r.label, 'Garcia (2018)')
+})
+
+test('old-audit fallback: canonical variants match within the mapped paragraph only', () => {
+  // old audit: actual_value missing; the paragraph contains the
+  // parenthetical form; only the explicit safe variants are tried
+  const pages = [page(3, [item('Results agree with (Garcia, 2018) elsewhere.', 100, 700)])]
+  const b = bundle(pages, () => 3)
+  const r = resolveCitationHighlight(citationFinding('f1', 0), b) // actual = null
+  assert.ok(r.rects && r.rects.length === 1)
+  assert.equal(r.label, '(Garcia, 2018)')
+  assert.equal(r.message, null)
+})
+
+test('old-audit fallback: narrative variant matches when only narrative exists', () => {
+  const pages = [page(3, [item('Garcia (2018) argues that', 100, 700)])]
+  const b = bundle(pages, () => 3)
+  const r = resolveCitationHighlight(citationFinding('f1', 0), b)
+  assert.ok(r.rects && r.rects.length === 1)
+  assert.equal(r.label, 'Garcia (2018)')
+})
+
+test('old-audit fallback: BOTH variants in one paragraph → ambiguous, never guessed', () => {
+  const pages = [page(3, [item('Garcia (2018) and (Garcia, 2018) both appear.', 100, 700)])]
+  const b = bundle(pages, () => 3)
+  const r = resolveCitationHighlight(citationFinding('f1', 0), b)
+  assert.equal(r.rects, null)
+  assert.equal(r.label, null)
+  assert.equal(r.message, HIGHLIGHT_UNAVAILABLE_MESSAGE)
+})
+
+test('old-audit fallback: no candidate in the paragraph → truthful unavailable', () => {
+  const pages = [page(3, [item('Smith (2005) writes here.', 100, 700)])]
+  const b = bundle(pages, () => 3)
+  const r = resolveCitationHighlight(citationFinding('f1', 0), b)
+  assert.equal(r.rects, null)
+  assert.equal(r.message, HIGHLIGHT_UNAVAILABLE_MESSAGE)
+})
+
+test('old-audit fallback never matches outside the mapped paragraph', () => {
+  // the parenthetical form exists on the page but in a DIFFERENT paragraph
+  // (paragraph 0 maps to the first item; the citation lives in the second)
+  const p = page(3, [item('Unrelated prose here.', 100, 700), item('(Garcia, 2018) in another paragraph.', 300, 700)])
+  const b = bundle([p], () => 3, [{ index: 0, text: 'Unrelated prose here.' }])
+  const r = resolveCitationHighlight(citationFinding('f1', 0), b)
+  assert.equal(r.rects, null)
+  assert.equal(r.message, HIGHLIGHT_UNAVAILABLE_MESSAGE)
+})
+
+test('same-paragraph Garcia and Lee findings remain separate (source-faithful)', () => {
+  const pages = [page(3, [item('Garcia (2018) and Lee (2021) disagree.', 100, 700)])]
+  const b = bundle(pages, () => 3)
+  const g = resolveCitationHighlight(citationFinding('g', 0, undefined, 'Garcia (2018)'), b)
+  const l = resolveCitationHighlight(citationFinding('l', 0, undefined, 'Lee (2021)'), b)
+  assert.ok(g.rects && l.rects)
+  assert.notEqual(firstRect(g.rects).x, firstRect(l.rects).x)
+  assert.equal(g.label, 'Garcia (2018)')
+  assert.equal(l.label, 'Lee (2021)')
+})
+
+test('parenthetical matching handles split TextItems and spacing', () => {
+  const p = page(3, [
+    item('Results agree', 100, 700, 40),
+    item(' with', 140, 700, 15),
+    item('(Garcia, 2018)', 155, 700, 50),
+    item(' elsewhere.', 205, 700, 25),
+  ])
+  const r = matchCitationOnPage(p, '(Garcia, 2018)')
+  assert.ok(r && r.length === 1)
+  assert.ok(firstRect(r).width > 0.05)
 })
 
 // ---------------------------------------------------------------------------

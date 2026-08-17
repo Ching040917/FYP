@@ -45,25 +45,69 @@ export const HIGHLIGHT_UNAVAILABLE_MESSAGE =
 const CITATION_IN_MESSAGE = /^citation '(.+?) \((\d{4}[a-z]?)\)'/i
 
 export interface CitationEvidence {
+  /**
+   * The text to match in the PDF: the SOURCE-FAITHFUL matched span verbatim
+   * when available (`(Garcia, 2018)`), otherwise the canonical narrative
+   * variant (`Garcia (2018)`) — see `sourceFaithful`.
+   */
   text: string
+  /** Canonical identity — for reference matching and finding identity. */
   author: string
   year: string
+  /** True when `text` is the exact matched source span (never reconstructed). */
+  sourceFaithful: boolean
 }
 
-/** Extract citation evidence from the deterministic finding's own fields. */
+/**
+ * Extract citation evidence from the deterministic finding's own fields.
+ *
+ * Data boundary: canonical identity (author/year, from the message) is for
+ * reference matching and finding identity; SOURCE-FAITHFUL evidence is the
+ * exact matched span (`(Garcia, 2018)`) for display and PDF highlighting.
+ * When the exact span is already available (the sensor stores it in
+ * actual_value), it is used VERBATIM — never reconstructed from author/year.
+ * The message is only a compatibility fallback for old audits.
+ */
 export function extractCitationEvidence(
   message: string | null | undefined,
   actualValue: string | null | undefined,
 ): CitationEvidence | null {
+  // Source-faithful span first — parenthetical AND narrative forms verbatim.
+  const fromActual = citationSpan(actualValue)
+  if (fromActual) return fromActual
+  // Old-audit compatibility: canonical identity from the deterministic
+  // message. Only the two explicit safe variants may be derived from it
+  // (handled by the variant fallback in resolveCitationHighlight).
   const fromMessage = message ? CITATION_IN_MESSAGE.exec(message.trim()) : null
   if (fromMessage) {
-    return { text: `${fromMessage[1]} (${fromMessage[2]})`, author: fromMessage[1], year: fromMessage[2] }
-  }
-  if (actualValue) {
-    const fromActual = /^(.+?) \((\d{4}[a-z]?)\)/.exec(actualValue.trim())
-    if (fromActual) {
-      return { text: `${fromActual[1]} (${fromActual[2]})`, author: fromActual[1], year: fromActual[2] }
+    return {
+      text: `${fromMessage[1]} (${fromMessage[2]})`,
+      author: fromMessage[1],
+      year: fromMessage[2],
+      sourceFaithful: false,
     }
+  }
+  return null
+}
+
+/**
+ * A source-faithful citation span: parenthetical `(Garcia, 2018)` (with
+ * optional locator) or narrative `Garcia (2018)` — matched IN FULL so the
+ * complete span including parentheses/comma is preserved verbatim.
+ * Multi-author and suffix forms (e.g. `(Smith & Jones, 2020a, p. 12)`) are
+ * kept as-is. Returns null when the value is not a complete citation.
+ */
+function citationSpan(value: string | null | undefined): CitationEvidence | null {
+  if (value == null) return null
+  const s = String(value).trim()
+  if (!s) return null
+  const paren = /^\((.+?), (\d{4}[a-z]?)(?:,.*)?\)$/.exec(s)
+  if (paren) {
+    return { text: s, author: paren[1], year: paren[2], sourceFaithful: true }
+  }
+  const narr = /^(.+?) \((\d{4}[a-z]?)(?:,.*)?\)$/.exec(s)
+  if (narr) {
+    return { text: s, author: narr[1], year: narr[2], sourceFaithful: true }
   }
   return null
 }
@@ -71,10 +115,18 @@ export function extractCitationEvidence(
 /**
  * Resolve the full highlight decision for a selected finding.
  * Never throws; returns a truthful result the UI can render directly.
+ *
+ * Primary path: SOURCE-FAITHFUL evidence (the exact matched span) matched
+ * on the mapped page. Old-audit compatibility: canonical author/year
+ * derives ONLY the two explicit safe variants (`Garcia (2018)` and
+ * `(Garcia, 2018)`), searched within the already mapped paragraph only.
+ * Variant rules: exactly one candidate → highlight; multiple candidates →
+ * no highlight; no candidate → truthful unavailable message. Never a
+ * global PDF search, never fuzzy author-only matching.
  */
 export function resolveCitationHighlight(
   finding: { id: string; ruleCode?: string | null; message?: string | null; actualValue?: string | null; location?: Record<string, unknown> | null },
-  bundle: { byIndex: Map<number, BlockMapping>; pages: PageText[] } | null | undefined,
+  bundle: { byIndex: Map<number, BlockMapping>; pages: PageText[]; blocks?: Array<{ index: number; text: string }> } | null | undefined,
 ): CitationHighlightResult {
   if (!bundle || finding.ruleCode !== 'CITATION_MISMATCH') {
     return { rects: null, label: null, message: null }
@@ -98,12 +150,30 @@ export function resolveCitationHighlight(
     return { rects: null, label: null, message: HIGHLIGHT_UNAVAILABLE_MESSAGE }
   }
 
-  const rects = matchCitationOnPage(page, evidence.text)
-  return {
-    rects,
-    label: rects ? evidence.text : null,
-    message: rects ? null : HIGHLIGHT_UNAVAILABLE_MESSAGE,
+  // Source-faithful path: the exact span, matched on the mapped page.
+  if (evidence.sourceFaithful) {
+    const rects = matchCitationOnPage(page, evidence.text)
+    return {
+      rects,
+      label: rects ? evidence.text : null,
+      message: rects ? null : HIGHLIGHT_UNAVAILABLE_MESSAGE,
+    }
   }
+
+  // Old-audit compatibility: safe variants within the mapped paragraph only.
+  const blockText = bundle.blocks?.find((b) => b.index === paraIndex)?.text ?? null
+  const variantMatch = matchCitationVariantsOnParagraph(
+    page,
+    blockText,
+    evidence.author,
+    evidence.year,
+    page.pageWidth,
+    page.pageHeight,
+  )
+  if (!variantMatch) {
+    return { rects: null, label: null, message: HIGHLIGHT_UNAVAILABLE_MESSAGE }
+  }
+  return { rects: variantMatch.rects, label: variantMatch.variant, message: null }
 }
 
 /**
@@ -153,6 +223,102 @@ export function matchCitationOnPage(
     })
   }
   return rects.length > 0 ? rects : null
+}
+
+/**
+ * Old-audit compatibility fallback: from canonical author/year generate ONLY
+ * the two explicit safe variants — `Garcia (2018)` and `(Garcia, 2018)` —
+ * and search them within the ALREADY MAPPED PARAGRAPH only (its item
+ * window on the page), never the whole PDF and never fuzzy author-only
+ * matching. Exactly one candidate match across both variants → highlight;
+ * multiple candidates → ambiguous, no highlight; none → null.
+ */
+export function matchCitationVariantsOnParagraph(
+  page: PageText,
+  blockText: string | null,
+  author: string,
+  year: string,
+  pageWidth?: number,
+  pageHeight?: number,
+  measure: MeasureText = measurePdfText,
+): { rects: CitationRect[]; variant: string } | null {
+  const items = page.items ?? []
+  if (items.length === 0 || !blockText) return null
+  const window = paragraphItemWindow(items, blockText, page.headerFooterItemIndices)
+  if (!window) return null
+
+  const variants = [`${author} (${year})`, `(${author}, ${year})`]
+  const width = pageWidth ?? page.pageWidth ?? 595
+  const height = pageHeight ?? page.pageHeight ?? 842
+  const candidates: Array<{ rects: CitationRect[]; variant: string }> = []
+  for (const variant of variants) {
+    const target = normalizeText(variant)
+    if (!target) continue
+    const occurrences = findNonOverlappingOccurrences(
+      items,
+      target,
+      measure,
+      page.headerFooterItemIndices,
+      window.start,
+      window.end,
+    )
+    if (occurrences.length !== 1) continue // 0 = no match, 2+ = ambiguous within the paragraph
+    const rects = rectsFromLines(occurrences[0].lines, page.pageNumber, width, height)
+    if (rects.length > 0) candidates.push({ rects, variant })
+  }
+  if (candidates.length !== 1) return null // multiple candidates → never guess
+  return candidates[0]
+}
+
+/** Minimal contiguous item window whose squeezed text contains the block. */
+function paragraphItemWindow(
+  items: TextItemLike[],
+  blockText: string,
+  headerFooterItemIndices: ReadonlySet<number> = new Set(),
+): { start: number; end: number } | null {
+  const target = squeeze(normalizeText(blockText))
+  if (!target) return null
+  const idxs: number[] = []
+  items.forEach((it, i) => {
+    if (headerFooterItemIndices.has(i)) return
+    if (squeeze(normalizeText(it.str)).length > 0) idxs.push(i)
+  })
+  for (let s = 0; s < idxs.length; s++) {
+    let acc = ''
+    for (let e = s; e < idxs.length; e++) {
+      acc += squeeze(normalizeText(items[idxs[e]].str))
+      if (acc.length >= target.length) {
+        if (acc.includes(target)) return { start: idxs[s], end: idxs[e] }
+        break
+      }
+    }
+  }
+  return null
+}
+
+function rectsFromLines(
+  lines: Array<{ x0: number; y0: number; x1: number; y1: number }>,
+  pageNumber: number,
+  width: number,
+  height: number,
+): CitationRect[] {
+  const rects: CitationRect[] = []
+  for (const line of lines) {
+    const rx = line.x0 / width
+    const ry = line.y0 / height
+    const rw = (line.x1 - line.x0) / width
+    const rh = (line.y1 - line.y0) / height
+    if (!Number.isFinite(rx) || !Number.isFinite(ry) || !Number.isFinite(rw) || !Number.isFinite(rh)) continue
+    if (rw <= 0 || rh <= 0) continue
+    rects.push({
+      page: pageNumber,
+      x: clamp01(rx),
+      y: clamp01(ry),
+      width: clamp01(rw),
+      height: clamp01(rh),
+    })
+  }
+  return rects.length > 0 ? rects : []
 }
 
 function clamp01(v: number): number {
@@ -321,11 +487,15 @@ function findNonOverlappingOccurrences(
   target: string,
   measure: MeasureText,
   headerFooterItemIndices: ReadonlySet<number> = new Set(),
+  rangeStart?: number,
+  rangeEnd?: number,
 ): Array<{ lines: Array<{ x0: number; y0: number; x1: number; y1: number }> }> {
   const targetSq = squeeze(target)
   const toks: Token[] = items
-    .map(buildToken)
-    .filter((t, i) => t.sq.length > 0 && !headerFooterItemIndices.has(i))
+    .map((it, abs) => ({ t: buildToken(it), abs }))
+    .filter((x) => x.t.sq.length > 0 && !headerFooterItemIndices.has(x.abs))
+    .filter((x) => rangeStart === undefined || (x.abs >= rangeStart && x.abs <= (rangeEnd ?? items.length - 1)))
+    .map((x) => x.t)
   const results: Array<{ lines: Array<{ x0: number; y0: number; x1: number; y1: number }> }> = []
 
   let s = 0

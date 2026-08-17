@@ -54,7 +54,7 @@ const MISSING_REQUIREMENT_RULES: Record<string, string> = {
 }
 
 const CITATION_ACTION =
-  'Add a matching reference entry, or correct or remove the citation if it does not represent the intended source.'
+  'Add the matching APA 7 reference entry. If the citation refers to the wrong source or is no longer needed, correct or remove it.'
 
 export function presentationFor(v: {
   rule_code: string
@@ -63,7 +63,6 @@ export function presentationFor(v: {
   actual_value: string | null
   location: Record<string, unknown> | null
 }): RulePresentation {
-  const issue = v.message
   const code = v.rule_code
 
   if (FORMATTING_RULES.has(code)) {
@@ -76,8 +75,11 @@ export function presentationFor(v: {
   }
 
   if (code === 'CITATION_MISMATCH') {
+    // Source-faithful evidence for display (the exact matched span, e.g.
+    // `(Garcia, 2018)`) — the raw message's canonical narrative form is
+    // never shown as the citation. Canonical identity stays internal.
     return {
-      issue,
+      issue: friendlyFindingMessage(code, v.message, v.expected_value, v.actual_value, v.location),
       evidence: v.actual_value ?? undefined,
       requiredAction: CITATION_ACTION,
     }

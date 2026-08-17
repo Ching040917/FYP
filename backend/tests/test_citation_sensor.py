@@ -482,3 +482,76 @@ def test_appendix_heading_terminates_reference_collection():
     assert len(viols) == 1
     assert "Jones" in viols[0].message
     assert "Smith" not in viols[0].message
+
+
+# ---------------------------------------------------------------------------
+# Source-faithful evidence preservation (parenthetical citation defect)
+# ---------------------------------------------------------------------------
+
+def _build_with_unrelated_references(body_paragraphs, reference_entries):
+    """Doc with body text + a References section that does NOT include the
+    body's authors — every body citation is an orphan (mismatch)."""
+    doc = Document()
+    for p in body_paragraphs:
+        doc.add_paragraph(p)
+    doc.add_paragraph("References")
+    for r in reference_entries:
+        doc.add_paragraph(r)
+    paras = extract_paragraphs(doc)
+    return run_citation_sensor(doc, paras)
+
+
+def test_parenthetical_citation_preserves_exact_matched_span():
+    """`(Garcia, 2018)` must survive as actual_value VERBATIM — the canonical
+    narrative form lives only in the message (reference identity), never in
+    the evidence."""
+    viols = _build_with_unrelated_references(
+        ["Results agree with (Garcia, 2018) elsewhere."],
+        ["Other, X. (2020). Unrelated entry. Press."],
+    )
+    assert len(viols) == 1
+    v = viols[0]
+    assert v.rule_code == "CITATION_MISMATCH"
+    # source-faithful evidence: exact span including parentheses and comma
+    assert v.actual_value == "(Garcia, 2018)"
+    # canonical identity stays in the message (author/year stable)
+    assert "Garcia (2018)" in v.message
+    assert v.expected_value == "Reference entry for Garcia"
+
+
+def test_narrative_citation_evidence_remains_narrative():
+    """`Garcia (2018)` stays narrative — never rewritten."""
+    viols = _build_with_unrelated_references(
+        ["Garcia (2018) argues that results matter."],
+        ["Other, X. (2020). Unrelated entry. Press."],
+    )
+    assert len(viols) == 1
+    assert viols[0].actual_value == "Garcia (2018)"
+    assert "Garcia (2018)" in viols[0].message
+
+
+def test_parenthetical_multi_author_preserves_span_and_primary_identity():
+    """Multi-author parenthetical keeps the whole span; the primary author
+    stays the canonical identity."""
+    viols = _build_with_unrelated_references(
+        ["Confirmed by (Smith & Jones, 2020a, p. 12) earlier."],
+        ["Other, X. (2020). Unrelated entry. Press."],
+    )
+    assert len(viols) == 1
+    v = viols[0]
+    assert v.actual_value == "(Smith & Jones, 2020a, p. 12)"
+    assert v.message.startswith("Citation 'Smith (2020a)'")
+    assert "Smith" in v.expected_value
+
+
+def test_garcia_and_lee_same_paragraph_stay_distinct_with_own_spans():
+    """Two parenthetical citations in one paragraph keep SEPARATE findings
+    with their OWN source-faithful spans."""
+    viols = _build_and_scan(
+        ["Garcia (2018) and Lee (2021) disagree with each other."],
+    )
+    assert len(viols) == 2
+    spans = sorted(v.actual_value for v in viols)
+    assert spans == ["Garcia (2018)", "Lee (2021)"]
+    # canonical identity per finding
+    assert {v.message.split("'")[1].split(" (")[0] for v in viols} == {"Garcia", "Lee"}

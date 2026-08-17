@@ -11,6 +11,8 @@
  * ("15.0pt" → "15 pt", "1.5in" → "1.5 in") and capitalization is consistent.
  */
 
+import { extractCitationEvidence } from './pdf/citation-highlight.ts'
+
 /** One-based friendly object label from the violation location. */
 export function objectLabel(
   location: Record<string, unknown> | null | undefined,
@@ -68,6 +70,13 @@ export function friendlyFindingMessage(
   }
   if (code === 'IMAGE_ALT_TEXT_MISSING' && label) {
     return `${label} does not have alternative text for screen-reader users.`
+  }
+  if (code === 'CITATION_MISMATCH') {
+    // Source-faithful evidence for display (exact matched span, e.g.
+    // `(Garcia, 2018)`) — never the message's canonical narrative form.
+    const evidence = extractCitationEvidence(message, actual)
+    const display = evidence ? evidence.text : (actual ?? cleanMessage(message))
+    return `The in-text citation ${display} does not have a matching entry in the References section.`
   }
   return cleanMessage(message)
 }

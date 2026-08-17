@@ -86,6 +86,31 @@ test('missing-requirement rules use Figure labels, not internal Image terms', ()
   assert.equal(alt.issue, 'Figure 2 does not have alternative text for screen-reader users.')
 })
 
+test('CITATION_MISMATCH shows the source-faithful parenthetical evidence', () => {
+  const pres = presentationFor(
+    v('CITATION_MISMATCH', "Citation 'Garcia (2018)' was found in text, but no matching entry was found in the References bibliography.", null, '(Garcia, 2018)', { paragraph_index: 23 }),
+  )
+  assert.equal(
+    pres.issue,
+    'The in-text citation (Garcia, 2018) does not have a matching entry in the References section.',
+  )
+  assert.equal(pres.evidence, '(Garcia, 2018)')
+  assert.equal(
+    pres.requiredAction,
+    'Add the matching APA 7 reference entry. If the citation refers to the wrong source or is no longer needed, correct or remove it.',
+  )
+  // never displayed as the normalized narrative form
+  assert.ok(!pres.issue.includes('Citation \u2019Garcia (2018)\u2019'))
+})
+
+test('CITATION_MISMATCH keeps the narrative evidence verbatim when it is the source form', () => {
+  const pres = presentationFor(
+    v('CITATION_MISMATCH', "Citation 'Garcia (2018)' was found in text", null, 'Garcia (2018)', { paragraph_index: 3 }),
+  )
+  assert.equal(pres.evidence, 'Garcia (2018)')
+  assert.ok(pres.issue.includes('Garcia (2018)'))
+})
+
 test('raw deterministic message is never mutated by presentation', () => {
   const raw = 'Body font size 15pt != required 12pt'
   const violation = v('FONT_SIZE', raw, '12pt', '15pt', { paragraph_index: 3 })
