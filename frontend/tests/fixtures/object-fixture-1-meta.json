@@ -1,0 +1,391 @@
+{
+ "docx_order": [
+  {
+   "kind": "paragraph",
+   "index": 0
+  },
+  {
+   "kind": "paragraph",
+   "index": 1
+  },
+  {
+   "kind": "paragraph",
+   "index": 2
+  },
+  {
+   "kind": "table",
+   "index": 0
+  },
+  {
+   "kind": "paragraph",
+   "index": 3
+  },
+  {
+   "kind": "paragraph",
+   "index": 4
+  },
+  {
+   "kind": "paragraph",
+   "index": 5
+  },
+  {
+   "kind": "table",
+   "index": 1
+  },
+  {
+   "kind": "paragraph",
+   "index": 6
+  },
+  {
+   "kind": "paragraph",
+   "index": 7
+  },
+  {
+   "kind": "paragraph",
+   "index": 8
+  },
+  {
+   "kind": "paragraph",
+   "index": 9
+  },
+  {
+   "kind": "paragraph",
+   "index": 10
+  },
+  {
+   "kind": "paragraph",
+   "index": 11
+  },
+  {
+   "kind": "paragraph",
+   "index": 12
+  },
+  {
+   "kind": "table",
+   "index": 2
+  },
+  {
+   "kind": "paragraph",
+   "index": 13
+  },
+  {
+   "kind": "paragraph",
+   "index": 14
+  }
+ ],
+ "tables": [
+  {
+   "index": 0,
+   "cells": [
+    [
+     "unique-cell-alpha-1",
+     "plain value"
+    ],
+    [
+     "same cell value",
+     "same cell value"
+    ],
+    [
+     "plain value",
+     "beta cell"
+    ]
+   ],
+   "caption": {
+    "text": "Table 1: Results summary",
+    "above": true
+   }
+  },
+  {
+   "index": 1,
+   "cells": [
+    [
+     "a1",
+     "a2"
+    ],
+    [
+     "b1",
+     "b2"
+    ]
+   ],
+   "caption": null
+  },
+  {
+   "index": 2,
+   "cells": [
+    [
+     "t3 r0 c0",
+     "t3 r0 c1",
+     "t3 r0 c2"
+    ],
+    [
+     "t3 r1 c0",
+     "t3 r1 c1",
+     "t3 r1 c2"
+    ],
+    [
+     "t3 r2 c0",
+     "t3 r2 c1",
+     "t3 r2 c2"
+    ],
+    [
+     "t3 r3 c0",
+     "t3 r3 c1",
+     "t3 r3 c2"
+    ],
+    [
+     "t3 r4 c0",
+     "t3 r4 c1",
+     "t3 r4 c2"
+    ],
+    [
+     "t3 r5 c0",
+     "t3 r5 c1",
+     "t3 r5 c2"
+    ],
+    [
+     "t3 r6 c0",
+     "t3 r6 c1",
+     "t3 r6 c2"
+    ],
+    [
+     "t3 r7 c0",
+     "t3 r7 c1",
+     "t3 r7 c2"
+    ],
+    [
+     "t3 r8 c0",
+     "t3 r8 c1",
+     "t3 r8 c2"
+    ],
+    [
+     "t3 r9 c0",
+     "t3 r9 c1",
+     "t3 r9 c2"
+    ],
+    [
+     "t3 r10 c0",
+     "t3 r10 c1",
+     "t3 r10 c2"
+    ],
+    [
+     "t3 r11 c0",
+     "t3 r11 c1",
+     "t3 r11 c2"
+    ],
+    [
+     "t3 r12 c0",
+     "t3 r12 c1",
+     "t3 r12 c2"
+    ],
+    [
+     "t3 r13 c0",
+     "t3 r13 c1",
+     "t3 r13 c2"
+    ],
+    [
+     "t3 r14 c0",
+     "t3 r14 c1",
+     "t3 r14 c2"
+    ],
+    [
+     "t3 r15 c0",
+     "t3 r15 c1",
+     "t3 r15 c2"
+    ],
+    [
+     "t3 r16 c0",
+     "t3 r16 c1",
+     "t3 r16 c2"
+    ],
+    [
+     "t3 r17 c0",
+     "t3 r17 c1",
+     "t3 r17 c2"
+    ],
+    [
+     "t3 r18 c0",
+     "t3 r18 c1",
+     "t3 r18 c2"
+    ],
+    [
+     "t3 r19 c0",
+     "t3 r19 c1",
+     "t3 r19 c2"
+    ],
+    [
+     "t3 r20 c0",
+     "t3 r20 c1",
+     "t3 r20 c2"
+    ],
+    [
+     "t3 r21 c0",
+     "t3 r21 c1",
+     "t3 r21 c2"
+    ],
+    [
+     "t3 r22 c0",
+     "t3 r22 c1",
+     "t3 r22 c2"
+    ],
+    [
+     "t3 r23 c0",
+     "t3 r23 c1",
+     "t3 r23 c2"
+    ],
+    [
+     "t3 r24 c0",
+     "t3 r24 c1",
+     "t3 r24 c2"
+    ],
+    [
+     "t3 r25 c0",
+     "t3 r25 c1",
+     "t3 r25 c2"
+    ],
+    [
+     "t3 r26 c0",
+     "t3 r26 c1",
+     "t3 r26 c2"
+    ],
+    [
+     "t3 r27 c0",
+     "t3 r27 c1",
+     "t3 r27 c2"
+    ],
+    [
+     "t3 r28 c0",
+     "t3 r28 c1",
+     "t3 r28 c2"
+    ],
+    [
+     "t3 r29 c0",
+     "t3 r29 c1",
+     "t3 r29 c2"
+    ],
+    [
+     "t3 r30 c0",
+     "t3 r30 c1",
+     "t3 r30 c2"
+    ],
+    [
+     "t3 r31 c0",
+     "t3 r31 c1",
+     "t3 r31 c2"
+    ],
+    [
+     "t3 r32 c0",
+     "t3 r32 c1",
+     "t3 r32 c2"
+    ],
+    [
+     "t3 r33 c0",
+     "t3 r33 c1",
+     "t3 r33 c2"
+    ],
+    [
+     "t3 r34 c0",
+     "t3 r34 c1",
+     "t3 r34 c2"
+    ],
+    [
+     "t3 r35 c0",
+     "t3 r35 c1",
+     "t3 r35 c2"
+    ],
+    [
+     "t3 r36 c0",
+     "t3 r36 c1",
+     "t3 r36 c2"
+    ],
+    [
+     "t3 r37 c0",
+     "t3 r37 c1",
+     "t3 r37 c2"
+    ],
+    [
+     "t3 r38 c0",
+     "t3 r38 c1",
+     "t3 r38 c2"
+    ],
+    [
+     "t3 r39 c0",
+     "t3 r39 c1",
+     "t3 r39 c2"
+    ],
+    [
+     "t3 r40 c0",
+     "t3 r40 c1",
+     "t3 r40 c2"
+    ],
+    [
+     "t3 r41 c0",
+     "t3 r41 c1",
+     "t3 r41 c2"
+    ],
+    [
+     "t3 r42 c0",
+     "t3 r42 c1",
+     "t3 r42 c2"
+    ],
+    [
+     "t3 r43 c0",
+     "t3 r43 c1",
+     "t3 r43 c2"
+    ],
+    [
+     "t3 r44 c0",
+     "t3 r44 c1",
+     "t3 r44 c2"
+    ],
+    [
+     "t3 r45 c0",
+     "t3 r45 c1",
+     "t3 r45 c2"
+    ]
+   ],
+   "caption": {
+    "text": "Table 3: Long results appendix",
+    "above": false
+   }
+  }
+ ],
+ "figures": [
+  {
+   "image_index": 0,
+   "host_paragraph_index": 1,
+   "in_header_footer": false,
+   "caption": null,
+   "decorative": true
+  },
+  {
+   "image_index": 1,
+   "host_paragraph_index": 7,
+   "in_header_footer": false,
+   "caption": {
+    "text": "Figure 1: Growth chart",
+    "above": false
+   },
+   "decorative": false
+  },
+  {
+   "image_index": 2,
+   "host_paragraph_index": 10,
+   "in_header_footer": false,
+   "caption": null,
+   "decorative": false
+  }
+ ],
+ "rels_order": [
+  0,
+  1,
+  2
+ ],
+ "drawing_order": [
+  0,
+  1,
+  2
+ ],
+ "header_image_indices": [
+  -1
+ ]
+}

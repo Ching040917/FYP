@@ -52,6 +52,15 @@ export interface DocumentPreviewProps {
   citationRects?: Array<{ page: number; x: number; y: number; width: number; height: number }> | null
   citationLabel?: string | null
   highlightMessage?: string | null
+  /** Formatting evidence highlights (Build 7). */
+  formattingEvidence?: {
+    kind: 'run' | 'paragraph'
+    pageRects: Array<{ page: number; x: number; y: number; width: number; height: number }>
+  } | null
+  formattingLabel?: string | null
+  formattingMessage?: string | null
+  /** Table/Figure object navigation status (compact chip only). */
+  objectStatus?: { label: string | null; message: string | null } | null
 }
 
 export function DocumentPreview({
@@ -71,6 +80,10 @@ export function DocumentPreview({
   citationRects = null,
   citationLabel = null,
   highlightMessage = null,
+  formattingEvidence = null,
+  formattingLabel = null,
+  formattingMessage = null,
+  objectStatus = null,
 }: DocumentPreviewProps) {
   const containerRef = React.useRef<HTMLDivElement>(null)
   const blockRefs = React.useRef<Map<number, HTMLElement>>(new Map())
@@ -212,6 +225,10 @@ export function DocumentPreview({
             citationRects={citationRects}
             citationLabel={citationLabel}
             highlightMessage={highlightMessage}
+            formattingEvidence={formattingEvidence}
+            formattingLabel={formattingLabel}
+            formattingMessage={formattingMessage}
+            objectStatus={objectStatus}
           />
         </div>
       )}

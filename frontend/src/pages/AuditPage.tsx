@@ -16,6 +16,14 @@ import { useFindingMapping } from '../hooks/use-finding-mapping'
 import { useRenderedPdf } from '../hooks/use-rendered-pdf.ts'
 import { classifyFindingTarget, resolveFindingNavigation } from '../lib/pdf/finding-navigation.ts'
 import { resolveCitationHighlight, type CitationRect } from '../lib/pdf/citation-highlight.ts'
+import { resolveFormattingHighlight, evidenceFamily } from '../lib/pdf/formatting-highlight.ts'
+import {
+  OBJECT_RULES,
+  resolveObjectSelection,
+  getObjectNavigation,
+  dropObjectNavCache,
+} from '../lib/pdf/object-navigation.ts'
+import { friendlyFindingMessage } from '../lib/friendly-finding'
 import { PendingNav, hasParagraphIdentity, type NavCommand } from '../lib/pdf/pending-navigation.ts'
 import { cn } from '../lib/utils'
 import type { AuditDocumentStats, AuditResponse, DocumentBlock, Violation } from '../types/api'
@@ -50,7 +58,9 @@ function toLayoutError(v: Violation): LayoutError {
     severity: v.severity === 'MAJOR' ? 'major' : 'minor',
     position,
     title: humanizeRuleCode(v.rule_code),
-    detail: v.message,
+    // Student-facing plain language; the raw deterministic message stays
+    // untouched in the violation record.
+    detail: friendlyFindingMessage(v.rule_code, v.message, v.expected_value, v.actual_value, v.location),
     suggestion: v.expected_value ?? v.actual_value ?? 'No automatic fix available — review manually.',
     snippet: (v.actual_value ?? '').toString().slice(0, 140) || undefined,
   }
@@ -93,11 +103,25 @@ export function AuditPage() {
   const [citationRects, setCitationRects] = useState<CitationRect[] | null>(null)
   const [citationLabel, setCitationLabel] = useState<string | null>(null)
   const [highlightMessage, setHighlightMessage] = useState<string | null>(null)
+  // Formatting evidence highlight (Build 7) — mutually exclusive with citation.
+  const [formattingEvidence, setFormattingEvidence] = useState<{ kind: 'run' | 'paragraph'; pageRects: CitationRect[] } | null>(null)
+  const [formattingLabel, setFormattingLabel] = useState<string | null>(null)
+  const [formattingMessage, setFormattingMessage] = useState<string | null>(null)
+  // Table/Figure object navigation status (page + compact message only).
+  const [objectStatus, setObjectStatus] = useState<{ label: string | null; message: string | null } | null>(null)
+
+  const clearObjectStatus = useCallback(() => setObjectStatus(null), [])
 
   const clearCitationHighlight = useCallback(() => {
     setCitationRects(null)
     setCitationLabel(null)
     setHighlightMessage(null)
+  }, [])
+
+  const clearFormattingHighlight = useCallback(() => {
+    setFormattingEvidence(null)
+    setFormattingLabel(null)
+    setFormattingMessage(null)
   }, [])
 
   const navigateToRenderedPage = (page: number) => {
@@ -129,8 +153,12 @@ export function AuditPage() {
   // It reappears only after a new genuine unavailable navigation result.
   useEffect(() => {
     if (previewMode === 'rendered') setNavNotice(null)
-    if (previewMode === 'text') clearCitationHighlight() // overlay lives on rendered pages
-  }, [previewMode, clearCitationHighlight])
+    if (previewMode === 'text') {
+      clearCitationHighlight() // overlays live on rendered pages
+      clearFormattingHighlight()
+      clearObjectStatus()
+    }
+  }, [previewMode, clearCitationHighlight, clearFormattingHighlight, clearObjectStatus])
 
   // Reset navigation state when the audit changes.
   useEffect(() => {
@@ -140,12 +168,17 @@ export function AuditPage() {
     setLocatingId(null)
     setNavNotice(null)
     clearCitationHighlight()
-  }, [auditId, clearCitationHighlight])
+    clearFormattingHighlight()
+    clearObjectStatus()
+    if (auditId) dropObjectNavCache(auditId)
+  }, [auditId, clearCitationHighlight, clearFormattingHighlight, clearObjectStatus])
 
   // PDF replaced: any highlight from the previous document is stale.
   useEffect(() => {
     clearCitationHighlight()
-  }, [renderedPdf?.bytes, clearCitationHighlight])
+    clearFormattingHighlight()
+    clearObjectStatus()
+  }, [renderedPdf?.bytes, clearCitationHighlight, clearFormattingHighlight, clearObjectStatus])
 
   // Execute (or fail) the retained navigation request when the mapping
   // settles — never before.
@@ -163,6 +196,12 @@ export function AuditPage() {
     if (!audit) return null
     const labels = new Map<string, string>()
     for (const v of audit.violations) {
+      if (OBJECT_RULES.has(v.rule_code) && mappingBundle) {
+        // Table/Figure findings: `Page N · Table M` / `Table M · Page unavailable`
+        const objectNav = getObjectNavigation(gatedAuditId, { ruleCode: v.rule_code, location: v.location }, mappingBundle)
+        if (objectNav.label) labels.set(v.id, objectNav.label)
+        continue
+      }
       if (mappingBundle) {
         const decision = resolveFindingNavigation(v, mappingBundle.byIndex)
         if (decision.locationLabel) labels.set(v.id, decision.locationLabel)
@@ -305,33 +344,61 @@ export function AuditPage() {
 
   // Exact/approximate mapping → Rendered Pages + page navigation;
   // completed unavailable mapping → extracted-text paragraph location;
-  // object findings (table/figure/section/margin) are never forced through
-  // the paragraph mapping and never switch the view — they show a concise
-  // notice instead. Selection uses the REAL violation (it carries
-  // location.paragraph_index) — the presentation LayoutError does not.
+  // Table/Figure object findings navigate to the reliably mapped page (never
+  // forced into Extracted Text; view stays stable when unavailable); other
+  // object-typed findings (section/margin) show a concise notice instead.
+  // Selection uses the REAL violation (it carries location.paragraph_index /
+  // table_index / image_index) — the presentation LayoutError does not.
   const applyNavigation = (e: LayoutError) => {
     const violation = violations.find((v) => v.id === e.id) ?? null
     if (!violation) return
+    const findingLike = {
+      id: violation.id,
+      ruleCode: violation.rule_code,
+      message: violation.message,
+      location: violation.location,
+    }
     if (classifyFindingTarget(violation) === 'object') {
       clearCitationHighlight()
-      setNavNotice(OBJECT_NOTICE)
+      clearFormattingHighlight()
+      // Object rules (Table/Figure): navigate to the reliably mapped page;
+      // overlays stay mutually exclusive; no forced Extracted Text.
+      if (OBJECT_RULES.has(violation.rule_code)) {
+        const objectSel = resolveObjectSelection(gatedAuditId, findingLike, mappingBundle)
+        setObjectStatus(objectSel.status)
+        if (objectSel.navigatePage !== null) {
+          navigateToRenderedPage(objectSel.navigatePage)
+        }
+        setNavNotice(null)
+        // stable: keep the current preview mode
+        pendingNavRef.current?.reset()
+      } else {
+        setObjectStatus(null)
+        setNavNotice(OBJECT_NOTICE)
+      }
       return
     }
-    // Exact citation highlight: resolves (or clears) from the deterministic
-    // finding's own fields; failure keeps Rendered Pages active.
-    const hl = resolveCitationHighlight(
-      {
-        id: violation.id,
-        ruleCode: violation.rule_code,
-        message: violation.message,
-        actualValue: violation.actual_value,
-        location: violation.location,
-      },
-      mappingBundle,
-    )
-    setCitationRects(hl.rects)
-    setCitationLabel(hl.label)
-    setHighlightMessage(hl.message)
+    // Citation and formatting overlays are mutually exclusive; the latest
+    // selection replaces the previous one.
+    setObjectStatus(null)
+    if (evidenceFamily(violation.rule_code) === 'formatting') {
+      clearCitationHighlight()
+      const fmt = resolveFormattingHighlight(findingLike, mappingBundle)
+      setFormattingEvidence(fmt.kind !== 'none' && fmt.pageRects.length > 0 ? { kind: fmt.kind, pageRects: fmt.pageRects } : null)
+      setFormattingLabel(fmt.label)
+      setFormattingMessage(fmt.message)
+    } else {
+      clearFormattingHighlight()
+      // Exact citation highlight: resolves (or clears) from the deterministic
+      // finding's own fields; failure keeps Rendered Pages active.
+      const hl = resolveCitationHighlight(
+        { ...findingLike, actualValue: violation.actual_value },
+        mappingBundle,
+      )
+      setCitationRects(hl.rects)
+      setCitationLabel(hl.label)
+      setHighlightMessage(hl.message)
+    }
     pendingNavRef.current?.select(violation, mappingBundle?.byIndex, emitNav)
   }
 
@@ -648,6 +715,10 @@ export function AuditPage() {
                     citationRects={citationRects}
                     citationLabel={citationLabel}
                     highlightMessage={highlightMessage}
+                    formattingEvidence={formattingEvidence}
+                    formattingLabel={formattingLabel}
+                    formattingMessage={formattingMessage}
+                    objectStatus={objectStatus}
                   />
                   <div className="flex flex-wrap items-center gap-2">
                     {selectedViolation && (
@@ -718,6 +789,10 @@ export function AuditPage() {
                     citationRects={citationRects}
                     citationLabel={citationLabel}
                     highlightMessage={highlightMessage}
+                    formattingEvidence={formattingEvidence}
+                    formattingLabel={formattingLabel}
+                    formattingMessage={formattingMessage}
+                    objectStatus={objectStatus}
                   />
                 </div>
               </div>
@@ -757,6 +832,10 @@ export function AuditPage() {
                     citationRects={citationRects}
                     citationLabel={citationLabel}
                     highlightMessage={highlightMessage}
+                    formattingEvidence={formattingEvidence}
+                    formattingLabel={formattingLabel}
+                    formattingMessage={formattingMessage}
+                    objectStatus={objectStatus}
                   />
                 </div>
                 <div

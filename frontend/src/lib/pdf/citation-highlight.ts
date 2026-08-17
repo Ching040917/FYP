@@ -128,7 +128,7 @@ export function matchCitationOnPage(
   const items = page.items ?? []
   if (items.length === 0) return null
 
-  const occurrences = findNonOverlappingOccurrences(items, target, measure)
+  const occurrences = findNonOverlappingOccurrences(items, target, measure, page.headerFooterItemIndices)
   if (occurrences.length !== 1) return null // 0 = unmatched, 2+ = ambiguous
 
   const width = pageWidth ?? page.pageWidth ?? 595
@@ -312,15 +312,20 @@ function tryMatch(
  * Character-level (token, offset) cursor scanning, so a citation may start
  * or end anywhere inside an item: prefix-in-item, split across adjacent
  * items, whitespace dropped between items, and MULTIPLE occurrences inside
- * a single item are all found.
+ * a single item are all found. Items belonging to repeated header/footer
+ * LINES (position-based indices) are excluded — they repeat on every page
+ * and would poison ambiguity detection.
  */
 function findNonOverlappingOccurrences(
   items: TextItemLike[],
   target: string,
   measure: MeasureText,
+  headerFooterItemIndices: ReadonlySet<number> = new Set(),
 ): Array<{ lines: Array<{ x0: number; y0: number; x1: number; y1: number }> }> {
   const targetSq = squeeze(target)
-  const toks: Token[] = items.map(buildToken).filter((t) => t.sq.length > 0)
+  const toks: Token[] = items
+    .map(buildToken)
+    .filter((t, i) => t.sq.length > 0 && !headerFooterItemIndices.has(i))
   const results: Array<{ lines: Array<{ x0: number; y0: number; x1: number; y1: number }> }> = []
 
   let s = 0

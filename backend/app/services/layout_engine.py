@@ -452,22 +452,34 @@ def _caption_status(p_elem, label_re, seq_label, style_names) -> str:
     return "manual"
 
 
-def _adjacent_caption_status(element, label_re, seq_label, style_names) -> str:
+def _adjacent_caption_status(element, label_re, seq_label, style_names, paragraphs=None):
     """Caption status from an element's sibling paragraphs (both directions).
 
     VALID beats MANUAL; a valid caption on either side satisfies the rule.
+    When `paragraphs` (the doc-level paragraph list) is given and a MANUAL
+    caption sibling is found, the second return value is that caption
+    paragraph's zero-based index — the authoritative association the
+    frontend uses to locate the caption block (the typed number may
+    legitimately differ from the object's ordinal, so it is never required
+    to match).
     """
     status = "missing"
+    caption_index = None
     for direction in (element.getprevious, element.getnext):
         sibling = direction()
         if sibling is None or not sibling.tag.endswith("}p"):
             continue
         s = _caption_status(sibling, label_re, seq_label, style_names)
         if s == "valid":
-            return "valid"
+            return "valid", caption_index
         if s == "manual":
             status = "manual"
-    return status
+            if paragraphs is not None:
+                caption_index = next(
+                    (i for i, p in enumerate(paragraphs) if p._p is sibling),
+                    None,
+                )
+    return status, caption_index
 
 
 def _find_image_context(doc: Document, image_rel) -> tuple:
@@ -538,14 +550,19 @@ def check_media_captions(doc: Document, paragraphs: List[Dict], preset) -> List[
 
     # ---- Tables ----
     for table_idx, table in enumerate(doc.tables):
-        status = _adjacent_caption_status(table._tbl, _TABLE_LABEL_RE, "table", style_names)
+        status, caption_idx = _adjacent_caption_status(
+            table._tbl, _TABLE_LABEL_RE, "table", style_names, doc.paragraphs
+        )
         if status == "valid":
             continue
         if status == "manual":
+            location = {"table_index": table_idx}
+            if caption_idx is not None:
+                location["paragraph_index"] = caption_idx
             violations.append(LayoutViolation(
                 rule_code="MANUAL_CAPTION",
                 severity="MINOR",
-                location={"table_index": table_idx},
+                location=location,
                 message=(
                     f"Table {table_idx + 1} has a manually typed caption. "
                     f"{MANUAL_CAPTION_ACTION}"

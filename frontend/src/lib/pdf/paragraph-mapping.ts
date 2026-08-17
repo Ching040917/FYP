@@ -32,6 +32,10 @@ export type PageText = {
   lines: PageLine[]
   /** Normalized line texts identified as repeated headers/footers. */
   headerFooterLines: Set<string>
+  /** ITEM INDICES belonging to repeated header/footer lines (position-based
+   *  exclusion for evidence matching — text equality would also remove
+   *  legit body text that happens to repeat a header phrase). */
+  headerFooterItemIndices?: Set<number>
   /** Raw text items (highlight coordinate evidence). Optional. */
   items?: TextItemLike[]
   /** Page dimensions in PDF units at scale 1 (highlight normalization). */

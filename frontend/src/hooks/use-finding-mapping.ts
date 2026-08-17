@@ -69,6 +69,7 @@ export function useFindingMapping(
         pages,
         mapping,
         byIndex: new Map(mapping.map((m) => [m.index, m])),
+        blocks: blockLike,
       }
     }
 

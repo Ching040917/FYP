@@ -14,6 +14,8 @@ export interface MappingBundle {
   pages: PageText[]
   mapping: BlockMapping[]
   byIndex: Map<number, BlockMapping>
+  /** Paragraph text evidence (formatting highlights). */
+  blocks: Array<{ index: number; text: string }>
 }
 
 export type MappingLoader = (auditId: string) => Promise<MappingBundle>

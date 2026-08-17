@@ -71,6 +71,26 @@ def _clean(text) -> str:
     return _xml_escape(s).replace("\n", "<br/>")
 
 
+def _student_clean(text) -> str:
+    """Student-facing wording cleanup for the exported PDF.
+
+    The API keeps raw deterministic messages untouched; the PDF is a
+    student-facing surface, so banned tokens (`!=`, `->`, `=>`, `SEQ field`,
+    `numPr`) never appear and units are normalized ("15pt" → "15 pt").
+    """
+    if text is None:
+        return ""
+    s = str(text)
+    s = s.replace("!=", "is not").replace("->", "to").replace("=>", "to")
+    s = re.sub(r"\bSEQ\s+field\b", "automatic caption numbering", s, flags=re.IGNORECASE)
+    s = re.sub(r"\bnumPr\b", "list formatting", s, flags=re.IGNORECASE)
+    s = re.sub(r"\bdocPr@descr\b", "image description", s, flags=re.IGNORECASE)
+    s = re.sub(r"(\d)pt\b", r"\1 pt", s, flags=re.IGNORECASE)
+    s = re.sub(r"(\d)in\b", r"\1 in", s, flags=re.IGNORECASE)
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+
 def _font_for(text: str) -> str:
     """Helvetica when WinAnsi covers the text, STSong-Light otherwise."""
     try:
@@ -216,7 +236,10 @@ def required_action(v) -> str:
     loc = location_text(v.location)
     if v.expected_value and v.actual_value and loc != "—":
         prop = _PROP_NAME.get(v.rule_code, "value")
-        return f"Change {prop} for {loc} from {v.actual_value} to {v.expected_value}."
+        return (
+            f"Change {prop} for {loc} from "
+            f"{_student_clean(v.actual_value)} to {_student_clean(v.expected_value)}."
+        )
     return _REQUIRED_ACTIONS.get(v.rule_code, "Review the finding and apply the required formatting.")
 
 
@@ -347,11 +370,11 @@ def _priority_table(pid, v) -> Table:
     loc = location_text(v.location)
     if loc != "—":
         rows.append(("Location", loc))
-    rows.append(("Issue", v.message or ""))
+    rows.append(("Issue", _student_clean(v.message) or ""))
     if v.expected_value:
-        rows.append(("Expected", v.expected_value))
+        rows.append(("Expected", _student_clean(v.expected_value)))
     if v.actual_value:
-        rows.append(("Actual", v.actual_value))
+        rows.append(("Actual", _student_clean(v.actual_value)))
     rows.append(("Required Action", required_action(v)))
     return _panel(f"{pid} — {_rule_name(v.rule_code)}", v.severity, rows)
 
@@ -405,9 +428,9 @@ def _group_panel(gid, members, rule_code, exp_val, action) -> Table:
     """Info panel for a grouped minor finding: header, comparison, locations, action."""
     names = sorted(set(str(v.actual_value) for v in members if v.actual_value))
     rows = [
-        ("Issue", members[0].message or ""),
-        ("Required", exp_val or "—"),
-        ("Observed", " · ".join(names) or "—"),
+        ("Issue", _student_clean(members[0].message) or ""),
+        ("Required", _student_clean(exp_val) or "—"),
+        ("Observed", " · ".join(_student_clean(n) for n in names) or "—"),
         ("Affected Locations", _location_summary(members)),
         ("Required Action", action),
     ]
@@ -434,8 +457,8 @@ def _appendix_table(entries) -> Table:
             _p(v.severity, size=8, font="Helvetica-Bold" if v.severity == "MAJOR" else "Helvetica"),
             _rule_cell(v),
             _p(location_text(v.location), size=8),
-            _p(v.actual_value or "", size=8),
-            _p(v.expected_value or "", size=8),
+            _p(_student_clean(v.actual_value or ""), size=8),
+            _p(_student_clean(v.expected_value or ""), size=8),
         ])
     table = Table(rows, colWidths=[14 * mm, 20 * mm, 55 * mm, 62 * mm, 58 * mm, 58 * mm],
                   repeatRows=1)
@@ -612,7 +635,7 @@ def generate_audit_pdf(audit, violations, citation_issues) -> bytes:
             story.append(_p(f"Paragraph {issue.paragraph_index + 1}", size=9.5, font="Helvetica-Bold", color=NAVY))
             if issue.text_snippet:
                 story.append(_p(f"'{issue.text_snippet}'", size=9, color=MUTED))
-            story.append(_p(issue.message, size=9.5))
+            story.append(_p(_student_clean(issue.message), size=9.5))
             if parts["correction"]:
                 story.append(_p("AI-assisted guidance", size=8.5, font="Helvetica-Bold", color=GREEN))
                 if issue.confidence is not None:

@@ -383,7 +383,61 @@ def test_specific_action_when_values_exist(client, test_engine):
                      "expected_value": "0pt", "actual_value": "18pt"}],
     )
     text = _pdf_text(_export(client, audit_id).content)
-    assert "Change space before for Paragraph 19 from 18pt to 0pt." in text
+    assert "Change space before for Paragraph 19 from 18 pt to 0 pt." in text
+
+
+def test_pdf_never_exposes_banned_tokens(client, test_engine):
+    """Student-facing PDF: no !=, ->, =>, SEQ field, or numPr anywhere."""
+    violations = [
+        {"rule_code": "FONT_SIZE", "severity": "MAJOR",
+         "location": {"paragraph_index": 0, "run_index": 0},
+         "message": "Body font size 15pt != required 12pt",
+         "expected_value": "12pt", "actual_value": "15pt"},
+        {"rule_code": "IMAGE_ALT_TEXT_MISSING", "severity": "MINOR",
+         "location": {"image_index": 0, "paragraph_index": 4},
+         "message": "Image 1 has no alt-text. Right-click the image -> Alt Text -> enter a description.",
+         "expected_value": "Non-empty alt-text description",
+         "actual_value": "Empty or missing docPr@descr"},
+        {"rule_code": "MANUAL_CAPTION", "severity": "MINOR",
+         "location": {"table_index": 0, "paragraph_index": 3},
+         "message": "Table 1 has a manually typed caption. Use Word semantics.",
+         "expected_value": "Word caption (References → Insert Caption)",
+         "actual_value": "Manual 'Table N' text without Caption style or SEQ field"},
+    ]
+    audit_id = _seed_audit(
+        test_engine, status="completed", weighted_score=70,
+        violations=violations,
+    )
+    text = _pdf_text(_export(client, audit_id).content)
+    assert "!=" not in text
+    assert "->" not in text
+    assert "=>" not in text
+    assert "SEQ field" not in text
+    assert "numPr" not in text
+    assert "docPr@descr" not in text
+    # Cleaned wording survives
+    assert "is not" in text
+    assert "automatic caption numbering" in text
+    assert "to Alt Text to enter" in text
+
+
+def test_pdf_cleaned_message_does_not_mutate_persisted_raw(client, test_engine):
+    """Export cleans only the PDF surface; the persisted message stays raw."""
+    violations = [{"rule_code": "LINE_SPACING", "severity": "MINOR",
+                   "location": {"paragraph_index": 2},
+                   "message": "Line spacing 2.0 != required 1.5",
+                   "expected_value": "1.5", "actual_value": "2.0"}]
+    audit_id = _seed_audit(
+        test_engine, status="completed", weighted_score=90,
+        violations=violations,
+    )
+    _export(client, audit_id)
+    from app.models.audit import AuditRecord, Violation as ViolationModel
+    Session = sessionmaker(bind=test_engine)
+    s = Session()
+    row = s.query(ViolationModel).filter_by(audit_id=audit_id).one()
+    assert row.message == "Line spacing 2.0 != required 1.5"
+    s.close()
 
 
 def test_score_and_deductions_unchanged(client, docx_factory):

@@ -30,6 +30,7 @@ import { getPdfjs } from '../../lib/pdf/pdf-text-extract.ts'
 import type { RenderedPdfState } from '../../hooks/use-rendered-pdf.ts'
 import { cn } from '../../lib/utils'
 import { PageCommandConsumer } from '../../lib/pdf/pending-navigation.ts'
+import { evidenceBarOffsetPx, evidenceBarHeight, EVIDENCE_BAR_METRICS } from '../../lib/pdf/formatting-highlight.ts'
 
 interface RenderedPreviewProps {
   /** PDF load state + bytes from the parent (shared with mapping). */
@@ -47,6 +48,15 @@ interface RenderedPreviewProps {
   citationLabel?: string | null
   /** Truthful message when exact highlighting failed (page still shown). */
   highlightMessage?: string | null
+  /** Formatting evidence (Build 7): kind + per-page normalized rects. */
+  formattingEvidence?: {
+    kind: 'run' | 'paragraph'
+    pageRects: Array<{ page: number; x: number; y: number; width: number; height: number }>
+  } | null
+  formattingLabel?: string | null
+  formattingMessage?: string | null
+  /** Table/Figure object navigation status (compact chip only). */
+  objectStatus?: { label: string | null; message: string | null } | null
 }
 
 const ZOOM_MIN = 0.5
@@ -68,6 +78,10 @@ export function RenderedPreview({
   citationRects = null,
   citationLabel = null,
   highlightMessage = null,
+  formattingEvidence = null,
+  formattingLabel = null,
+  formattingMessage = null,
+  objectStatus = null,
 }: RenderedPreviewProps) {
   const [pdfDoc, setPdfDoc] = React.useState<PDFDocumentProxy | null>(null)
   const [docLoading, setDocLoading] = React.useState(false)
@@ -318,6 +332,36 @@ export function RenderedPreview({
         </span>
       )}
 
+      {/* Compact formatting-evidence chip (Build 7) — neutral, amber accent. */}
+      {formattingEvidence && formattingLabel && (
+        <span className="inline-flex w-fit shrink-0 items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-[12px] leading-[16px] text-foreground">
+          <Info className="h-3.5 w-3.5 shrink-0 text-warning" aria-hidden="true" />
+          Selected evidence
+          <span className="font-medium text-warning">: {formattingLabel}</span>
+        </span>
+      )}
+      {formattingMessage && !formattingEvidence && (
+        <span className="inline-flex w-fit shrink-0 items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-[12px] leading-[16px] text-muted-foreground">
+          <Info className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+          {formattingMessage}
+        </span>
+      )}
+
+      {/* Compact Table/Figure object status (Build: object navigation). */}
+      {objectStatus && objectStatus.label && !objectStatus.message && (
+        <span className="inline-flex w-fit shrink-0 items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-[12px] leading-[16px] text-foreground">
+          <Info className="h-3.5 w-3.5 shrink-0 text-warning" aria-hidden="true" />
+          Selected object
+          <span className="font-medium text-warning">: {objectStatus.label}</span>
+        </span>
+      )}
+      {objectStatus && objectStatus.message && (
+        <span className="inline-flex w-fit shrink-0 items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-[12px] leading-[16px] text-muted-foreground">
+          <Info className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+          {objectStatus.label ? `${objectStatus.label} · ` : ''}{objectStatus.message}
+        </span>
+      )}
+
       {/* Screen-reader status for page/zoom changes */}
       <p aria-live="polite" className="sr-only">
         Page {pageNum} of {numPages}, {zoomLabel}
@@ -369,6 +413,15 @@ export function RenderedPreview({
                 </div>
               ) : null,
             )}
+            {formattingEvidence?.pageRects.map((rect, i) => (
+              <FormattingOverlayRect
+                key={`fmt-${i}`}
+                kind={formattingEvidence.kind}
+                rect={rect}
+                pageNum={pageNum}
+                pageWidthPx={canvasRef.current?.width ?? 0}
+              />
+            ))}
           </div>
         </div>
         {renderFailed && (
@@ -418,5 +471,63 @@ function ToolButton({
       {children}
       <span className="sr-only">{label}</span>
     </button>
+  )
+}
+
+/* ---------------------------------------------------------------------------
+ * Shared formatting evidence overlay (exact-run AND paragraph-level).
+ * One component for both branches: pale amber background aligned with the
+ * exact text rectangle, plus ONE left evidence bar rendered as a SIBLING
+ * (no negative-position clipping) with a fixed pixel gap from the first
+ * glyph. Near the page's left edge the gap clamps so the bar stays inside
+ * the page. Everything above the canvas, below interactive controls,
+ * pointer-events: none.
+ * --------------------------------------------------------------------------- */
+
+function FormattingOverlayRect({
+  kind,
+  rect,
+  pageNum,
+  pageWidthPx,
+}: {
+  kind: 'run' | 'paragraph'
+  rect: { page: number; x: number; y: number; width: number; height: number }
+  pageNum: number
+  pageWidthPx: number
+}) {
+  if (rect.page !== pageNum) return null
+  const barLeftPx = evidenceBarOffsetPx(rect.x, pageWidthPx)
+  const topPct = (1 - rect.y - rect.height) * 100
+  const heightPct = rect.height * 100
+  return (
+    <>
+      {/* Background — exact rectangle, rounded only here (never clips the bar). */}
+      <div
+        aria-hidden="true"
+        className={cn(
+          'pointer-events-none absolute rounded-[3px]',
+          kind === 'run' ? 'bg-warning/15 border border-warning/50' : 'bg-warning/10 border border-warning/40',
+        )}
+        style={{
+          left: `${rect.x * 100}%`,
+          top: `${topPct}%`,
+          width: `${rect.width * 100}%`,
+          height: `${heightPct}%`,
+        }}
+      />
+      {/* Evidence bar — sibling, fixed 4px gap; explicit translateY moves
+          the marker BELOW the highlight top independently of zoom rounding;
+          height = highlight minus 2px/3px insets, floored positive. */}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute w-[3px] rounded-full bg-warning"
+        style={{
+          left: `${barLeftPx}px`,
+          top: `calc(${topPct}% + ${EVIDENCE_BAR_METRICS.topInsetPx}px)`,
+          height: evidenceBarHeight(heightPct),
+          transform: `translateY(${EVIDENCE_BAR_METRICS.translateYPx}px)`,
+        }}
+      />
+    </>
   )
 }

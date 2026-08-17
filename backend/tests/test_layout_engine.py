@@ -246,6 +246,24 @@ def test_manual_table_caption_flagged_minor():
     mc = next(v for v in viols if v.rule_code == "MANUAL_CAPTION")
     assert mc.severity == "MINOR"
     assert "Insert Caption" in mc.message
+    # The caption paragraph identity rides along so the frontend can
+    # associate by document order instead of requiring the typed number to
+    # match the table ordinal.
+    assert mc.location.get("table_index") == 0
+    assert isinstance(mc.location.get("paragraph_index"), int)
+    assert mc.location["paragraph_index"] >= 0
+
+
+def test_manual_table_caption_below_table_still_carries_caption_index():
+    """Caption BELOW the table is associated the same way (both directions)."""
+    file_bytes = _doc_with_table(
+        caption_builder=lambda doc: doc.add_paragraph("Table 1: Results"),
+        below=True,
+    )
+    viols = run_static_rules_engine(file_bytes)
+    mc = next(v for v in viols if v.rule_code == "MANUAL_CAPTION")
+    assert mc.location.get("table_index") == 0
+    assert isinstance(mc.location.get("paragraph_index"), int)
 
 
 def test_manual_figure_caption_flagged_minor():
