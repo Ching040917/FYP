@@ -58,18 +58,106 @@ def extract_paragraphs(doc: Document) -> List[Dict[str, Any]]:
 
 
 def extract_sections(doc: Document) -> List[Dict[str, Any]]:
-    """Extract page margin info from sections."""
+    """Extract page margin info + OOXML boundary metadata from sections.
+
+    Each section is described by the `w:sectPr` that CLOSES it:
+      - a paragraph-level `w:pPr/w:sectPr` ends the current section at that
+        paragraph (zero-based `end_paragraph_index`);
+      - the final body-level `w:sectPr` closes the last section
+        (`end_paragraph_index=None` — it runs to the end of the document);
+      - the first paragraph-level `w:sectPr` opens section 0, so each
+        section's `start_paragraph_index` is the paragraph right after the
+        previous section's closing sectPr (0 for the first section).
+
+    `section_index` is zero-based and follows document traversal order —
+    never inferred from the section count alone. Boundaries are nullable
+    (historical/odd documents may lack a paragraph-level sectPr).
+    """
+    from docx.oxml.ns import qn
+
+    # --- build the ordered sectPr list (paragraph-level first, body last) ---
+    sect_prs: List[Dict[str, Any]] = []
+    for idx, para in enumerate(doc.paragraphs):
+        pPr = para._p.find(qn("w:pPr"))
+        if pPr is not None:
+            sect = pPr.find(qn("w:sectPr"))
+            if sect is not None:
+                sect_prs.append({"sectPr": sect, "para_index": idx})
+    final_sect = doc.element.body.find(qn("w:sectPr"))
+    if final_sect is not None:
+        sect_prs.append({"sectPr": final_sect, "para_index": None})
+
+    # --- derive per-section boundaries from traversal order ---
+    # start index = paragraph after the previous sectPr (0 for the first).
     sections = []
-    for section in doc.sections:
+    for i, entry in enumerate(sect_prs):
+        sect = entry["sectPr"]
+        prev_end = sect_prs[i - 1]["para_index"] if i > 0 else None
+        start = None if prev_end is None else prev_end + 1
+        if i == 0:
+            start = 0
         sections.append({
-            "page_width": section.page_width.inches if section.page_width else None,
-            "page_height": section.page_height.inches if section.page_height else None,
-            "margin_left": section.left_margin.inches if section.left_margin else None,
-            "margin_right": section.right_margin.inches if section.right_margin else None,
-            "margin_top": section.top_margin.inches if section.top_margin else None,
-            "margin_bottom": section.bottom_margin.inches if section.bottom_margin else None,
+            "section_index": i,
+            "start_paragraph_index": start,
+            "end_paragraph_index": entry["para_index"],
+            "break_type": _sect_break_type(sect),
+            "page_width": _emu_to_inches(sect, qn("w:pgSz"), "w:w"),
+            "page_height": _emu_to_inches(sect, qn("w:pgSz"), "w:h"),
+            "margin_left": _emu_to_inches(sect, qn("w:pgMar"), "w:left"),
+            "margin_right": _emu_to_inches(sect, qn("w:pgMar"), "w:right"),
+            "margin_top": _emu_to_inches(sect, qn("w:pgMar"), "w:top"),
+            "margin_bottom": _emu_to_inches(sect, qn("w:pgMar"), "w:bottom"),
+        })
+
+    # Fallback for documents with no sectPr at all: a single section.
+    if not sections:
+        sections.append({
+            "section_index": 0,
+            "start_paragraph_index": 0,
+            "end_paragraph_index": None,
+            "break_type": "nextPage",
+            "page_width": _emu_to_inches(doc.element.body.find(qn("w:sectPr")), qn("w:pgSz"), "w:w"),
+            "page_height": _emu_to_inches(doc.element.body.find(qn("w:sectPr")), qn("w:pgSz"), "w:h"),
+            "margin_left": None,
+            "margin_right": None,
+            "margin_top": None,
+            "margin_bottom": None,
         })
     return sections
+
+
+def _sect_break_type(sect) -> str:
+    """w:type value normalized: nextPage | continuous | oddPage | evenPage."""
+    from docx.oxml.ns import qn
+    if sect is None:
+        return "nextPage"
+    typ = sect.find(qn("w:type"))
+    val = typ.get(qn("w:val")) if typ is not None else None
+    if not val:
+        return "nextPage"  # OOXML default is nextPage
+    return val
+
+
+def _emu_to_inches(sect, parent_tag: str, attr: str) -> Optional[float]:
+    """Read a twips dimension as inches, or None when absent.
+
+    OOXML stores `w:pgSz` (page size) and `w:pgMar` (margins) in twips
+    (twentieths of a point; 1 twip = 1/1440 inch). This matches the
+    python-docx Section accessors (left_margin.inches etc.).
+    """
+    from docx.oxml.ns import qn
+    if sect is None:
+        return None
+    parent = sect.find(parent_tag)
+    if parent is None:
+        return None
+    val = parent.get(qn(attr))
+    if val is None:
+        return None
+    try:
+        return int(val) / 1440.0  # twips → inches
+    except (TypeError, ValueError):
+        return None
 
 
 def extract_tables(doc: Document) -> List[Dict[str, Any]]:

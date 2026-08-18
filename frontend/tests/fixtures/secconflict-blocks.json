@@ -1,0 +1,22 @@
+[
+ {
+  "index": 0,
+  "text": "Conflict end block text that appears late."
+ },
+ {
+  "index": 1,
+  "text": "Conflict middle text."
+ },
+ {
+  "index": 2,
+  "text": "Conflict start block text that appears early."
+ },
+ {
+  "index": 3,
+  "text": ""
+ },
+ {
+  "index": 4,
+  "text": "Conflict outro."
+ }
+]

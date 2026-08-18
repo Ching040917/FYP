@@ -24,8 +24,26 @@ import {
   getObjectNavigation,
   dropObjectNavCache,
 } from '../lib/pdf/object-navigation.ts'
+import {
+  FIGURE_OUTLINE_RULES,
+  resolveFigureOutline,
+} from '../lib/pdf/figure-bbox.ts'
+import {
+  getPageGeometry,
+  geometryLoaderFromBytes,
+  dropPageGeometry,
+} from '../lib/pdf/figure-outlines.ts'
 import { friendlyFindingMessage } from '../lib/friendly-finding'
 import { PendingNav, hasParagraphIdentity, type NavCommand } from '../lib/pdf/pending-navigation.ts'
+import type { PageGeometry } from '../lib/pdf/pdf-text-extract.ts'
+import { MARGIN_RULES, MARGIN_UNAVAILABLE_MESSAGE, resolveMarginNavigation, resolveMarginMarker, marginMarkerChip, sectionIndexOf } from '../lib/pdf/margin-navigation.ts'
+import { mapAllSections, type SectionMetadataLike, type SectionRange } from '../lib/pdf/section-mapping.ts'
+import {
+  cacheSectionRanges,
+  cachedSectionRanges,
+  dropSectionRangeCache,
+  sectionMapInput,
+} from '../lib/pdf/section-cache.ts'
 import { cn } from '../lib/utils'
 import type { AuditDocumentStats, AuditResponse, DocumentBlock, Violation } from '../types/api'
 import type { AuditCategory, LayoutError } from '../types/audit'
@@ -96,6 +114,36 @@ export function AuditPage() {
     blocksError,
     renderedPdf.status === 'available' ? renderedPdf.bytes : undefined,
   )
+  // Figure outline evidence (Build 8F): operator-list geometry from the SAME
+  // shared bytes, loaded once per audit. Geometry is independent of the
+  // paragraph mapping — it can be ready before or after it.
+  const [figureGeometry, setFigureGeometry] = useState<PageGeometry[] | null>(null)
+  useEffect(() => {
+    if (!gatedAuditId) {
+      setFigureGeometry(null)
+      return
+    }
+    if (renderedPdf.status !== 'available' || renderedPdf.bytes === undefined) {
+      setFigureGeometry(null)
+      return
+    }
+    let cancelled = false
+    const loader = geometryLoaderFromBytes(renderedPdf.bytes)
+    if (!loader) {
+      setFigureGeometry(null)
+      return
+    }
+    getPageGeometry(gatedAuditId, loader)
+      .then((g) => {
+        if (!cancelled) setFigureGeometry(g)
+      })
+      .catch(() => {
+        if (!cancelled) setFigureGeometry(null)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [gatedAuditId, renderedPdf?.status, renderedPdf?.bytes])
   const [previewMode, setPreviewMode] = useState<'rendered' | 'text'>('rendered')
   const [pageCommand, setPageCommand] = useState<{ page: number; seq: number } | null>(null)
   const [locatingId, setLocatingId] = useState<string | null>(null)
@@ -110,6 +158,37 @@ export function AuditPage() {
   const [formattingMessage, setFormattingMessage] = useState<string | null>(null)
   // Table/Figure object navigation status (page + compact message only).
   const [objectStatus, setObjectStatus] = useState<{ label: string | null; message: string | null } | null>(null)
+  // Exact Figure outline (Build 8F) — mutually exclusive with citation /
+  // formatting evidence. Latest selection wins.
+  const [figureOutline, setFigureOutline] = useState<{
+    rect: { page: number; x: number; y: number; width: number; height: number }
+    label: string
+  } | null>(null)
+  const [figureMessage, setFigureMessage] = useState<string | null>(null)
+  const figureStateRef = useRef<{ ruleCode: string; imageIndex: number; pageNumber: number | null } | null>(null)
+
+  // Margin section navigation status (Build: Section page-range navigation).
+  const [marginStatus, setMarginStatus] = useState<{ label: string | null; message: string | null } | null>(null)
+  // Margin page-edge marker (Build: Margin markers): exact-range only.
+  const [marginMarker, setMarginMarker] = useState<{
+    side: 'left' | 'right' | 'top' | 'bottom'
+    startPage: number
+    endPage: number
+    sectionNumber: number
+  } | null>(null)
+  const [marginChipLabel, setMarginChipLabel] = useState<string | null>(null)
+
+  const clearMarginStatus = useCallback(() => {
+    setMarginStatus(null)
+    setMarginMarker(null)
+    setMarginChipLabel(null)
+  }, [])
+
+  const clearFigureOutline = useCallback(() => {
+    setFigureOutline(null)
+    setFigureMessage(null)
+    figureStateRef.current = null
+  }, [])
 
   const clearObjectStatus = useCallback(() => setObjectStatus(null), [])
 
@@ -129,6 +208,66 @@ export function AuditPage() {
     setPreviewMode('rendered')
     setPageCommand((cur) => ({ page, seq: (cur?.seq ?? 0) + 1 }))
   }
+
+  /**
+   * Exact Figure outline (Build 8F): resolve the authoritative image_index
+   * against the operator-list geometry. Rendered ONLY when identity is
+   * reliable AND page/order agree AND the geometry is finite — otherwise the
+   * truthful page message, never an approximate outline. Geometry may still
+   * be loading — the geometry-ready effect applies it for the latest
+   * selection (latest-wins guard).
+   */
+  const applyFigureOutline = useCallback(
+    (violation: Violation, navigatePage: number | null) => {
+      const ruleCode = violation.rule_code
+      const imageIndex = (violation.location ?? {}).image_index
+      if (
+        !FIGURE_OUTLINE_RULES.has(ruleCode) ||
+        typeof imageIndex !== 'number' ||
+        imageIndex < 0
+      ) {
+        clearFigureOutline()
+        return
+      }
+      figureStateRef.current = { ruleCode, imageIndex, pageNumber: navigatePage }
+      if (!figureGeometry) {
+        setFigureOutline(null)
+        setFigureMessage(null)
+        return
+      }
+      const result = resolveFigureOutline({
+        finding: { ruleCode, location: violation.location },
+        geometry: figureGeometry,
+        pageNumber: navigatePage,
+      })
+      setFigureOutline(result.rect ? { rect: result.rect, label: result.label ?? '' } : null)
+      setFigureMessage(result.message)
+      // The operator page is authoritative — when geometry resolved a real
+      // page that differs from the (host-derived) navigation page, navigate
+      // to the operator's page so the outline is actually visible.
+      if (result.pageNumber !== null && result.pageNumber !== navigatePage) {
+        navigateToRenderedPage(result.pageNumber)
+      }
+    },
+    [figureGeometry, clearFigureOutline],
+  )
+
+  // Geometry arrives AFTER the selection: apply the outline for the LATEST
+  // figure selection only (latest-wins; stale selections never repaint).
+  useEffect(() => {
+    const state = figureStateRef.current
+    if (!state || !figureGeometry) return
+    const result = resolveFigureOutline({
+      finding: { ruleCode: state.ruleCode, location: { image_index: state.imageIndex } },
+      geometry: figureGeometry,
+      pageNumber: state.pageNumber,
+    })
+    setFigureOutline(result.rect ? { rect: result.rect, label: result.label ?? '' } : null)
+    setFigureMessage(result.message)
+    if (result.pageNumber !== null && result.pageNumber !== state.pageNumber) {
+      navigateToRenderedPage(result.pageNumber)
+    }
+  }, [figureGeometry])
 
   // Pending-navigation state machine: a finding selected while the mapping
   // is still loading is retained and executed once it arrives.
@@ -158,8 +297,10 @@ export function AuditPage() {
       clearCitationHighlight() // overlays live on rendered pages
       clearFormattingHighlight()
       clearObjectStatus()
+      clearFigureOutline()
+      clearMarginStatus()
     }
-  }, [previewMode, clearCitationHighlight, clearFormattingHighlight, clearObjectStatus])
+  }, [previewMode, clearCitationHighlight, clearFormattingHighlight, clearObjectStatus, clearFigureOutline, clearMarginStatus])
 
   // Reset navigation state when the audit changes.
   useEffect(() => {
@@ -171,15 +312,23 @@ export function AuditPage() {
     clearCitationHighlight()
     clearFormattingHighlight()
     clearObjectStatus()
-    if (auditId) dropObjectNavCache(auditId)
-  }, [auditId, clearCitationHighlight, clearFormattingHighlight, clearObjectStatus])
+    clearFigureOutline()
+    clearMarginStatus()
+    if (auditId) {
+      dropObjectNavCache(auditId)
+      dropPageGeometry(auditId)
+      dropSectionRangeCache(auditId)
+    }
+  }, [auditId, clearCitationHighlight, clearFormattingHighlight, clearObjectStatus, clearFigureOutline, clearMarginStatus])
 
   // PDF replaced: any highlight from the previous document is stale.
   useEffect(() => {
     clearCitationHighlight()
     clearFormattingHighlight()
     clearObjectStatus()
-  }, [renderedPdf?.bytes, clearCitationHighlight, clearFormattingHighlight, clearObjectStatus])
+    clearFigureOutline()
+    clearMarginStatus()
+  }, [renderedPdf?.bytes, clearCitationHighlight, clearFormattingHighlight, clearObjectStatus, clearFigureOutline, clearMarginStatus])
 
   // Execute (or fail) the retained navigation request when the mapping
   // settles — never before.
@@ -209,12 +358,60 @@ export function AuditPage() {
     [gatedAuditId, tableFindings, mappingBundle],
   )
 
+  // Object-navigation bundle augmented with the figure operator geometry:
+  // figure page resolution is geometry-first, so both the row label and the
+  // selection chip/navigation derive from the exact operator page.
+  const figureBundle = useMemo(
+    () => (mappingBundle ? { ...mappingBundle, geometry: figureGeometry } : null),
+    [mappingBundle, figureGeometry],
+  )
+
+  // Section mapping (Build: margin navigation). Built from the optional API
+  // `sections` metadata + the existing paragraph mapping bundle. Session-
+  // cached; only successes are cached.
+  const [sectionRanges, setSectionRanges] = useState<SectionRange[] | null>(null)
+  const sectionMeta: SectionMetadataLike[] | null | undefined = audit?.sections
+  useEffect(() => {
+    if (!gatedAuditId || !sectionMeta || sectionMeta.length === 0) {
+      setSectionRanges(null)
+      return
+    }
+    if (!mappingBundle) return // mapping not ready — never cache a failure
+    // The rendered PDF page count is the validation bound. Use the max
+    // mapped paragraph page as a truthful floor; if the PDF is available,
+    // that bound is the document's real page count as seen by the mapper.
+    const maxMapped = Math.max(0, ...[...mappingBundle.byIndex.values()].map((m) => m.pageNumber ?? 0))
+    const input = sectionMapInput(sectionMeta, mappingBundle.byIndex, Math.max(maxMapped, 1))
+    if (!input) {
+      setSectionRanges(null)
+      return
+    }
+    // Session cache: reuse a previous successful resolution for this audit.
+    const cached = cachedSectionRanges(gatedAuditId)
+    if (cached) {
+      setSectionRanges(cached)
+      return
+    }
+    const ranges = mapAllSections(input)
+    cacheSectionRanges(gatedAuditId, ranges)
+    setSectionRanges(ranges)
+  }, [gatedAuditId, sectionMeta, mappingBundle])
+
   // User-facing location labels per finding (exact/approximate → page label,
   // unavailable → paragraph label; never confidence terminology).
   const locationLabels = useMemo(() => {
     if (!audit) return null
     const labels = new Map<string, string>()
     for (const v of audit.violations) {
+      if (MARGIN_RULES.has(v.rule_code)) {
+        const idx = sectionIndexOf(v.location)
+        if (idx !== null) {
+          const range = sectionRanges?.find((r) => r.sectionIndex === idx)
+          const decision = resolveMarginNavigation(v.rule_code, idx, range)
+          if (decision.rowLabel) labels.set(v.id, decision.rowLabel)
+        }
+        continue
+      }
       if (OBJECT_RULES.has(v.rule_code) && mappingBundle) {
         // Table/Figure findings: `Page N · Table M` / `Table M · Page unavailable`
         const loc = v.location ?? {}
@@ -222,7 +419,7 @@ export function AuditPage() {
           const decision = tableNav.get(loc.table_index)
           if (decision?.label) labels.set(v.id, decision.label)
         } else {
-          const objectNav = getObjectNavigation(gatedAuditId, { ruleCode: v.rule_code, location: v.location }, mappingBundle)
+          const objectNav = getObjectNavigation(gatedAuditId, { ruleCode: v.rule_code, location: v.location }, figureBundle)
           if (objectNav.label) labels.set(v.id, objectNav.label)
         }
         continue
@@ -236,7 +433,7 @@ export function AuditPage() {
       }
     }
     return labels
-  }, [mappingBundle, mappingStatus, audit, tableNav])
+  }, [figureBundle, mappingBundle, mappingStatus, audit, tableNav, sectionRanges])
 
   // Mobile/tablet workspace view — tabs below lg, side-by-side at lg+.
   const [mobileView, setMobileView] = useState<WorkspaceView>('findings')
@@ -386,6 +583,54 @@ export function AuditPage() {
     if (classifyFindingTarget(violation) === 'object') {
       clearCitationHighlight()
       clearFormattingHighlight()
+      clearFigureOutline()
+      clearObjectStatus()
+      clearMarginStatus() // margin marker is exclusive; the margin branch re-sets it
+      // Margin findings (MARGIN_*): navigate to the proven section range
+      // using the authoritative section_index. Unavailable keeps the view
+      // stable (never jumps to Page 1).
+      if (MARGIN_RULES.has(violation.rule_code)) {
+        const idx = sectionIndexOf(violation.location)
+        if (idx !== null) {
+          const range = sectionRanges?.find((r) => r.sectionIndex === idx) ?? null
+          const decision = resolveMarginNavigation(violation.rule_code, idx, range)
+          setMarginStatus(
+            decision.chipLabel || decision.message
+              ? { label: decision.chipLabel, message: decision.message }
+              : null,
+          )
+          // Margin marker: only for EXACT ranges; the viewer shows it on
+          // every page inside the affected range (manual Previous/Next
+          // stays free) and hides it outside.
+          const markerState = resolveMarginMarker({
+            ruleCode: violation.rule_code,
+            sectionIndex: idx,
+            range,
+            currentPage: decision.navigatePage ?? 1,
+          })
+          setMarginMarker(
+            markerState.side && markerState.startPage !== null && markerState.endPage !== null
+              ? {
+                  side: markerState.side,
+                  startPage: markerState.startPage,
+                  endPage: markerState.endPage,
+                  sectionNumber: markerState.sectionNumber ?? idx + 1,
+                }
+              : null,
+          )
+          setMarginChipLabel(marginMarkerChip(markerState))
+          if (decision.navigatePage !== null) {
+            navigateToRenderedPage(decision.navigatePage)
+          }
+        } else {
+          setMarginStatus({ label: null, message: MARGIN_UNAVAILABLE_MESSAGE })
+          setMarginMarker(null)
+          setMarginChipLabel(null)
+        }
+        setNavNotice(null)
+        pendingNavRef.current?.reset()
+        return
+      }
       // Object rules (Table/Figure): navigate to the reliably mapped page;
       // overlays stay mutually exclusive; no forced Extracted Text.
       if (OBJECT_RULES.has(violation.rule_code)) {
@@ -402,11 +647,15 @@ export function AuditPage() {
             navigateToRenderedPage(decision.pageNumber)
           }
         } else {
-          const objectSel = resolveObjectSelection(gatedAuditId, findingLike, mappingBundle)
+          const objectSel = resolveObjectSelection(gatedAuditId, findingLike, figureBundle)
           setObjectStatus(objectSel.status)
           if (objectSel.navigatePage !== null) {
             navigateToRenderedPage(objectSel.navigatePage)
           }
+          // Exact Figure outline: image_index is the authoritative identity.
+          // The outline is rendered only when identity + order + geometry all
+          // agree; otherwise the truthful page message (never approximate).
+          applyFigureOutline(violation, objectSel.navigatePage)
         }
         setNavNotice(null)
         // stable: keep the current preview mode
@@ -420,6 +669,8 @@ export function AuditPage() {
     // Citation and formatting overlays are mutually exclusive; the latest
     // selection replaces the previous one.
     setObjectStatus(null)
+    clearFigureOutline()
+    clearMarginStatus()
     if (evidenceFamily(violation.rule_code) === 'formatting') {
       clearCitationHighlight()
       const fmt = resolveFormattingHighlight(findingLike, mappingBundle)
@@ -758,6 +1009,11 @@ export function AuditPage() {
                     formattingLabel={formattingLabel}
                     formattingMessage={formattingMessage}
                     objectStatus={objectStatus}
+                    figureOutline={figureOutline}
+                    figureMessage={figureMessage}
+                    marginStatus={marginStatus}
+                    marginMarker={marginMarker}
+                    marginChipLabel={marginChipLabel}
                   />
                   <div className="flex flex-wrap items-center gap-2">
                     {selectedViolation && (
@@ -832,6 +1088,11 @@ export function AuditPage() {
                     formattingLabel={formattingLabel}
                     formattingMessage={formattingMessage}
                     objectStatus={objectStatus}
+                    figureOutline={figureOutline}
+                    figureMessage={figureMessage}
+                    marginStatus={marginStatus}
+                    marginMarker={marginMarker}
+                    marginChipLabel={marginChipLabel}
                   />
                 </div>
               </div>
@@ -875,6 +1136,11 @@ export function AuditPage() {
                     formattingLabel={formattingLabel}
                     formattingMessage={formattingMessage}
                     objectStatus={objectStatus}
+                    figureOutline={figureOutline}
+                    figureMessage={figureMessage}
+                    marginStatus={marginStatus}
+                    marginMarker={marginMarker}
+                    marginChipLabel={marginChipLabel}
                   />
                 </div>
                 <div

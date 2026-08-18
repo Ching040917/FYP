@@ -1,0 +1,26 @@
+[
+ {
+  "section_index": 0,
+  "start_paragraph_index": 0,
+  "end_paragraph_index": 1,
+  "break_type": "nextPage",
+  "page_width": 8.5,
+  "page_height": 11.0,
+  "margin_left": 1.25,
+  "margin_right": 1.25,
+  "margin_top": 1.0,
+  "margin_bottom": 1.0
+ },
+ {
+  "section_index": 1,
+  "start_paragraph_index": 2,
+  "end_paragraph_index": null,
+  "break_type": "evenPage",
+  "page_width": 8.5,
+  "page_height": 11.0,
+  "margin_left": 1.25,
+  "margin_right": 1.25,
+  "margin_top": 1.0,
+  "margin_bottom": 1.0
+ }
+]

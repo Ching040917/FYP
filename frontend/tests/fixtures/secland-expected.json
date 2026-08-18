@@ -1,0 +1,26 @@
+[
+ {
+  "section_index": 0,
+  "startPage": 1,
+  "endPage": 1,
+  "confidence": "exact",
+  "startsMidPage": false,
+  "endsMidPage": false
+ },
+ {
+  "section_index": 1,
+  "startPage": 2,
+  "endPage": 2,
+  "confidence": "exact",
+  "startsMidPage": false,
+  "endsMidPage": false
+ },
+ {
+  "section_index": 2,
+  "startPage": 3,
+  "endPage": 3,
+  "confidence": "exact",
+  "startsMidPage": false,
+  "endsMidPage": false
+ }
+]

@@ -57,6 +57,24 @@ interface RenderedPreviewProps {
   formattingMessage?: string | null
   /** Table/Figure object navigation status (compact chip only). */
   objectStatus?: { label: string | null; message: string | null } | null
+  /** Exact Figure outline (Build 8F): one normalized rect + compact label. */
+  figureOutline?: {
+    rect: { page: number; x: number; y: number; width: number; height: number }
+    label: string
+  } | null
+  /** Truthful message when the exact Figure boundary is unavailable. */
+  figureMessage?: string | null
+  /** Margin section navigation status (compact chip only). */
+  marginStatus?: { label: string | null; message: string | null } | null
+  /** Margin page-edge marker (Build: Margin markers): side + section range. */
+  marginMarker?: {
+    side: 'left' | 'right' | 'top' | 'bottom'
+    startPage: number
+    endPage: number
+    sectionNumber: number
+  } | null
+  /** Compact margin marker chip label (`Right margin · Section 1 · Pages 1–3`). */
+  marginChipLabel?: string | null
 }
 
 const ZOOM_MIN = 0.5
@@ -82,6 +100,11 @@ export function RenderedPreview({
   formattingLabel = null,
   formattingMessage = null,
   objectStatus = null,
+  figureOutline = null,
+  figureMessage = null,
+  marginStatus = null,
+  marginMarker = null,
+  marginChipLabel = null,
 }: RenderedPreviewProps) {
   const [pdfDoc, setPdfDoc] = React.useState<PDFDocumentProxy | null>(null)
   const [docLoading, setDocLoading] = React.useState(false)
@@ -362,6 +385,43 @@ export function RenderedPreview({
         </span>
       )}
 
+      {/* Exact Figure outline chip (Build 8F) — compact amber evidence. */}
+      {figureOutline && (
+        <span className="inline-flex w-fit shrink-0 items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-[12px] leading-[16px] text-foreground">
+          <Info className="h-3.5 w-3.5 shrink-0 text-warning" aria-hidden="true" />
+          Selected figure
+          <span className="font-medium text-warning">: {figureOutline.label}</span>
+        </span>
+      )}
+      {figureMessage && !figureOutline && (
+        <span className="inline-flex w-fit shrink-0 items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-[12px] leading-[16px] text-muted-foreground">
+          <Info className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+          {figureMessage}
+        </span>
+      )}
+
+      {/* Margin section navigation chip (Build: Section page-range navigation). */}
+      {marginChipLabel && (
+        <span className="inline-flex w-fit shrink-0 items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-[12px] leading-[16px] text-foreground">
+          <Info className="h-3.5 w-3.5 shrink-0 text-warning" aria-hidden="true" />
+          Selected margin
+          <span className="font-medium text-warning">: {marginChipLabel}</span>
+        </span>
+      )}
+      {marginStatus && marginStatus.label && !marginChipLabel && (
+        <span className="inline-flex w-fit shrink-0 items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-[12px] leading-[16px] text-foreground">
+          <Info className="h-3.5 w-3.5 shrink-0 text-warning" aria-hidden="true" />
+          Selected margin
+          <span className="font-medium text-warning">: {marginStatus.label}</span>
+        </span>
+      )}
+      {marginStatus && marginStatus.message && (
+        <span className="inline-flex w-fit shrink-0 items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-[12px] leading-[16px] text-muted-foreground">
+          <Info className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+          {marginStatus.label ? `${marginStatus.label} · ` : ''}{marginStatus.message}
+        </span>
+      )}
+
       {/* Screen-reader status for page/zoom changes */}
       <p aria-live="polite" className="sr-only">
         Page {pageNum} of {numPages}, {zoomLabel}
@@ -422,6 +482,12 @@ export function RenderedPreview({
                 pageWidthPx={canvasRef.current?.width ?? 0}
               />
             ))}
+            {figureOutline && figureOutline.rect.page === pageNum && (
+              <FigureOutlineOverlay rect={figureOutline.rect} label={figureOutline.label} />
+            )}
+            {marginMarker && pageNum >= marginMarker.startPage && pageNum <= marginMarker.endPage && (
+              <MarginEdgeMarker side={marginMarker.side} sectionNumber={marginMarker.sectionNumber} />
+            )}
           </div>
         </div>
         {renderFailed && (
@@ -528,6 +594,106 @@ function FormattingOverlayRect({
           transform: `translateY(${EVIDENCE_BAR_METRICS.translateYPx}px)`,
         }}
       />
+    </>
+  )
+}
+
+/* ---------------------------------------------------------------------------
+ * Exact Figure outline overlay (Build 8F).
+ *
+ * Pale amber transparent region + thin amber outline + compact `Figure N`
+ * label, positioned with % of the canvas wrapper — so zoom, fit-width,
+ * resize, and rotation keep the outline aligned with the painted image.
+ * pointer-events: none so it never intercepts page interaction; the label
+ * sits ABOVE the region so it never covers the figure.
+ * --------------------------------------------------------------------------- */
+
+function FigureOutlineOverlay({
+  rect,
+  label,
+}: {
+  rect: { page: number; x: number; y: number; width: number; height: number }
+  label: string
+}) {
+  const topPct = (1 - rect.y - rect.height) * 100
+  return (
+    <>
+      {/* Pale amber region with thin amber border — 1px outline, inside bounds. */}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute rounded-[3px] border border-warning/70 bg-warning/10"
+        style={{
+          left: `${rect.x * 100}%`,
+          top: `${topPct}%`,
+          width: `${rect.width * 100}%`,
+          height: `${rect.height * 100}%`,
+        }}
+      />
+      {/* Compact label — pinned just above the region, never overlapping it. */}
+      <span
+        aria-hidden="true"
+        className="pointer-events-none absolute whitespace-nowrap rounded-sm bg-warning/90 px-1.5 py-0.5 font-mono text-[11px] leading-[14px] text-white"
+        style={{
+          left: `${rect.x * 100}%`,
+          top: `calc(${topPct}% - 20px)`,
+        }}
+      >
+        {label}
+      </span>
+    </>
+  )
+}
+
+/* ---------------------------------------------------------------------------
+ * Margin page-edge marker (Build: Margin markers).
+ *
+ * A calm, non-obstructive band along the AFFECTED page side — indicates
+ * WHICH edge has a problem, never the measured margin width. Pale
+ * translucent rose fill + restrained dark-red inner edge line (Major);
+ * pointer-events none; positioned with % of the canvas wrapper so zoom,
+ * fit-width, resize, and rotation keep it aligned. Decorative only — the
+ * chip supplies the non-color meaning.
+ * --------------------------------------------------------------------------- */
+
+const MARGIN_MARKER_VERTICAL_WIDTH = 5 // CSS px
+const MARGIN_MARKER_HORIZONTAL_HEIGHT = 6 // CSS px
+const MARGIN_MARKER_EDGE = 2 // CSS px inner edge line
+
+function MarginEdgeMarker({ side, sectionNumber }: { side: 'left' | 'right' | 'top' | 'bottom'; sectionNumber: number }) {
+  const isVertical = side === 'left' || side === 'right'
+  const base: React.CSSProperties = {
+    position: 'absolute',
+    pointerEvents: 'none',
+    zIndex: 0,
+  }
+  if (isVertical) {
+    base.width = MARGIN_MARKER_VERTICAL_WIDTH
+    base.top = 0
+    base.bottom = 0
+    base[side] = 0
+  } else {
+    base.height = MARGIN_MARKER_HORIZONTAL_HEIGHT
+    base.left = 0
+    base.right = 0
+    base[side] = 0
+  }
+  return (
+    <>
+      {/* Pale translucent rose band — never a saturated block. */}
+      <div aria-hidden="true" className="bg-destructive/10" style={base} />
+      {/* Restrained dark-red inner edge line along the page side. */}
+      <div
+        aria-hidden="true"
+        className="bg-destructive/70"
+        style={{
+          ...base,
+          ...(isVertical
+            ? { width: MARGIN_MARKER_EDGE, left: side === 'left' ? 0 : undefined, right: side === 'right' ? 0 : undefined }
+            : { height: MARGIN_MARKER_EDGE, top: side === 'top' ? 0 : undefined, bottom: side === 'bottom' ? 0 : undefined }),
+        }}
+      />
+      {/* Screen-reader-only meaning (chip duplicates it visually). */}
+      <span className="sr-only">Margin issue on the {side} edge of this page, Section {sectionNumber}</span>
     </>
   )
 }

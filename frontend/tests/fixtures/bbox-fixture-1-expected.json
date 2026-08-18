@@ -1,0 +1,98 @@
+{
+ "figures": [
+  {
+   "page": 2,
+   "bbox": {
+    "x": 0.3235294117647059,
+    "y": 0.6797979797979797,
+    "width": 0.35294117647058826,
+    "height": 0.20454545454545456
+   },
+   "classification": "exact",
+   "evidence": "pypdf-image-op",
+   "index": 1
+  },
+  {
+   "page": 2,
+   "bbox": {
+    "x": 0.16184640522875818,
+    "y": 0.4970959595959596,
+    "width": 0.23529411764705882,
+    "height": 0.13636363636363635
+   },
+   "classification": "exact",
+   "evidence": "pypdf-image-op",
+   "index": 2
+  },
+  {
+   "page": 2,
+   "bbox": {
+    "x": 0.6627450980392158,
+    "y": 0.28200757575757573,
+    "width": 0.21838235294117644,
+    "height": 0.16875
+   },
+   "classification": "exact",
+   "evidence": "pypdf-image-op",
+   "index": 3
+  }
+ ],
+ "tables": [
+  {
+   "page": 1,
+   "bbox": {
+    "x": 0.14673202614379086,
+    "y": 0.3851010101010101,
+    "width": 0.7058823529411764,
+    "height": 0.09633838383838385
+   },
+   "classification": "exact",
+   "evidence": "pypdf-border-frame",
+   "h_lines": 4,
+   "v_lines": 4,
+   "index": 2
+  },
+  {
+   "page": 1,
+   "bbox": {
+    "x": 0.14673202614379086,
+    "y": 0.7316919191919192,
+    "width": 0.7058823529411764,
+    "height": 0.09633838383838378
+   },
+   "classification": "exact",
+   "evidence": "pypdf-border-frame",
+   "h_lines": 4,
+   "v_lines": 4,
+   "index": 0
+  },
+  {
+   "page": 3,
+   "bbox": {
+    "x": 0.14673202614379086,
+    "y": 0.10214646464646465,
+    "width": 0.7058823529411764,
+    "height": 0.7507575757575757
+   },
+   "classification": "exact",
+   "evidence": "pypdf-border-frame",
+   "h_lines": 25,
+   "v_lines": 4,
+   "index": 3
+  },
+  {
+   "page": 4,
+   "bbox": {
+    "x": 0.14673202614379086,
+    "y": 0.20707070707070707,
+    "width": 0.7058823529411764,
+    "height": 0.702020202020202
+   },
+   "classification": "exact",
+   "evidence": "pypdf-border-frame",
+   "h_lines": 23,
+   "v_lines": 4,
+   "index": 3
+  }
+ ]
+}

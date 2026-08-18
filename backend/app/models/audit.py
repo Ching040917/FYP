@@ -43,6 +43,14 @@ class AuditRecord(Base):
     # deletion removes it automatically. Never log block text.
     document_blocks = Column(JSON, nullable=True)
 
+    # Section boundary metadata (PoC): nullable JSON mirroring the
+    # SectionMetadata API shape (section_index, start/end paragraph index,
+    # break_type, page size, margins). Nullable — historical records
+    # predate the column and Margin navigation must report "unavailable",
+    # never a fabricated range. Populated at audit creation from the DOCX
+    # (never reconstructed from PDF text after the DOCX is discarded).
+    section_metadata = Column(JSON, nullable=True)
+
     # Rendered PDF preview metadata (Build 1). NULL = never attempted or
     # historical record; "AVAILABLE" = rendered PDF present in storage;
     # "UNAVAILABLE" = render attempted but failed. rendered_preview_error

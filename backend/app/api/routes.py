@@ -17,6 +17,7 @@ from app.schemas.audit import (
     CitationIssueResponse,
     ScoreBreakdownResponse,
     DocumentStatsResponse,
+    SectionMetadata,
 )
 from app.services.layout_engine import run_static_rules_engine
 from app.services.scoring import calculate_weighted_score, calculate_weighted_score_detailed
@@ -26,6 +27,7 @@ from app.services.document_parser import (
     extract_paragraphs,
     extract_document_stats,
     extract_document_blocks,
+    extract_sections,
 )
 from app.services.docx_pdf_converter import convert_docx_to_pdf, DocxConversionError
 from app.services import preview_storage
@@ -124,6 +126,11 @@ async def audit_document(
         doc = parse_document(file_bytes)
         paragraphs = extract_paragraphs(doc)
 
+        # ---- Section boundary metadata (PoC) — persisted with the audit ----
+        # Captured from the DOCX at creation time so GET / refresh / History
+        # keep it (never reconstructed from PDF text after the DOCX is gone).
+        section_metadata = extract_sections(doc)
+
         # ---- Static rules engine ----
         layout_violations = run_static_rules_engine(file_bytes)
 
@@ -146,6 +153,10 @@ async def audit_document(
         # Stored as JSON on the parent row (automatic cascade on delete).
         # The original DOCX is never stored; block text is never logged.
         audit.document_blocks = extract_document_blocks(doc)
+
+        # Section boundary metadata (PoC): persisted so POST, GET, refresh,
+        # and History all see identical metadata. Historical rows stay NULL.
+        audit.section_metadata = section_metadata
 
         # Persist violations
         for v in layout_violations:
@@ -241,6 +252,7 @@ async def audit_document(
             minor_count=score_result.minor_count,
             ai_review_status=ai_result.status,
             ai_provider=ai_result.provider,
+            sections=[SectionMetadata(**s) for s in section_metadata],
         )
 
     except HTTPException:
@@ -347,6 +359,11 @@ async def get_audit(audit_id: str, db: Session = Depends(get_db)):
         minor_count=score_result.minor_count,
         ai_review_status=audit.ai_review_status,
         ai_provider=audit.ai_provider,
+        sections=(
+            [SectionMetadata(**s) for s in audit.section_metadata]
+            if isinstance(audit.section_metadata, list)
+            else None
+        ),
     )
 
 

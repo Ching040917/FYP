@@ -62,6 +62,20 @@ export interface AuditSubmitResponse {
   ai_provider?: string | null
 }
 
+/** Section boundary metadata (PoC) — mirrors backend SectionMetadata. */
+export interface SectionMetadata {
+  section_index: number
+  start_paragraph_index: number | null
+  end_paragraph_index: number | null
+  break_type: string
+  page_width: number | null
+  page_height: number | null
+  margin_left: number | null
+  margin_right: number | null
+  margin_top: number | null
+  margin_bottom: number | null
+}
+
 export interface AuditResponse {
   id: string
   filename: string
@@ -81,6 +95,8 @@ export interface AuditResponse {
   /** NEW — AI-assisted citation review execution summary (Build 7D). Null = status not recorded. */
   ai_review_status?: string | null
   ai_provider?: string | null
+  /** Section boundary metadata (PoC). Null for historical audits. */
+  sections?: SectionMetadata[] | null
 }
 
 export interface AuditListItem {

@@ -50,6 +50,22 @@ class DocumentStatsResponse(BaseModel):
     words: Optional[int] = None
 
 
+# Section boundary metadata (PoC). Nullable — historical records and
+# documents without section breaks have null boundaries. Never carries
+# document text or paths.
+class SectionMetadata(BaseModel):
+    section_index: int
+    start_paragraph_index: Optional[int] = None
+    end_paragraph_index: Optional[int] = None
+    break_type: str = "nextPage"
+    page_width: Optional[float] = None
+    page_height: Optional[float] = None
+    margin_left: Optional[float] = None
+    margin_right: Optional[float] = None
+    margin_top: Optional[float] = None
+    margin_bottom: Optional[float] = None
+
+
 class AuditSubmitResponse(BaseModel):
     status: str
     audit_id: str
@@ -67,6 +83,9 @@ class AuditSubmitResponse(BaseModel):
     # "ran" or "unavailable" — it means "status not recorded".
     ai_review_status: Optional[str] = None
     ai_provider: Optional[str] = None
+    # NEW — Section boundary metadata (PoC). Optional list; absent for
+    # historical audits. Backward-compatible.
+    sections: Optional[List[SectionMetadata]] = None
 
 
 class AuditResponse(BaseModel):
@@ -90,6 +109,9 @@ class AuditResponse(BaseModel):
     # NEW — AI-assisted citation review execution summary (Build 7D).
     ai_review_status: Optional[str] = None
     ai_provider: Optional[str] = None
+    # NEW — Section boundary metadata (PoC). Optional list; absent for
+    # historical audits. Backward-compatible.
+    sections: Optional[List[SectionMetadata]] = None
 
 
 class AuditListResponse(BaseModel):

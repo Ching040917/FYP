@@ -61,6 +61,21 @@ export interface DocumentPreviewProps {
   formattingMessage?: string | null
   /** Table/Figure object navigation status (compact chip only). */
   objectStatus?: { label: string | null; message: string | null } | null
+  /** Exact Figure outline (Build 8F): one normalized rect + compact label. */
+  figureOutline?: { rect: { page: number; x: number; y: number; width: number; height: number }; label: string } | null
+  /** Truthful message when the exact Figure boundary is unavailable. */
+  figureMessage?: string | null
+  /** Margin section navigation status (compact chip only). */
+  marginStatus?: { label: string | null; message: string | null } | null
+  /** Margin page-edge marker (Build: Margin markers). */
+  marginMarker?: {
+    side: 'left' | 'right' | 'top' | 'bottom'
+    startPage: number
+    endPage: number
+    sectionNumber: number
+  } | null
+  /** Compact margin marker chip label. */
+  marginChipLabel?: string | null
 }
 
 export function DocumentPreview({
@@ -84,6 +99,11 @@ export function DocumentPreview({
   formattingLabel = null,
   formattingMessage = null,
   objectStatus = null,
+  figureOutline = null,
+  figureMessage = null,
+  marginStatus = null,
+  marginMarker = null,
+  marginChipLabel = null,
 }: DocumentPreviewProps) {
   const containerRef = React.useRef<HTMLDivElement>(null)
   const blockRefs = React.useRef<Map<number, HTMLElement>>(new Map())
@@ -229,6 +249,11 @@ export function DocumentPreview({
             formattingLabel={formattingLabel}
             formattingMessage={formattingMessage}
             objectStatus={objectStatus}
+            figureOutline={figureOutline}
+            figureMessage={figureMessage}
+            marginStatus={marginStatus}
+            marginMarker={marginMarker}
+            marginChipLabel={marginChipLabel}
           />
         </div>
       )}

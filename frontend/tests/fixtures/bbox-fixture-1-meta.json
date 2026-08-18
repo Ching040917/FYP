@@ -1,0 +1,434 @@
+{
+ "docx_order": [
+  {
+   "kind": "paragraph",
+   "index": 0
+  },
+  {
+   "kind": "paragraph",
+   "index": 1
+  },
+  {
+   "kind": "table",
+   "index": 0
+  },
+  {
+   "kind": "paragraph",
+   "index": 2
+  },
+  {
+   "kind": "paragraph",
+   "index": 3
+  },
+  {
+   "kind": "paragraph",
+   "index": 4
+  },
+  {
+   "kind": "table",
+   "index": 1
+  },
+  {
+   "kind": "paragraph",
+   "index": 5
+  },
+  {
+   "kind": "paragraph",
+   "index": 6
+  },
+  {
+   "kind": "table",
+   "index": 2
+  },
+  {
+   "kind": "paragraph",
+   "index": 7
+  },
+  {
+   "kind": "figure",
+   "index": 1
+  },
+  {
+   "kind": "paragraph",
+   "index": 8
+  },
+  {
+   "kind": "figure",
+   "index": 2
+  },
+  {
+   "kind": "paragraph",
+   "index": 9
+  },
+  {
+   "kind": "figure",
+   "index": 3
+  },
+  {
+   "kind": "paragraph",
+   "index": 10
+  },
+  {
+   "kind": "figure",
+   "index": 4
+  },
+  {
+   "kind": "paragraph",
+   "index": 11
+  },
+  {
+   "kind": "paragraph",
+   "index": 12
+  },
+  {
+   "kind": "paragraph",
+   "index": 13
+  },
+  {
+   "kind": "table",
+   "index": 3
+  },
+  {
+   "kind": "paragraph",
+   "index": 14
+  }
+ ],
+ "tables": [
+  {
+   "index": 0,
+   "cells": [
+    [
+     "T1 R0 C0",
+     "T1 R0 C1",
+     "T1 R0 C2"
+    ],
+    [
+     "T1 R1 C0",
+     "T1 R1 C1",
+     "T1 R1 C2"
+    ],
+    [
+     "T1 R2 C0",
+     "T1 R2 C1",
+     "T1 R2 C2"
+    ]
+   ],
+   "caption": "Table 1: Bordered results",
+   "above": true,
+   "borderless": false
+  },
+  {
+   "index": 1,
+   "cells": [
+    [
+     "T2 R0 C0",
+     "T2 R0 C1"
+    ],
+    [
+     "T2 R1 C0",
+     "T2 R1 C1"
+    ],
+    [
+     "T2 R2 C0",
+     "T2 R2 C1"
+    ]
+   ],
+   "caption": null,
+   "above": false,
+   "borderless": false
+  },
+  {
+   "index": 2,
+   "cells": [
+    [
+     "MERGED CELL",
+     "MERGED CELL",
+     ""
+    ],
+    [
+     "T3 R1 C0",
+     "T3 R1 C1",
+     "T3 R1 C2"
+    ],
+    [
+     "T3 R2 C0",
+     "T3 R2 C1",
+     "T3 R2 C2"
+    ]
+   ],
+   "caption": "Table 3: Merged layout",
+   "above": true,
+   "borderless": false
+  },
+  {
+   "index": 3,
+   "cells": [
+    [
+     "T4 R0 C0",
+     "T4 R0 C1",
+     "T4 R0 C2"
+    ],
+    [
+     "T4 R1 C0",
+     "T4 R1 C1",
+     "T4 R1 C2"
+    ],
+    [
+     "T4 R2 C0",
+     "T4 R2 C1",
+     "T4 R2 C2"
+    ],
+    [
+     "T4 R3 C0",
+     "T4 R3 C1",
+     "T4 R3 C2"
+    ],
+    [
+     "T4 R4 C0",
+     "T4 R4 C1",
+     "T4 R4 C2"
+    ],
+    [
+     "T4 R5 C0",
+     "T4 R5 C1",
+     "T4 R5 C2"
+    ],
+    [
+     "T4 R6 C0",
+     "T4 R6 C1",
+     "T4 R6 C2"
+    ],
+    [
+     "T4 R7 C0",
+     "T4 R7 C1",
+     "T4 R7 C2"
+    ],
+    [
+     "T4 R8 C0",
+     "T4 R8 C1",
+     "T4 R8 C2"
+    ],
+    [
+     "T4 R9 C0",
+     "T4 R9 C1",
+     "T4 R9 C2"
+    ],
+    [
+     "T4 R10 C0",
+     "T4 R10 C1",
+     "T4 R10 C2"
+    ],
+    [
+     "T4 R11 C0",
+     "T4 R11 C1",
+     "T4 R11 C2"
+    ],
+    [
+     "T4 R12 C0",
+     "T4 R12 C1",
+     "T4 R12 C2"
+    ],
+    [
+     "T4 R13 C0",
+     "T4 R13 C1",
+     "T4 R13 C2"
+    ],
+    [
+     "T4 R14 C0",
+     "T4 R14 C1",
+     "T4 R14 C2"
+    ],
+    [
+     "T4 R15 C0",
+     "T4 R15 C1",
+     "T4 R15 C2"
+    ],
+    [
+     "T4 R16 C0",
+     "T4 R16 C1",
+     "T4 R16 C2"
+    ],
+    [
+     "T4 R17 C0",
+     "T4 R17 C1",
+     "T4 R17 C2"
+    ],
+    [
+     "T4 R18 C0",
+     "T4 R18 C1",
+     "T4 R18 C2"
+    ],
+    [
+     "T4 R19 C0",
+     "T4 R19 C1",
+     "T4 R19 C2"
+    ],
+    [
+     "T4 R20 C0",
+     "T4 R20 C1",
+     "T4 R20 C2"
+    ],
+    [
+     "T4 R21 C0",
+     "T4 R21 C1",
+     "T4 R21 C2"
+    ],
+    [
+     "T4 R22 C0",
+     "T4 R22 C1",
+     "T4 R22 C2"
+    ],
+    [
+     "T4 R23 C0",
+     "T4 R23 C1",
+     "T4 R23 C2"
+    ],
+    [
+     "T4 R24 C0",
+     "T4 R24 C1",
+     "T4 R24 C2"
+    ],
+    [
+     "T4 R25 C0",
+     "T4 R25 C1",
+     "T4 R25 C2"
+    ],
+    [
+     "T4 R26 C0",
+     "T4 R26 C1",
+     "T4 R26 C2"
+    ],
+    [
+     "T4 R27 C0",
+     "T4 R27 C1",
+     "T4 R27 C2"
+    ],
+    [
+     "T4 R28 C0",
+     "T4 R28 C1",
+     "T4 R28 C2"
+    ],
+    [
+     "T4 R29 C0",
+     "T4 R29 C1",
+     "T4 R29 C2"
+    ],
+    [
+     "T4 R30 C0",
+     "T4 R30 C1",
+     "T4 R30 C2"
+    ],
+    [
+     "T4 R31 C0",
+     "T4 R31 C1",
+     "T4 R31 C2"
+    ],
+    [
+     "T4 R32 C0",
+     "T4 R32 C1",
+     "T4 R32 C2"
+    ],
+    [
+     "T4 R33 C0",
+     "T4 R33 C1",
+     "T4 R33 C2"
+    ],
+    [
+     "T4 R34 C0",
+     "T4 R34 C1",
+     "T4 R34 C2"
+    ],
+    [
+     "T4 R35 C0",
+     "T4 R35 C1",
+     "T4 R35 C2"
+    ],
+    [
+     "T4 R36 C0",
+     "T4 R36 C1",
+     "T4 R36 C2"
+    ],
+    [
+     "T4 R37 C0",
+     "T4 R37 C1",
+     "T4 R37 C2"
+    ],
+    [
+     "T4 R38 C0",
+     "T4 R38 C1",
+     "T4 R38 C2"
+    ],
+    [
+     "T4 R39 C0",
+     "T4 R39 C1",
+     "T4 R39 C2"
+    ],
+    [
+     "T4 R40 C0",
+     "T4 R40 C1",
+     "T4 R40 C2"
+    ],
+    [
+     "T4 R41 C0",
+     "T4 R41 C1",
+     "T4 R41 C2"
+    ],
+    [
+     "T4 R42 C0",
+     "T4 R42 C1",
+     "T4 R42 C2"
+    ],
+    [
+     "T4 R43 C0",
+     "T4 R43 C1",
+     "T4 R43 C2"
+    ],
+    [
+     "T4 R44 C0",
+     "T4 R44 C1",
+     "T4 R44 C2"
+    ]
+   ],
+   "caption": "Table 4: Long appendix",
+   "above": true,
+   "borderless": false
+  }
+ ],
+ "figures": [
+  {
+   "image_index": 1,
+   "decorative": false,
+   "in_header_footer": false
+  },
+  {
+   "image_index": 2,
+   "decorative": false,
+   "in_header_footer": false
+  },
+  {
+   "image_index": 3,
+   "decorative": false,
+   "in_header_footer": false
+  },
+  {
+   "image_index": 4,
+   "decorative": true,
+   "in_header_footer": false
+  }
+ ],
+ "drawing_order": [
+  1,
+  2,
+  3,
+  4
+ ],
+ "rels_order": [
+  1,
+  2,
+  3,
+  4
+ ],
+ "header_image_indices": [
+  0
+ ]
+}

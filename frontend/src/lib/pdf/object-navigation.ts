@@ -18,6 +18,8 @@
  */
 import { normalizeText, type BlockMapping, type PageText } from './paragraph-mapping.ts'
 import type { ObjectMappingResult } from './object-mapping.ts'
+import type { PageGeometry } from './pdf-text-extract.ts'
+import { figurePageForIndex } from './figure-bbox.ts'
 
 export const OBJECT_RULES: ReadonlySet<string> = new Set([
   'TABLE_CAPTION_MISSING',
@@ -49,6 +51,8 @@ export type BundleLike = {
   byIndex: Map<number, BlockMapping>
   pages: PageText[]
   blocks?: Array<{ index: number; text: string }>
+  /** Operator-list page geometry (Build 8F) — authoritative figure pages. */
+  geometry?: PageGeometry[] | null
 }
 
 const objectLabel = (type: 'table' | 'figure', index: number) =>
@@ -142,6 +146,21 @@ export function mapObjectFromBundle(
   }
 
   if (imageIndex !== null) {
+    // Operator geometry is the authoritative figure identity: the real page
+    // of the body-figure paint for this image_index. It wins over the
+    // caption and host-paragraph pages (identity rule 9) — a host paragraph
+    // or caption text that flowed to another page never moves the figure.
+    const hasGeometry = bundle.geometry !== null && bundle.geometry !== undefined && bundle.geometry.length > 0
+    const opPage = hasGeometry ? figurePageForIndex(bundle.geometry, imageIndex) : null
+    if (hasGeometry) {
+      // When operator geometry is available it is the ONLY authority. A
+      // missing op (order disagreement / index beyond the body ops) is
+      // UNAVAILABLE — never guessed from caption or adjacent prose.
+      if (opPage !== null) {
+        return { targetType: 'figure', targetIndex: imageIndex, pageNumber: opPage, bbox: null, confidence: 'exact', evidenceMethod: 'image-op-order', ambiguityReason: null }
+      }
+      return { targetType: 'figure', targetIndex: imageIndex, pageNumber: null, bbox: null, confidence: 'unavailable', evidenceMethod: 'image-op-order', ambiguityReason: 'op-order-mismatch' }
+    }
     const caption = captionPage(bundle, 'figure', imageIndex)
     if (caption !== null) {
       return { targetType: 'figure', targetIndex: imageIndex, pageNumber: caption, bbox: null, confidence: 'exact', evidenceMethod: 'caption', ambiguityReason: null }
