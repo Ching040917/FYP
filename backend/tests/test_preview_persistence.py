@@ -266,11 +266,18 @@ def test_historical_records_remain_valid(client, test_engine):
         assert getattr(row, field) is None
 
 
-def test_concurrent_audits_use_isolated_files(client, docx_factory, preview_root, converter_ok):
+def test_concurrent_audits_use_isolated_files(client_file_db, docx_factory, preview_root, converter_ok):
+    # Uses client_file_db: a temporary FILE-backed SQLite with per-thread
+    # pooled connections. The in-memory client shares ONE StaticPool
+    # connection across threads, which races db.refresh() — the production
+    # concurrency logic is untouched, only the test infrastructure is
+    # isolated per worker. Also verifies the concurrency invariants:
+    # separate conversion workdirs, separate LO profiles, separate rendered
+    # PDF files, no overwrite or cross-lock.
     results = []
 
     def _run():
-        results.append(_post(client, docx_factory).json()["audit_id"])
+        results.append(_post(client_file_db, docx_factory).json()["audit_id"])
 
     threads = [threading.Thread(target=_run) for _ in range(4)]
     for t in threads:

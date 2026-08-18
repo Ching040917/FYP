@@ -32,6 +32,8 @@ import { AppNav } from '../components/layout/AppNav'
 import { AppFooter } from '../components/layout/AppFooter'
 import { api, TimeoutError } from '../services/api'
 import { useToast } from '../hooks/useToast'
+import { formatAuditDateTime, auditDateTimeAttr } from '../lib/format-date'
+import { dropRenderedPdfCache } from '../hooks/use-rendered-pdf'
 import type { AuditListItem } from '../types/api'
 
 type LoadState = 'loading' | 'success' | 'error' | 'empty'
@@ -121,6 +123,9 @@ export function HistoryPage() {
     setDeleting(true)
     try {
       await api.deleteAudit(audit.id)
+      // Cache invalidation ONLY after the API deletion succeeded — a failed
+      // deletion must not clear local state or the rendered-PDF cache.
+      dropRenderedPdfCache(audit.id)
       setDeleteTarget(null)
       focusAfterDeleteRef.current = true
       showToast(`Deleted audit record: ${audit.filename}`, 'success')
@@ -295,7 +300,9 @@ function HistoryRegister({
                 <td className="whitespace-nowrap px-4 py-3 align-top">
                   <span className="inline-flex items-center gap-1.5 text-[13px] text-muted-foreground">
                     <Clock className="h-3.5 w-3.5" aria-hidden="true" />
-                    {formatDate(a.created_at)}
+                    <time dateTime={auditDateTimeAttr(a.created_at) ?? undefined}>
+                      {formatDate(a.created_at)}
+                    </time>
                   </span>
                 </td>
                 <td className="px-4 py-3 align-top">
@@ -347,7 +354,9 @@ function HistoryRegister({
                 <StatusBadge status={a.status} />
                 <span className="inline-flex items-center gap-1">
                   <Clock className="h-3 w-3" aria-hidden="true" />
-                  {formatDate(a.created_at)}
+                  <time dateTime={auditDateTimeAttr(a.created_at) ?? undefined}>
+                    {formatDate(a.created_at)}
+                  </time>
                 </span>
               </div>
               <div className="mt-2 flex items-center justify-between gap-3">
@@ -452,18 +461,7 @@ function StatusBadge({ status }: { status: string }) {
 }
 
 function formatDate(iso: string): string {
-  try {
-    const d = new Date(iso)
-    return d.toLocaleString(undefined, {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    })
-  } catch {
-    return iso
-  }
+  return formatAuditDateTime(iso)
 }
 
 /* ----------------------------- States ----------------------------- */
@@ -658,7 +656,9 @@ function DeleteDialog({
           </div>
           <div className="mt-1 flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
             <span className="font-mono">{audit.id}</span>
-            <span>{formatDate(audit.created_at)}</span>
+            <time dateTime={auditDateTimeAttr(audit.created_at) ?? undefined}>
+              {formatDate(audit.created_at)}
+            </time>
           </div>
         </div>
 

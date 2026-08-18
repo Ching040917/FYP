@@ -91,6 +91,46 @@ def client(test_engine, mock_ai_task, mock_init_db):
 
 
 @pytest.fixture
+def client_file_db(tmp_path, mock_ai_task, mock_init_db):
+    """TestClient backed by a temporary FILE-backed SQLite database.
+
+    Unlike the in-memory `client` (which shares ONE StaticPool connection
+    across threads), a file-backed SQLite uses SQLAlchemy's default
+    QueuePool: each concurrent request thread gets its own pooled
+    connection and session, so `db.refresh()` after commit cannot race.
+
+    Purpose: concurrency tests only — the production app keeps its own
+    single-connection behavior untouched.
+    """
+    db_path = tmp_path / "concurrent-tests.db"
+    engine = create_engine(
+        f"sqlite:///{db_path}",
+        connect_args={"check_same_thread": False},
+    )
+    Base.metadata.create_all(bind=engine)
+    Session = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+    def _override_get_db():
+        db = Session()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[get_db] = _override_get_db
+    c = TestClient(app)
+    try:
+        with c:
+            yield c
+    finally:
+        app.dependency_overrides.clear()
+        Session.close_all()
+        engine.dispose()
+        # tmp_path removal is handled by pytest; nothing is written to
+        # backend/audit.db (mock_init_db prevents startup writes).
+
+
+@pytest.fixture
 def client_with_small_cap(test_engine, small_file_cap, mock_ai_task, mock_init_db):
     """TestClient variant with a tiny MAX_FILE_SIZE for oversize tests."""
     c = _build_client(test_engine)

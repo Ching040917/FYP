@@ -45,7 +45,7 @@ def _seed_audit(test_engine, status="completed", violations=(), citations=(), **
     Session = sessionmaker(bind=test_engine)
     s = Session()
     audit_id = fields.pop("id", str(uuid.uuid4()))
-    rec = AuditRecord(
+    rec_kwargs = dict(
         id=audit_id,
         filename=fields.pop("filename", "seeded.docx"),
         file_size=100,
@@ -62,6 +62,13 @@ def _seed_audit(test_engine, status="completed", violations=(), citations=(), **
         ai_provider=fields.pop("ai_provider", None),
         document_blocks=fields.pop("document_blocks", None),
     )
+    # Only pass datetimes when the caller supplied them, so other tests keep
+    # the model defaults (created_at = utcnow, completed_at = NULL).
+    if "created_at" in fields:
+        rec_kwargs["created_at"] = fields.pop("created_at")
+    if "completed_at" in fields:
+        rec_kwargs["completed_at"] = fields.pop("completed_at")
+    rec = AuditRecord(**rec_kwargs)
     s.add(rec)
     for v in violations:
         s.add(Violation(id=str(uuid.uuid4()), audit_id=audit_id, **v))
@@ -108,6 +115,51 @@ def test_export_pdf_contains_core_sections(client, docx_factory):
         "HEADING_HIERARCHY",
     ):
         assert section in text, f"missing section: {section}"
+
+
+# ---------------------------------------------------------------------------
+# Report Date — English UK presentation (18 Aug 2026, 12:30 PM UTC)
+# ---------------------------------------------------------------------------
+
+def test_export_pdf_report_date_english_uk_format(client, test_engine):
+    """Report Date uses day-month-year + 12-hour AM/PM with an explicit UTC
+    label (the stored datetime is a naive UTC wall-clock moment — it must
+    never appear as an unlabelled local time)."""
+    from datetime import datetime
+    audit_id = _seed_audit(
+        test_engine, status="completed",
+        created_at=datetime(2026, 8, 18, 12, 30),
+        completed_at=datetime(2026, 8, 18, 12, 30),
+    )
+    text = _pdf_text(_export(client, audit_id).content)
+    assert "Report Date" in text
+    assert "18 Aug 2026, 12:30 PM UTC" in text
+    # Never the long-form month or a 24-hour clock.
+    assert "18 August 2026" not in text
+    assert "12:30:00" not in text
+
+
+def test_export_pdf_report_date_midnight_and_december(client, test_engine):
+    from datetime import datetime
+    audit_id = _seed_audit(
+        test_engine, status="completed",
+        created_at=datetime(2026, 12, 5, 0, 5),
+        completed_at=datetime(2026, 12, 5, 0, 5),
+    )
+    text = _pdf_text(_export(client, audit_id).content)
+    assert "05 Dec 2026, 12:05 AM UTC" in text
+
+
+def test_export_pdf_report_date_falls_back_to_created_at(client, test_engine):
+    """A completed_at of NULL (processing/legacy) falls back to created_at."""
+    from datetime import datetime
+    audit_id = _seed_audit(
+        test_engine, status="completed",
+        created_at=datetime(2026, 8, 18, 8, 5),
+        completed_at=None,
+    )
+    text = _pdf_text(_export(client, audit_id).content)
+    assert "18 Aug 2026, 08:05 AM UTC" in text
 
 
 # ---------------------------------------------------------------------------

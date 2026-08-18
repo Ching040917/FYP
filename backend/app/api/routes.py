@@ -258,7 +258,10 @@ async def audit_document(
     except HTTPException:
         # Re-raise validation errors (400 from .docx/size) untouched
         raise
-    except Exception as e:
+    except Exception:
+        # Privacy-safe server-side log: exception details (traceback, SQL,
+        # paths, document content, provider responses) stay in the server
+        # log — never in the HTTP response or the database.
         logger.exception("Audit processing failed for audit_id=%s", audit.id)
         # PDF persisted but the audit transaction failed: remove the final
         # file so no orphan remains; preserve the original failure behavior.
@@ -268,7 +271,13 @@ async def audit_document(
             audit.rendered_preview_error = "persistence_failed"
         audit.status = "failed"
         db.commit()
-        raise HTTPException(status_code=500, detail=f"Processing failed: {str(e)}")
+        # Stable general-user message — no exception text, stack trace,
+        # paths, commands, SQL, or document content is exposed.
+        raise HTTPException(
+            status_code=500,
+            detail="The document could not be processed. Please try again. "
+            "If the problem continues, use a different DOCX file.",
+        )
 
 
 @router.get("/api/audit/{audit_id}", response_model=AuditResponse)
@@ -537,6 +546,11 @@ async def delete_audit(audit_id: str, db: Session = Depends(get_db)):
     The cascade="all, delete-orphan" on the Violation and CitationIssue
     relationships means SQLAlchemy automatically deletes the children when
     the parent AuditRecord is deleted.
+
+    After the database record is committed, the persisted rendered PDF
+    preview is removed as best-effort cleanup: a missing file, file-lock, or
+    deletion failure never fails the audit deletion — only the audit ID and
+    a safe outcome category are logged, never absolute paths.
     """
     audit = db.query(AuditRecord).filter(AuditRecord.id == audit_id).first()
     if not audit:
@@ -545,6 +559,21 @@ async def delete_audit(audit_id: str, db: Session = Depends(get_db)):
     filename = audit.filename
     db.delete(audit)
     db.commit()
+
+    # Best-effort rendered-preview cleanup AFTER the DB commit. The path is
+    # derived from the validated audit UUID only — invalid IDs are a safe
+    # no-op and can never target arbitrary files. Failures are logged with
+    # the audit ID and a fixed category; the deletion stays successful.
+    try:
+        if preview_storage.remove_preview(audit_id):
+            logger.info("audit delete audit=%s preview=removed", audit_id)
+        else:
+            logger.info("audit delete audit=%s preview=absent_or_failed", audit_id)
+    except Exception:
+        # remove_preview already swallows OSError, but never let any
+        # unexpected cleanup failure flip a successful deletion into an
+        # error response.
+        logger.warning("audit delete audit=%s preview=cleanup_failed", audit_id)
 
     logger.info("Deleted audit id=%s filename=%s", audit_id, filename)
     return {"status": "deleted", "audit_id": audit_id, "filename": filename}

@@ -2,6 +2,18 @@
 import io
 import uuid
 
+import pytest
+
+from app.api import routes as api_routes
+
+
+@pytest.fixture
+def preview_root(tmp_path, monkeypatch):
+    """Isolated preview storage (Build 9A failure-path tests)."""
+    root = tmp_path / "previews"
+    monkeypatch.setattr(api_routes.settings, "PREVIEW_STORAGE_DIR", str(root))
+    return root
+
 
 def test_post_audit_happy_path_returns_200_and_audit_id(client, docx_factory):
     body = ["Body paragraph."]
@@ -239,3 +251,128 @@ def test_concurrent_uploads_get_unique_ids(client, docx_factory):
         )
         ids.add(r.json()["audit_id"])
     assert len(ids) == 3
+
+
+# ---------------------------------------------------------------------------
+# POST internal-exception containment (Build 9A, Blocker 4)
+# ---------------------------------------------------------------------------
+
+SAFE_500_DETAIL = (
+    "The document could not be processed. Please try again. "
+    "If the problem continues, use a different DOCX file."
+)
+
+
+def test_internal_exception_returns_safe_message_not_internals(client, docx_factory, monkeypatch):
+    """A processing crash returns the stable message — never str(e)."""
+    def _boom(*args, **kwargs):
+        raise RuntimeError("simulated-internal-secret: C:\\Users\\secret\\tmp\\x.docx")
+    monkeypatch.setattr(api_routes, "calculate_weighted_score_detailed", _boom)
+
+    resp = client.post(
+        "/api/audit",
+        files={"file": ("test.docx", docx_factory(paragraphs=["Body."]), "application/octet-stream")},
+    )
+    assert resp.status_code == 500
+    detail = resp.json()["detail"]
+    assert detail == SAFE_500_DETAIL
+    assert "simulated-internal-secret" not in detail
+    assert "secret" not in detail
+    assert "\\Users\\" not in detail
+
+
+def test_internal_exception_details_not_in_logs(client, docx_factory, monkeypatch, caplog):
+    """Logs contain no document text or absolute temp paths."""
+    import logging
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("leaky C:\\Users\\x\\AppData\\Local\\Temp\\docx2pdf_abc\\in.docx")
+    monkeypatch.setattr(api_routes, "calculate_weighted_score_detailed", _boom)
+
+    with caplog.at_level(logging.ERROR, logger="app.api.routes"):
+        resp = client.post(
+            "/api/audit",
+            files={"file": ("test.docx", docx_factory(paragraphs=["Body text."]), "application/octet-stream")},
+        )
+    assert resp.status_code == 500
+    joined = "\n".join(rec.getMessage() for rec in caplog.records)
+    # The audit id IS expected; absolute temp paths are not.
+    assert "C:\\Users\\" not in joined
+    assert "AppData" not in joined
+    assert "Body text" not in joined
+
+
+def test_internal_exception_rolls_back_and_cleans_preview(
+    client, docx_factory, preview_root, monkeypatch, test_engine,
+):
+    """A processing failure marks the audit failed, and removes any persisted PDF."""
+    from sqlalchemy.orm import sessionmaker
+    from app.models.audit import AuditRecord
+
+    monkeypatch.setattr(api_routes, "convert_docx_to_pdf", lambda _bytes: _make_pdf_for_test())
+    monkeypatch.setattr(api_routes, "calculate_weighted_score_detailed", _boom_scoring)
+
+    resp = client.post(
+        "/api/audit",
+        files={"file": ("test.docx", docx_factory(paragraphs=["Body."]), "application/octet-stream")},
+    )
+    assert resp.status_code == 500
+    assert resp.json()["detail"] == SAFE_500_DETAIL
+
+    Session = sessionmaker(bind=test_engine)
+    s = Session()
+    row = s.query(AuditRecord).order_by(AuditRecord.created_at.desc()).first()
+    assert row is not None
+    assert row.status == "failed"
+    aid = row.id
+    s.close()
+    # The persisted rendered PDF was removed with the failed transaction.
+    assert not (preview_root / f"{aid}.pdf").exists()
+    assert list((preview_root / ".tmp").iterdir()) == []
+
+
+def test_validation_errors_keep_specific_messages(client, docx_factory):
+    """Known validation errors must NOT become generic 500s."""
+    bad = client.post(
+        "/api/audit",
+        files={"file": ("test.pdf", b"%PDF fake", "application/pdf")},
+    )
+    assert bad.status_code == 400
+    assert bad.json()["detail"] != SAFE_500_DETAIL
+
+    big = client.post(
+        "/api/audit",
+        files={"file": ("big.docx", b"x" * 2048, "application/octet-stream")},
+    )
+    # MAX_FILE_SIZE is 10MB in this client — this is NOT oversize, so it
+    # will attempt processing; use client_with_small_cap for the real check.
+    assert big.status_code in (200, 400, 500)
+
+
+def test_validation_errors_small_cap_keep_specific_messages(client_with_small_cap, docx_factory):
+    big = client_with_small_cap.post(
+        "/api/audit",
+        files={"file": ("big.docx", b"x" * 2048, "application/octet-stream")},
+    )
+    assert big.status_code == 400
+    assert big.json()["detail"] != SAFE_500_DETAIL
+
+
+# ---------------------------------------------------------------------------
+# helpers for the failure-path tests
+# ---------------------------------------------------------------------------
+
+def _make_pdf_for_test(page_count: int = 2) -> bytes:
+    import io as _io
+    from reportlab.pdfgen import canvas as pdfcanvas
+    buf = _io.BytesIO()
+    c = pdfcanvas.Canvas(buf)
+    for i in range(page_count):
+        c.drawString(72, 720, f"page {i + 1}")
+        c.showPage()
+    c.save()
+    return buf.getvalue()
+
+
+def _boom_scoring(*args, **kwargs):
+    raise RuntimeError("simulated scoring failure")

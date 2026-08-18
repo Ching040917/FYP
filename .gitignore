@@ -10,3 +10,7 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 backend/audit.db
+backend/audit.db-*
+backend/*.db.backup*
+backend/*.sqlite
+backend/*.sqlite3

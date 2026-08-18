@@ -15,6 +15,7 @@ import { Button } from '../ui/button'
 import { VerdictChecklist } from './verdict-checklist'
 import { aiProviderLabel } from '../../lib/audit/adapter'
 import { gradeFor } from '../../lib/audit/scoring'
+import { formatAuditDateTime, auditDateTimeAttr } from '../../lib/format-date'
 import type { AuditResult, DocumentStats } from '../../types/audit'
 
 const STAT_LABELS: Array<[keyof DocumentStats, string]> = [
@@ -46,7 +47,10 @@ export function ComplianceSummary({
           Compliance summary
         </CardTitle>
         <CardDescription>
-          Audit complete · {new Date(result.audited_at).toLocaleString()}
+          Audit complete ·{' '}
+          <time dateTime={auditDateTimeAttr(result.audited_at) ?? undefined}>
+            {formatAuditDateTime(result.audited_at)}
+          </time>
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-5">

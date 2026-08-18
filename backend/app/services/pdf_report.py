@@ -564,7 +564,11 @@ def generate_audit_pdf(audit, violations, citation_issues) -> bytes:
     story.append(_kv_table([
         ("Document", audit.filename),
         ("Audit ID", audit.id),
-        ("Report Date", report_date.strftime("%d %B %Y, %H:%M UTC") if report_date else "Unavailable"),
+        # English UK convention ("18 Aug 2026, 12:30 PM") with an explicit
+        # UTC label — the report date is a naive UTC wall-clock moment
+        # (datetime.utcnow()) and must never be shown as an unlabelled local
+        # time.
+        ("Report Date", report_date.strftime("%d %b %Y, %I:%M %p UTC") if report_date else "Unavailable"),
         ("Deployment Mode", audit.deploy_mode),
         ("AI Citation Review", audit.ai_review_status or "Not recorded"),
     ]))
