@@ -152,7 +152,22 @@ export function RenderedPreview({
     const load = async () => {
       try {
         const pdfjs = await getPdfjs()
-        const task = pdfjs.getDocument({ data: bytes.slice(0) })
+        // Never hand the shared cached buffer to pdf.js: it may transfer
+        // (detach) it, breaking every other consumer. Make a fresh owned
+        // copy; if the source is already detached/zero-length, fail quietly
+        // (the parent reports 'corrupt'/'unavailable' — viewing stays intact).
+        let owned: Uint8Array
+        try {
+          owned = new Uint8Array(bytes.slice(0))
+        } catch {
+          setPdfDoc(null)
+          return
+        }
+        if (owned.byteLength === 0) {
+          setPdfDoc(null)
+          return
+        }
+        const task = pdfjs.getDocument({ data: owned })
         loadingTaskRef.current = task
         const doc = await task.promise
         if (cancelled) {

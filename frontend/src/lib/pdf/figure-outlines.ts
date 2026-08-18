@@ -37,7 +37,18 @@ export function geometryLoaderFromBytes(
   pdfBytes: ArrayBuffer | undefined,
 ): GeometryLoader | null {
   if (!pdfBytes) return null
-  return () => extractPageGeometry(pdfBytes.slice(0))
+  // Never slice the shared cached buffer: it may already be detached by a
+  // pdf.js worker transfer. Copy into a fresh owned buffer; if the source
+  // is detached or empty, return null so callers treat geometry as
+  // unavailable (the Figure outline is omitted, the report still works).
+  let owned: Uint8Array
+  try {
+    owned = new Uint8Array(pdfBytes.slice(0))
+  } catch {
+    return null
+  }
+  if (owned.byteLength === 0) return null
+  return () => extractPageGeometry(owned)
 }
 
 /** Drop the cached geometry for an audit (audit changed / PDF replaced). */

@@ -53,11 +53,29 @@ function withPdfLock<T>(fn: () => Promise<T>): Promise<T> {
 let sharedDocRef: Uint8Array | ArrayBuffer | null = null
 let sharedDocPromise: Promise<any> | null = null
 
+/**
+ * pdf.js may TRANSFER (detach) the buffer handed to `getDocument({data})`
+ * when it moves the bytes to its worker. If the caller passes a shared
+ * ArrayBuffer (e.g. the cached rendered-PDF bytes also used by the viewer
+ * and the geometry loader), that detaches it for EVERY other consumer —
+ * their next `.slice()` throws "Cannot perform ArrayBuffer.prototype.slice
+ * on a detached ArrayBuffer".
+ *
+ * Fix: always hand pdf.js a FRESH owned copy. The caller's buffer is never
+ * passed through, so no shared buffer can be detached by this document.
+ */
+function freshOwnedCopy(pdfBytes: Uint8Array | ArrayBuffer): Uint8Array {
+  const view = pdfBytes instanceof Uint8Array ? pdfBytes : new Uint8Array(pdfBytes)
+  // new Uint8Array(view) copies the bytes into a brand-new buffer we own.
+  return new Uint8Array(view)
+}
+
 async function openDocument(pdfBytes: Uint8Array | ArrayBuffer) {
-  if (sharedDocRef === pdfBytes && sharedDocPromise) return sharedDocPromise
-  sharedDocRef = pdfBytes
+  const owned = freshOwnedCopy(pdfBytes)
+  if (sharedDocRef === owned && sharedDocPromise) return sharedDocPromise
+  sharedDocRef = owned
   const pdfjsLib = await getPdfjs()
-  sharedDocPromise = pdfjsLib.getDocument({ data: pdfBytes }).promise
+  sharedDocPromise = pdfjsLib.getDocument({ data: owned }).promise
   return sharedDocPromise
 }
 
