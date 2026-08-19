@@ -25,6 +25,9 @@ export function useFindingMapping(
   const [bundle, setBundle] = useState<MappingBundle | null>(null)
   const [status, setStatus] = useState<MappingStatus>('idle')
   const generation = useRef(0)
+  // PDF bytes identity: a replaced PDF for the SAME audit must not be served
+  // a stale mapping computed from the previous bytes.
+  const lastBytesRef = useRef<ArrayBuffer | undefined>(undefined)
 
   useEffect(() => {
     if (!auditId) {
@@ -60,9 +63,15 @@ export function useFindingMapping(
     let cancelled = false
     setStatus('loading')
 
+    // A PDF replaced for the SAME audit id invalidates the cached mapping
+    // (the cache is keyed by audit id only) — never serve stale pages.
+    const bytesChanged = lastBytesRef.current !== pdfBytes
+    lastBytesRef.current = pdfBytes
+    if (bytesChanged) invalidateMapping(auditId)
+
     const loader = async (id: string): Promise<MappingBundle> => {
       const pages = await extractPageText(pdfBytes)
-      const blockLike = blockList.map((b) => ({ index: b.index, text: b.text }))
+      const blockLike = blockList.map((b) => ({ index: b.index, text: b.text, styleName: b.style_name ?? null }))
       const mapping = mapBlocksToPages(blockLike, pages)
       return {
         auditId: id,

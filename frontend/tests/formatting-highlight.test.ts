@@ -21,6 +21,8 @@ import {
   RUN_FALLBACK_MESSAGE,
   REGION_UNAVAILABLE_MESSAGE,
   FORMATTING_RULES,
+  spacingBandTopPct,
+  SPACING_BAND_PCT,
   type FormattingHighlightResult,
 } from '../src/lib/pdf/formatting-highlight.ts'
 import { normalizeText, type PageText, type TextItemLike } from '../src/lib/pdf/paragraph-mapping.ts'
@@ -195,7 +197,7 @@ test('unavailable paragraph geometry keeps Rendered Pages decision', () => {
   const pages = [page(1, [item(BODY, 100, 700)])]
   const b = { byIndex: new Map<number, BlockMapping>(), pages, blocks: [{ index: 0, text: BODY }] }
   const r = resolveFormattingHighlight(finding('f1', 'LINE_SPACING', 0), b)
-  assert.deepEqual(r, { kind: 'none', pageRects: [], label: null, message: null })
+  assert.deepEqual(r, { kind: 'none', pageRects: [], label: null, message: null, spacingSide: null })
 })
 
 test('space before/after and heading hierarchy are paragraph-level', () => {
@@ -407,4 +409,353 @@ test('chip never appears without an overlay or a limitation message', () => {
       if (r.pageRects.length === 0) assert.ok(r.message !== null)
     }
   }
+})
+
+// ---------------------------------------------------------------------------
+// bullet list items (LibreOffice private-use marker glyph)
+// ---------------------------------------------------------------------------
+
+test('bullet list item gets a paragraph region covering the text', () => {
+  // LibreOffice renders each bullet as a separate \uF0B7 item before the
+  // text — matching must ignore the marker but keep text geometry.
+  const p = page(1, [
+    item('\uF0B7', 90.1, 700, 5.5),
+    item(' ', 95.6, 700, 12.5),
+    item('First bullet item text here.', 108.1, 700, 130),
+  ])
+  const text = 'First bullet item text here.'
+  const b = bundle([p], [{ index: 0, text }], () => 1)
+  const r = paragraphRegion(b, 0)!
+  assert.ok(r && r.length === 1)
+  // region starts at the TEXT x (0.182), never at the bullet (0.151)
+  assert.ok(r[0].x > 0.16, `region must not include the bullet marker: ${r[0].x}`)
+})
+
+test('multi-line bullet item envelope spans all its lines', () => {
+  const p = page(1, [
+    item('\uF0B7', 90.1, 700, 5.5),
+    item(' ', 95.6, 700, 12.5),
+    item('First line of the bullet item that', 108.1, 700, 160),
+    item('continues onto the next line.', 108.1, 680, 150),
+  ])
+  const text = 'First line of the bullet item that continues onto the next line.'
+  const b = bundle([p], [{ index: 0, text }], () => 1)
+  const r = paragraphRegion(b, 0)!
+  assert.ok(r && r.length === 1)
+  assert.ok(r[0].height * 842 > 30, 'envelope covers both lines')
+})
+
+test('repeated bullet item text → truthful unavailable message, never silent', () => {
+  // two identical bullet items on the same page → ambiguous paragraph
+  // region; the finding must still surface a limitation message.
+  const p = page(1, [
+    item('\uF0B7', 90, 700, 5),
+    item('Duplicate item text.', 108, 700, 90),
+    item('\uF0B7', 90, 650, 5),
+    item('Duplicate item text.', 108, 650, 90),
+  ])
+  const text = 'Duplicate item text.'
+  const b = bundle([p], [{ index: 0, text }], () => 1)
+  const r = resolveFormattingHighlight(finding('f1', 'SPACE_AFTER', 0), b)
+  assert.equal(r.kind, 'paragraph')
+  assert.equal(r.pageRects.length, 0)
+  assert.equal(r.message, REGION_UNAVAILABLE_MESSAGE)
+})
+
+// ---------------------------------------------------------------------------
+// spacing side markers (Build: Space Before/After side-specific overlays)
+// ---------------------------------------------------------------------------
+
+test('SPACE_BEFORE sets spacingSide to before', () => {
+  const pages = [page(1, [item(BODY, 100, 700)])]
+  const b = bundle(pages, [{ index: 0, text: BODY }], () => 1)
+  const r = resolveFormattingHighlight(finding('f1', 'SPACE_BEFORE', 0), b)
+  assert.equal(r.kind, 'paragraph')
+  assert.ok(r.pageRects.length >= 1)
+  assert.equal(r.spacingSide, 'before')
+  assert.equal(r.message, null)
+})
+
+test('SPACE_AFTER sets spacingSide to after', () => {
+  const pages = [page(1, [item(BODY, 100, 700)])]
+  const b = bundle(pages, [{ index: 0, text: BODY }], () => 1)
+  const r = resolveFormattingHighlight(finding('f1', 'SPACE_AFTER', 0), b)
+  assert.equal(r.kind, 'paragraph')
+  assert.ok(r.pageRects.length >= 1)
+  assert.equal(r.spacingSide, 'after')
+  assert.equal(r.message, null)
+})
+
+test('same paragraph with SPACE_BEFORE and SPACE_AFTER produces different sides', () => {
+  const pages = [page(1, [item(BODY, 100, 700)])]
+  const b = bundle(pages, [{ index: 0, text: BODY }], () => 1)
+  const before = resolveFormattingHighlight(finding('f1', 'SPACE_BEFORE', 0), b)
+  const after = resolveFormattingHighlight(finding('f2', 'SPACE_AFTER', 0), b)
+  assert.equal(before.spacingSide, 'before')
+  assert.equal(after.spacingSide, 'after')
+  assert.equal(before.pageRects[0].x, after.pageRects[0].x)
+  assert.equal(before.pageRects[0].y, after.pageRects[0].y)
+  assert.equal(before.pageRects[0].width, after.pageRects[0].width)
+  assert.equal(before.pageRects[0].height, after.pageRects[0].height)
+})
+
+test('non-spacing rules have null spacingSide', () => {
+  const pages = [page(1, [item(BODY, 100, 700)])]
+  const b = bundle(pages, [{ index: 0, text: BODY }], () => 1)
+  for (const rule of ['ALIGNMENT', 'LINE_SPACING', 'HEADING_HIERARCHY', 'FONT_SIZE', 'FONT_CONSISTENCY']) {
+    const r = resolveFormattingHighlight(finding('f1', rule, 0), b)
+    if (r.kind !== 'none') assert.equal(r.spacingSide, null, rule)
+  }
+})
+
+test('multi-line explanatory paragraph spacing gets valid side', () => {
+  const p = page(1, [
+    item('First line of the explanatory paragraph.', 100, 700),
+    item('Second line continues the explanation.', 100, 680),
+    item('Third and final line wraps around.', 100, 660),
+  ])
+  const text = 'First line of the explanatory paragraph. Second line continues the explanation. Third and final line wraps around.'
+  const b = bundle([p], [{ index: 0, text }], () => 1)
+  const before = resolveFormattingHighlight(finding('f1', 'SPACE_BEFORE', 0), b)
+  const after = resolveFormattingHighlight(finding('f2', 'SPACE_AFTER', 0), b)
+  assert.equal(before.spacingSide, 'before')
+  assert.equal(after.spacingSide, 'after')
+  assert.ok(before.pageRects.length >= 1)
+  assert.ok(after.pageRects.length >= 1)
+})
+
+test('paragraph below figure — spacing marker present even when rect is tight', () => {
+  // Paragraph text exists; figure items are separate TextItems elsewhere.
+  const pages = [
+    page(1, [
+      item('Figure placeholder content here.', 100, 600),
+      item(BODY, 100, 400),
+    ]),
+  ]
+  const b = bundle(pages, [{ index: 0, text: BODY }], () => 1)
+  const r = resolveFormattingHighlight(finding('f1', 'SPACE_BEFORE', 0), b)
+  assert.equal(r.kind, 'paragraph')
+  assert.equal(r.spacingSide, 'before')
+  assert.ok(r.pageRects.length >= 1)
+})
+
+test('repeated Expected result paragraphs — neighbour disambiguation keeps unique side', () => {
+  // Two identical paragraphs on different pages. The first one (mapped to page 1)
+  // should still produce a unique spacingSide result, even though page 2 also
+  // has the same text.
+  const p1 = page(1, [item('Expected result for the test case.', 100, 700)])
+  const p2 = page(2, [item('Expected result for the test case.', 100, 700)])
+  const text = 'Expected result for the test case.'
+  const b = bundle([p1, p2], [{ index: 0, text }], () => 1)
+  const r = resolveFormattingHighlight(finding('f1', 'SPACE_BEFORE', 0), b)
+  // Same-text on page 2 makes it ambiguous → no region, but side is still set on
+  // the result object if a region were found. Here we expect null pageRects but
+  // spacingSide should still reflect the rule intent.
+  assert.equal(r.kind, 'paragraph')
+  assert.equal(r.spacingSide, 'before')
+  // Ambiguous: returns null rects and message
+  assert.equal(r.message, REGION_UNAVAILABLE_MESSAGE)
+})
+
+test('unique neighbour-based disambiguation for repeated text', () => {
+  // Two paragraphs with the SAME text but different neighbours (different indices).
+  // Index 0 paragraph is unique on page 1; index 1 is also unique on page 1.
+  const p = page(1, [
+    item('Same text first occurrence.', 100, 700),
+    item('Same text second occurrence.', 100, 650),
+  ])
+  const text1 = 'Same text first occurrence.'
+  const text2 = 'Same text second occurrence.'
+  const b = bundle([p], [
+    { index: 0, text: text1 },
+    { index: 1, text: text2 },
+  ], () => 1)
+  const r1 = resolveFormattingHighlight(finding('f1', 'SPACE_BEFORE', 0), b)
+  const r2 = resolveFormattingHighlight(finding('f2', 'SPACE_AFTER', 1), b)
+  assert.equal(r1.spacingSide, 'before')
+  assert.equal(r2.spacingSide, 'after')
+  assert.ok(r1.pageRects.length >= 1)
+  assert.ok(r2.pageRects.length >= 1)
+  // Different paragraphs: regions should differ in y position.
+  assert.notEqual(r1.pageRects[0].y, r2.pageRects[0].y)
+})
+
+test('genuine ambiguity remains unavailable with spacingSide still set', () => {
+  const p = page(1, [
+    item('Identical paragraph text here.', 100, 700),
+    item('Identical paragraph text here.', 100, 650),
+  ])
+  const text = 'Identical paragraph text here.'
+  const b = bundle([p], [{ index: 0, text }], () => 1)
+  const r = resolveFormattingHighlight(finding('f1', 'SPACE_AFTER', 0), b)
+  assert.equal(r.kind, 'paragraph')
+  assert.equal(r.spacingSide, 'after')
+  assert.equal(r.pageRects.length, 0)
+  assert.equal(r.message, REGION_UNAVAILABLE_MESSAGE)
+})
+
+// ---------------------------------------------------------------------------
+// Paragraph 13 regression (Build 9): Word SEQ-field captions
+// ---------------------------------------------------------------------------
+// The confirmed production structure: the persisted block text drops the
+// SEQ-field number ("Figure : Semantically captioned synthetic chart") while
+// the rendered PDF carries it ("Figure 1: Semantically captioned synthetic
+// chart" — separate TextItems: "Figure", "1", ": Semantically …"). The
+// contiguous text walk stalls; the unique prefix+suffix anchor must resolve
+// the REAL caption line so SPACE_BEFORE/SPACE_AFTER markers render.
+
+test('Paragraph 13 fixture: SEQ-numbered caption resolves via unique prefix+suffix', () => {
+  const p2 = page(2, [
+    item('Figure', 211.7, 488.7, 28.3),
+    item(' ', 240.0, 488.7, 2.5),
+    item('1', 242.5, 488.7, 5.0),
+    item(' ', 247.5, 488.7, 2.5),
+    item(': Semantically captioned synthetic chart', 250.0, 488.7, 170.9),
+  ])
+  const block = { index: 12, text: 'Figure : Semantically captioned synthetic chart' }
+  const b = bundle([p2], [block], () => 2)
+
+  const before = resolveFormattingHighlight(finding('f1', 'SPACE_BEFORE', 12), b)
+  assert.equal(before.kind, 'paragraph')
+  assert.equal(before.spacingSide, 'before')
+  assert.equal(before.message, null)
+  assert.equal(before.pageRects.length, 1)
+  assert.equal(before.pageRects[0].page, 2)
+
+  const after = resolveFormattingHighlight(finding('f2', 'SPACE_AFTER', 12), b)
+  assert.equal(after.kind, 'paragraph')
+  assert.equal(after.spacingSide, 'after')
+  assert.equal(after.message, null)
+  assert.equal(after.pageRects.length, 1)
+  assert.equal(after.pageRects[0].page, 2)
+
+  // Both sides mark the SAME caption line (identical geometry).
+  assert.equal(before.pageRects[0].x, after.pageRects[0].x)
+  assert.equal(before.pageRects[0].y, after.pageRects[0].y)
+  assert.equal(before.pageRects[0].width, after.pageRects[0].width)
+  // The region is the caption line, not a full-width guess.
+  assert.ok(before.pageRects[0].width < 0.6, 'region hugs the caption text')
+})
+
+test('Paragraph 13 fixture: anchor respects repeated Expected result prefixes on the same page', () => {
+  // Two paragraphs on Page 2 share the "Expected result:" prefix; only the
+  // caption-style block 12 carries the SEQ-number gap that needs anchoring.
+  const p2 = page(2, [
+    item('Figure', 211.7, 488.7, 28.3),
+    item('1', 242.5, 488.7, 5.0),
+    item(': Semantically captioned synthetic chart', 247.5, 488.7, 170.9),
+    item('Expected result: the auditor should recognize the semantic Figure caption and should not', 90.1, 472.3, 449.3),
+    item('create an image-caption finding.', 90.1, 451.6, 155.1),
+  ])
+  const blocks = [
+    { index: 12, text: 'Figure : Semantically captioned synthetic chart' },
+    { index: 13, text: 'Expected result: the auditor should recognize the semantic Figure caption and should not create an image-caption finding.' },
+  ]
+  const b = bundle([p2], blocks, () => 2)
+
+  // Block 12 must anchor to the caption line (y 488.7), NOT the prose below.
+  const cap = resolveFormattingHighlight(finding('f1', 'SPACE_BEFORE', 12), b)
+  assert.equal(cap.pageRects.length, 1)
+  assert.ok(cap.pageRects[0].y > 0.55, 'caption line sits lower-half of page')
+
+  // Block 13 matches contiguously (wrapped two lines) and stays unique.
+  const exp = resolveFormattingHighlight(finding('f2', 'SPACE_AFTER', 13), b)
+  assert.equal(exp.pageRects.length, 1)
+  assert.notEqual(exp.pageRects[0].y, cap.pageRects[0].y)
+})
+
+test('anchor ambiguity never guesses: two identical caption lines → unavailable', () => {
+  const p2 = page(2, [
+    item('Figure', 211.7, 488.7, 28.3),
+    item('1', 242.5, 488.7, 5.0),
+    item(': Semantically captioned synthetic chart', 247.5, 488.7, 170.9),
+    item('Figure', 211.7, 400, 28.3),
+    item('2', 242.5, 400, 5.0),
+    item(': Semantically captioned synthetic chart', 247.5, 400, 170.9),
+  ])
+  const block = { index: 12, text: 'Figure : Semantically captioned synthetic chart' }
+  const b = bundle([p2], [block], () => 2)
+  const r = resolveFormattingHighlight(finding('f1', 'SPACE_BEFORE', 12), b)
+  assert.equal(r.pageRects.length, 0)
+  assert.equal(r.message, REGION_UNAVAILABLE_MESSAGE)
+  assert.equal(r.spacingSide, 'before')
+})
+
+// ---------------------------------------------------------------------------
+// spacing boundary marker geometry (Build: marker direction fix)
+// ---------------------------------------------------------------------------
+
+test('SPACE_BEFORE band sits ABOVE the paragraph top edge', () => {
+  // rect: bottom-left origin, paragraph spans y 0.5..0.55
+  const rect = { y: 0.5, height: 0.05 }
+  const top = spacingBandTopPct('before', rect)
+  // paragraph top edge in CSS = (1 - 0.5 - 0.05) = 45%; band above it
+  const expected = (1 - 0.5 - 0.05) * 100 - SPACING_BAND_PCT * 100
+  assert.ok(Math.abs(top - expected) < 1e-9)
+  assert.ok(top < (1 - rect.y - rect.height) * 100, 'band strictly above the top edge')
+})
+
+test('SPACE_AFTER band sits BELOW the paragraph bottom edge', () => {
+  const rect = { y: 0.5, height: 0.05 }
+  const top = spacingBandTopPct('after', rect)
+  // paragraph bottom edge in CSS = (1 - 0.5) = 50%
+  assert.ok(Math.abs(top - 50) < 1e-9)
+  assert.ok(top > (1 - rect.y - rect.height) * 100, 'band strictly below the bottom edge')
+})
+
+test('before and after markers are distinct on the same paragraph', () => {
+  const rect = { y: 0.5, height: 0.05 }
+  const beforeTop = spacingBandTopPct('before', rect)
+  const afterTop = spacingBandTopPct('after', rect)
+  assert.notEqual(beforeTop, afterTop)
+  assert.ok(afterTop - beforeTop > rect.height * 100, 'markers straddle the paragraph')
+})
+
+test('marker position is zoom/fit-width invariant (percent-based)', () => {
+  // The band top is a page-relative percentage — the same at every canvas
+  // pixel size (100% vs 200% zoom, fit-width, rotation).
+  const rect = { y: 0.3, height: 0.02 }
+  const before = spacingBandTopPct('before', rect)
+  const after = spacingBandTopPct('after', rect)
+  // percentage values are identical regardless of canvas scale
+  for (const scale of [1, 1.5, 2.25]) {
+    const h = 842 * scale
+    const expectedBefore = ((1 - 0.3 - 0.02) * h - SPACING_BAND_PCT * h) / h * 100
+    assert.ok(Math.abs(before - expectedBefore) < 1e-9)
+    assert.ok(Math.abs(after - (1 - 0.3) * 100) < 1e-9)
+  }
+})
+
+test('no fixed 595-point canvas assumption in the bar offset path', () => {
+  // evidenceBarOffsetPx takes the REAL canvas width; the old `rect.page * 595`
+  // assumption is gone. Zoom 100% (595px) vs 200% (1190px) scale the bar
+  // gap identically in pixels.
+  const x = 0.2
+  const at100 = evidenceBarOffsetPx(x, 595)
+  const at200 = evidenceBarOffsetPx(x, 1190)
+  assert.equal(at100, 0.2 * 595 - 4)
+  assert.equal(at200, 0.2 * 1190 - 4)
+})
+
+test('markers never cover adjacent text: band is a thin fixed strip', () => {
+  // The band is 2% of page height regardless of paragraph height; a multi-
+  // line paragraph keeps its markers just outside the top/bottom edges.
+  const multiLine = { y: 0.2, height: 0.3 }
+  const before = spacingBandTopPct('before', multiLine)
+  const after = spacingBandTopPct('after', multiLine)
+  const expectedBefore = (1 - 0.2 - 0.3) * 100 - SPACING_BAND_PCT * 100
+  assert.ok(Math.abs(before - expectedBefore) < 1e-9)
+  assert.ok(Math.abs(after - (1 - 0.2) * 100) < 1e-9)
+  assert.ok(SPACING_BAND_PCT * 100 < 5, 'band stays thin')
+})
+
+test('rotated/landscape pages keep percentage positioning', () => {
+  // Rotation only changes the viewport's pixel dimensions — the normalized
+  // rect percentages are already rotation-aware (see object-bbox). The band
+  // uses the same percentages, so it stays aligned.
+  const rect = { y: 0.6, height: 0.1 }
+  const before = spacingBandTopPct('before', rect)
+  const after = spacingBandTopPct('after', rect)
+  assert.ok(before < (1 - 0.6 - 0.1) * 100)
+  assert.ok(Math.abs(after - 40) < 1e-9) // 1 - 0.6 = 0.4 → 40%
 })

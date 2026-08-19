@@ -50,7 +50,7 @@ export interface ObjectNavigationDecision {
 export type BundleLike = {
   byIndex: Map<number, BlockMapping>
   pages: PageText[]
-  blocks?: Array<{ index: number; text: string }>
+  blocks?: Array<{ index: number; text: string; styleName?: string | null }>
   /** Operator-list page geometry (Build 8F) — authoritative figure pages. */
   geometry?: PageGeometry[] | null
 }
@@ -194,15 +194,37 @@ function captionPage(bundle: BundleLike, type: 'table' | 'figure', index: number
 // surrounding-block evidence for uncaptioned tables (collision-safe)
 // ---------------------------------------------------------------------------
 
-/** Any visible table caption ("Table N"/"Tab. N"/"Jadual N"/"表N") — a
- *  positional anchor: captions sit adjacent to their tables, so caption
- *  blocks mark table positions in the document stream. */
-const CAPTION_ANCHOR_RE = /^\s*(?:table|tab\.|jadual|表)\s*\d+/i
+/** Caption-styled paragraphs (Word Caption style — SEQ fields). */
+const CAPTION_STYLE_RE = /caption/i
 
+/** Manual caption text: label + number, then colon/period/dash or EOL —
+ *  excludes prose like "Table 1 has Caption style…" (visible caption
+ *  numbers in prose are NEVER authoritative identity). */
+const TABLE_CAPTION_TEXT_RE = /^\s*(?:table|tab\.|jadual|表)\s*\d+(?:\s*[:.\-–—]|$)/i
+
+/** Table-label start — caption-styled SEQ captions may render without the
+ *  number in the extracted block text ("Table  testing"). */
+const TABLE_LABEL_START_RE = /^\s*(?:table|tab\.|jadual|表)(?:\s|\d)/i
+
+/**
+ * Caption-anchor block indexes (positional evidence for uncaptioned tables).
+ * A block anchors when it is EITHER:
+ *   - caption-styled (Word Caption style, SEQ fields may hide the number)
+ *     AND starts with a table label; or
+ *   - a visible manual caption ("Table N:" / "Table N." / "Table N" alone).
+ * Prose that merely contains "Table N" (checklist text, body copy) is never
+ * an anchor — visible caption numbers are not identity.
+ */
 export function captionAnchors(bundle: BundleLike): number[] {
   const anchors: number[] = []
   for (const block of bundle.blocks ?? []) {
-    if (CAPTION_ANCHOR_RE.test(normalizeText(block.text))) anchors.push(block.index)
+    const text = normalizeText(block.text)
+    const isCaptionStyled =
+      typeof block.styleName === 'string' && CAPTION_STYLE_RE.test(block.styleName)
+    const isAnchor = isCaptionStyled
+      ? TABLE_LABEL_START_RE.test(text)
+      : TABLE_CAPTION_TEXT_RE.test(text)
+    if (isAnchor) anchors.push(block.index)
   }
   return anchors.sort((a, b) => a - b)
 }
@@ -411,6 +433,12 @@ function objectKey(finding: { ruleCode?: string | null; location?: Record<string
  * Resolve (with session caching) the object navigation for a finding.
  * Only successful decisions are cached — temporary loading states (no
  * bundle) are never cached.
+ *
+ * Stale-cache guard: a FIGURE decision cached while operator geometry was
+ * NOT yet ready (caption/host-paragraph based) must never be served once
+ * geometry arrives — the operator page is authoritative. When the bundle
+ * carries geometry, the cache is bypassed for figure findings entirely
+ * (recomputed from the operator list, never reused across PDF changes).
  */
 export function getObjectNavigation(
   auditId: string | null,
@@ -420,13 +448,18 @@ export function getObjectNavigation(
   if (!auditId || !bundle) return { mode: 'none', pageNumber: null, label: null, chipLabel: null, message: null, evidenceMethod: null }
   const key = objectKey(finding)
   const cacheKey = key ? `${auditId}|${key}` : null
-  if (cacheKey) {
+  const hasGeometry = bundle.geometry !== null && bundle.geometry !== undefined && bundle.geometry.length > 0
+  const isFigureFinding = typeof (finding.location ?? {}).image_index === 'number'
+  // Geometry-ready figure findings are ALWAYS recomputed (authoritative
+  // operator evidence; cached caption-based decisions are stale).
+  const geometryReady = isFigureFinding && hasGeometry
+  if (cacheKey && !geometryReady) {
     const hit = objectNavCache.get(cacheKey)
     if (hit) return hit
   }
   const mapping = mapObjectFromBundle(finding, bundle)
   const decision = resolveObjectNavigation(mapping)
-  if (cacheKey && decision.mode !== 'none') objectNavCache.set(cacheKey, decision)
+  if (cacheKey && !geometryReady && decision.mode !== 'none') objectNavCache.set(cacheKey, decision)
   return decision
 }
 

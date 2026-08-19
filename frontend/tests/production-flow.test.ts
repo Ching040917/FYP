@@ -117,6 +117,28 @@ test('production flow: transient loader failure is not cached', async () => {
   assert.equal(calls, 2) // retried, not served a stale unavailable
 })
 
+test('production flow: mapping cache is invalidated when the PDF bytes change (same audit)', async () => {
+  invalidateMapping('bytes-audit')
+  const bundleFor = (text: string) => ({
+    auditId: 'bytes-audit',
+    pages: [page(1, [text])],
+    mapping: [],
+    byIndex: new Map(),
+    blocks: [{ index: 0, text }],
+  })
+  // First load computes and caches.
+  const first = await getMapping('bytes-audit', async () => bundleFor('old pdf text'))
+  assert.equal(first.pages[0].lines[0].text, 'old pdf text')
+  // Same audit id, no invalidation → cached instance served.
+  const cached = await getMapping('bytes-audit', async () => bundleFor('never called'))
+  assert.equal(cached, first)
+  // PDF replaced (bytes change) → invalidate → recomputed with new bytes.
+  invalidateMapping('bytes-audit')
+  const fresh = await getMapping('bytes-audit', async () => bundleFor('new pdf text'))
+  assert.notEqual(fresh, first)
+  assert.equal(fresh.pages[0].lines[0].text, 'new pdf text')
+})
+
 // ---------------------------------------------------------------------------
 // 5. mapping becomes ready after selection
 // ---------------------------------------------------------------------------

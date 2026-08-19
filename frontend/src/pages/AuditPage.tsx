@@ -13,6 +13,7 @@ import { DocumentPreview } from '../components/audit/document-preview'
 import { categoryForRuleCode, humanizeRuleCode, aiProviderLabel, normalizeAiProvider } from '../lib/audit/adapter'
 import { gradeFor } from '../lib/audit/scoring'
 import { useFindingMapping } from '../hooks/use-finding-mapping'
+import { invalidateMapping } from '../lib/pdf/mapping-cache.ts'
 import { useRenderedPdf } from '../hooks/use-rendered-pdf.ts'
 import { classifyFindingTarget, resolveFindingNavigation } from '../lib/pdf/finding-navigation.ts'
 import { resolveCitationHighlight, type CitationRect } from '../lib/pdf/citation-highlight.ts'
@@ -118,6 +119,9 @@ export function AuditPage() {
   // shared bytes, loaded once per audit. Geometry is independent of the
   // paragraph mapping — it can be ready before or after it.
   const [figureGeometry, setFigureGeometry] = useState<PageGeometry[] | null>(null)
+  // PDF bytes identity — a replaced PDF for the SAME audit must not reuse
+  // geometry computed from the previous bytes.
+  const geometryBytesRef = useRef<ArrayBuffer | undefined>(undefined)
   useEffect(() => {
     if (!gatedAuditId) {
       setFigureGeometry(null)
@@ -127,6 +131,9 @@ export function AuditPage() {
       setFigureGeometry(null)
       return
     }
+    const bytesChanged = geometryBytesRef.current !== renderedPdf.bytes
+    geometryBytesRef.current = renderedPdf.bytes
+    if (bytesChanged) dropPageGeometry(gatedAuditId)
     let cancelled = false
     const loader = geometryLoaderFromBytes(renderedPdf.bytes)
     if (!loader) {
@@ -154,6 +161,7 @@ export function AuditPage() {
   const [highlightMessage, setHighlightMessage] = useState<string | null>(null)
   // Formatting evidence highlight (Build 7) — mutually exclusive with citation.
   const [formattingEvidence, setFormattingEvidence] = useState<{ kind: 'run' | 'paragraph'; pageRects: CitationRect[] } | null>(null)
+  const [formattingSpacingSide, setFormattingSpacingSide] = useState<'before' | 'after' | null>(null)
   const [formattingLabel, setFormattingLabel] = useState<string | null>(null)
   const [formattingMessage, setFormattingMessage] = useState<string | null>(null)
   // Table/Figure object navigation status (page + compact message only).
@@ -200,6 +208,7 @@ export function AuditPage() {
 
   const clearFormattingHighlight = useCallback(() => {
     setFormattingEvidence(null)
+    setFormattingSpacingSide(null)
     setFormattingLabel(null)
     setFormattingMessage(null)
   }, [])
@@ -321,14 +330,22 @@ export function AuditPage() {
     }
   }, [auditId, clearCitationHighlight, clearFormattingHighlight, clearObjectStatus, clearFigureOutline, clearMarginStatus])
 
-  // PDF replaced: any highlight from the previous document is stale.
+  // PDF replaced: any highlight from the previous document is stale, and so
+  // are the session caches derived from the previous bytes (paragraph
+  // mapping, operator geometry, object navigation). Never serve old-bytes
+  // evidence for the new document.
   useEffect(() => {
     clearCitationHighlight()
     clearFormattingHighlight()
     clearObjectStatus()
     clearFigureOutline()
     clearMarginStatus()
-  }, [renderedPdf?.bytes, clearCitationHighlight, clearFormattingHighlight, clearObjectStatus, clearFigureOutline, clearMarginStatus])
+    if (gatedAuditId) {
+      dropObjectNavCache(gatedAuditId)
+      dropPageGeometry(gatedAuditId)
+      invalidateMapping(gatedAuditId)
+    }
+  }, [renderedPdf?.bytes, gatedAuditId, clearCitationHighlight, clearFormattingHighlight, clearObjectStatus, clearFigureOutline, clearMarginStatus])
 
   // Execute (or fail) the retained navigation request when the mapping
   // settles — never before.
@@ -675,6 +692,7 @@ export function AuditPage() {
       clearCitationHighlight()
       const fmt = resolveFormattingHighlight(findingLike, mappingBundle)
       setFormattingEvidence(fmt.kind !== 'none' && fmt.pageRects.length > 0 ? { kind: fmt.kind, pageRects: fmt.pageRects } : null)
+      setFormattingSpacingSide(fmt.spacingSide)
       setFormattingLabel(fmt.label)
       setFormattingMessage(fmt.message)
     } else {
@@ -1006,6 +1024,7 @@ export function AuditPage() {
                     citationLabel={citationLabel}
                     highlightMessage={highlightMessage}
                     formattingEvidence={formattingEvidence}
+                    formattingSpacingSide={formattingSpacingSide}
                     formattingLabel={formattingLabel}
                     formattingMessage={formattingMessage}
                     objectStatus={objectStatus}
@@ -1085,6 +1104,7 @@ export function AuditPage() {
                     citationLabel={citationLabel}
                     highlightMessage={highlightMessage}
                     formattingEvidence={formattingEvidence}
+                    formattingSpacingSide={formattingSpacingSide}
                     formattingLabel={formattingLabel}
                     formattingMessage={formattingMessage}
                     objectStatus={objectStatus}
@@ -1133,6 +1153,7 @@ export function AuditPage() {
                     citationLabel={citationLabel}
                     highlightMessage={highlightMessage}
                     formattingEvidence={formattingEvidence}
+                    formattingSpacingSide={formattingSpacingSide}
                     formattingLabel={formattingLabel}
                     formattingMessage={formattingMessage}
                     objectStatus={objectStatus}

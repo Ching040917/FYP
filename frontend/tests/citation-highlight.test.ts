@@ -124,6 +124,32 @@ test('punctuation and case normalization', () => {
   assert.ok(matchCitationOnPage(p2, 'Garcia \u2019s (2018)'))
 })
 
+test('bullet marker glyph (private-use) is ignored in token matching', () => {
+  // LibreOffice renders list bullets as \uF0B7 (Symbol-font private-use
+  // glyph) in a SEPARATE TextItem before the text. It must not pollute
+  // evidence matching — the paragraph text matches cleanly.
+  const p = page(1, [
+    item('\uF0B7', 90.1, 700, 5.5), // bullet marker glyph
+    item(' ', 95.6, 700, 12.5),     // tab/space after the bullet
+    item('First bullet item text', 108.1, 700, 100),
+  ])
+  const r = matchCitationOnPage(p, 'first bullet item')
+  assert.ok(r && r.length === 1)
+  // geometry is untouched: rect starts at the TEXT item, not the bullet
+  assert.ok(Math.abs(firstRect(r).x - 108.1 / 595) < 0.01)
+})
+
+test('bullet glyph split from text still matches and keeps text geometry', () => {
+  // bullet + text in the SAME TextItem: '• First item' (U+2022 literal)
+  // must still match, while the private-use \uF0B7 form is ignored
+  const p = page(1, [item('• First item', 90, 700, 60)])
+  assert.ok(matchCitationOnPage(p, 'first item'))
+  const p2 = page(1, [item('\uF0B7 First item', 90, 700, 60)])
+  assert.ok(matchCitationOnPage(p2, 'first item'))
+  const r = matchCitationOnPage(p2, 'first item')
+  assert.ok(r && Math.abs(firstRect(r).x - 90 / 595) < 0.01)
+})
+
 test('duplicate occurrences are ambiguous → no exact rect', () => {
   const p = page(1, [
     item('Garcia (2018) says', 100, 700),

@@ -345,11 +345,25 @@ interface Token {
 
 const LINE_Y_TOLERANCE = 2
 
+/**
+ * Private-use Unicode range (U+E000–U+F8FF). LibreOffice renders bullet
+ * markers (•) from the Symbol font as \uF0B7 — a decorative glyph that is
+ * NOT part of the paragraph's extracted text and must not participate in
+ * evidence matching. Ignoring it here is purely a MATCHING concern: the
+ * item's geometry (transform/width) is untouched, so highlight rectangles
+ * keep their real positions.
+ */
+function isPrivateUse(ch: string): boolean {
+  const cp = ch.codePointAt(0)
+  return cp !== undefined && cp >= 0xe000 && cp <= 0xf8ff
+}
+
 function buildToken(it: TextItemLike): Token {
   const map: number[] = []
   let sq = ''
   for (let oi = 0; oi < it.str.length; oi++) {
     for (const ch of normalizeText(it.str[oi])) {
+      if (isPrivateUse(ch)) continue
       if (/\s/.test(ch)) continue
       sq += ch
       map.push(oi)

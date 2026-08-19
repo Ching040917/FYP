@@ -89,14 +89,30 @@ def check_font_size(paragraphs: List[Dict], preset) -> List[LayoutViolation]:
     return violations
 
 
-def _is_list_item(para_dict: Dict) -> bool:
+def _is_list_item(para_dict: Dict, paragraph_obj=None) -> bool:
     """Detect whether a paragraph is a numbered/bulleted list item.
 
+    Two sources are unified so direct-formatting and style-inherited lists
+    behave identically:
+      - the `is_list_item` flag set by extract_paragraphs() from a DIRECT
+        <w:numPr> on the paragraph, and
+      - numbering inherited through the style chain (e.g. Word's List
+        Bullet / List Number styles), detected via _style_has_numbering().
+
     List items are exempt from the body-alignment rule (they're legitimately
-    left-aligned even when body is justified). The flag is set by
-    extract_paragraphs() which walks the <w:numPr> element.
+    left-aligned even when body is justified) and, when the preset is silent
+    on list spacing, from the SPACE_BEFORE/SPACE_AFTER checks.
     """
-    return bool(para_dict.get("is_list_item", False))
+    if para_dict.get("is_list_item", False):
+        return True
+    if paragraph_obj is not None:
+        try:
+            style = paragraph_obj.style
+        except Exception:
+            style = None
+        if style is not None and _style_has_numbering(style):
+            return True
+    return False
 
 
 def _paragraph_visible_text(para: Dict) -> str:
@@ -107,6 +123,29 @@ def _paragraph_visible_text(para: Dict) -> str:
     uncached field) has no visible text and is not body text.
     """
     return "".join((r.get("text") or "") for r in para.get("runs", [])).strip()
+
+
+def _is_caption_paragraph(para: Dict, paragraph_obj=None, preset=None) -> bool:
+    """True when the paragraph is a caption — semantic or manual.
+
+    Shared eligibility classifier for ALIGNMENT and SPACE_BEFORE/SPACE_AFTER
+    so both rules agree on what counts as a caption:
+      - semantic: Caption paragraph style (name contains 'caption') — the
+        style covers SEQ-field captions whose visible text drops the number
+        ("Figure : Semantically captioned…");
+      - manual: visible text matches the preset's caption label patterns
+        ("Table 1: …", "Figure 2 …", multilingual labels).
+    Headings and list items whose text merely resembles a caption are NOT
+    captions for eligibility — they are excluded by the style/pattern tests
+    (heading/list styles don't contain 'caption' and their text only matches
+    if the preset pattern matches, which the caller rules out first).
+    """
+    style_name = (para.get("style_name") or "").lower()
+    if "caption" in style_name:
+        return True
+    if preset is not None and preset.is_caption_text(para.get("text") or ""):
+        return True
+    return False
 
 
 def _style_has_numbering(style) -> bool:
@@ -178,12 +217,8 @@ def _alignment_eligible(
     if style_name.startswith(("title", "subtitle")):
         return False
 
-    # 4. Semantic Caption style.
-    if "caption" in style_name:
-        return False
-
-    # 5. Manual caption text already classified by caption logic.
-    if preset.is_caption_text(para.get("text") or ""):
+    # 4/5. Captions — semantic (Caption style) and manual (caption text).
+    if _is_caption_paragraph(para, paragraph_obj, preset):
         return False
 
     # 7. Numbering inherited through the style chain.
@@ -213,7 +248,14 @@ def check_paragraph_typography(
     _alignment_eligible): empty, image-only, caption, title/subtitle, list,
     and Reference-list paragraphs are skipped; ordinary body paragraphs
     keep the justify requirement and headings keep their configured preset
-    alignment. Line-spacing and spacing-before/after checks are unchanged.
+    alignment. Line-spacing checks are unchanged. Spacing-before/after
+    follows list awareness: when the preset is silent on list spacing
+    (LIST_SPACE_AFTER is None) list items are exempt from both SPACE_BEFORE
+    and SPACE_AFTER; when configured, list SPACE_AFTER validates against
+    that value. Caption paragraphs (semantic or manual) validate only
+    against CAPTION_SPACE_BEFORE / CAPTION_SPACE_AFTER — None (default)
+    means no deterministic caption spacing requirement. Ordinary
+    body/heading paragraphs are unchanged.
     """
     violations = []
     references_span = _references_span(paragraphs)
@@ -226,7 +268,7 @@ def check_paragraph_typography(
         style = para.get("style_name", "")
         level = get_heading_level(style)
         is_heading = level is not None
-        is_list = _is_list_item(para)
+        is_list = _is_list_item(para, paragraph_obj)
 
         # Line spacing
         expected_line_spacing = preset.LINE_SPACING_HEADING if is_heading else preset.LINE_SPACING_BODY
@@ -241,32 +283,80 @@ def check_paragraph_typography(
                 actual_value=str(actual_line_spacing),
             ))
 
-        # Space before/after
-        expected_before = preset.SPACE_BEFORE_HEADING if is_heading else preset.SPACE_BEFORE_BODY
-        expected_after = preset.SPACE_AFTER_HEADING if is_heading else preset.SPACE_AFTER_BODY
+        # Space before/after. List items follow list-specific configuration:
+        # when the preset is silent (LIST_SPACE_AFTER is None) no spacing
+        # requirement is invented and list items are exempt from both checks;
+        # when configured, only SPACE_AFTER is validated (there is no
+        # list-before configuration). Caption paragraphs (semantic OR manual)
+        # follow CAPTION_SPACE_BEFORE / CAPTION_SPACE_AFTER — None (default)
+        # means no deterministic caption spacing requirement and both checks
+        # are skipped; when configured, the caption validates against that
+        # explicit value per side. Ordinary body/heading paragraphs are
+        # unchanged.
+        is_caption = _is_caption_paragraph(para, paragraph_obj, preset)
+        if is_list:
+            if preset.LIST_SPACE_AFTER is not None:
+                actual_after = para.get("space_after")
+                if actual_after is not None and abs(actual_after - preset.LIST_SPACE_AFTER) > 1:
+                    violations.append(LayoutViolation(
+                        rule_code="SPACE_AFTER",
+                        severity="MINOR",
+                        location={"paragraph_index": para["index"]},
+                        message=f"Space after {actual_after}pt != required {preset.LIST_SPACE_AFTER}pt",
+                        expected_value=f"{preset.LIST_SPACE_AFTER}pt",
+                        actual_value=f"{actual_after}pt",
+                    ))
+        elif is_caption:
+            expected_before = preset.CAPTION_SPACE_BEFORE
+            expected_after = preset.CAPTION_SPACE_AFTER
+            actual_before = para.get("space_before")
+            actual_after = para.get("space_after")
+            # None = the preset is silent on caption spacing — no
+            # deterministic requirement, never a finding.
+            if expected_before is not None and actual_before is not None and abs(actual_before - expected_before) > 1:
+                violations.append(LayoutViolation(
+                    rule_code="SPACE_BEFORE",
+                    severity="MINOR",
+                    location={"paragraph_index": para["index"]},
+                    message=f"Space before {actual_before}pt != required {expected_before}pt",
+                    expected_value=f"{expected_before}pt",
+                    actual_value=f"{actual_before}pt",
+                ))
+            if expected_after is not None and actual_after is not None and abs(actual_after - expected_after) > 1:
+                violations.append(LayoutViolation(
+                    rule_code="SPACE_AFTER",
+                    severity="MINOR",
+                    location={"paragraph_index": para["index"]},
+                    message=f"Space after {actual_after}pt != required {expected_after}pt",
+                    expected_value=f"{expected_after}pt",
+                    actual_value=f"{actual_after}pt",
+                ))
+        else:
+            expected_before = preset.SPACE_BEFORE_HEADING if is_heading else preset.SPACE_BEFORE_BODY
+            expected_after = preset.SPACE_AFTER_HEADING if is_heading else preset.SPACE_AFTER_BODY
 
-        actual_before = para.get("space_before")
-        actual_after = para.get("space_after")
+            actual_before = para.get("space_before")
+            actual_after = para.get("space_after")
 
-        if actual_before is not None and abs(actual_before - expected_before) > 1:
-            violations.append(LayoutViolation(
-                rule_code="SPACE_BEFORE",
-                severity="MINOR",
-                location={"paragraph_index": para["index"]},
-                message=f"Space before {actual_before}pt != required {expected_before}pt",
-                expected_value=f"{expected_before}pt",
-                actual_value=f"{actual_before}pt",
-            ))
+            if actual_before is not None and abs(actual_before - expected_before) > 1:
+                violations.append(LayoutViolation(
+                    rule_code="SPACE_BEFORE",
+                    severity="MINOR",
+                    location={"paragraph_index": para["index"]},
+                    message=f"Space before {actual_before}pt != required {expected_before}pt",
+                    expected_value=f"{expected_before}pt",
+                    actual_value=f"{actual_before}pt",
+                ))
 
-        if actual_after is not None and abs(actual_after - expected_after) > 1:
-            violations.append(LayoutViolation(
-                rule_code="SPACE_AFTER",
-                severity="MINOR",
-                location={"paragraph_index": para["index"]},
-                message=f"Space after {actual_after}pt != required {expected_after}pt",
-                expected_value=f"{expected_after}pt",
-                actual_value=f"{actual_after}pt",
-            ))
+            if actual_after is not None and abs(actual_after - expected_after) > 1:
+                violations.append(LayoutViolation(
+                    rule_code="SPACE_AFTER",
+                    severity="MINOR",
+                    location={"paragraph_index": para["index"]},
+                    message=f"Space after {actual_after}pt != required {expected_after}pt",
+                    expected_value=f"{expected_after}pt",
+                    actual_value=f"{actual_after}pt",
+                ))
 
         # Alignment — only eligible visible-text paragraphs are validated:
         # empty/image-only/caption/title/list/References paragraphs skip.
@@ -510,15 +600,37 @@ def _find_image_context(doc: Document, image_rel) -> tuple:
     return -1, None, None
 
 
-def _extract_image_alt_text(doc: Document, image_rel) -> str:
-    """Extract the docPr@descr (alt-text) for an image.
+def _find_image_drawing(doc: Document, image_rel):
+    """Return the <w:drawing> element embedding this specific image.
 
-    Walks all <wp:docPr> elements in the document XML; returns the descr
-    attribute (or title as fallback). Returns "" if no alt-text is set.
+    Matches the r:embed rId on <a:blip> against the relationship id, so
+    each image resolves to its own drawing — never another image's. Works
+    for inline and anchored drawings (both live inside <w:drawing>) and
+    for multiple images in one paragraph (each matched by its own rId).
+    Returns None if the image is not found in the body.
     """
-    body_xml = doc.element.body
+    from docx.oxml.ns import qn
+
+    for drawing in doc.element.body.iter(qn("w:drawing")):
+        for blip in drawing.findall(".//" + qn("a:blip")):
+            embed = blip.get(qn("r:embed"))
+            if embed and embed == image_rel.rId:
+                return drawing
+    return None
+
+
+def _extract_image_alt_text(doc: Document, image_rel) -> str:
+    """Extract the docPr@descr (alt-text) for a specific image.
+
+    Resolves alt-text from the image's own drawing properties only — never
+    from another image's docPr. Returns "" when the image has no drawing or
+    no alt-text (descr/title empty or absent).
+    """
     ns = "{http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing}"
-    for docpr in body_xml.iter(ns + "docPr"):
+    drawing = _find_image_drawing(doc, image_rel)
+    if drawing is None:
+        return ""
+    for docpr in drawing.findall(".//" + ns + "docPr"):
         descr = docpr.get("descr") or docpr.get("title") or ""
         if descr:
             return descr

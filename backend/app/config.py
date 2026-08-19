@@ -1,7 +1,7 @@
 import os
 import re
 from pathlib import Path
-from typing import List, Pattern
+from typing import List, Optional, Pattern
 from pydantic_settings import BaseSettings
 from typing import Literal
 
@@ -30,6 +30,23 @@ class PresetConfig:
     SPACE_AFTER_HEADING = 6    # pt
     SPACE_BEFORE_BODY = 0
     SPACE_AFTER_BODY = 6
+
+    # ---- List spacing (optional) ----
+    # None (default): list items are EXEMPT from SPACE_BEFORE/SPACE_AFTER
+    # checks — the preset is silent on list spacing, so no requirement is
+    # invented and the checks do not apply. Set to a number (pt) to
+    # validate list items' SPACE_AFTER against that value. SPACE_BEFORE is
+    # never checked for list items (no list-before configuration exists).
+    LIST_SPACE_AFTER: Optional[float] = None
+
+    # ---- Caption spacing (optional) ----
+    # None (default): Caption paragraphs (semantic OR manual) are EXEMPT
+    # from SPACE_BEFORE/SPACE_AFTER checks — the preset is silent on caption
+    # spacing, so no deterministic requirement is invented. Set to a number
+    # (pt) to validate Caption paragraphs against that explicit value per
+    # side. Applies to semantic and manual Table/Figure captions alike.
+    CAPTION_SPACE_BEFORE: Optional[float] = None
+    CAPTION_SPACE_AFTER: Optional[float] = None
 
     # ---- Alignment ----
     ALIGNMENT_BODY = "justify"

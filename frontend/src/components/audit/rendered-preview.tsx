@@ -30,7 +30,7 @@ import { getPdfjs } from '../../lib/pdf/pdf-text-extract.ts'
 import type { RenderedPdfState } from '../../hooks/use-rendered-pdf.ts'
 import { cn } from '../../lib/utils'
 import { PageCommandConsumer } from '../../lib/pdf/pending-navigation.ts'
-import { evidenceBarOffsetPx, evidenceBarHeight, EVIDENCE_BAR_METRICS } from '../../lib/pdf/formatting-highlight.ts'
+import { evidenceBarOffsetPx, evidenceBarHeight, EVIDENCE_BAR_METRICS, spacingBandTopPct, SPACING_BAND_PCT } from '../../lib/pdf/formatting-highlight.ts'
 
 interface RenderedPreviewProps {
   /** PDF load state + bytes from the parent (shared with mapping). */
@@ -53,6 +53,8 @@ interface RenderedPreviewProps {
     kind: 'run' | 'paragraph'
     pageRects: Array<{ page: number; x: number; y: number; width: number; height: number }>
   } | null
+  /** 'before' = mark top boundary, 'after' = mark bottom boundary, null = no side marker. */
+  formattingSpacingSide?: 'before' | 'after' | null
   formattingLabel?: string | null
   formattingMessage?: string | null
   /** Table/Figure object navigation status (compact chip only). */
@@ -97,6 +99,7 @@ export function RenderedPreview({
   citationLabel = null,
   highlightMessage = null,
   formattingEvidence = null,
+  formattingSpacingSide = null,
   formattingLabel = null,
   formattingMessage = null,
   objectStatus = null,
@@ -497,6 +500,15 @@ export function RenderedPreview({
                 pageWidthPx={canvasRef.current?.width ?? 0}
               />
             ))}
+            {formattingSpacingSide && formattingEvidence?.pageRects.length !== undefined && (
+              <SpacingBoundaryOverlay
+                key={`spacing-${formattingSpacingSide}`}
+                side={formattingSpacingSide}
+                rect={formattingEvidence.pageRects[0]}
+                pageNum={pageNum}
+                pageWidthPx={canvasRef.current?.width ?? 0}
+              />
+            )}
             {figureOutline && figureOutline.rect.page === pageNum && (
               <FigureOutlineOverlay rect={figureOutline.rect} label={figureOutline.label} />
             )}
@@ -709,6 +721,77 @@ function MarginEdgeMarker({ side, sectionNumber }: { side: 'left' | 'right' | 't
       />
       {/* Screen-reader-only meaning (chip duplicates it visually). */}
       <span className="sr-only">Margin issue on the {side} edge of this page, Section {sectionNumber}</span>
+    </>
+  )
+}
+
+/* ---------------------------------------------------------------------------
+ * Spacing boundary overlay (Build: Space Before/After side-specific markers).
+ *
+ * SPACE_BEFORE: pale amber horizontal band just above the paragraph TOP edge.
+ * SPACE_AFTER:  pale amber horizontal band just below the paragraph BOTTOM
+ *               edge. Both carry a thin darker inner line + small left
+ *               evidence bar. The band is a FIXED visual thickness — it
+ *               never claims to represent the actual point spacing.
+ * pointer-events: none, no layout shift, aligned during zoom/fit/resize/
+ * rotation (percent positioning + the real canvas width for the bar gap).
+ * --------------------------------------------------------------------------- */
+
+function SpacingBoundaryOverlay({
+  side,
+  rect,
+  pageNum,
+  pageWidthPx,
+}: {
+  side: 'before' | 'after'
+  rect: { page: number; x: number; y: number; width: number; height: number }
+  pageNum: number
+  pageWidthPx: number
+}) {
+  if (rect.page !== pageNum) return null
+  const heightPct = SPACING_BAND_PCT * 100
+  const isBefore = side === 'before'
+  // PDF rects are bottom-left origin; CSS top is measured from the top.
+  // SPACE_BEFORE marks the TOP boundary (band above the paragraph);
+  // SPACE_AFTER  marks the BOTTOM boundary (band below the paragraph).
+  const topPct = spacingBandTopPct(side, rect)
+  // Left evidence bar: 3px wide, sits 4px left of the rect's left edge,
+  // using the ACTUAL rendered canvas width (zoom/fit-width independent).
+  const barLeftPx = evidenceBarOffsetPx(rect.x, pageWidthPx)
+  return (
+    <>
+      {/* Pale amber horizontal band — above for BEFORE, below for AFTER. */}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute bg-amber-200/40"
+        style={{
+          left: `${rect.x * 100}%`,
+          top: `${topPct}%`,
+          width: `${rect.width * 100}%`,
+          height: `${heightPct}%`,
+        }}
+      />
+      {/* Thin darker inner line along the side closest to the paragraph. */}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute bg-amber-500"
+        style={{
+          left: `${rect.x * 100}%`,
+          top: isBefore ? `calc(${topPct}% + ${heightPct - 1}px)` : `calc(${topPct}% + ${heightPct / 2}%)`,
+          width: `${rect.width * 100}%`,
+          height: '1px',
+        }}
+      />
+      {/* Small left evidence bar. */}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute w-[3px] rounded-full bg-amber-500"
+        style={{
+          left: `${barLeftPx}px`,
+          top: `${topPct}%`,
+          height: `${heightPct}%`,
+        }}
+      />
     </>
   )
 }

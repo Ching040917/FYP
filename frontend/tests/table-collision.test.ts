@@ -328,3 +328,43 @@ test('API-shaped violations (snake_case) resolve identically through the batch',
   assert.equal(nav.get(f.missingIdx)!.pageNumber, 2)
   assert.equal(nav.get(f.targetIdx)!.pageNumber, 3)
 })
+
+// ---------------------------------------------------------------------------
+// SEQ-field captions (production defect: Table 3 mapped to Page 2 while it
+// renders on Page 1)
+// ---------------------------------------------------------------------------
+
+test('SEQ captions (caption style, hidden number) anchor the uncaptioned table on the right page', () => {
+  // Real production structure: Word SEQ captions render "Table 1"/"Table 2"
+  // in the PDF, but the persisted block text drops the number ("Table  testing").
+  // Prose checklist items ("Table 1 has Caption style…") must NOT be anchors.
+  const blocks = [
+    { index: 4, text: 'Table  testing', styleName: 'Caption' },
+    { index: 6, text: 'Table  real tba', styleName: 'Caption' },
+    { index: 8, text: '3 Table without a Caption' },
+    { index: 9, text: 'Expected result: the auditor should create TABLE_CAPTION_MISSING for the table above.' },
+    { index: 12, text: 'Figure : Semantically captioned synthetic chart', styleName: 'Caption' },
+    { index: 18, text: 'Table 1 has Caption style and a SEQ Table field.', styleName: 'List Bullet' },
+    { index: 19, text: 'Table 2 has no adjacent caption.', styleName: 'List Bullet' },
+  ]
+  const pages = [
+    page(1, [blocks[0].text, blocks[1].text, blocks[2].text, blocks[3].text]),
+    page(2, [blocks[4].text, blocks[5].text, blocks[6].text]),
+  ]
+  const mapping = mapBlocksToPages(blocks, pages)
+  const bundle = { byIndex: new Map(mapping.map((m) => [m.index, m])), pages, blocks }
+
+  // Figure captions and prose checklist items are NOT table anchors.
+  assert.deepEqual(captionAnchors(bundle), [4, 6])
+
+  // Table 3 (index 2, uncaptioned) sits between captions 4/6 → Page 1.
+  const nav = resolveTableNavigations('audit-seq', [
+    violation('TABLE_CAPTION_MISSING', { table_index: 2 }, 'c'),
+  ], bundle)
+  const t3 = nav.get(2)!
+  assert.equal(t3.mode, 'rendered')
+  assert.equal(t3.pageNumber, 1)
+  assert.equal(t3.label, 'Page 1 · Table 3')
+  assert.equal(t3.chipLabel, 'Table 3 · Page 1')
+  assert.equal(t3.evidenceMethod, 'surrounding-blocks')
+})

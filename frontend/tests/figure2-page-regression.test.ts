@@ -227,3 +227,51 @@ test('CF3: Figure 1 behavior is unchanged when geometry disagrees with host page
   assert.equal(nav.pageNumber, 2)
   assert.equal(nav.label, 'Page 2 · Figure 1')
 })
+
+test('CF3: caption-cached figure decision is NOT reused once operator geometry arrives', () => {
+  // THE production defect: geometry loads async. A selection made before
+  // geometry was ready cached a caption/host-based decision ("Page 3") for
+  // image_index 1; when geometry arrives (Figure 2 on Page 2), the stale
+  // cache must be bypassed — never "Figure 2 · Page 3".
+  const g = fixtureGeometry()
+  const audit = nextAudit()
+  const noGeoBundle = (() => {
+    const pages = [
+      page(1, ['Chapter One']),
+      page(2, ['Figure 1: Growth chart']),
+      page(3, ['Figure 2 explanatory text continues onto this page.']),
+    ]
+    const blocks = [
+      { index: 0, text: 'Chapter One' },
+      { index: 1, text: '' },
+      { index: 2, text: 'Figure 1: Growth chart' },
+      { index: 3, text: '' },
+      { index: 4, text: 'Figure 2 explanatory text continues onto this page.' },
+    ]
+    const mapping = mapBlocksToPages(blocks, pages)
+    return { byIndex: new Map(mapping.map((m) => [m.index, m])), pages, blocks }
+  })()
+  const f = { ruleCode: 'IMAGE_CAPTION_MISSING', location: { image_index: 1, paragraph_index: 4 } }
+
+  // Before geometry: caption-based evidence (block "Figure 2 explanatory…"
+  // maps to page 3) — cached.
+  const stale = getObjectNavigation(audit, f, noGeoBundle)
+  assert.equal(stale.evidenceMethod, 'caption')
+  assert.equal(stale.pageNumber, 3)
+
+  // Geometry arrives: the cache entry for the SAME audit/key must not be
+  // served — the operator page (2) is authoritative.
+  const fresh = getObjectNavigation(audit, f, { ...noGeoBundle, geometry: g })
+  assert.equal(fresh.pageNumber, 2)
+  assert.equal(fresh.evidenceMethod, 'image-op-order')
+  assert.equal(fresh.chipLabel, 'Figure 2 · Page 2')
+
+  // And the outline resolves to the SAME operator-derived page/bbox for
+  // both Figure 2 findings.
+  const cap = resolveFigureOutline({ finding: { ruleCode: 'IMAGE_CAPTION_MISSING', location: { image_index: 1, paragraph_index: 4 } }, geometry: g, pageNumber: 2 })
+  const alt = resolveFigureOutline({ finding: { ruleCode: 'IMAGE_ALT_TEXT_MISSING', location: { image_index: 1, paragraph_index: 4 } }, geometry: g, pageNumber: 2 })
+  assert.ok(cap.rect && alt.rect)
+  assert.equal(cap.pageNumber, 2)
+  assert.equal(alt.pageNumber, 2)
+  assert.deepEqual(cap.rect, alt.rect)
+})

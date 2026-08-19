@@ -188,6 +188,28 @@ _PNG_1PX = (
 )
 
 
+def _PNG_RGB(index):
+    """Build a distinct 1x1 PNG (index -> different colour) in-memory."""
+    import base64
+    import struct
+    import zlib
+
+    def chunk(tag, data):
+        c = tag + data
+        return (
+            struct.pack(">I", len(data)) + c
+            + struct.pack(">I", zlib.crc32(c) & 0xFFFFFFFF)
+        )
+
+    ihdr = struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0)
+    rgb = ((255, 0, 0), (0, 0, 255), (0, 128, 0), (128, 0, 128))[index % 4]
+    raw = b"\x00" + bytes(rgb)
+    return (
+        b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr)
+        + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b"")
+    )
+
+
 def _doc_with_image(caption_builder=None, below=True, alt_text="Test alt"):
     """Body + optional caption + one inline picture paragraph."""
     import base64
@@ -206,6 +228,100 @@ def _doc_with_image(caption_builder=None, below=True, alt_text="Test alt"):
     buf = io.BytesIO()
     doc.save(buf)
     return buf.getvalue()
+
+
+def _convert_inline_to_anchor(inline):
+    """Convert one wp:inline drawing element into a wp:anchor (in place)."""
+    wp = "{http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing}"
+    a_ns = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
+    drawing = inline.getparent()
+    anchor = OxmlElement("wp:anchor")
+    for attr, val in (
+        ("distT", "0"), ("distB", "0"), ("distL", "114300"), ("distR", "114300"),
+        ("simplePos", "0"), ("relativeHeight", "251658240"), ("behindDoc", "0"),
+        ("locked", "0"), ("layoutInCell", "1"), ("allowOverlap", "1"),
+    ):
+        anchor.set(attr, val)
+    for tag in ("simplePos", "positionH", "positionV"):
+        el = OxmlElement("wp:" + tag)
+        if tag == "simplePos":
+            el.set("x", "0")
+            el.set("y", "0")
+        else:
+            el.set("relativeFrom", "column" if tag == "positionH" else "paragraph")
+            off = OxmlElement("wp:posOffset")
+            off.text = "0"
+            el.append(off)
+        anchor.append(el)
+    extent = inline.find(wp + "extent")
+    if extent is not None:
+        anchor.append(extent)
+    eff = inline.find(wp + "effectExtent")
+    if eff is not None:
+        anchor.append(eff)
+    anchor.append(OxmlElement("wp:wrapNone"))
+    docpr = inline.find(wp + "docPr")
+    if docpr is not None:
+        anchor.append(docpr)
+    cnv = inline.find(wp + "cNvGraphicFramePr")
+    if cnv is not None:
+        anchor.append(cnv)
+    graphic = inline.find(a_ns + "graphic")
+    if graphic is not None:
+        anchor.append(graphic)
+    drawing.replace(inline, anchor)
+
+
+def _png_bytes(index):
+    """Distinct 1x1 PNG per index — python-docx dedupes identical images."""
+    import base64
+    if index == 0:
+        return base64.b64decode(_PNG_1PX)
+    return _PNG_RGB(index)
+
+
+def _doc_with_images(alt_texts, one_paragraph=False, anchored=False):
+    """Build docx with len(alt_texts) images.
+
+    `alt_texts`: per-image docPr@descr; None means "no alt text".
+    `one_paragraph`: all images in a single paragraph (order preserved).
+    `anchored`: use wp:anchor instead of wp:inline for every drawing.
+    """
+    doc = Document()
+    doc.add_paragraph("Body text.")
+    if one_paragraph:
+        para = doc.add_paragraph()
+        for i in range(len(alt_texts)):
+            para.add_run().add_picture(
+                io.BytesIO(_png_bytes(i)), width=Inches(1)
+            )
+    else:
+        for i in range(len(alt_texts)):
+            para = doc.add_paragraph()
+            para.add_run().add_picture(
+                io.BytesIO(_png_bytes(i)), width=Inches(1)
+            )
+
+    wp = "{http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing}"
+    if anchored:
+        for inline in doc.element.body.findall(".//" + wp + "inline"):
+            _convert_inline_to_anchor(inline)
+
+    docprs = doc.element.body.findall(".//" + wp + "docPr")
+    for docpr, alt in zip(docprs, alt_texts):
+        if alt is not None:
+            docpr.set("descr", alt)
+
+    buf = io.BytesIO()
+    doc.save(buf)
+    return buf.getvalue()
+
+
+def _alt_missing_indexes(viols):
+    return sorted(
+        v.location.get("image_index")
+        for v in viols if v.rule_code == "IMAGE_ALT_TEXT_MISSING"
+    )
 
 
 def _caption_codes(viols):
@@ -351,3 +467,66 @@ def test_uncaptioned_image_triggers_minor(docx_factory):
     )
     viols = run_static_rules_engine(file_bytes)
     assert "IMAGE_CAPTION_MISSING" in _caption_codes(viols)
+
+
+# ---------------------------------------------------------------------------
+# Image alt-text — per-image docPr@descr resolution (defect fix)
+# ---------------------------------------------------------------------------
+
+def test_alt_text_first_image_only():
+    """Only the image WITHOUT alt text is flagged — not its neighbour."""
+    file_bytes = _doc_with_images(["First image alt", None])
+    viols = run_static_rules_engine(file_bytes)
+    assert _alt_missing_indexes(viols) == [1]
+
+
+def test_alt_text_second_image_only():
+    file_bytes = _doc_with_images([None, "Second image alt"])
+    viols = run_static_rules_engine(file_bytes)
+    assert _alt_missing_indexes(viols) == [0]
+
+
+def test_alt_text_both_images_distinct():
+    """Distinct alt text on both images -> no IMAGE_ALT_TEXT_MISSING."""
+    file_bytes = _doc_with_images(["First alt", "Second alt"])
+    viols = run_static_rules_engine(file_bytes)
+    assert _alt_missing_indexes(viols) == []
+
+
+def test_alt_text_neither_image():
+    file_bytes = _doc_with_images([None, None])
+    viols = run_static_rules_engine(file_bytes)
+    assert _alt_missing_indexes(viols) == [0, 1]
+
+
+def test_alt_text_multiple_images_one_paragraph():
+    """Multiple images in a single paragraph still resolve individually."""
+    file_bytes = _doc_with_images([None, "Second alt"], one_paragraph=True)
+    viols = run_static_rules_engine(file_bytes)
+    assert _alt_missing_indexes(viols) == [0]
+
+
+def test_alt_text_anchored_images():
+    """Anchored drawings resolve alt text per image too."""
+    file_bytes = _doc_with_images(["First alt", None], anchored=True)
+    viols = run_static_rules_engine(file_bytes)
+    assert _alt_missing_indexes(viols) == [1]
+
+
+def test_alt_text_anchored_images_both_have_alt():
+    file_bytes = _doc_with_images(["A", "B"], anchored=True)
+    viols = run_static_rules_engine(file_bytes)
+    assert _alt_missing_indexes(viols) == []
+
+
+def test_image_index_stable_across_rules():
+    """image_index ordering matches for alt-text and caption findings."""
+    file_bytes = _doc_with_images(["Alt", None])
+    viols = run_static_rules_engine(file_bytes)
+    alt = _alt_missing_indexes(viols)
+    cap = sorted(
+        v.location["image_index"]
+        for v in viols if v.rule_code == "IMAGE_CAPTION_MISSING"
+    )
+    assert alt == [1]
+    assert cap == [0, 1]

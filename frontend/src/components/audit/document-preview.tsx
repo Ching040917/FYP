@@ -57,6 +57,7 @@ export interface DocumentPreviewProps {
     kind: 'run' | 'paragraph'
     pageRects: Array<{ page: number; x: number; y: number; width: number; height: number }>
   } | null
+  formattingSpacingSide?: 'before' | 'after' | null
   formattingLabel?: string | null
   formattingMessage?: string | null
   /** Table/Figure object navigation status (compact chip only). */
@@ -96,6 +97,7 @@ export function DocumentPreview({
   citationLabel = null,
   highlightMessage = null,
   formattingEvidence = null,
+  formattingSpacingSide = null,
   formattingLabel = null,
   formattingMessage = null,
   objectStatus = null,
@@ -246,6 +248,7 @@ export function DocumentPreview({
             citationLabel={citationLabel}
             highlightMessage={highlightMessage}
             formattingEvidence={formattingEvidence}
+            formattingSpacingSide={formattingSpacingSide}
             formattingLabel={formattingLabel}
             formattingMessage={formattingMessage}
             objectStatus={objectStatus}

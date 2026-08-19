@@ -43,7 +43,7 @@ export type PageText = {
   pageHeight?: number
 }
 
-export type BlockLike = { index: number; text: string }
+export type BlockLike = { index: number; text: string; styleName?: string | null }
 
 export type MappingConfidence = 'exact' | 'approximate' | 'unavailable'
 
