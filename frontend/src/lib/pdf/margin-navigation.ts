@@ -86,7 +86,7 @@ export function resolveMarginNavigation(
     return {
       navigatePage: null,
       chipLabel: null,
-      message: MARGIN_UNAVAILABLE_MESSAGE,
+      message: `${sectionLabel} could not be located. The displayed page has not changed.`,
       rowLabel: `${sectionLabel} · Page unavailable`,
     }
   }

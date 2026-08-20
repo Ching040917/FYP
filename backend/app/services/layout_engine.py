@@ -17,6 +17,15 @@ from app.services.citation_sensor import (
     _find_references_start,
     APPENDIX_HEADER_PATTERN,
 )
+from app.services.role_eligibility import (
+    is_font_eligible,
+    is_heading_role,
+    is_body_role,
+    is_caption_role,
+    is_reference_role,
+    typography_skipped,
+    body_prose_paragraph,
+)
 from app.config import settings
 
 
@@ -29,60 +38,194 @@ LayoutViolation = __import__(
 ).LayoutViolation
 
 
-def check_font_consistency(paragraphs: List[Dict], preset) -> List[LayoutViolation]:
-    """FR-2.1: Font Consistency - scan runs, flag mismatched font families per style."""
+def _heading_style_level(style_name: Optional[str], role: Optional[str]) -> Optional[int]:
+    """Heading level for font/typography: authoritative role wins when the
+    paragraph is heading-like; otherwise the style-derived level (legacy
+    fallback for callers without roles)."""
+    if is_heading_role(role):
+        if role in ("REFERENCES_HEADING", "APPENDIX_HEADING"):
+            return 1
+        return int(role.rsplit("_", 1)[-1])
+    return get_heading_level(style_name)
+
+
+def check_font_consistency(
+    paragraphs: List[Dict],
+    preset,
+    roles: Optional[List[Optional[str]]] = None,
+) -> List[LayoutViolation]:
+    """FR-2.1: Font Consistency - scan runs, flag mismatched font families.
+
+    Role-aware (Phase 2A): only font-eligible roles (BODY, APPENDIX_BODY,
+    heading-like, LIST_ITEM) validate. Cover labels, Title/Subtitle, TOC
+    entries, equations, figure hosts, empty/field-only, UNKNOWN, and
+    reference entries are skipped — the authoritative role decides, not the
+    style name. When `roles` is None (legacy callers), the previous
+    style-heuristic behavior is preserved.
+
+    Profile-aware (Build 4): when the config carries an allowed font-and-size
+    combination set, each run validates (family, size) TOGETHER against the
+    allowed pairs — a valid family with a size from another family is
+    rejected. Messages reference the selected profile.
+    """
     violations = []
     expected_font = preset.FONT_FAMILY
+    profile_label = getattr(preset, "profile_label", None)
+    has_combos = bool(getattr(preset, "BODY_ALLOWED_FONT_COMBOS", ()))
 
-    for para in paragraphs:
+    for i, para in enumerate(paragraphs):
         style = para.get("style_name", "")
-        if not style or style.lower().startswith("heading"):
-            continue  # Headings checked separately
+        role = roles[i] if roles is not None else None
+        if role is not None:
+            if not is_font_eligible(role):
+                continue
+        elif not style or style.lower().startswith("heading"):
+            continue  # Headings checked separately (legacy fallback)
+
+        # Headings use the heading family; body/list use the body family.
+        level = _heading_style_level(style, role)
+        heading = level is not None
+        expected_family = (
+            getattr(preset, "HEADING_FONT_FAMILY", None) if heading else expected_font
+        )
 
         for run in para.get("runs", []):
             font_name = run.get("font_name")
-            if font_name and font_name.lower() != expected_font.lower():
+            if not font_name:
+                continue
+            font_size = run.get("font_size")
+            if has_combos:
+                # Allowed-pair profile (APA): validate family+size together.
+                if not preset.is_font_pair_allowed(font_name, font_size, heading=heading):
+                    if profile_label:
+                        msg = (
+                            f"This text uses {font_name} {font_size or '?'}pt. "
+                            f"The selected {profile_label} profile requires an "
+                            f"allowed font-and-size combination."
+                        )
+                    else:
+                        msg = f"Font '{font_name}' does not match required '{expected_font}'"
+                    violations.append(LayoutViolation(
+                        rule_code="FONT_CONSISTENCY",
+                        severity="MINOR",
+                        location={"paragraph_index": para["index"], "run_index": run["index"]},
+                        message=msg,
+                        expected_value=", ".join(f"{f} {s:g}pt" for f, s in preset.BODY_ALLOWED_FONT_COMBOS) or expected_font,
+                        actual_value=f"{font_name} {font_size or ''}pt",
+                    ))
+                continue
+            # Exact-family profile.
+            if expected_family and font_name.lower() != expected_family.lower():
+                if profile_label:
+                    msg = (
+                        f"This text uses {font_name}. The selected {profile_label} "
+                        f"profile requires {expected_family}."
+                    )
+                else:
+                    msg = f"Font '{font_name}' does not match required '{expected_family}'"
                 violations.append(LayoutViolation(
                     rule_code="FONT_CONSISTENCY",
                     severity="MINOR",
                     location={"paragraph_index": para["index"], "run_index": run["index"]},
-                    message=f"Font '{font_name}' does not match required '{expected_font}'",
-                    expected_value=expected_font,
+                    message=msg,
+                    expected_value=expected_family,
                     actual_value=font_name,
                 ))
     return violations
 
 
-def check_font_size(paragraphs: List[Dict], preset) -> List[LayoutViolation]:
-    """FR-2.2: Font Size Alignment - verify heading/body sizes against presets."""
-    violations = []
+def check_font_size(
+    paragraphs: List[Dict],
+    preset,
+    roles: Optional[List[Optional[str]]] = None,
+) -> List[LayoutViolation]:
+    """FR-2.2: Font Size Alignment - verify heading/body sizes against presets.
 
-    for para in paragraphs:
+    Role-aware (Phase 2A): only font-eligible roles validate. The expected
+    size comes from the authoritative heading role when present, else the
+    style-derived heading level (legacy fallback). Cover/TOC/equation/
+    figure-host/empty/field-only/UNKNOWN/reference-entry paragraphs are
+    skipped.
+
+    Profile-aware (Build 4): heading sizes come from the resolved snapshot
+    (per-level; APA inherits the body pair — no fixed 16/14/12 pt descent).
+    When the profile uses an allowed font-and-size combination set, a run is
+    only flagged when its (family, size) is NOT a valid pair; exact-size
+    profiles keep the size-only check. Messages reference the profile.
+    """
+    violations = []
+    profile_label = getattr(preset, "profile_label", None)
+    has_combos = bool(getattr(preset, "BODY_ALLOWED_FONT_COMBOS", ()))
+
+    for i, para in enumerate(paragraphs):
         style = para.get("style_name", "")
-        level = get_heading_level(style)
+        role = roles[i] if roles is not None else None
+        level = _heading_style_level(style, role)
 
         expected_size = None
-        if level == 1:
-            expected_size = preset.FONT_SIZE_H1
-        elif level == 2:
-            expected_size = preset.FONT_SIZE_H2
-        elif level == 3:
-            expected_size = preset.FONT_SIZE_H3
+        if level in (1, 2, 3):
+            expected_size = preset.heading_expected_size(level) if hasattr(preset, "heading_expected_size") else {
+                1: getattr(preset, "FONT_SIZE_H1", None),
+                2: getattr(preset, "FONT_SIZE_H2", None),
+                3: getattr(preset, "FONT_SIZE_H3", None),
+            }.get(level)
         elif not level:
-            expected_size = preset.FONT_SIZE_BODY
+            if role is not None:
+                # Role-aware: body-like roles get body size; everything else
+                # (cover, TOC, equations, UNKNOWN...) is skipped.
+                if is_body_role(role):
+                    expected_size = preset.FONT_SIZE_BODY
+            else:
+                expected_size = preset.FONT_SIZE_BODY
 
         if expected_size is None:
             continue
 
         for run in para.get("runs", []):
             font_size = run.get("font_size")
-            if font_size and abs(font_size - expected_size) > 0.5:  # Allow 0.5pt tolerance
+            if not font_size:
+                continue
+            font_name = run.get("font_name")
+            if has_combos:
+                # Allowed-pair profile: flag only when the pair is invalid.
+                if preset.is_font_pair_allowed(font_name, font_size, heading=level is not None):
+                    continue
                 severity = "MAJOR" if level else "MINOR"
+                if profile_label:
+                    msg = (
+                        f"This {'heading' if level else 'body'} text uses "
+                        f"{font_name} {font_size:g}pt. The selected {profile_label} "
+                        f"profile requires an allowed font-and-size combination."
+                    )
+                else:
+                    msg = f"{style or 'Body'} font size {font_size}pt is not an allowed combination"
                 violations.append(LayoutViolation(
                     rule_code="FONT_SIZE",
                     severity=severity,
                     location={"paragraph_index": para["index"], "run_index": run["index"]},
-                    message=f"{style or 'Body'} font size {font_size}pt != required {expected_size}pt",
+                    message=msg,
+                    expected_value=", ".join(f"{f} {s:g}pt" for f, s in (
+                        getattr(preset, "HEADING_ALLOWED_FONT_COMBOS", ()) if level
+                        else getattr(preset, "BODY_ALLOWED_FONT_COMBOS", ())
+                    )) or f"{expected_size}pt",
+                    actual_value=f"{font_name} {font_size:g}pt",
+                ))
+                continue
+            if abs(font_size - expected_size) > 0.5:  # Allow 0.5pt tolerance
+                severity = "MAJOR" if level else "MINOR"
+                if profile_label:
+                    what = "Heading" if level else "Body"
+                    msg = (
+                        f"This {what} text uses {font_size:g} pt. The selected "
+                        f"{profile_label} profile requires {expected_size:g} pt."
+                    )
+                else:
+                    msg = f"{style or 'Body'} font size {font_size}pt != required {expected_size}pt"
+                violations.append(LayoutViolation(
+                    rule_code="FONT_SIZE",
+                    severity=severity,
+                    location={"paragraph_index": para["index"], "run_index": run["index"]},
+                    message=msg,
                     expected_value=f"{expected_size}pt",
                     actual_value=f"{font_size}pt",
                 ))
@@ -241,44 +384,146 @@ def check_paragraph_typography(
     paragraphs: List[Dict],
     preset,
     doc: Optional[Document] = None,
+    roles: Optional[List[Optional[str]]] = None,
 ) -> List[LayoutViolation]:
     """FR-2.3: Paragraph typography — line spacing, spacing before/after, alignment.
 
-    ALIGNMENT applies only to eligible visible-text paragraphs (see
-    _alignment_eligible): empty, image-only, caption, title/subtitle, list,
-    and Reference-list paragraphs are skipped; ordinary body paragraphs
-    keep the justify requirement and headings keep their configured preset
-    alignment. Line-spacing checks are unchanged. Spacing-before/after
-    follows list awareness: when the preset is silent on list spacing
-    (LIST_SPACE_AFTER is None) list items are exempt from both SPACE_BEFORE
-    and SPACE_AFTER; when configured, list SPACE_AFTER validates against
-    that value. Caption paragraphs (semantic or manual) validate only
-    against CAPTION_SPACE_BEFORE / CAPTION_SPACE_AFTER — None (default)
-    means no deterministic caption spacing requirement. Ordinary
-    body/heading paragraphs are unchanged.
+    Role-aware (Phase 2A): the authoritative paragraph role decides which
+    requirements apply.
+
+      BODY / APPENDIX_BODY(prose):
+        body line spacing, body space-before/after, body alignment.
+      HEADING_1/2/3 / REFERENCES_HEADING / APPENDIX_HEADING:
+        heading line spacing, heading space-before/after, heading alignment.
+      LIST_ITEM:
+        visible-text font checks only — list-specific spacing policy is
+        preserved (LIST_SPACE_AFTER=None ⇒ no deterministic list-spacing
+        finding; configured ⇒ SPACE_AFTER validates against it).
+      CAPTION_TABLE / CAPTION_FIGURE:
+        NO body font/alignment/line-spacing; only CAPTION_SPACE_BEFORE /
+        CAPTION_SPACE_AFTER when explicitly configured (None ⇒ no finding).
+      REFERENCE_ENTRY:
+        reference-specific formatting only — REFERENCES_LINE_SPACING
+        (default 2.0). No BODY line-spacing, alignment, or
+        paragraph-spacing findings.
+      COVER, TITLE, SUBTITLE, TOC_*, DISPLAYED_EQUATION, FIGURE_HOST,
+      EMPTY, FIELD_ONLY, UNKNOWN:
+        no typography findings; no invented cover requirements; UNKNOWN is
+        never converted to BODY.
+
+    When `roles` is None (legacy callers), the previous style/text-heuristic
+    behavior is preserved exactly.
     """
     violations = []
     references_span = _references_span(paragraphs)
+    profile_label = getattr(preset, "profile_label", None)
+
+    def _msg(what: str, actual, expected, unit: str) -> str:
+        """Profile-aware message: 'This <what> is <actual><unit>. The
+        selected "<profile>" profile requires <expected><unit>.' Falls back
+        to the legacy format when no profile label exists."""
+        if profile_label:
+            if unit:
+                return (
+                    f"This {what} is {actual:g} {unit}. The selected {profile_label} "
+                    f"profile requires {expected:g} {unit}."
+                )
+            return (
+                f"This {what} is {actual:g}. The selected {profile_label} "
+                f"profile requires {expected:g}."
+            )
+        return f"{what} {actual} != required {expected}"
+
+    def _line_spacing_msg(actual, expected) -> str:
+        """Line-spacing message — a multiplier, no unit suffix."""
+        if profile_label:
+            return (
+                f"This line spacing is {actual:g}. The selected {profile_label} "
+                f"profile requires {expected:g}."
+            )
+        return f"Line spacing {actual} != required {expected}"
 
     # doc.paragraphs aligns 1:1 with extract_paragraphs output — pairing
     # gives access to the paragraph style chain for inherited numbering.
     paired = zip(paragraphs, doc.paragraphs) if doc is not None else ((p, None) for p in paragraphs)
 
-    for para, paragraph_obj in paired:
+    for i, (para, paragraph_obj) in enumerate(paired):
         style = para.get("style_name", "")
-        level = get_heading_level(style)
+        role = roles[i] if roles is not None else None
+        level = _heading_style_level(style, role)
         is_heading = level is not None
         is_list = _is_list_item(para, paragraph_obj)
+        is_caption = _is_caption_paragraph(para, paragraph_obj, preset)
 
-        # Line spacing
+        # ---- Role-gated early exit: skip non-typography roles entirely.
+        # Cover/TOC/equation/figure-host/empty/field-only/UNKNOWN get no
+        # BODY typography findings; captions and reference entries are
+        # handled by their dedicated branches below.
+        if role is not None:
+            if typography_skipped(role):
+                continue
+            if is_caption_role(role):
+                # Caption-specific spacing only — no line-spacing/alignment.
+                expected_before = preset.CAPTION_SPACE_BEFORE
+                expected_after = preset.CAPTION_SPACE_AFTER
+                actual_before = para.get("space_before")
+                actual_after = para.get("space_after")
+                if expected_before is not None and actual_before is not None and abs(actual_before - expected_before) > 1:
+                    violations.append(LayoutViolation(
+                        rule_code="SPACE_BEFORE",
+                        severity="MINOR",
+                        location={"paragraph_index": para["index"]},
+                        message=_msg("space before this caption", actual_before, expected_before, "pt"),
+                        expected_value=f"{expected_before}pt",
+                        actual_value=f"{actual_before}pt",
+                    ))
+                if expected_after is not None and actual_after is not None and abs(actual_after - expected_after) > 1:
+                    violations.append(LayoutViolation(
+                        rule_code="SPACE_AFTER",
+                        severity="MINOR",
+                        location={"paragraph_index": para["index"]},
+                        message=_msg("space after this caption", actual_after, expected_after, "pt"),
+                        expected_value=f"{expected_after}pt",
+                        actual_value=f"{actual_after}pt",
+                    ))
+                continue
+            if is_reference_role(role):
+                # Reference-specific formatting only: REFERENCES_LINE_SPACING.
+                # No BODY line-spacing, alignment, or paragraph-spacing.
+                if preset.REFERENCES_LINE_SPACING is not None:
+                    expected = preset.REFERENCES_LINE_SPACING
+                    actual = para.get("line_spacing")
+                    if actual is not None and abs(actual - expected) > 0.1:
+                        violations.append(LayoutViolation(
+                            rule_code="LINE_SPACING",
+                            severity="MINOR",
+                            location={"paragraph_index": para["index"]},
+                            message=(
+                                f"This reference entry uses {actual:g} line spacing. "
+                                f"The selected {profile_label or 'profile'} profile "
+                                f"requires {expected:g}."
+                            ) if profile_label else
+                            f"References line spacing {actual} != required {expected}",
+                            expected_value=str(expected),
+                            actual_value=str(actual),
+                        ))
+                continue
+            # APPENDIX_BODY is BODY-eligible only when it contains ordinary
+            # academic prose — rubric/form content must never become BODY.
+            if not body_prose_paragraph(role, para.get("text") or ""):
+                continue
+            # BODY/APPENDIX_BODY/LIST_ITEM/heading-like: fall through to the
+            # common typography path (role-aware heading/body split below).
+
+        # Line spacing — nullable requirement (None) skips the check.
         expected_line_spacing = preset.LINE_SPACING_HEADING if is_heading else preset.LINE_SPACING_BODY
         actual_line_spacing = para.get("line_spacing")
-        if actual_line_spacing and abs(actual_line_spacing - expected_line_spacing) > 0.1:
+        if expected_line_spacing is not None and actual_line_spacing and abs(actual_line_spacing - expected_line_spacing) > 0.1:
             violations.append(LayoutViolation(
                 rule_code="LINE_SPACING",
                 severity="MINOR",
                 location={"paragraph_index": para["index"]},
-                message=f"Line spacing {actual_line_spacing} != required {expected_line_spacing}",
+                message=_line_spacing_msg(actual_line_spacing, expected_line_spacing),
                 expected_value=str(expected_line_spacing),
                 actual_value=str(actual_line_spacing),
             ))
@@ -293,7 +538,6 @@ def check_paragraph_typography(
         # are skipped; when configured, the caption validates against that
         # explicit value per side. Ordinary body/heading paragraphs are
         # unchanged.
-        is_caption = _is_caption_paragraph(para, paragraph_obj, preset)
         if is_list:
             if preset.LIST_SPACE_AFTER is not None:
                 actual_after = para.get("space_after")
@@ -302,7 +546,7 @@ def check_paragraph_typography(
                         rule_code="SPACE_AFTER",
                         severity="MINOR",
                         location={"paragraph_index": para["index"]},
-                        message=f"Space after {actual_after}pt != required {preset.LIST_SPACE_AFTER}pt",
+                        message=_msg("space after this list item", actual_after, preset.LIST_SPACE_AFTER, "pt"),
                         expected_value=f"{preset.LIST_SPACE_AFTER}pt",
                         actual_value=f"{actual_after}pt",
                     ))
@@ -318,7 +562,7 @@ def check_paragraph_typography(
                     rule_code="SPACE_BEFORE",
                     severity="MINOR",
                     location={"paragraph_index": para["index"]},
-                    message=f"Space before {actual_before}pt != required {expected_before}pt",
+                    message=_msg("space before this caption", actual_before, expected_before, "pt"),
                     expected_value=f"{expected_before}pt",
                     actual_value=f"{actual_before}pt",
                 ))
@@ -327,7 +571,7 @@ def check_paragraph_typography(
                     rule_code="SPACE_AFTER",
                     severity="MINOR",
                     location={"paragraph_index": para["index"]},
-                    message=f"Space after {actual_after}pt != required {expected_after}pt",
+                    message=_msg("space after this caption", actual_after, expected_after, "pt"),
                     expected_value=f"{expected_after}pt",
                     actual_value=f"{actual_after}pt",
                 ))
@@ -338,22 +582,23 @@ def check_paragraph_typography(
             actual_before = para.get("space_before")
             actual_after = para.get("space_after")
 
-            if actual_before is not None and abs(actual_before - expected_before) > 1:
+            # Nullable requirement (None) → skip that deterministic check.
+            if expected_before is not None and actual_before is not None and abs(actual_before - expected_before) > 1:
                 violations.append(LayoutViolation(
                     rule_code="SPACE_BEFORE",
                     severity="MINOR",
                     location={"paragraph_index": para["index"]},
-                    message=f"Space before {actual_before}pt != required {expected_before}pt",
+                    message=_msg("space before this paragraph", actual_before, expected_before, "pt"),
                     expected_value=f"{expected_before}pt",
                     actual_value=f"{actual_before}pt",
                 ))
 
-            if actual_after is not None and abs(actual_after - expected_after) > 1:
+            if expected_after is not None and actual_after is not None and abs(actual_after - expected_after) > 1:
                 violations.append(LayoutViolation(
                     rule_code="SPACE_AFTER",
                     severity="MINOR",
                     location={"paragraph_index": para["index"]},
-                    message=f"Space after {actual_after}pt != required {expected_after}pt",
+                    message=_msg("space after this paragraph", actual_after, expected_after, "pt"),
                     expected_value=f"{expected_after}pt",
                     actual_value=f"{actual_after}pt",
                 ))
@@ -374,12 +619,22 @@ def check_paragraph_typography(
             WD_ALIGN_PARAGRAPH.JUSTIFY: "justify",
         }
         actual_align_str = align_map.get(actual_align, "unknown")
+        # Nullable alignment (None) → no deterministic requirement.
+        if expected_align is None:
+            continue
         if actual_align_str != "unknown" and actual_align_str != expected_align:
+            if profile_label:
+                message = (
+                    f"This text is {actual_align_str}-aligned. The selected "
+                    f"{profile_label} profile requires {expected_align} alignment."
+                )
+            else:
+                message = f"Alignment '{actual_align_str}' != required '{expected_align}'"
             violations.append(LayoutViolation(
                 rule_code="ALIGNMENT",
                 severity="MINOR",
                 location={"paragraph_index": para["index"]},
-                message=f"Alignment '{actual_align_str}' != required '{expected_align}'",
+                message=message,
                 expected_value=expected_align,
                 actual_value=actual_align_str,
             ))
@@ -387,8 +642,14 @@ def check_paragraph_typography(
 
 
 def check_page_margins(sections: List[Dict], preset) -> List[LayoutViolation]:
-    """FR-2.4: Page Margins - measure physical page boundaries."""
+    """FR-2.4: Page Margins - measure physical page boundaries.
+
+    Profile-aware (Build 4): nullable margin in the snapshot means no
+    deterministic requirement — the check is skipped, never scored. Messages
+    reference the selected profile when available.
+    """
     violations = []
+    profile_label = getattr(preset, "profile_label", None)
     margin_checks = [
         ("margin_left", "MARGIN_LEFT", preset.MARGIN_LEFT),
         ("margin_right", "MARGIN_RIGHT", preset.MARGIN_RIGHT),
@@ -398,13 +659,24 @@ def check_page_margins(sections: List[Dict], preset) -> List[LayoutViolation]:
 
     for section_idx, section in enumerate(sections):
         for key, rule_code, expected in margin_checks:
+            # Nullable requirement → skip this deterministic check.
+            if expected is None:
+                continue
             actual = section.get(key)
             if actual is not None and abs(actual - expected) > 0.05:  # 0.05" tolerance
+                name = key.replace("margin_", "")
+                if profile_label:
+                    message = (
+                        f"The {name} margin is {actual:.2f} in. The selected "
+                        f"{profile_label} profile requires {expected:.2f} in."
+                    )
+                else:
+                    message = f"Page margin {name} {actual:.2f}in != required {expected}in"
                 violations.append(LayoutViolation(
                     rule_code=rule_code,
                     severity="MAJOR",
                     location={"section_index": section_idx},
-                    message=f"Page margin {key.replace('margin_', '')} {actual:.2f}in != required {expected}in",
+                    message=message,
                     expected_value=f"{expected}in",
                     actual_value=f"{actual:.2f}in",
                 ))
@@ -760,18 +1032,36 @@ def check_media_captions(doc: Document, paragraphs: List[Dict], preset) -> List[
     return violations
 
 
-def run_static_rules_engine(file_bytes: bytes) -> List[LayoutViolation]:
-    """Main entry point - runs all static layout checks."""
+def run_static_rules_engine(
+    file_bytes: bytes,
+    config=None,
+) -> List[LayoutViolation]:
+    """Main entry point - runs all static layout checks.
+
+    `config` (Build 4): an immutable snapshot-derived rule config
+    (EffectiveProfileConfig). Production audit execution ALWAYS passes it —
+    the resolved EffectiveProfileSnapshot drives every supported rule, and
+    global PresetConfig defaults are never read during a production audit.
+    When `config` is None (legacy callers / tests), the global PresetConfig
+    is used as the compatibility default.
+    """
     doc = parse_document(file_bytes)
-    preset = settings.PRESET
+    preset = config if config is not None else settings.PRESET
 
     paragraphs = extract_paragraphs(doc)
     sections = extract_sections(doc)
 
+    # Phase 2A: the authoritative paragraph roles (the same classifier that
+    # populates document_blocks.role) gate Font + Paragraph Typography
+    # eligibility. Roles are computed once and shared by the rules — rules
+    # never reclassify paragraphs themselves.
+    from app.services.role_classifier import classify_paragraphs
+    roles = classify_paragraphs(doc, paragraphs)
+
     all_violations = []
-    all_violations.extend(check_font_consistency(paragraphs, preset))
-    all_violations.extend(check_font_size(paragraphs, preset))
-    all_violations.extend(check_paragraph_typography(paragraphs, preset, doc=doc))
+    all_violations.extend(check_font_consistency(paragraphs, preset, roles=roles))
+    all_violations.extend(check_font_size(paragraphs, preset, roles=roles))
+    all_violations.extend(check_paragraph_typography(paragraphs, preset, doc=doc, roles=roles))
     all_violations.extend(check_page_margins(sections, preset))
     all_violations.extend(check_heading_hierarchy(paragraphs))
     all_violations.extend(check_media_captions(doc, paragraphs, preset))

@@ -118,7 +118,7 @@ test('unavailable mapping keeps view stable, never Page 1', () => {
   const d = resolveMarginNavigation('MARGIN_LEFT', 0, null)
   assert.equal(d.navigatePage, null)
   assert.equal(d.chipLabel, null)
-  assert.equal(d.message, MARGIN_UNAVAILABLE_MESSAGE)
+  assert.equal(d.message, 'Section 1 could not be located. The displayed page has not changed.')
   assert.notEqual(d.navigatePage, 1)
 })
 
@@ -126,7 +126,7 @@ test('historical sections == null resolves unavailable, never infers whole PDF',
   // No section metadata at all → every margin finding is unavailable.
   const d = resolveMarginNavigation('MARGIN_LEFT', 0, null)
   assert.equal(d.navigatePage, null)
-  assert.equal(d.message, MARGIN_UNAVAILABLE_MESSAGE)
+  assert.equal(d.message, 'Section 1 could not be located. The displayed page has not changed.')
   // Section 1 is NOT auto-assumed to cover the whole PDF.
   const d1 = resolveMarginNavigation('MARGIN_RIGHT', 0, null)
   assert.equal(d1.navigatePage, null)
@@ -209,7 +209,8 @@ test('no raw internal terms leak into user-facing labels', () => {
     }
   }
   const u = resolveMarginNavigation('MARGIN_LEFT', 0, null)
-  assert.ok(u.message!.includes('Finding Details'))
+  assert.ok(u.message!.includes('could not be located'))
+  assert.ok(u.message!.includes('displayed page has not changed'))
 })
 
 // ---------------------------------------------------------------------------
@@ -258,7 +259,7 @@ test('lifecycle: mapping waits for metadata, never caches a temporary absence', 
   // Before the GET arrives there is no metadata → unavailable (never Page 1).
   const before = resolveMarginNavigation('MARGIN_RIGHT', 0, null)
   assert.equal(before.navigatePage, null)
-  assert.equal(before.message, MARGIN_UNAVAILABLE_MESSAGE)
+  assert.equal(before.message, 'Section 1 could not be located. The displayed page has not changed.')
   // Once metadata arrives, the SAME audit resolves exactly.
   const sections = [sec({ section_index: 0, start_paragraph_index: 0, end_paragraph_index: 1 })]
   const byIndex = mapping([[0, 1], [1, 2]])

@@ -1,6 +1,7 @@
-from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Query, Response
+from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Query, Response, Form
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Any, Optional
+import json
 import logging
 import time
 import uuid
@@ -32,6 +33,11 @@ from app.services.document_parser import (
 from app.services.docx_pdf_converter import convert_docx_to_pdf, DocxConversionError
 from app.services import preview_storage
 from app.services.pdf_report import generate_audit_pdf, build_export_filename
+from app.services.profile_resolver import (
+    resolve_request_profile,
+    restore_snapshot,
+    ProfileResolveError,
+)
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -58,6 +64,8 @@ def _preview_error_category(exc: Exception) -> str:
 async def audit_document(
     file: UploadFile = File(...),
     cloud: bool = Query(False, description="Enable cloud AI citation audit (Gemini)"),
+    profile_id: Optional[str] = Query(None, description="Built-in formatting profile id"),
+    custom_profile: Optional[str] = Form(None, description="Validated custom formatting profile payload (JSON string)"),
     db: Session = Depends(get_db),
 ):
     # Validate file type
@@ -71,6 +79,28 @@ async def audit_document(
 
     # Determine deploy mode: request flag overrides env default for this audit
     deploy_mode = "CLOUD" if cloud else settings.DEPLOY_MODE
+
+    # ---- Resolve the immutable formatting profile snapshot BEFORE any
+    # deterministic processing begins (Build 3). Missing input → recommended
+    # SUC built-in (transitional compatibility); unknown id / malformed
+    # custom payload → friendly 400 with safe field-path messages.
+    custom_payload = None
+    if custom_profile is not None:
+        try:
+            custom_payload = json.loads(custom_profile)
+        except (ValueError, TypeError):
+            raise HTTPException(
+                status_code=400,
+                detail="custom_profile must be a valid JSON object",
+            )
+    try:
+        profile_snapshot = resolve_request_profile(
+            profile_id=profile_id,
+            custom_profile=custom_payload,
+        )
+    except ProfileResolveError as exc:
+        detail = "; ".join(f"{path}: {msg}" for path, msg in exc.errors) if exc.errors else str(exc)
+        raise HTTPException(status_code=400, detail=detail)
 
     # Create audit record with "processing" status
     audit = AuditRecord(
@@ -131,8 +161,15 @@ async def audit_document(
         # keep it (never reconstructed from PDF text after the DOCX is gone).
         section_metadata = extract_sections(doc)
 
-        # ---- Static rules engine ----
-        layout_violations = run_static_rules_engine(file_bytes)
+        # ---- Static rules engine (Build 4: snapshot-derived config) ----
+        # The resolved immutable snapshot drives every supported deterministic
+        # rule — global PresetConfig defaults are never read during a
+        # production audit. Nullable snapshot requirements skip their check.
+        from app.services.profile_preset_adapter import EffectiveProfileConfig
+        layout_violations = run_static_rules_engine(
+            file_bytes,
+            config=EffectiveProfileConfig(profile_snapshot),
+        )
 
         # ---- Authoritative scoring with per-category breakdown ----
         score_result = calculate_weighted_score_detailed(layout_violations)
@@ -157,6 +194,13 @@ async def audit_document(
         # Section boundary metadata (PoC): persisted so POST, GET, refresh,
         # and History all see identical metadata. Historical rows stay NULL.
         audit.section_metadata = section_metadata
+
+        # Immutable Document Formatting Profile snapshot (Build 3): resolved
+        # BEFORE deterministic processing and persisted in the SAME
+        # transaction as the audit row, violations, and score. A processing
+        # failure rolls back audit + snapshot together — no partial row.
+        # Never stores document text, filenames, paths, or credentials.
+        audit.profile_snapshot = profile_snapshot.to_dict()
 
         # Persist violations
         for v in layout_violations:
@@ -253,6 +297,7 @@ async def audit_document(
             ai_review_status=ai_result.status,
             ai_provider=ai_result.provider,
             sections=[SectionMetadata(**s) for s in section_metadata],
+            profile_snapshot=profile_snapshot.to_dict(),
         )
 
     except HTTPException:
@@ -373,7 +418,29 @@ async def get_audit(audit_id: str, db: Session = Depends(get_db)):
             if isinstance(audit.section_metadata, list)
             else None
         ),
+        # GET returns the STORED snapshot, never a re-resolution (Build 3).
+        # Null for historical audits → future UI shows "Legacy formatting
+        # requirements". Corrupt stored data stays null — never crashes,
+        # never re-scored.
+        profile_snapshot=(
+            audit.profile_snapshot
+            if isinstance(audit.profile_snapshot, dict)
+            and restore_snapshot(audit.profile_snapshot) is not None
+            else None
+        ),
     )
+
+
+@router.get("/api/formatting-profiles")
+async def list_formatting_profiles():
+    """Read-only listing of available built-in Document Formatting Profiles
+    (Build 5). Presentation-safe only: identity, version, source, description,
+    recommended flag, citation style, and a concise key-requirements summary.
+    Never exposes internal types, validation internals, fingerprints, or
+    mutable registry objects. Uses the authoritative backend registry.
+    """
+    from app.services.profile_registry import list_profile_listings
+    return {"profiles": list_profile_listings()}
 
 
 @router.get("/api/audits", response_model=List[AuditListResponse])

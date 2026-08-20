@@ -15,7 +15,7 @@ export interface MappingBundle {
   mapping: BlockMapping[]
   byIndex: Map<number, BlockMapping>
   /** Paragraph text evidence (formatting highlights) + caption-style hints. */
-  blocks: Array<{ index: number; text: string; styleName?: string | null }>
+  blocks: Array<{ index: number; text: string; styleName?: string | null; role?: string | null }>
 }
 
 export type MappingLoader = (auditId: string) => Promise<MappingBundle>

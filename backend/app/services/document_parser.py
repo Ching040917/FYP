@@ -228,9 +228,16 @@ def extract_document_blocks(doc: Document) -> List[Dict[str, Any]]:
     paragraphs are preserved for index fidelity. No run-level data, tables,
     images, page numbers, HTML, file bytes, or raw XML. This is a preview
     surface — document text must never be logged.
+
+    Each block carries a `role` from the authoritative role classifier
+    (Phase 1 PoC — additive, nullable; historical blocks lack it).
     """
+    from app.services.role_classifier import classify_paragraphs
+
+    paragraphs = extract_paragraphs(doc)
+    roles = classify_paragraphs(doc, paragraphs)
     blocks = []
-    for para in extract_paragraphs(doc):
+    for para, role in zip(paragraphs, roles):
         blocks.append({
             "order": para["index"],
             "type": "paragraph",
@@ -238,6 +245,7 @@ def extract_document_blocks(doc: Document) -> List[Dict[str, Any]]:
             "text": para["text"],
             "style_name": para["style_name"],
             "heading_level": get_heading_level(para["style_name"]),
+            "role": role,
         })
     return blocks
 

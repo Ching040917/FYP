@@ -51,6 +51,16 @@ class AuditRecord(Base):
     # (never reconstructed from PDF text after the DOCX is discarded).
     section_metadata = Column(JSON, nullable=True)
 
+    # Immutable Document Formatting Profile snapshot (Build 3): the
+    # complete resolved EffectiveProfileSnapshot captured at audit creation
+    # (identity, version, source, citation style, effective formatting
+    # requirements, eligibility policies, canonical fingerprint). Nullable —
+    # historical records predate the column and must display "Legacy
+    # formatting requirements", never an auto-resolved default. Stored data
+    # is never re-resolved; GET returns exactly what was persisted. Never
+    # carries document text, filenames, paths, or credentials.
+    profile_snapshot = Column(JSON, nullable=True)
+
     # Rendered PDF preview metadata (Build 1). NULL = never attempted or
     # historical record; "AVAILABLE" = rendered PDF present in storage;
     # "UNAVAILABLE" = render attempted but failed. rendered_preview_error

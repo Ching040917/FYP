@@ -117,14 +117,14 @@ def test_image_only_host_paragraph_skipped():
     assert _alignment_at(viols, 0) == []
 
 
-def test_mixed_text_and_image_paragraph_validates():
-    # two paragraphs: image-only (skip) then mixed text+image (validate)
-    blocks = [
-        ("", None, AM.CENTER, "image"),
-        ("See figure below.", None, AM.CENTER, "image"),
-    ]
-    # the second paragraph has a drawing run AND text runs — add text separately
+def test_mixed_text_and_image_paragraph_skipped_as_figure_host():
+    """Phase 2A: a drawing-host paragraph is FIGURE_HOST — mixed visible text
+    never silently converts it to BODY, so it is NOT alignment-eligible."""
+    # two paragraphs: image-only (skip) then mixed text+image (also skip —
+    # the classifier marks any drawing host FIGURE_HOST)
     import base64
+    from docx.shared import Pt as _Pt
+
     doc = Document()
     p = doc.add_paragraph()
     p.alignment = AM.CENTER
@@ -134,7 +134,7 @@ def test_mixed_text_and_image_paragraph_validates():
     buf = io.BytesIO()
     doc.save(buf)
     viols = run_static_rules_engine(buf.getvalue())
-    assert len([v for v in viols if v.rule_code == "ALIGNMENT"]) == 1
+    assert len([v for v in viols if v.rule_code == "ALIGNMENT"]) == 0
 
 
 def test_semantic_caption_style_skipped():
@@ -206,7 +206,9 @@ def test_references_entry_justified_is_valid_anyway():
 
 
 def test_other_typography_findings_not_suppressed_for_skipped_paragraphs():
-    """Skipping alignment must not suppress line-spacing findings."""
+    """Phase 2A: a drawing-host paragraph (FIGURE_HOST) skips ALIGNMENT AND
+    LINE_SPACING — the role is authoritative. Ordinary BODY paragraphs keep
+    all typography findings."""
     import base64
     from docx.shared import Pt as _Pt
 
@@ -218,5 +220,16 @@ def test_other_typography_findings_not_suppressed_for_skipped_paragraphs():
     buf = io.BytesIO()
     doc.save(buf)
     viols = run_static_rules_engine(buf.getvalue())
-    assert "ALIGNMENT" not in _alignment_codes(viols)  # image-only → skipped
-    assert "LINE_SPACING" in _alignment_codes(viols)   # other checks survive
+    # FIGURE_HOST → both alignment and line-spacing skipped (role-gated).
+    assert "ALIGNMENT" not in _alignment_codes(viols)
+    assert "LINE_SPACING" not in _alignment_codes(viols)
+    # A genuine BODY paragraph still gets its typography findings.
+    doc2 = Document()
+    b = doc2.add_paragraph("Ordinary body text that is long enough to be prose.")
+    b.alignment = AM.CENTER
+    b.paragraph_format.line_spacing = 2.0
+    buf2 = io.BytesIO()
+    doc2.save(buf2)
+    viols2 = run_static_rules_engine(buf2.getvalue())
+    assert "ALIGNMENT" in _alignment_codes(viols2)
+    assert "LINE_SPACING" in _alignment_codes(viols2)

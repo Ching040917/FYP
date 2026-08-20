@@ -1,23 +1,27 @@
 /**
  * Section-mapping session cache (Build: Section page-range navigation).
  *
- * Caches SUCCESSFUL section mappings (confidence exact or approximate)
- * per audit/PDF session, keyed by `auditId`. Temporary loading failures
- * (no bundle yet, no PDF) are NEVER cached — they are recomputed on the
- * next use. Dropped on audit change / PDF replacement.
+ * Caches FULLY-RESOLVED section mappings (every section exact or
+ * approximate) per audit/PDF session, keyed by `auditId`. A set containing
+ * ANY unavailable section is NEVER cached — it may be temporarily
+ * unavailable because later evidence (object pages, geometry) has not
+ * arrived yet, and must be recomputed on the next use. Dropped on audit
+ * change / PDF replacement.
  */
 import type { SectionMetadataLike, SectionRange } from './section-mapping.ts'
 
 const done = new Map<string, SectionRange[]>()
 
-/** Cache a resolved set of section ranges for an audit (successes only). */
+/** Cache a fully-resolved set of section ranges for an audit. */
 export function cacheSectionRanges(
   auditId: string,
   ranges: SectionRange[],
 ): void {
   if (!auditId || ranges.length === 0) return
-  const successful = ranges.filter((r) => r.confidence !== 'unavailable')
-  if (successful.length === 0) return
+  // Temporary unavailable must not be cached as final: if ANY section is
+  // unavailable, later evidence may still resolve it, so the whole set is
+  // recomputed on the next use.
+  if (ranges.some((r) => r.confidence === 'unavailable')) return
   done.set(auditId, ranges)
 }
 

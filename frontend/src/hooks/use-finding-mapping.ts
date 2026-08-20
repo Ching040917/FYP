@@ -71,7 +71,7 @@ export function useFindingMapping(
 
     const loader = async (id: string): Promise<MappingBundle> => {
       const pages = await extractPageText(pdfBytes)
-      const blockLike = blockList.map((b) => ({ index: b.index, text: b.text, styleName: b.style_name ?? null }))
+      const blockLike = blockList.map((b) => ({ index: b.index, text: b.text, styleName: b.style_name ?? null, role: b.role ?? null }))
       const mapping = mapBlocksToPages(blockLike, pages)
       return {
         auditId: id,

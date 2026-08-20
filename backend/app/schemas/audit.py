@@ -86,6 +86,10 @@ class AuditSubmitResponse(BaseModel):
     # NEW — Section boundary metadata (PoC). Optional list; absent for
     # historical audits. Backward-compatible.
     sections: Optional[List[SectionMetadata]] = None
+    # NEW — immutable Document Formatting Profile snapshot (Build 3).
+    # The identical snapshot POSTed is returned; null for historical audits
+    # ("Legacy formatting requirements"). Never carries document content.
+    profile_snapshot: Optional[Any] = None
 
 
 class AuditResponse(BaseModel):
@@ -112,6 +116,10 @@ class AuditResponse(BaseModel):
     # NEW — Section boundary metadata (PoC). Optional list; absent for
     # historical audits. Backward-compatible.
     sections: Optional[List[SectionMetadata]] = None
+    # NEW — immutable Document Formatting Profile snapshot (Build 3).
+    # Null for historical audits. GET returns stored data, never a
+    # re-resolution.
+    profile_snapshot: Optional[Any] = None
 
 
 class AuditListResponse(BaseModel):

@@ -13,7 +13,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app.models.audit import AuditRecord
 
-BLOCK_KEYS = {"order", "type", "index", "text", "style_name", "heading_level"}
+BLOCK_KEYS = {"order", "type", "index", "text", "style_name", "heading_level", "role"}
 
 
 def _post_audit(client, docx_factory, paragraphs):

@@ -20,6 +20,7 @@ import {
   Cloud,
   CloudOff,
   Info,
+  RefreshCw,
 } from 'lucide-react'
 import { Button } from '../ui/button'
 import {
@@ -29,6 +30,13 @@ import {
   CardTitle,
   CardDescription,
 } from '../ui/card'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '../ui/select'
 import { Switch } from '../ui/switch'
 import { Label } from '../ui/label'
 import { Badge } from '../ui/badge'
@@ -36,7 +44,9 @@ import { cn } from '../../lib/utils'
 import { api } from '../../services/api'
 import { useToast } from '../../hooks/useToast'
 import { adaptAuditResponse } from '../../lib/audit/adapter'
+import { resolveProfileSelection } from '../../lib/profile-selection'
 import type { AuditResult } from '../../types/audit'
+import type { FormattingProfile } from '../../types/api'
 
 const MAX_SIZE_MB = 10
 const MAX_SIZE_BYTES = MAX_SIZE_MB * 1024 * 1024
@@ -65,7 +75,44 @@ export function UploadCard({ onResult, onReset, trySampleSignal = 0 }: UploadCar
   const [cloudEnabled, setCloudEnabled] = React.useState(false)
   const [isDragging, setIsDragging] = React.useState(false)
   const [isUploading, setIsUploading] = React.useState(false)
+  const [profiles, setProfiles] = React.useState<FormattingProfile[]>([])
+  const [selectedProfileId, setSelectedProfileId] = React.useState<string | null>(null)
+  const [profilesLoading, setProfilesLoading] = React.useState(true)
+  const [profilesError, setProfilesError] = React.useState(false)
   const inputRef = React.useRef<HTMLInputElement>(null)
+  // Tracks the current selection across reloads without stale closures.
+  const selectedProfileIdRef = React.useRef<string | null>(null)
+
+  /**
+   * Load available built-in profiles. Default = the authoritative recommended
+   * profile. If a previously selected profile is no longer available, reset
+   * to the recommended one and notify — never submit a stale ID.
+   */
+  const loadProfiles = React.useCallback(async () => {
+    setProfilesLoading(true)
+    setProfilesError(false)
+    try {
+      const list = await api.getFormattingProfiles()
+      setProfiles(list)
+      const { selectedId, reset } = resolveProfileSelection(list, selectedProfileIdRef.current)
+      setSelectedProfileId(selectedId)
+      selectedProfileIdRef.current = selectedId
+      if (reset) {
+        showToast('The selected document requirements are no longer available. Using the recommended profile.', 'info')
+      }
+    } catch {
+      setProfilesError(true)
+      setProfiles([])
+      setSelectedProfileId(null)
+      selectedProfileIdRef.current = null
+    } finally {
+      setProfilesLoading(false)
+    }
+  }, [showToast])
+
+  React.useEffect(() => {
+    void loadProfiles()
+  }, [loadProfiles])
 
   const selectFile = (f: File | null) => {
     if (!f) return
@@ -95,7 +142,12 @@ export function UploadCard({ onResult, onReset, trySampleSignal = 0 }: UploadCar
     async (target: File) => {
       setIsUploading(true)
       try {
-        const raw = await api.auditDocument(target, { cloud: cloudEnabled })
+        // Backend remains authoritative: unknown/stale profile id → friendly
+        // 400. We only pass the selected id — never the full configuration.
+        const raw = await api.auditDocument(target, {
+          cloud: cloudEnabled,
+          profileId: selectedProfileId ?? undefined,
+        })
         const result = adaptAuditResponse({
           raw,
         })
@@ -112,11 +164,18 @@ export function UploadCard({ onResult, onReset, trySampleSignal = 0 }: UploadCar
         setIsUploading(false)
       }
     },
-    [cloudEnabled, onResult, showToast],
+    [cloudEnabled, onResult, selectedProfileId, showToast],
   )
 
   const onUpload = () => {
     if (!file) return
+    // Safety: never submit when document requirements failed to load — the
+    // backend would reject an unknown profile, and silently submitting
+    // without a known profile is worse than blocking.
+    if (profilesError || (!profilesLoading && profiles.length === 0)) {
+      showToast('Document requirements could not be loaded. Please try again.', 'error')
+      return
+    }
     void runAudit(file)
   }
 
@@ -132,6 +191,11 @@ export function UploadCard({ onResult, onReset, trySampleSignal = 0 }: UploadCar
    * "Try with the sample thesis" button below.
    */
   const loadAndAuditSample = React.useCallback(async () => {
+    // Never auto-submit with an unknown profile.
+    if (profilesError || (!profilesLoading && profiles.length === 0)) {
+      showToast('Document requirements could not be loaded. Please try again.', 'error')
+      return
+    }
     try {
       const res = await fetch(SAMPLE_PATH)
       if (!res.ok) throw new Error(`Sample fetch failed: ${res.status}`)
@@ -148,7 +212,7 @@ export function UploadCard({ onResult, onReset, trySampleSignal = 0 }: UploadCar
       showToast(`Could not load sample. ${message}`, 'error')
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [runAudit, showToast])
+  }, [runAudit, showToast, profilesError, profiles.length, profilesLoading])
 
   // Re-run only when the parent increments the signal
   const lastSignalRef = React.useRef(trySampleSignal)
@@ -254,6 +318,95 @@ export function UploadCard({ onResult, onReset, trySampleSignal = 0 }: UploadCar
           </div>
         )}
 
+        {/* Document requirements — profile selector (Build 5) */}
+        <div className="rounded-md border border-border bg-input/20 px-3 py-3">
+          <Label htmlFor="profile-select" className="text-sm font-medium">
+            Document requirements
+          </Label>
+          <p className="mt-0.5 text-xs leading-[16px] text-muted-foreground">
+            Findings are evaluated against the selected document requirements.
+          </p>
+
+          {profilesLoading ? (
+            <div
+              role="status"
+              aria-live="polite"
+              className="mt-2 flex items-center gap-2 text-xs text-muted-foreground"
+            >
+              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+              Loading document requirements…
+            </div>
+          ) : profilesError || profiles.length === 0 ? (
+            <div
+              role="alert"
+              aria-live="assertive"
+              className="mt-2 flex items-center justify-between gap-2 rounded-md border border-border bg-input/30 px-2.5 py-2"
+            >
+              <span className="text-xs text-muted-foreground">
+                Document requirements could not be loaded. Please try again.
+              </span>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-7 shrink-0 gap-1 text-xs"
+                onClick={() => void loadProfiles()}
+              >
+                <RefreshCw className="h-3 w-3" aria-hidden="true" />
+                Retry
+              </Button>
+            </div>
+          ) : (
+            <div className="mt-2 space-y-2">
+              <Select
+                value={selectedProfileId ?? undefined}
+                onValueChange={(v) => {
+                  setSelectedProfileId(v)
+                  selectedProfileIdRef.current = v
+                }}
+                disabled={isUploading}
+              >
+                <SelectTrigger
+                  id="profile-select"
+                  className="w-full"
+                  aria-label="Document requirements profile"
+                >
+                  <SelectValue placeholder="Select document requirements" />
+                </SelectTrigger>
+                <SelectContent>
+                  {profiles.map((p) => (
+                    <SelectItem key={p.profile_id} value={p.profile_id}>
+                      {p.profile_name}
+                      {p.recommended ? ' — Recommended for this institution' : ''}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+
+              {(() => {
+                const selected = profiles.find((p) => p.profile_id === selectedProfileId)
+                if (!selected) return null
+                return (
+                  <div className="space-y-1.5 text-xs leading-[16px] text-muted-foreground">
+                    <p>{selected.description}</p>
+                    {selected.key_requirements.length > 0 && (
+                      <ul className="list-disc space-y-0.5 pl-4">
+                        {selected.key_requirements.map((req) => (
+                          <li key={req}>{req}</li>
+                        ))}
+                      </ul>
+                    )}
+                    <p className="flex items-center gap-1">
+                      <Info className="h-3 w-3 shrink-0" aria-hidden="true" />
+                      Citation style: {selected.citation_style}
+                    </p>
+                  </div>
+                )
+              })()}
+            </div>
+          )}
+        </div>
+
         {/* Optional AI-assisted citation review */}
         <div className="flex items-start justify-between gap-3 rounded-md border border-border bg-input/20 px-3 py-2.5">
           <div className="flex items-start gap-2.5">
@@ -285,7 +438,7 @@ export function UploadCard({ onResult, onReset, trySampleSignal = 0 }: UploadCar
         <Button
           type="button"
           className="w-full bg-primary text-primary-foreground hover:bg-primary/90"
-          disabled={!file || isUploading}
+          disabled={!file || isUploading || profilesLoading || profilesError || profiles.length === 0}
           onClick={onUpload}
         >
           {isUploading ? (

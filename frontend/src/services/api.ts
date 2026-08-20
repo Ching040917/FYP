@@ -1,4 +1,4 @@
-import type { AuditSubmitResponse, AuditResponse, AuditListItem, DocumentBlock } from '../types/api'
+import type { AuditSubmitResponse, AuditResponse, AuditListItem, DocumentBlock, FormattingProfile } from '../types/api'
 
 const API_BASE = '/api'
 
@@ -37,17 +37,32 @@ async function handleResponse<T>(response: Response): Promise<T> {
 export const api = {
   async auditDocument(
     file: File,
-    options: { cloud?: boolean } = {},
+    options: { cloud?: boolean; profileId?: string } = {},
   ): Promise<AuditSubmitResponse> {
     const formData = new FormData()
     formData.append('file', file)
-    const url = options.cloud ? `${API_BASE}/audit?cloud=1` : `${API_BASE}/audit`
+    const params = new URLSearchParams()
+    if (options.cloud) params.set('cloud', '1')
+    if (options.profileId) params.set('profile_id', options.profileId)
+    const qs = params.toString()
+    const url = qs ? `${API_BASE}/audit?${qs}` : `${API_BASE}/audit`
     const response = await fetchWithTimeout(
       url,
       { method: 'POST', body: formData },
       UPLOAD_TIMEOUT_MS,
     )
     return handleResponse<AuditSubmitResponse>(response)
+  },
+
+  /** Read-only list of available built-in formatting profiles (Build 5). */
+  async getFormattingProfiles(): Promise<FormattingProfile[]> {
+    const response = await fetchWithTimeout(
+      `${API_BASE}/formatting-profiles`,
+      {},
+      POLL_TIMEOUT_MS,
+    )
+    const body = await handleResponse<{ profiles: FormattingProfile[] }>(response)
+    return body.profiles
   },
 
   async getAudit(auditId: string): Promise<AuditResponse> {

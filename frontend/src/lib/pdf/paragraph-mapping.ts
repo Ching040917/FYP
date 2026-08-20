@@ -43,7 +43,7 @@ export type PageText = {
   pageHeight?: number
 }
 
-export type BlockLike = { index: number; text: string; styleName?: string | null }
+export type BlockLike = { index: number; text: string; styleName?: string | null; role?: string | null }
 
 export type MappingConfidence = 'exact' | 'approximate' | 'unavailable'
 
@@ -315,6 +315,41 @@ export function mapBlocksToPages(
     const total = textCounts.get(normalized[i]) ?? 1
     const prevPage = previousPage(i)
     const nextPageNum = nextPage(i)
+
+    // ---- Role-aware academic Heading disambiguation (TOC vs body) ----
+    // A heading's text frequently appears twice in the rendered PDF: once
+    // in the Table of Contents, once as the real academic Heading followed
+    // by its body content. The TOC occurrence must NOT consume the academic
+    // paragraph identity. When the block is a heading-like role, prefer the
+    // candidate page whose following non-empty block (the academic body)
+    // also appears there — never "first occurrence wins".
+    const headingRoles = new Set([
+      'HEADING_1', 'HEADING_2', 'HEADING_3',
+      'REFERENCES_HEADING', 'APPENDIX_HEADING',
+    ])
+    const role = blocks[i]?.role ?? null
+    if (role && headingRoles.has(role) && pages.length > 1) {
+      let nextBlockIdx = i + 1
+      while (nextBlockIdx < blocks.length && !normalized[nextBlockIdx]) nextBlockIdx++
+      if (nextBlockIdx < blocks.length) {
+        const nextText = normalized[nextBlockIdx] ?? ''
+        const bodyPages = new Set(
+          clean
+            .filter((p) => contains(p.blob, nextText))
+            .map((p) => p.pageNumber),
+        )
+        const withBody = pool.filter((c) => bodyPages.has(c.pageNumber))
+        if (withBody.length === 1) return withBody[0]
+        // The body also appears on multiple pages (or not at all) — the
+        // previous confirmed neighbour decides when it agrees with a body
+        // candidate.
+        if (prevPage !== null && bodyPages.has(prevPage)) {
+          const onPrev = pool.filter((c) => c.pageNumber === prevPage)
+          if (onPrev.length === 1) return onPrev[0]
+        }
+        return null // genuine ambiguity — never first match
+      }
+    }
 
     if (occurrence === 1 && total > 1) {
       // First instance of a duplicated block: the previous confirmed

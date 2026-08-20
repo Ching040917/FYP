@@ -53,7 +53,7 @@ import type { AuditCategory, LayoutError } from '../types/audit'
 const OBJECT_NOTICE =
   'Exact page location is not available for this finding. Review the finding details for its document location.'
 const TEXT_FALLBACK_NOTICE =
-  'Exact rendered-page location is unavailable. Showing the extracted-text location instead.'
+  'The rendered-page location could not be confirmed. Showing the extracted-text location instead.'
 
 // Poll every 2s; give up after 5 minutes (150 attempts).
 const POLL_INTERVAL_MS = 2000
@@ -394,11 +394,12 @@ export function AuditPage() {
       return
     }
     if (!mappingBundle) return // mapping not ready — never cache a failure
-    // The rendered PDF page count is the validation bound. Use the max
-    // mapped paragraph page as a truthful floor; if the PDF is available,
-    // that bound is the document's real page count as seen by the mapper.
-    const maxMapped = Math.max(0, ...[...mappingBundle.byIndex.values()].map((m) => m.pageNumber ?? 0))
-    const input = sectionMapInput(sectionMeta, mappingBundle.byIndex, Math.max(maxMapped, 1))
+    // The rendered PDF page count is the validation bound — the REAL page
+    // count extracted from the PDF, never the max mapped paragraph page
+    // (a document whose final page holds unmapped paragraphs would wrongly
+    // shrink the bound and reject valid section boundaries as out-of-range).
+    const numPages = mappingBundle.pages.length
+    const input = sectionMapInput(sectionMeta, mappingBundle.byIndex, numPages)
     if (!input) {
       setSectionRanges(null)
       return

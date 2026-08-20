@@ -107,6 +107,18 @@ export interface AuditListItem {
   created_at: string
 }
 
+/** Presentation-safe built-in Document Formatting Profile listing (Build 5). */
+export interface FormattingProfile {
+  profile_id: string
+  profile_name: string
+  profile_version: number
+  description: string
+  profile_source: 'built_in' | 'custom'
+  recommended: boolean
+  citation_style: string
+  key_requirements: string[]
+}
+
 /** Structured paragraph block from GET /api/audit/{id}/document-blocks — mirrors backend extract_document_blocks. */
 export interface DocumentBlock {
   /** Document order — use for ordering, never array position. */
@@ -118,4 +130,6 @@ export interface DocumentBlock {
   text: string
   style_name: string | null
   heading_level: number | null
+  /** Authoritative structural role (Phase 1 PoC). Null on historical audits. */
+  role: string | null
 }

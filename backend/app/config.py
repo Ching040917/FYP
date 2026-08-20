@@ -39,6 +39,13 @@ class PresetConfig:
     # never checked for list items (no list-before configuration exists).
     LIST_SPACE_AFTER: Optional[float] = None
 
+    # ---- References spacing (Phase 2A) ----
+    # Reference entries are role-gated: they never receive BODY line-spacing,
+    # alignment, or paragraph-spacing requirements. When set, reference
+    # entries validate their line spacing against this value. The approved
+    # current institutional profile expects References line spacing 2.0.
+    REFERENCES_LINE_SPACING: Optional[float] = 2.0
+
     # ---- Caption spacing (optional) ----
     # None (default): Caption paragraphs (semantic OR manual) are EXEMPT
     # from SPACE_BEFORE/SPACE_AFTER checks — the preset is silent on caption
