@@ -477,6 +477,19 @@ def _cover_signal_exists(
 # ---------------------------------------------------------------------------
 
 
+def cover_region_end(doc: Document, paragraphs: List[Dict]) -> int:
+    """Zero-based index where the cover region ends (first paragraph AFTER
+    cover). 0 = no cover (body-first). Cover-only documents return
+    len(paragraphs). Shared derivation with classify_paragraphs so region
+    membership always agrees."""
+    body_seq = _body_sequence(doc)
+    by_index = {p["index"]: p for p in paragraphs}
+    boundary = _cover_boundary(by_index, body_seq)
+    if _cover_signal_exists(doc, by_index, body_seq, boundary):
+        return boundary if boundary is not None else len(paragraphs)
+    return 0
+
+
 def classify_paragraphs(
     doc: Document,
     paragraphs: List[Dict],
@@ -743,11 +756,46 @@ def _rubric_or_unknown(doc: Document, table_idx: int) -> str:
 
 
 def _scholarly_or_unknown(doc: Document, table_idx: int) -> str:
-    """Manuscript-body table: SCHOLARLY_TABLE only when a numbered caption is
-    adjacent (academic evidence). Structure alone never qualifies."""
+    """Manuscript-body table: SCHOLARLY_TABLE only with reliable academic
+    evidence — an adjacent numbered Table Caption OR surrounding academic
+    body prose that refers to the Table ("as shown in Table 2", "the table
+    below"). Structure alone never qualifies; ambiguity returns UNKNOWN."""
     if _has_adjacent_numbered_caption(doc, table_idx):
         return "SCHOLARLY_TABLE"
+    if _has_in_text_table_reference(doc, table_idx):
+        return "SCHOLARLY_TABLE"
     return "UNKNOWN"
+
+
+def _has_in_text_table_reference(doc: Document, table_idx: int) -> bool:
+    """True when nearby body paragraphs refer to the table in academic
+    prose — a numbered in-text reference ("Table 2 shows", "see Table 2")
+    or an explicit deictic reference ("the table below/above"). Evaluated
+    only in the manuscript-body region (never cover/back-matter)."""
+    children = list(doc.element.body.iterchildren())
+    tbl_positions = [i for i, c in enumerate(children) if c.tag == qn("w:tbl")]
+    if table_idx >= len(tbl_positions):
+        return False
+    pos = tbl_positions[table_idx]
+    # Window of surrounding paragraphs (2 before / 3 after — a caption or
+    # prose reference typically sits adjacent).
+    window = []
+    for delta in range(-2, 4):
+        n = pos + delta
+        if 0 <= n < len(children) and children[n].tag == qn("w:p"):
+            text = "".join((t.text or "") for t in children[n].iter(qn("w:t")))
+            window.append(text)
+    for text in window:
+        lowered = text.strip().lower()
+        if not lowered:
+            continue
+        # Numbered in-text reference (not a caption line — captions are
+        # already handled by _has_adjacent_numbered_caption).
+        if re.search(r"\b(?:see|shown in|as (?:seen|shown) in|in)\s+table\s*\d+", lowered):
+            return True
+        if re.search(r"\bthe\s+table\s+(?:below|above)\b", lowered):
+            return True
+    return False
 
 
 def _first_row_text(table) -> str:

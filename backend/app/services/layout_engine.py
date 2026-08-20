@@ -909,8 +909,23 @@ def _extract_image_alt_text(doc: Document, image_rel) -> str:
     return ""
 
 
-def check_media_captions(doc: Document, paragraphs: List[Dict], preset) -> List[LayoutViolation]:
-    """FR-2.6: Media captions — tables AND images must have captions.
+def check_media_captions(
+    doc: Document,
+    paragraphs: List[Dict],
+    preset,
+    table_roles: Optional[List[str]] = None,
+    paragraph_roles: Optional[List[str]] = None,
+    cover_end: Optional[int] = None,
+) -> List[LayoutViolation]:
+    """FR-2.6: Media captions — scholarly Tables and academic Figures.
+
+    Role-gated (Phase 2B): Caption requirements apply ONLY to proven
+    scholarly Tables (`SCHOLARLY_TABLE`) and academic Figures (an image
+    hosted in an academic BODY-region paragraph). Administrative cover
+    Tables, assignment/assessment/rubric Tables, layout Tables, UNKNOWN
+    Tables, cover logos, repeated header images, and decorative images are
+    EXEMPT from Caption findings — no scored finding, no manual-review
+    deduction.
 
     Adjacent captions are classified semantically:
     - VALID:   Caption paragraph style and/or a matching SEQ Table/Figure
@@ -920,20 +935,42 @@ def check_media_captions(doc: Document, paragraphs: List[Dict], preset) -> List[
     - MISSING: no matching adjacent caption — TABLE_CAPTION_MISSING /
                IMAGE_CAPTION_MISSING.
 
-    Multilingual labels (English, Malay Jadual/Gambar/Rajah/Graf, Chinese
-    表/图/图表) are preserved and split by object type. Headings, list
-    items, and table-cell text are never accepted as captions. No visual
-    appearance (colour, bold) is consulted. Both caption positions are
-    accepted (tables above, figures below, or the reverse).
+    Multilingual labels are preserved and split by object type. Headings,
+    list items, and table-cell text are never accepted as captions.
 
-    Image alt-text: every embedded image should carry a docPr@descr
-    attribute for accessibility. Missing alt-text is a MINOR violation.
+    Alt-text: kept independent of Caption eligibility — a Caption exemption
+    never automatically exempts Alt Text. (Logo/decorative Alt Text policy
+    is unresolved in this Build; see warnings.)
     """
     violations = []
     style_names = {s.style_id: (s.name or "").lower() for s in doc.styles}
 
-    # ---- Tables ----
+    # ---- Academic-region determination for images ----
+    # An image host paragraph is FIGURE_HOST regardless of region (the
+    # classifier's drawing check fires before the cover check). Academic
+    # Figure eligibility needs the REGION: an image hosted at/after the
+    # cover end is an academic Figure; images before it (cover logos) are
+    # exempt from Caption findings. Body-first documents have cover_end=0 →
+    # everything is academic. cover_end=None (legacy callers) falls back to
+    # the first academic Heading as the boundary.
+    effective_cover_end = cover_end
+    if effective_cover_end is None:
+        first_heading_idx = None
+        if paragraph_roles is not None:
+            for i, r in enumerate(paragraph_roles):
+                if r in ("HEADING_1", "HEADING_2", "HEADING_3"):
+                    first_heading_idx = i
+                    break
+        effective_cover_end = first_heading_idx if first_heading_idx is not None else 0
+
+    # ---- Tables (role-gated) ----
     for table_idx, table in enumerate(doc.tables):
+        role = table_roles[table_idx] if table_roles is not None and table_idx < len(table_roles) else None
+        # TABLE_CAPTION_MISSING / MANUAL_CAPTION apply ONLY to proven
+        # scholarly Tables. Administrative/rubric/layout/UNKNOWN tables get
+        # NO caption finding — a Word table is not automatically scholarly.
+        if role != "SCHOLARLY_TABLE":
+            continue
         status, caption_idx = _adjacent_caption_status(
             table._tbl, _TABLE_LABEL_RE, "table", style_names, doc.paragraphs
         )
@@ -968,55 +1005,72 @@ def check_media_captions(doc: Document, paragraphs: List[Dict], preset) -> List[
                 actual_value="No caption found",
             ))
 
-    # ---- Images (inline shapes) — caption + alt-text checks ----
+    # ---- Images — caption + alt-text checks ----
     image_idx = 0
     for rel in doc.part.rels.values():
         if "image" not in rel.target_ref:
             continue
         image_idx += 1
 
-        # Walk the document body to find the paragraph hosting this image,
-        # then check its surrounding paragraphs for captions.
+        # Walk the document body to find the paragraph hosting this image.
         host_para_idx, prev_elem, next_elem = _find_image_context(doc, rel)
-        status = "missing"
-        for elem in (prev_elem, next_elem):
-            if elem is None or not elem.tag.endswith("}p"):
-                continue
-            s = _caption_status(elem, _FIGURE_LABEL_RE, "figure", style_names)
-            if s == "valid":
-                status = "valid"
-                break
-            if s == "manual":
-                status = "manual"
-        if status == "manual":
-            violations.append(LayoutViolation(
-                rule_code="MANUAL_CAPTION",
-                severity="MINOR",
-                location={"image_index": image_idx - 1, "paragraph_index": host_para_idx},
-                message=(
-                    f"Image {image_idx} has a manually typed caption. "
-                    f"{MANUAL_CAPTION_ACTION}"
-                ),
-                expected_value="Word caption (References → Insert Caption)",
-                actual_value="Manual 'Figure N' text without Caption style or SEQ field",
-            ))
-        elif status == "missing":
-            violations.append(LayoutViolation(
-                rule_code="IMAGE_CAPTION_MISSING",
-                severity="MINOR",
-                location={"image_index": image_idx - 1, "paragraph_index": host_para_idx},
-                message=(
-                    f"Image {image_idx} has no caption. Add a paragraph "
-                    f"below it starting with 'Figure {image_idx}: ' "
-                    f"(or 'Gambar {image_idx}: ' / '图{image_idx}')."
-                ),
-                expected_value=f"Figure {image_idx}: <description>",
-                actual_value="No caption found",
-            ))
+        # Academic Figure = an image hosted at/after the cover end. Images
+        # before it (cover logos, cover branding) are exempt from Figure
+        # Caption findings.
+        academic_figure = (
+            host_para_idx >= 0
+            and host_para_idx >= effective_cover_end
+        )
+        if academic_figure:
+            status = "missing"
+            for elem in (prev_elem, next_elem):
+                if elem is None or not elem.tag.endswith("}p"):
+                    continue
+                s = _caption_status(elem, _FIGURE_LABEL_RE, "figure", style_names)
+                if s == "valid":
+                    status = "valid"
+                    break
+                if s == "manual":
+                    status = "manual"
+            if status == "manual":
+                violations.append(LayoutViolation(
+                    rule_code="MANUAL_CAPTION",
+                    severity="MINOR",
+                    location={"image_index": image_idx - 1, "paragraph_index": host_para_idx},
+                    message=(
+                        f"Image {image_idx} has a manually typed caption. "
+                        f"{MANUAL_CAPTION_ACTION}"
+                    ),
+                    expected_value="Word caption (References → Insert Caption)",
+                    actual_value="Manual 'Figure N' text without Caption style or SEQ field",
+                ))
+            elif status == "missing":
+                violations.append(LayoutViolation(
+                    rule_code="IMAGE_CAPTION_MISSING",
+                    severity="MINOR",
+                    location={"image_index": image_idx - 1, "paragraph_index": host_para_idx},
+                    message=(
+                        f"Image {image_idx} has no caption. Add a paragraph "
+                        f"below it starting with 'Figure {image_idx}: ' "
+                        f"(or 'Gambar {image_idx}: ' / '图{image_idx}')."
+                    ),
+                    expected_value=f"Figure {image_idx}: <description>",
+                    actual_value="No caption found",
+                ))
 
-        # Alt-text check — walk the inline drawing's docPr element
+        # Alt-text check — walk the inline drawing's docPr element. Kept
+        # INDEPENDENT of Caption eligibility: a Caption exemption never
+        # automatically exempts Alt Text for academic-region images.
+        #
+        # Cover-region images (cover logo / institutional branding) have NO
+        # explicit logo/decorative Alt Text policy in the selected profile —
+        # the policy is UNRESOLVED. Per the Phase 2B contract, an unresolved
+        # policy must not silently apply a universal rule: no scored finding
+        # is created for cover-region images, and the unresolved policy is
+        # reported as a warning at the call site.
         alt_text = _extract_image_alt_text(doc, rel)
-        if not alt_text or not alt_text.strip():
+        in_academic_region = host_para_idx >= 0 and host_para_idx >= effective_cover_end
+        if in_academic_region and (not alt_text or not alt_text.strip()):
             violations.append(LayoutViolation(
                 rule_code="IMAGE_ALT_TEXT_MISSING",
                 severity="MINOR",
@@ -1055,8 +1109,10 @@ def run_static_rules_engine(
     # populates document_blocks.role) gate Font + Paragraph Typography
     # eligibility. Roles are computed once and shared by the rules — rules
     # never reclassify paragraphs themselves.
-    from app.services.role_classifier import classify_paragraphs
+    from app.services.role_classifier import classify_paragraphs, classify_table_roles, cover_region_end
     roles = classify_paragraphs(doc, paragraphs)
+    table_roles = classify_table_roles(doc)
+    cover_end = cover_region_end(doc, paragraphs)
 
     all_violations = []
     all_violations.extend(check_font_consistency(paragraphs, preset, roles=roles))
@@ -1064,7 +1120,12 @@ def run_static_rules_engine(
     all_violations.extend(check_paragraph_typography(paragraphs, preset, doc=doc, roles=roles))
     all_violations.extend(check_page_margins(sections, preset))
     all_violations.extend(check_heading_hierarchy(paragraphs))
-    all_violations.extend(check_media_captions(doc, paragraphs, preset))
+    all_violations.extend(check_media_captions(
+        doc, paragraphs, preset,
+        table_roles=table_roles,
+        paragraph_roles=roles,
+        cover_end=cover_end,
+    ))
     all_violations.extend(run_citation_sensor(doc, paragraphs))
 
     return all_violations

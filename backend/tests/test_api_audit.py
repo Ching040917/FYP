@@ -140,20 +140,23 @@ def test_post_audit_persists_citation_mismatch_as_violation_row(client, docx_fac
 
 def test_post_audit_score_decrements_per_violation(client, docx_factory, monkeypatch):
     # The new scoring engine uses per-category weights + caps (CATEGORY_META).
-    # 1 MAJOR margin (page_margins: 8pt) + 1 MAJOR citation (citation_apa: 5pt)
-    # -> 100 - 8 - 5 = 87
+    # APA profile on a doc with 1.5 in margins, 1.5 spacing, justified text:
+    #   - 4 margin majors (page_margins: 8pt each, cap 32)  → 32
+    #   - LINE_SPACING + ALIGNMENT minors (paragraph_typography) → 2
+    #   - 1 citation MAJOR (citation_apa: 5pt)               → 5
+    # -> 100 - 32 - 2 - 5 = 61
     body = ["Orphan (Garcia, 2018) text."]
     file_bytes = docx_factory(
         paragraphs=body, references=None,
-        margins={"left": 1.0, "right": 1.0, "top": 1.0, "bottom": 1.0},
+        margins={"left": 1.5, "right": 1.5, "top": 1.5, "bottom": 1.5},
     )
     post = client.post(
         "/api/audit",
         files={"file": ("test.docx", file_bytes, "application/octet-stream")},
+        params={"profile_id": "apa7-student-paper"},
     )
     score = post.json()["weighted_compliance_score"]
-    # 1 MARGIN_LEFT (MAJOR, page_margins weight=8) + 1 CITATION_MISMATCH (MAJOR, citation_apa weight=5)
-    assert score == 87
+    assert score == 61
 
 
 def test_post_audit_persists_document_stats_via_get(client, docx_factory):

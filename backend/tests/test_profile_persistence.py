@@ -58,8 +58,12 @@ def test_default_suc_snapshot_persisted(client):
     assert snap is not None
     assert snap["profile_id"] == RECOMMENDED_PROFILE_ID
     assert snap["profile_source"] == "built_in"
+    assert snap["profile_version"] == 2
     assert snap["fingerprint"]
-    assert snap["margins"]["left_in"] == 1.5
+    assert snap["margins"]["left_in"] is None
+    assert snap["margins"]["right_in"] is None
+    assert snap["margins"]["top_in"] is None
+    assert snap["margins"]["bottom_in"] is None
 
 
 def test_apa_profile_persisted(client):
@@ -170,7 +174,7 @@ def test_registry_changes_do_not_affect_stored_snapshot(client):
     # GET still returns the stored snapshot.
     get = client.get(f"/api/audit/{audit_id}").json()
     assert get["profile_snapshot"]["fingerprint"] == stored["fingerprint"]
-    assert get["profile_snapshot"]["margins"]["left_in"] == 1.5
+    assert get["profile_snapshot"]["margins"]["left_in"] is None
 
 
 # ---------------------------------------------------------------------------

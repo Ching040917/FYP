@@ -44,19 +44,24 @@ _BOILERPLATE_EXEMPT_ROLES = frozenset({
 def _suc_academic_report() -> DocumentFormattingProfile:
     """SUC Academic Report — institution-specific verified values.
 
-    Mirrors the current PresetConfig so the recommended default for the
-    current institutional deployment reproduces today's behavior exactly.
-    All values are labelled institution-specific; none are universal.
+    There is NO verified universal margin requirement for ordinary SUC
+    academic reports — margins are not enforced by this profile. Margin
+    requirements apply only when a course, assignment, or thesis template
+    explicitly specifies them (a Custom profile can enable explicit
+    margins). All values are labelled institution-specific; none are
+    universal.
     """
     return DocumentFormattingProfile(
         profile_id=SUC_PROFILE_ID,
         profile_name="SUC Academic Report",
-        profile_version=1,
+        profile_version=2,
         profile_source="built_in",
         description=(
             "Institution-specific requirements for the current SUC "
             "deployment (verified). Recommended default for SUC theses and "
-            "assignments. Values are institution-specific, not universal."
+            "assignments. Margins: Not checked unless your course or "
+            "document template specifies them. Values are "
+            "institution-specific, not universal."
         ),
         citation_style="APA 7",
         body=BodySettings(
@@ -77,10 +82,10 @@ def _suc_academic_report() -> DocumentFormattingProfile:
             space_after_pt=6.0,
         ),
         margins=MarginSettings(
-            margin_left_in=1.5,
-            margin_right_in=1.0,
-            margin_top_in=1.0,
-            margin_bottom_in=1.0,
+            margin_left_in=None,
+            margin_right_in=None,
+            margin_top_in=None,
+            margin_bottom_in=None,
         ),
         references=ReferencesSettings(
             line_spacing=2.0,
@@ -239,14 +244,18 @@ def _key_requirements_summary(profile: DocumentFormattingProfile) -> List[str]:
     # Margins
     if all(v is not None for v in (m.margin_left_in, m.margin_right_in, m.margin_top_in, m.margin_bottom_in)):
         if len({m.margin_left_in, m.margin_right_in, m.margin_top_in, m.margin_bottom_in}) == 1:
-            lines.append(f"{m.margin_left_in:g} in margins on all sides")
+            lines.append(f"Margins: {m.margin_left_in:g} in on all sides")
         else:
             lines.append(
-                f"{m.margin_left_in:g} in left, {m.margin_right_in:g} in right, "
-                f"{m.margin_top_in:g} in top, {m.margin_bottom_in:g} in bottom margins"
+                f"Margins: {m.margin_left_in:g} in left, {m.margin_right_in:g} in right, "
+                f"{m.margin_top_in:g} in top, {m.margin_bottom_in:g} in bottom"
             )
+    elif all(v is None for v in (m.margin_left_in, m.margin_right_in, m.margin_top_in, m.margin_bottom_in)):
+        lines.append(
+            "Margins: Not checked unless your course or document template specifies them."
+        )
     elif m.margin_left_in is not None:
-        lines.append(f"{m.margin_left_in:g} in left margin")
+        lines.append(f"Margins: {m.margin_left_in:g} in left margin")
 
     # Body font
     if b.allowed_font_combos:

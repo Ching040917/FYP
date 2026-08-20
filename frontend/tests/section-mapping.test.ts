@@ -171,3 +171,86 @@ test('oddPage break does not override contradictory rendered evidence', () => {
   assert.equal(r.startPage, 2)
   assert.equal(r.confidence, 'exact')
 })
+
+// ---------------------------------------------------------------------------
+// Phase 3: content-less gap sections (invisible TOC / empty break sections)
+// ---------------------------------------------------------------------------
+
+test('empty nextPage section between two exact neighbours maps to the gap page', () => {
+  // Section 1 (idx 1) contains ONLY empty paragraphs (invisible field-based
+  // TOC). Section 0 → P1 (cover), Section 2 → P3+ (academic). Section 1 is
+  // nextPage → occupies exactly P2, proven by both neighbours + break type.
+  const byIndex = mapping([
+    [2, 1], [7, 1],      // Section 0: cover mapped P1
+    [10, null], [11, null], [12, null], // Section 1: all empty/unmapped
+    [13, 3], [14, 3], [15, 4], // Section 2: academic P3+
+  ])
+  const sections = [
+    sec({ section_index: 0, start_paragraph_index: 0, end_paragraph_index: 9, break_type: 'nextPage' }),
+    sec({ section_index: 1, start_paragraph_index: 10, end_paragraph_index: 12, break_type: 'nextPage' }),
+    sec({ section_index: 2, start_paragraph_index: 13, break_type: 'nextPage' }),
+  ]
+  const all = mapAllSections({ sections, byIndex, numPages: 10 })
+  const r1 = all.find((r) => r.sectionIndex === 1)!
+  assert.equal(r1.confidence, 'exact')
+  assert.deepEqual([r1.startPage, r1.endPage], [2, 2])
+  assert.equal(r1.evidenceMethod, 'gap-between-neighbors')
+})
+
+test('empty gap section stays unavailable when only ONE neighbour is proven', () => {
+  // Section 1 (empty) has a proven next neighbour (P3) but the PREVIOUS
+  // section is unavailable → the gap is unbounded on one side → unavailable.
+  const byIndex = mapping([[13, 3], [14, 3]])
+  const sections = [
+    sec({ section_index: 0, start_paragraph_index: 0, end_paragraph_index: 9, break_type: 'nextPage' }),
+    sec({ section_index: 1, start_paragraph_index: 10, end_paragraph_index: 12, break_type: 'nextPage' }),
+    sec({ section_index: 2, start_paragraph_index: 13, break_type: 'nextPage' }),
+  ]
+  const all = mapAllSections({ sections, byIndex, numPages: 10 })
+  const r1 = all.find((r) => r.sectionIndex === 1)!
+  assert.equal(r1.confidence, 'unavailable')
+  assert.equal(r1.startPage, null)
+})
+
+test('empty section with continuous break does NOT invent a page', () => {
+  // continuous break → may share a page; the gap rule only fires for
+  // page-advancing breaks (nextPage/oddPage/evenPage).
+  const byIndex = mapping([[2, 1], [13, 3]])
+  const sections = [
+    sec({ section_index: 0, start_paragraph_index: 0, end_paragraph_index: 9, break_type: 'nextPage' }),
+    sec({ section_index: 1, start_paragraph_index: 10, end_paragraph_index: 12, break_type: 'continuous' }),
+    sec({ section_index: 2, start_paragraph_index: 13, break_type: 'nextPage' }),
+  ]
+  const all = mapAllSections({ sections, byIndex, numPages: 10 })
+  const r1 = all.find((r) => r.sectionIndex === 1)!
+  assert.equal(r1.confidence, 'unavailable')
+  assert.equal(r1.startPage, null)
+})
+
+test('empty gap section outside the real PDF page count stays unavailable', () => {
+  // The gap rule requires the inferred pages to be inside the real PDF.
+  const byIndex = mapping([[2, 1], [13, 5]])
+  const sections = [
+    sec({ section_index: 0, start_paragraph_index: 0, end_paragraph_index: 9, break_type: 'nextPage' }),
+    sec({ section_index: 1, start_paragraph_index: 10, end_paragraph_index: 12, break_type: 'nextPage' }),
+    sec({ section_index: 2, start_paragraph_index: 13, break_type: 'nextPage' }),
+  ]
+  // numPages=3: the inferred gap 2..4 exceeds the PDF → unavailable.
+  const all = mapAllSections({ sections, byIndex, numPages: 3 })
+  const r1 = all.find((r) => r.sectionIndex === 1)!
+  assert.equal(r1.confidence, 'unavailable')
+})
+
+test('adjacent proven sections with no gap leave the empty section unavailable', () => {
+  // Section 0 ends P1, Section 2 starts P2 → gapStart(2) > gapEnd(1) → no
+  // blank page → unavailable.
+  const byIndex = mapping([[2, 1], [13, 2]])
+  const sections = [
+    sec({ section_index: 0, start_paragraph_index: 0, end_paragraph_index: 9, break_type: 'nextPage' }),
+    sec({ section_index: 1, start_paragraph_index: 10, end_paragraph_index: 12, break_type: 'nextPage' }),
+    sec({ section_index: 2, start_paragraph_index: 13, break_type: 'nextPage' }),
+  ]
+  const all = mapAllSections({ sections, byIndex, numPages: 10 })
+  const r1 = all.find((r) => r.sectionIndex === 1)!
+  assert.equal(r1.confidence, 'unavailable')
+})

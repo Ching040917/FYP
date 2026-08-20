@@ -152,7 +152,7 @@ export function UploadCard({ onResult, onReset, trySampleSignal = 0 }: UploadCar
           raw,
         })
         showToast(
-          `Audit complete. Score: ${result.weighted_compliance_score}/100 · ${result.major_count} major · ${result.minor_count} minor`,
+          `Audit complete. Score: ${result.weighted_compliance_score}/100 for enabled checks · ${result.major_count} major · ${result.minor_count} minor`,
           'success',
         )
         onResult(result, cloudEnabled)

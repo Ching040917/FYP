@@ -565,9 +565,10 @@ def test_sanitized_real_doc_cover_findings_removed():
 
 
 def test_sanitized_real_doc_score_improves():
-    """Score before 68 → after 78 (cover + references typography findings
-    removed; margins and table captions remain)."""
+    """Score trajectory across builds: 68 (pre-2A) → 78 (Phase 2A cover +
+    references typography removed) → 84 (Phase 2B: 3 administrative/rubric
+    Table Caption false positives removed, each MINOR=2pt). Margins remain."""
     from app.services.scoring import calculate_weighted_score_detailed
     viols = run_static_rules_engine(_sanitized_real_doc())
     score = calculate_weighted_score_detailed(viols).total
-    assert score == 78, f"expected 78, got {score}"
+    assert score == 84, f"expected 84, got {score}"

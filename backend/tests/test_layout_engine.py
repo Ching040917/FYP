@@ -114,7 +114,10 @@ def test_wrong_body_font_triggers_minor(docx_factory):
     assert fc.severity == "MINOR"
 
 
-def test_uncaptioned_table_triggers_minor(docx_factory):
+def test_uncaptioned_body_table_without_reference_is_not_scholarly(docx_factory):
+    """Phase 2B: a Word table is not automatically scholarly. A body data
+    table with no caption and no in-text reference is UNKNOWN → no Caption
+    finding."""
     body = ["Body text."]
     refs = []
     file_bytes = docx_factory(
@@ -125,9 +128,26 @@ def test_uncaptioned_table_triggers_minor(docx_factory):
     )
     viols = run_static_rules_engine(file_bytes)
     codes = [v.rule_code for v in viols]
+    assert "TABLE_CAPTION_MISSING" not in codes
+    assert "MANUAL_CAPTION" not in codes
+
+
+def test_uncaptioned_table_with_in_text_reference_is_scholarly(docx_factory):
+    """Phase 2B: a body table referenced by surrounding academic prose
+    ("as shown in Table 1") is SCHOLARLY_TABLE → missing caption finding."""
+    body = [
+        "Body text before the table.",
+        "The results, as shown in Table 1, support the hypothesis.",
+    ]
+    file_bytes = docx_factory(
+        paragraphs=body, references=[],
+        margins={"left": 1.5, "right": 1.0, "top": 1.0, "bottom": 1.0},
+        tables=[[["A", "B"], ["1", "2"]]],
+        with_caption=False,
+    )
+    viols = run_static_rules_engine(file_bytes)
+    codes = [v.rule_code for v in viols]
     assert "TABLE_CAPTION_MISSING" in codes
-    tc = next(v for v in viols if v.rule_code == "TABLE_CAPTION_MISSING")
-    assert tc.severity == "MINOR"
 
 
 # ---------------------------------------------------------------------------
@@ -394,10 +414,13 @@ def test_manual_figure_caption_flagged_minor():
 
 
 def test_wrong_label_type_not_accepted():
-    """A Figure caption beside a table does not satisfy the table rule."""
-    file_bytes = _doc_with_table(
-        caption_builder=lambda doc: doc.add_paragraph("Figure 1: Wrong label"),
-    )
+    """A Figure caption beside a scholarly Table does not satisfy the table
+    rule — the table is scholarly via in-text reference, and the wrong label
+    type still leaves it without a valid Table caption."""
+    def builder(doc):
+        doc.add_paragraph("The data, as shown in Table 1, is conclusive.")
+        doc.add_paragraph("Figure 1: Wrong label")
+    file_bytes = _doc_with_table(caption_builder=builder)
     viols = run_static_rules_engine(file_bytes)
     codes = _caption_codes(viols)
     assert "TABLE_CAPTION_MISSING" in codes

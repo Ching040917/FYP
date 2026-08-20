@@ -97,6 +97,8 @@ export interface AuditResponse {
   ai_provider?: string | null
   /** Section boundary metadata (PoC). Null for historical audits. */
   sections?: SectionMetadata[] | null
+  /** Immutable per-Audit Formatting Profile snapshot. Null for historical audits. */
+  profile_snapshot?: ProfileSnapshot | null
 }
 
 export interface AuditListItem {
@@ -117,6 +119,28 @@ export interface FormattingProfile {
   recommended: boolean
   citation_style: string
   key_requirements: string[]
+}
+
+/**
+ * Immutable per-Audit Formatting Profile snapshot (Build 3) as served by
+ * GET/POST audit responses. `margins` uses `{left_in, right_in, top_in,
+ * bottom_in}` — null means the corresponding deterministic Margin check is
+ * disabled. Null snapshot = historical audit (legacy requirements).
+ */
+export interface ProfileSnapshot {
+  profile_id: string
+  profile_name: string
+  profile_version: number
+  profile_source: string
+  description: string
+  citation_style: string
+  institution_specific: boolean
+  margins: {
+    left_in: number | null
+    right_in: number | null
+    top_in: number | null
+    bottom_in: number | null
+  }
 }
 
 /** Structured paragraph block from GET /api/audit/{id}/document-blocks — mirrors backend extract_document_blocks. */

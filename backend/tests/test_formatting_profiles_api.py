@@ -71,8 +71,10 @@ def test_endpoint_suc_summary_institution_specific(client):
     suc = next(p for p in profiles if p["profile_id"] == SUC_PROFILE_ID)
     assert suc["profile_source"] == "built_in"
     assert suc["citation_style"] == "APA 7"
+    assert suc["profile_version"] == 2
     joined = " ".join(suc["key_requirements"]).lower()
-    assert "1.5 in left" in joined
+    assert "margins: not checked" in joined
+    assert "course or document template specifies them" in joined
     assert "12 pt body" in joined
     assert "institution" in suc["description"].lower()
 
@@ -81,7 +83,7 @@ def test_endpoint_apa_summary_truthful(client):
     profiles = client.get("/api/formatting-profiles").json()["profiles"]
     apa = next(p for p in profiles if p["profile_id"] == APA_PROFILE_ID)
     joined = " ".join(apa["key_requirements"]).lower()
-    assert "1 in margins" in joined
+    assert "margins: 1 in on all sides" in joined
     assert "double line spacing" in joined
     assert "left-aligned" in joined
     assert "allowed fonts" in joined

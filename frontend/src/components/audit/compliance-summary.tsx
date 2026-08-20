@@ -14,8 +14,12 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../ui
 import { Button } from '../ui/button'
 import { VerdictChecklist } from './verdict-checklist'
 import { aiProviderLabel } from '../../lib/audit/adapter'
-import { gradeFor } from '../../lib/audit/scoring'
 import { formatAuditDateTime, auditDateTimeAttr } from '../../lib/format-date'
+import {
+  ALL_ENABLED_CHECKS_PASSED,
+  ENABLED_CHECKS_CAUTION,
+  ENABLED_CHECKS_SUFFIX,
+} from '../../lib/audit/enabled-checks-wording'
 import type { AuditResult, DocumentStats } from '../../types/audit'
 
 const STAT_LABELS: Array<[keyof DocumentStats, string]> = [
@@ -33,7 +37,6 @@ export function ComplianceSummary({
   result: AuditResult
 }) {
   const navigate = useNavigate()
-  const grade = gradeFor(result.weighted_compliance_score)
   const majorCount = result.major_count ?? 0
   const minorCount = result.minor_count ?? 0
   const hasFindings = majorCount + minorCount > 0
@@ -66,20 +69,19 @@ export function ComplianceSummary({
               </span>
               <span className="text-[13px] text-muted-foreground">/100</span>
             </div>
+            <div className="mt-0.5 text-[12px] leading-4 text-muted-foreground">
+              {ENABLED_CHECKS_SUFFIX}
+            </div>
           </div>
           <div className="text-right">
             <div className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-              Grade
+              Findings
             </div>
             <div className="mt-1 text-[13px] font-medium text-foreground">
-              {grade.grade} · {grade.label}
+              {majorCount} major · {minorCount} minor
             </div>
           </div>
         </div>
-
-        <p className="text-[13px] text-muted-foreground">
-          {majorCount} major findings · {minorCount} minor findings
-        </p>
 
         <VerdictChecklist breakdown={result.score_breakdown} showDerivedNote />
 
@@ -90,10 +92,14 @@ export function ComplianceSummary({
         )}
 
         {!hasFindings && (
-          <p className="rounded-md border border-border bg-input/20 px-3 py-2 text-[13px] leading-[19px] text-muted-foreground">
-            No supported compliance findings were detected in this document. This does not
-            certify the document as academically correct in all respects.
-          </p>
+          <div className="rounded-md border border-border bg-input/20 px-3 py-2.5">
+            <p className="text-[13px] font-medium leading-[19px] text-foreground">
+              {ALL_ENABLED_CHECKS_PASSED}
+            </p>
+            <p className="mt-0.5 text-[13px] leading-[19px] text-muted-foreground">
+              {ENABLED_CHECKS_CAUTION}
+            </p>
+          </div>
         )}
 
         {auditId ? (

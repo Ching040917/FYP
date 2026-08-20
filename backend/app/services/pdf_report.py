@@ -32,7 +32,7 @@ from reportlab.platypus import (
 )
 
 from app.services.layout_violation import LayoutViolation
-from app.services.scoring import calculate_weighted_score_detailed, grade_for
+from app.services.scoring import calculate_weighted_score_detailed
 
 # Built-in CID font — renders any Unicode text (incl. Chinese captions)
 # without shipping font files. Latin text keeps the Helvetica look.
@@ -475,7 +475,46 @@ def _appendix_table(entries) -> Table:
     return table
 
 
-def _score_summary(score, grade_label, major, minor) -> Table:
+def _append_profile_disclosure(story, profile_snapshot) -> None:
+    """Formatting Profile + Margin disclosure block for the report header.
+
+    Reads ONLY the STORED snapshot (immutable, per-Audit). Never exposes
+    schema/version/fingerprint/PresetConfig terminology. Historical audits
+    (no snapshot) get a legacy-requirements note instead.
+    """
+    if not isinstance(profile_snapshot, dict):
+        story.append(_p(
+            "Formatting Profile: Legacy formatting requirements (not recorded).",
+            size=9,
+        ))
+        return
+
+    name = str(profile_snapshot.get("profile_name") or "Selected profile")
+    version = profile_snapshot.get("profile_version")
+    citation = str(profile_snapshot.get("citation_style") or "APA 7")
+    margins = (profile_snapshot.get("margins") or {})
+    left = margins.get("left_in")
+    right = margins.get("right_in")
+    top = margins.get("top_in")
+    bottom = margins.get("bottom_in")
+
+    if all(v is None for v in (left, right, top, bottom)):
+        margin_line = "Margins: Not checked"
+    elif all(v is not None for v in (left, right, top, bottom)) and len({left, right, top, bottom}) == 1:
+        margin_line = f"Margins: {left:g} in on all sides"
+    elif left is not None:
+        margin_line = f"Margins: {left:g} in left"
+    else:
+        margin_line = "Margins: Not checked"
+
+    story.append(_p(
+        f"Formatting Profile: {name} (v{version}). Citation Style: {citation}.",
+        size=9,
+    ))
+    story.append(_p(margin_line, size=9))
+
+
+def _score_summary(score, major, minor) -> Table:
     def cell(text, size, font, color, bg=None):
         return Paragraph(_clean(text), ParagraphStyle(
             f"cell-{size}-{font}",
@@ -487,16 +526,14 @@ def _score_summary(score, grade_label, major, minor) -> Table:
         ))
 
     data = [
-        [cell("Compliance Score", 8.5, "Helvetica-Bold", MUTED),
-         cell("Grade", 8.5, "Helvetica-Bold", MUTED),
+        [cell("Compliance Score (enabled checks)", 8.5, "Helvetica-Bold", MUTED),
          cell("Major", 8.5, "Helvetica-Bold", MUTED),
          cell("Minor", 8.5, "Helvetica-Bold", MUTED)],
         [cell(str(score), 20, "Helvetica-Bold", colors.white),
-         cell(f"{grade_label['grade']} - {grade_label['label']}", 12, "Helvetica-Bold", NAVY),
          cell(str(major), 16, "Helvetica-Bold", RED),
          cell(str(minor), 16, "Helvetica-Bold", MUTED)],
     ]
-    table = Table(data, colWidths=[50 * mm, 55 * mm, 35 * mm, 35 * mm])
+    table = Table(data, colWidths=[90 * mm, 45 * mm, 45 * mm])
     table.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (0, 1), NAVY),
         ("BACKGROUND", (1, 0), (-1, 0), LIGHT),
@@ -539,8 +576,14 @@ def _on_landscape(canvas, doc):
     _draw_chrome(canvas, doc, _LAND_W, _LAND_H)
 
 
-def generate_audit_pdf(audit, violations, citation_issues) -> bytes:
-    """Build the full A4 report as PDF bytes."""
+def generate_audit_pdf(audit, violations, citation_issues, profile_snapshot=None) -> bytes:
+    """Build the full A4 report as PDF bytes.
+
+    `profile_snapshot` is the STORED per-Audit snapshot dict (optional): the
+    report discloses the Formatting Profile name/version, Citation Style,
+    and enabled/disabled Margin checks. Historical PDFs keep their stored
+    snapshot — never a re-resolution.
+    """
     reconstructed = [
         LayoutViolation(
             rule_code=v.rule_code,
@@ -553,7 +596,6 @@ def generate_audit_pdf(audit, violations, citation_issues) -> bytes:
         for v in violations
     ]
     score_result = calculate_weighted_score_detailed(reconstructed)
-    grade = grade_for(score_result.total)
 
     story = []
     story.append(_p("Academic Compliance Report", size=18, font="Helvetica-Bold", color=NAVY, leading=22))
@@ -577,7 +619,26 @@ def generate_audit_pdf(audit, violations, citation_issues) -> bytes:
     # ---- Executive Summary ----
     story.append(_section("Executive Summary"))
     story.append(Spacer(1, 2 * mm))
-    story.append(_score_summary(score_result.total, grade, score_result.major_count, score_result.minor_count))
+    story.append(_score_summary(score_result.total, score_result.major_count, score_result.minor_count))
+    story.append(Spacer(1, 2 * mm))
+    story.append(_p(
+        f"The score of {score_result.total}/100 applies only to the enabled deterministic "
+        "checks in the selected formatting profile. It does not assess writing quality, "
+        "factual accuracy, or requirements that are not enabled in that profile.",
+        size=8.5, color=MUTED,
+    ))
+    story.append(Spacer(1, 2 * mm))
+    if not violations:
+        story.append(_p("All enabled checks passed.", size=9.5, font="Helvetica-Bold", color=GREEN))
+        story.append(_p(
+            "No issues were detected by the enabled deterministic checks. This does not "
+            "certify that the document is academically correct in every respect.",
+            size=8.5, color=MUTED,
+        ))
+        story.append(Spacer(1, 2 * mm))
+
+    # ---- Selected Formatting Profile disclosure (stored snapshot only) ----
+    _append_profile_disclosure(story, profile_snapshot)
     story.append(Spacer(1, 4 * mm))
 
     # ---- Category Breakdown ----
@@ -611,7 +672,11 @@ def generate_audit_pdf(audit, violations, citation_issues) -> bytes:
     major = [v for v in violations if v.severity == "MAJOR"]
     minor = [v for v in violations if v.severity == "MINOR"]
     if not violations:
-        story.append(_p("No layout or citation findings were recorded for this document.", size=9.5, color=GREEN))
+        story.append(_p(
+            "No issues were detected by the enabled deterministic checks. This does not "
+            "certify that the document is academically correct in every respect.",
+            size=9.5, color=GREEN,
+        ))
     else:
         story.append(_p(
             f"{len(violations)} deterministic finding(s): {len(major)} major (shown individually), "

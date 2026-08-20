@@ -428,7 +428,12 @@ function ScoreCell({ status, score }: { status: string; score: number }) {
   if (status !== 'completed') {
     return <span className="text-[13px] text-muted-foreground">Unavailable</span>
   }
-  return <span className="font-mono text-[13px] text-foreground">{score}</span>
+  return (
+    <span className="whitespace-nowrap">
+      <span className="font-mono text-[13px] text-foreground">{score}</span>
+      <span className="ml-1 text-[11px] text-muted-foreground">/100 for enabled checks</span>
+    </span>
+  )
 }
 
 function StatusBadge({ status }: { status: string }) {

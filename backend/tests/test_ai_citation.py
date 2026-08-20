@@ -579,7 +579,9 @@ def test_deterministic_findings_unchanged_with_ai_available(client, docx_factory
     assert resp.status_code == 200
     data = resp.json()
     assert data["ai_review_status"] == AI_STATUS_WITH_SUGGESTIONS
-    assert data["weighted_compliance_score"] == 79  # 2 margin majors (16) + 1 citation MAJOR (5)
+    # Default SUC profile does not check margins → only the citation MAJOR
+    # (citation_apa weight=5) deducts: 100 - 5 = 95.
+    assert data["weighted_compliance_score"] == 95
 
 
 def test_deterministic_findings_unchanged_with_ai_unavailable(client, docx_factory, monkeypatch):
@@ -605,7 +607,7 @@ def test_deterministic_findings_unchanged_with_ai_unavailable(client, docx_facto
     data = resp.json()
     assert data["ai_review_status"] == AI_STATUS_UNAVAILABLE
     # Score must match the deterministic-only score (no AI tip count added for LOCAL)
-    assert data["weighted_compliance_score"] == 79
+    assert data["weighted_compliance_score"] == 95
 
 
 # ---------------------------------------------------------------------------
@@ -966,8 +968,10 @@ async def test_score_unchanged_with_same_paragraph_findings(client, docx_factory
     resp = client.post("/api/audit", files={"file": ("t.docx", file_bytes, "application/octet-stream")})
     assert resp.status_code == 200
     data = resp.json()
-    # Score reflects deterministic violations only — AI suggestions don't add deductions
-    assert data["weighted_compliance_score"] == 82  # 3 margin majors (24) + 1 citation MAJOR (5) = 100-18=82
+    # Score reflects deterministic violations only — the default SUC profile
+    # does not check margins, so only the 2 same-paragraph citations deduct:
+    # 100 - 10 = 90. AI suggestions don't add deductions.
+    assert data["weighted_compliance_score"] == 90
     assert data["ai_review_status"] == AI_STATUS_WITH_SUGGESTIONS
 
 

@@ -28,7 +28,7 @@ from app.services.profile_registry import (
     get_builtin_profile,
 )
 from app.services.profile_schema import new_custom_profile
-from app.services.profile_snapshot import resolve_snapshot
+from app.services.profile_snapshot import resolve_snapshot, EffectiveProfileSnapshot
 
 AM = WD_ALIGN_PARAGRAPH
 _PNG = (
@@ -108,14 +108,45 @@ def _codes(viols):
 # SUC vs APA comparison
 # ---------------------------------------------------------------------------
 
-def test_one_inch_left_margin_fails_suc_passes_apa():
-    """Same DOCX (1 in left margin): SUC requires 1.5 → MARGIN_LEFT; APA
-    requires 1.0 → no MARGIN_LEFT."""
+def test_one_inch_left_margin_passes_suc_fails_apa():
+    """Same DOCX (1 in left margin): SUC does not check margins → no
+    MARGIN_LEFT; APA requires 1.0 → no MARGIN_LEFT either. The contrast
+    appears for NON-1-in margins under APA."""
     file_bytes = _doc(left_margin=1.0)
     suc = run_static_rules_engine(file_bytes, config=_config(get_builtin_profile(SUC_PROFILE_ID)))
     apa = run_static_rules_engine(file_bytes, config=_config(get_builtin_profile(APA_PROFILE_ID)))
-    assert "MARGIN_LEFT" in _codes(suc)
+    assert "MARGIN_LEFT" not in _codes(suc)
     assert "MARGIN_LEFT" not in _codes(apa)
+
+
+def test_suc_no_margin_findings_across_1_1_25_1_5():
+    """SUC produces no Margin findings for 1 in, 1.25 in, or 1.5 in left
+    margins — the check is disabled, never scored."""
+    for margin in (1.0, 1.25, 1.5):
+        file_bytes = _doc(left_margin=margin)
+        viols = run_static_rules_engine(file_bytes, config=_config(get_builtin_profile(SUC_PROFILE_ID)))
+        codes = _codes(viols)
+        assert "MARGIN_LEFT" not in codes
+        assert "MARGIN_RIGHT" not in codes
+        assert "MARGIN_TOP" not in codes
+        assert "MARGIN_BOTTOM" not in codes
+
+
+def test_apa_identifies_non_one_inch_margins():
+    """APA requires 1 in on all sides — 1.25 in left is flagged."""
+    file_bytes = _doc(left_margin=1.25)
+    apa = run_static_rules_engine(file_bytes, config=_config(get_builtin_profile(APA_PROFILE_ID)))
+    assert "MARGIN_LEFT" in _codes(apa)
+    assert "MARGIN_RIGHT" not in _codes(apa)
+
+
+def test_apa_still_requires_one_inch():
+    """APA continues to require 1 in margins."""
+    apa = get_builtin_profile(APA_PROFILE_ID)
+    assert apa.margins.margin_left_in == 1.0
+    assert apa.margins.margin_right_in == 1.0
+    assert apa.margins.margin_top_in == 1.0
+    assert apa.margins.margin_bottom_in == 1.0
 
 
 def test_references_2_0_passes_suc_and_apa():
@@ -218,8 +249,8 @@ def test_same_document_reproducible_but_profile_dependent():
     suc = run_static_rules_engine(file_bytes, config=_config(get_builtin_profile(SUC_PROFILE_ID)))
     # Same profile → identical findings.
     assert [(v.rule_code, v.severity, v.location) for v in a1] == [(v.rule_code, v.severity, v.location) for v in a2]
-    # Different profile → different margin finding.
-    assert ("MARGIN_LEFT", "MAJOR", {"section_index": 0}) in [
+    # SUC never emits margin findings; APA at 1.0 in has none either here.
+    assert ("MARGIN_LEFT", "MAJOR", {"section_index": 0}) not in [
         (v.rule_code, v.severity, v.location) for v in suc
     ]
     assert ("MARGIN_LEFT", "MAJOR", {"section_index": 0}) not in [
@@ -239,12 +270,12 @@ def test_no_global_default_fallback():
 
 
 def test_profile_aware_messages_reference_profile():
-    """Findings reference the selected profile by name."""
-    file_bytes = _doc(left_margin=1.0)
-    suc = run_static_rules_engine(file_bytes, config=_config(get_builtin_profile(SUC_PROFILE_ID)))
-    ml = next(v for v in suc if v.rule_code == "MARGIN_LEFT")
-    assert '"SUC Academic Report"' in ml.message
-    assert "requires 1.50 in" in ml.message
+    """APA margin findings reference the selected profile by name."""
+    file_bytes = _doc(left_margin=1.25)
+    apa = run_static_rules_engine(file_bytes, config=_config(get_builtin_profile(APA_PROFILE_ID)))
+    ml = next(v for v in apa if v.rule_code == "MARGIN_LEFT")
+    assert '"APA 7 Student Paper"' in ml.message
+    assert "requires 1.00 in" in ml.message
 
 
 # ---------------------------------------------------------------------------
@@ -255,20 +286,10 @@ def test_audit_uses_snapshot_config_and_stores_it(client):
     """The audit's findings are produced from the stored snapshot config —
     the same document audited under different profiles gives different
     results, and each audit stores its snapshot."""
-    from tests.test_profile_persistence import _docx_bytes  # reuse builder
-
-    def _post(profile_id):
-        return client.post(
-            "/api/audit",
-            files={"file": ("t.docx", _docx_bytes(), "application/octet-stream")},
-            params={"profile_id": profile_id},
-        )
-
-    # This builder produces a default-margin doc — SUC (1.5) flags left margin.
-    from app.config import settings
-    # Build a doc with 1.0 left margin explicitly.
+    # Build a doc with 1.25 in left margin so SUC passes (not checked) and
+    # APA flags it.
     doc = Document()
-    doc.sections[0].left_margin = Inches(1.0)
+    doc.sections[0].left_margin = Inches(1.25)
     doc.sections[0].right_margin = Inches(1.0)
     doc.sections[0].top_margin = Inches(1.0)
     doc.sections[0].bottom_margin = Inches(1.0)
@@ -289,10 +310,10 @@ def test_audit_uses_snapshot_config_and_stores_it(client):
     doc.save(buf)
     doc_bytes = buf.getvalue()
 
-    def _post_bytes(profile_id):
+    def _post_bytes(profile_id, bytes_override=None):
         return client.post(
             "/api/audit",
-            files={"file": ("t.docx", doc_bytes, "application/octet-stream")},
+            files={"file": ("t.docx", bytes_override or doc_bytes, "application/octet-stream")},
             params={"profile_id": profile_id},
         )
 
@@ -302,8 +323,8 @@ def test_audit_uses_snapshot_config_and_stores_it(client):
     assert apa_post.status_code == 200
     suc_codes = {v["rule_code"] for v in suc_post.json()["physical_layout_errors"]}
     apa_codes = {v["rule_code"] for v in apa_post.json()["physical_layout_errors"]}
-    assert "MARGIN_LEFT" in suc_codes
-    assert "MARGIN_LEFT" not in apa_codes
+    assert "MARGIN_LEFT" not in suc_codes
+    assert "MARGIN_LEFT" in apa_codes
     # Each audit stores the snapshot it used.
     assert suc_post.json()["profile_snapshot"]["profile_id"] == SUC_PROFILE_ID
     assert apa_post.json()["profile_snapshot"]["profile_id"] == APA_PROFILE_ID
@@ -341,3 +362,139 @@ def test_modifying_custom_source_does_not_alter_stored_results(client):
     get = client.get(f"/api/audit/{audit_id}").json()
     assert get["profile_snapshot"]["fingerprint"] == stored_fp
     assert get["violations"] == findings
+
+
+# ---------------------------------------------------------------------------
+# Evidence-based margin policy (SUC does not check margins)
+# ---------------------------------------------------------------------------
+
+def test_custom_explicit_margins_still_create_findings():
+    """A Custom profile requiring 1.5 in left margin still creates a
+    MARGIN_LEFT finding for a 1.0 in document."""
+    custom = new_custom_profile("CustomMargins", base=get_builtin_profile(APA_PROFILE_ID))
+    custom.margins.margin_left_in = 1.5
+    file_bytes = _doc(left_margin=1.0)
+    viols = run_static_rules_engine(file_bytes, config=_config(custom))
+    ml = next(v for v in viols if v.rule_code == "MARGIN_LEFT")
+    assert ml.severity == "MAJOR"
+    assert "requires 1.50 in" in ml.message
+    assert "CustomMargins" in ml.message
+
+
+def test_custom_null_margins_skip_findings():
+    """A Custom profile with null margins produces no Margin findings."""
+    custom = new_custom_profile("NullMargins", base=get_builtin_profile(APA_PROFILE_ID))
+    custom.margins.margin_left_in = None
+    custom.margins.margin_right_in = None
+    custom.margins.margin_top_in = None
+    custom.margins.margin_bottom_in = None
+    for margin in (1.0, 1.25, 1.5):
+        file_bytes = _doc(left_margin=margin)
+        viols = run_static_rules_engine(file_bytes, config=_config(custom))
+        codes = _codes(viols)
+        assert "MARGIN_LEFT" not in codes
+        assert "MARGIN_RIGHT" not in codes
+        assert "MARGIN_TOP" not in codes
+        assert "MARGIN_BOTTOM" not in codes
+
+
+def test_suc_profile_version_incremented():
+    """SUC built-in version bumped to 2 when the margin policy changed."""
+    assert get_builtin_profile(SUC_PROFILE_ID).profile_version == 2
+
+
+def test_suc_snapshot_fingerprint_differs_from_previous_version():
+    """The new SUC snapshot (margins null) fingerprints differently from the
+    old v1 snapshot (margins 1.5/1.0) — effective requirements changed."""
+    old = get_builtin_profile(SUC_PROFILE_ID).to_dict()
+    old["profile_version"] = 1
+    old["margins"]["margin_left_in"] = 1.5
+    old["margins"]["margin_right_in"] = 1.0
+    old["margins"]["margin_top_in"] = 1.0
+    old["margins"]["margin_bottom_in"] = 1.0
+    from app.services.profile_schema import profile_from_dict
+    old_snap = resolve_snapshot(profile_from_dict(old))
+    new_snap = resolve_snapshot(get_builtin_profile(SUC_PROFILE_ID))
+    assert old_snap.fingerprint != new_snap.fingerprint
+
+
+def test_historical_snapshot_immutable_and_no_rescore(client, test_engine):
+    """A stored historical SUC snapshot keeps its original margins and is
+    never re-scored — GET returns the stored snapshot, and the stored
+    score/findings stay untouched."""
+    from sqlalchemy.orm import sessionmaker
+    Session = sessionmaker(bind=test_engine)
+    s = Session()
+    from app.models.audit import AuditRecord, Violation
+    old_snap = resolve_snapshot(get_builtin_profile(SUC_PROFILE_ID))
+    # Simulate an OLD v1 snapshot stored before the margin-policy change.
+    old_dict = old_snap.to_dict()
+    old_dict["profile_version"] = 1
+    old_dict["margins"]["left_in"] = 1.5
+    old_dict["margins"]["right_in"] = 1.0
+    old_dict["margins"]["top_in"] = 1.0
+    old_dict["margins"]["bottom_in"] = 1.0
+    old_dict["fingerprint"] = ""
+    # Re-fingerprint with the old margins but keep it valid.
+    restored = EffectiveProfileSnapshot(
+        schema_version=old_dict["schema_version"],
+        profile_id=old_dict["profile_id"],
+        profile_name=old_dict["profile_name"],
+        profile_version=1,
+        profile_source=old_dict["profile_source"],
+        description=old_dict["description"],
+        citation_style=old_dict["citation_style"],
+        institution_specific=old_dict["institution_specific"],
+        body_font_family=old_dict["body"]["font_family"],
+        body_font_size_pt=old_dict["body"]["font_size_pt"],
+        body_allowed_font_combos=tuple(tuple(c) for c in old_dict["body"]["allowed_font_combos"]),
+        body_line_spacing=old_dict["body"]["line_spacing"],
+        body_alignment=old_dict["body"]["alignment"],
+        body_space_before_pt=old_dict["body"]["space_before_pt"],
+        body_space_after_pt=old_dict["body"]["space_after_pt"],
+        body_first_line_indent_in=old_dict["body"]["first_line_indent_in"],
+        heading_font_family=old_dict["heading"]["font_family"],
+        heading_font_size_pt=old_dict["heading"]["font_size_pt"],
+        heading_allowed_font_combos=tuple(tuple(c) for c in old_dict["heading"]["allowed_font_combos"]),
+        heading_alignment=old_dict["heading"]["alignment"],
+        heading_space_before_pt=old_dict["heading"]["space_before_pt"],
+        heading_space_after_pt=old_dict["heading"]["space_after_pt"],
+        heading_level_1=dict(old_dict["heading"]["level_1"] or {}),
+        heading_level_2=dict(old_dict["heading"]["level_2"] or {}),
+        heading_level_3=dict(old_dict["heading"]["level_3"] or {}),
+        margin_left_in=1.5,
+        margin_right_in=1.0,
+        margin_top_in=1.0,
+        margin_bottom_in=1.0,
+        references_line_spacing=old_dict["references"]["line_spacing"],
+        references_hanging_indent_in=old_dict["references"]["hanging_indent_in"],
+        caption_space_before_pt=old_dict["captions"]["space_before_pt"],
+        caption_space_after_pt=old_dict["captions"]["space_after_pt"],
+        list_space_after_pt=old_dict["lists"]["space_after_pt"],
+        role_exemptions=tuple(sorted(old_dict["role_exemptions"])),
+        table_eligibility=old_dict["table_eligibility"],
+    ).with_fingerprint()
+
+    rec = AuditRecord(
+        id="hist-suc-0001", filename="old.docx", file_size=10,
+        weighted_score=70, deploy_mode="LOCAL", status="completed",
+    )
+    rec.profile_snapshot = restored.to_dict()
+    rec_id = rec.id
+    s.add(rec)
+    s.add(Violation(id="v-1", audit_id=rec_id, rule_code="MARGIN_LEFT",
+                    severity="MAJOR", location={"section_index": 0},
+                    message="Old margin finding", expected_value="1.5in",
+                    actual_value="1.0in"))
+    s.commit()
+    s.close()
+
+    get = client.get(f"/api/audit/{rec_id}").json()
+    # Stored historical snapshot returned as-is (old 1.5 margin, v1).
+    assert get["profile_snapshot"]["profile_version"] == 1
+    assert get["profile_snapshot"]["margins"]["left_in"] == 1.5
+    assert get["profile_snapshot"]["fingerprint"] == restored.fingerprint
+    # Original findings + score untouched — never re-scored.
+    assert get["weighted_score"] == 70
+    codes = {v["rule_code"] for v in get["violations"]}
+    assert "MARGIN_LEFT" in codes

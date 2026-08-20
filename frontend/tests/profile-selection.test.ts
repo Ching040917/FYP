@@ -16,12 +16,12 @@ import type { FormattingProfile } from '../src/types/api'
 const SUC: FormattingProfile = {
   profile_id: 'suc-academic-report',
   profile_name: 'SUC Academic Report',
-  profile_version: 1,
+  profile_version: 2,
   description: 'Institution-specific.',
   profile_source: 'built_in',
   recommended: true,
   citation_style: 'APA 7',
-  key_requirements: ['1.5 in left margin', 'Times New Roman 12 pt body text', '1.5 line spacing for body text'],
+  key_requirements: ['Margins: Not checked unless your course or document template specifies them.', 'Times New Roman 12 pt body text', '1.5 line spacing for body text'],
 }
 
 const APA: FormattingProfile = {
@@ -32,7 +32,7 @@ const APA: FormattingProfile = {
   profile_source: 'built_in',
   recommended: false,
   citation_style: 'APA 7',
-  key_requirements: ['1 in margins on all sides', 'double line spacing for body text', 'Left-aligned body paragraphs'],
+  key_requirements: ['Margins: 1 in on all sides', 'double line spacing for body text', 'Left-aligned body paragraphs'],
 }
 
 const PROFILES = [SUC, APA]
@@ -65,10 +65,10 @@ test('switching SUC → APA changes key requirements summary', () => {
   const suc = PROFILES.find((p) => p.profile_id === 'suc-academic-report')!
   const apa = PROFILES.find((p) => p.profile_id === 'apa7-student-paper')!
   assert.notDeepEqual(suc.key_requirements, apa.key_requirements)
-  assert.ok(suc.key_requirements.some((r) => r.includes('1.5 in left')))
-  assert.ok(apa.key_requirements.some((r) => r.includes('1 in margins')))
+  assert.ok(suc.key_requirements.some((r) => r.includes('Margins: Not checked')))
+  assert.ok(apa.key_requirements.some((r) => r.includes('Margins: 1 in on all sides')))
   assert.ok(apa.key_requirements.some((r) => r.includes('double line spacing')))
   assert.ok(apa.key_requirements.some((r) => r.includes('Left-aligned')))
   // APA key requirements never claim institution-specific values.
-  assert.ok(!apa.key_requirements.some((r) => r.includes('1.5 in left')))
+  assert.ok(!apa.key_requirements.some((r) => r.includes('Not checked')))
 })

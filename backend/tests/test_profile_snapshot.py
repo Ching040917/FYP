@@ -42,7 +42,11 @@ def test_suc_snapshot_resolution():
     snap = resolve_snapshot(get_builtin_profile(SUC_PROFILE_ID))
     assert snap.profile_id == SUC_PROFILE_ID
     assert snap.schema_version == SNAPSHOT_SCHEMA_VERSION
-    assert snap.margin_left_in == 1.5
+    assert snap.profile_version == 2
+    assert snap.margin_left_in is None
+    assert snap.margin_right_in is None
+    assert snap.margin_top_in is None
+    assert snap.margin_bottom_in is None
     assert snap.body_font_size_pt == 12.0
     assert snap.body_line_spacing == 1.5
     assert snap.references_line_spacing == 2.0
@@ -382,7 +386,10 @@ def test_adapter_output_from_snapshot_only():
     view = snapshot_to_preset_view(snap)
     assert view["FONT_FAMILY"] == "Times New Roman"
     assert view["FONT_SIZE_BODY"] == 12.0
-    assert view["MARGIN_LEFT"] == 1.5
+    assert view["MARGIN_LEFT"] is None  # SUC margins not enforced
+    assert view["MARGIN_RIGHT"] is None
+    assert view["MARGIN_TOP"] is None
+    assert view["MARGIN_BOTTOM"] is None
     assert view["REFERENCES_LINE_SPACING"] == 2.0
     assert view["LIST_SPACE_AFTER"] is None  # nullable preserved
 

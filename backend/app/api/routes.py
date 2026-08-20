@@ -506,7 +506,12 @@ async def export_audit_pdf(audit_id: str, db: Session = Depends(get_db)):
         )
 
     try:
-        pdf_bytes = generate_audit_pdf(audit, list(audit.violations), list(audit.citation_issues))
+        pdf_bytes = generate_audit_pdf(
+            audit,
+            list(audit.violations),
+            list(audit.citation_issues),
+            profile_snapshot=audit.profile_snapshot,
+        )
     except Exception:
         logger.exception("PDF export failed for audit_id=%s", audit_id)
         raise HTTPException(

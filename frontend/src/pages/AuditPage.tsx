@@ -11,7 +11,6 @@ import { VerdictChecklist } from '../components/audit/verdict-checklist'
 import { FindingDetail } from '../components/audit/finding-detail'
 import { DocumentPreview } from '../components/audit/document-preview'
 import { categoryForRuleCode, humanizeRuleCode, aiProviderLabel, normalizeAiProvider } from '../lib/audit/adapter'
-import { gradeFor } from '../lib/audit/scoring'
 import { useFindingMapping } from '../hooks/use-finding-mapping'
 import { invalidateMapping } from '../lib/pdf/mapping-cache.ts'
 import { useRenderedPdf } from '../hooks/use-rendered-pdf.ts'
@@ -48,6 +47,12 @@ import {
 import { cn } from '../lib/utils'
 import type { AuditDocumentStats, AuditResponse, DocumentBlock, Violation } from '../types/api'
 import type { AuditCategory, LayoutError } from '../types/audit'
+import {
+  ALL_ENABLED_CHECKS_PASSED,
+  ENABLED_CHECKS_CAUTION,
+  ENABLED_CHECKS_SUFFIX,
+  profileDisclosure,
+} from '../lib/audit/enabled-checks-wording'
 
 // Concise user-facing notices for non-navigable findings (Task 3).
 const OBJECT_NOTICE =
@@ -798,7 +803,6 @@ export function AuditPage() {
   const violations = audit?.violations ?? []
   const mappedErrors = violations.map(toLayoutError)
   const selectedViolation = violations.find((v) => v.id === selectedId) ?? null
-  const grade = audit ? gradeFor(audit.weighted_score) : null
 
   const breakdown = audit?.score_breakdown ?? []
   const catCounts = breakdown.reduce(
@@ -855,22 +859,25 @@ export function AuditPage() {
                       {audit.major_count ?? 0} major · {audit.minor_count ?? 0} minor findings
                     </span>
                   )}
+                  {audit.status === 'completed' && profileDisclosure(audit.profile_snapshot) && (
+                    <span className="inline-flex items-center gap-1">
+                      {profileDisclosure(audit.profile_snapshot)}
+                    </span>
+                  )}
                 </div>
               </div>
               <div className="shrink-0 text-right">
                 <div className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-                  Score
+                  Score (enabled checks)
                 </div>
                 <div className="flex items-baseline justify-end gap-1.5">
                   <span className="font-mono text-lg font-semibold text-foreground">
                     {audit.weighted_score}
                   </span>
                   <span className="text-[13px] text-muted-foreground">/100</span>
-                  {grade && (
-                    <span className="text-[13px] text-muted-foreground">
-                      · {grade.label} {grade.grade}
-                    </span>
-                  )}
+                </div>
+                <div className="mt-0.5 text-right text-[12px] leading-4 text-muted-foreground">
+                  {ENABLED_CHECKS_SUFFIX}
                 </div>
               </div>
 
@@ -1315,10 +1322,9 @@ function NoFindingsState() {
       <div className="flex items-start gap-3">
         <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-success" aria-hidden="true" />
         <div>
-          <h2 className="text-component-title text-foreground">No supported findings detected</h2>
+          <h2 className="text-component-title text-foreground">{ALL_ENABLED_CHECKS_PASSED}</h2>
           <p className="mt-1 text-sm leading-[21px] text-muted-foreground">
-            This audit detected no supported compliance violations in the document. It does not
-            certify the document as academically correct in all respects.
+            {ENABLED_CHECKS_CAUTION}
           </p>
         </div>
       </div>

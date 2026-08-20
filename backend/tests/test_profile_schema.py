@@ -73,22 +73,29 @@ def test_apa_headings_inherit_body_font_not_fixed_sizes():
 
 def test_suc_keeps_institution_specific_values_but_labels_them():
     """SUC values are institution-specific and labelled as such — never
-    presented as universal."""
+    presented as universal. Margins are NOT enforced (null) unless a course
+    or document template specifies them."""
     suc = get_builtin_profile(SUC_PROFILE_ID)
-    assert suc.margins.margin_left_in == 1.5
+    assert suc.margins.margin_left_in is None
+    assert suc.margins.margin_right_in is None
+    assert suc.margins.margin_top_in is None
+    assert suc.margins.margin_bottom_in is None
+    assert suc.profile_version == 2
     assert suc.body.font_size_pt == 12.0
     assert suc.body.line_spacing == 1.5
     assert "institution" in suc.description.lower()
+    assert "Margins" in suc.description
     assert suc.profile_source == "built_in"
     assert RECOMMENDED_PROFILE_ID == SUC_PROFILE_ID
 
 
 def test_one_inch_and_one_point_five_inch_profiles_distinct():
-    """1 in and 1.5 in margin profiles are distinct profiles."""
+    """APA has explicit 1 in margins; SUC has none (not checked). Distinct
+    profiles."""
     apa = get_builtin_profile(APA_PROFILE_ID)
     suc = get_builtin_profile(SUC_PROFILE_ID)
     assert apa.margins.margin_left_in == 1.0
-    assert suc.margins.margin_left_in == 1.5
+    assert suc.margins.margin_left_in is None
     assert apa.profile_id != suc.profile_id
 
 

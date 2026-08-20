@@ -49,7 +49,7 @@ export function StaticAuditPreview() {
         <div className="text-right">
           <div className="flex items-baseline justify-end gap-1.5">
             <span className="font-mono text-section-title text-foreground">76</span>
-            <span className="text-[13px] text-muted-foreground">/100</span>
+            <span className="text-[13px] text-muted-foreground">/100 for enabled checks</span>
           </div>
           <div className="flex items-center justify-end gap-1.5 text-[13px] text-warning">
             <AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />

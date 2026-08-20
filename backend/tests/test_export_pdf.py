@@ -19,12 +19,16 @@ from app.services.ai_citation import build_apa_suggestion
 # helpers
 # ---------------------------------------------------------------------------
 
-def _post_audit(client, docx_factory, name="report.docx", paragraphs=None, **docx_kw):
+def _post_audit(client, docx_factory, name="report.docx", paragraphs=None, profile_id=None, **docx_kw):
     if paragraphs is None:
         paragraphs = ["Body paragraph."]
+    params = {}
+    if profile_id:
+        params["profile_id"] = profile_id
     resp = client.post(
         "/api/audit",
         files={"file": (name, docx_factory(paragraphs=paragraphs, **docx_kw), "application/octet-stream")},
+        params=params,
     )
     assert resp.status_code == 200
     return resp.json()["audit_id"]
@@ -111,10 +115,39 @@ def test_export_pdf_contains_core_sections(client, docx_factory):
         "Required Action",
         "Deployment Mode",
         "Page Margins",
-        "MARGIN_LEFT",
         "HEADING_HIERARCHY",
     ):
         assert section in text, f"missing section: {section}"
+    # The default SUC profile does not check margins — no MARGIN_LEFT finding.
+    assert "MARGIN_LEFT" not in text
+    # Score wording applies to enabled checks only.
+    assert "Compliance Score (enabled checks)" in text
+    # SUC disclosure: margins not checked.
+    assert "Formatting Profile: SUC Academic Report" in text
+    assert "Margins: Not checked" in text
+
+
+def test_export_pdf_apa_profile_shows_one_inch_margins(client, docx_factory):
+    """PDF under the APA profile discloses 1 in margins on all sides."""
+    audit_id = _post_audit(
+        client, docx_factory,
+        paragraphs=[("Body", "Normal")],
+        margins={"left": 1.0},
+        profile_id="apa7-student-paper",
+    )
+    text = _pdf_text(_export(client, audit_id).content)
+    assert "Formatting Profile: APA 7 Student Paper" in text
+    assert "Margins: 1 in on all sides" in text
+
+
+def test_export_pdf_zero_findings_no_academic_certification(client, test_engine):
+    """Zero-findings wording never certifies academic correctness."""
+    audit_id = _seed_audit(test_engine, status="completed", weighted_score=100)
+    text = _pdf_text(_export(client, audit_id).content)
+    assert "All enabled checks passed" in text
+    assert "does not certify" in text
+    assert "No errors exist" not in text
+    assert "fully compliant" not in text
 
 
 # ---------------------------------------------------------------------------

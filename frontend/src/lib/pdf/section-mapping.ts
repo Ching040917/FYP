@@ -196,7 +196,8 @@ export function mapSection(input: SectionMapInput, sectionIndex: number): Sectio
 
 /**
  * Map all sections in document order. Phase 2 derives mid-page flags and
- * monotonicity from the resolved neighbors (no recursion).
+ * monotonicity from the resolved neighbors (no recursion). Phase 3 fills
+ * content-less gap sections from two independently proven neighbors.
  */
 export function mapAllSections(input: SectionMapInput): SectionRange[] {
   const ordered = [...input.sections].sort((a, b) => a.section_index - b.section_index)
@@ -206,7 +207,7 @@ export function mapAllSections(input: SectionMapInput): SectionRange[] {
   const byIndex = new Map(cores.map((c) => [c.sectionIndex, c]))
 
   // Phase 2 — flags + monotonicity.
-  return cores.map((core, i) => {
+  const phased = cores.map((core, i) => {
     const meta = ordered[i]
     let { startsMidPage, endsMidPage } = { startsMidPage: false, endsMidPage: false }
     const { startPage, endPage } = core
@@ -250,4 +251,48 @@ export function mapAllSections(input: SectionMapInput): SectionRange[] {
 
     return { ...core, startsMidPage, endsMidPage }
   })
+
+  // Phase 3 — content-less gap sections. A section with NO eligible mapped
+  // block (all EMPTY / field-only / invisible-TOC content) cannot prove its
+  // own page from inside. It is NOT invented: when BOTH neighbors are
+  // independently proven exact AND this section has a page-advancing break
+  // (nextPage/oddPage/evenPage), the section occupies exactly the pages
+  // strictly between the previous section's proven end and the next
+  // section's proven start — provided that gap is non-empty and inside the
+  // real PDF. Conflicting or unbounded gaps stay unavailable.
+  const finalRanges = [...phased]
+  for (let i = 0; i < phased.length; i++) {
+    const core = phased[i]
+    if (core.confidence !== 'unavailable' && core.confidence !== 'approximate') continue
+    if (core.ambiguityReason !== 'no eligible mapped block for section start') continue
+    const meta = ordered[i]
+    if (!['nextPage', 'oddPage', 'evenPage'].includes(meta.break_type)) continue
+    if (i === 0 || i + 1 >= phased.length) continue // needs both neighbors
+    const prev = byIndex.get(ordered[i - 1].section_index)
+    const next = byIndex.get(ordered[i + 1].section_index)
+    if (
+      !prev || !next ||
+      prev.confidence !== 'exact' || next.confidence !== 'exact' ||
+      prev.endPage === null || next.startPage === null
+    ) continue
+    const gapStart = prev.endPage + 1
+    const gapEnd = next.startPage - 1
+    if (gapStart > gapEnd) continue // adjacent sections — no blank page
+    if (gapStart < 1 || gapEnd > input.numPages) continue // outside real PDF
+    const affected: number[] = []
+    for (let p = gapStart; p <= gapEnd; p++) affected.push(p)
+    finalRanges[i] = {
+      sectionIndex: core.sectionIndex,
+      startPage: gapStart,
+      endPage: gapEnd,
+      affectedPages: affected,
+      startsMidPage: false,
+      endsMidPage: false,
+      confidence: 'exact',
+      evidenceMethod: 'gap-between-neighbors',
+      ambiguityReason: null,
+    }
+  }
+
+  return finalRanges
 }
