@@ -122,6 +122,23 @@ export interface FormattingProfile {
 }
 
 /**
+ * Result of POST /api/formatting-profiles/validate (Build 3). When the
+ * endpoint is reachable it is either `valid: true` with a normalized
+ * backend-confirmed profile, or `valid: false` with friendly per-field
+ * errors. `unreachable: true` means the request could not be completed —
+ * the editor shows a retryable generic message.
+ */
+export type ProfileValidationResult =
+  | { valid: true; profile: Record<string, unknown> }
+  | { valid: false; errors: ProfileValidationError[] }
+  | { valid: false; unreachable: true }
+
+export interface ProfileValidationError {
+  field: string
+  message: string
+}
+
+/**
  * Immutable per-Audit Formatting Profile snapshot (Build 3) as served by
  * GET/POST audit responses. `margins` uses `{left_in, right_in, top_in,
  * bottom_in}` — null means the corresponding deterministic Margin check is

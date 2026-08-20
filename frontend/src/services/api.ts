@@ -1,4 +1,4 @@
-import type { AuditSubmitResponse, AuditResponse, AuditListItem, DocumentBlock, FormattingProfile } from '../types/api'
+import type { AuditSubmitResponse, AuditResponse, AuditListItem, DocumentBlock, FormattingProfile, ProfileValidationResult } from '../types/api'
 
 const API_BASE = '/api'
 
@@ -63,6 +63,42 @@ export const api = {
     )
     const body = await handleResponse<{ profiles: FormattingProfile[] }>(response)
     return body.profiles
+  },
+
+  /**
+   * Read-only canonical payload of ONE built-in formatting profile (Build 3).
+   * Used to authoritatively copy a built-in profile into a custom one.
+   */
+  async getBuiltinProfilePayload(profileId: string): Promise<Record<string, unknown>> {
+    const response = await fetchWithTimeout(
+      `${API_BASE}/formatting-profiles/${encodeURIComponent(profileId)}/payload`,
+      {},
+      POLL_TIMEOUT_MS,
+    )
+    const body = await handleResponse<{ profile: Record<string, unknown> }>(response)
+    return body.profile
+  },
+
+  /**
+   * Presentation-safe backend validation of ONE custom formatting profile
+   * (Build 3). Returns a discriminated result so the editor can distinguish
+   * a network failure from a definite validation failure.
+   */
+  async validateCustomProfile(payload: Record<string, unknown>): Promise<ProfileValidationResult> {
+    try {
+      const response = await fetchWithTimeout(
+        `${API_BASE}/formatting-profiles/validate`,
+        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) },
+        UPLOAD_TIMEOUT_MS,
+      )
+      const body = await response.json().catch(() => null)
+      if (!response.ok || body === null) {
+        return { valid: false, unreachable: true }
+      }
+      return body as ProfileValidationResult
+    } catch {
+      return { valid: false, unreachable: true }
+    }
   },
 
   async getAudit(auditId: string): Promise<AuditResponse> {

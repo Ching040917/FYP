@@ -30,6 +30,8 @@ import {
   CardTitle,
   CardDescription,
 } from '../ui/card'
+import { Link } from 'react-router-dom'
+import { Settings2 } from 'lucide-react'
 import {
   Select,
   SelectContent,
@@ -320,9 +322,18 @@ export function UploadCard({ onResult, onReset, trySampleSignal = 0 }: UploadCar
 
         {/* Document requirements — profile selector (Build 5) */}
         <div className="rounded-md border border-border bg-input/20 px-3 py-3">
-          <Label htmlFor="profile-select" className="text-sm font-medium">
-            Document requirements
-          </Label>
+          <div className="flex items-center justify-between gap-2">
+            <Label htmlFor="profile-select" className="text-sm font-medium">
+              Document requirements
+            </Label>
+            <Link
+              to="/profiles/custom"
+              className="inline-flex items-center gap-1 rounded-md px-2 py-1.5 text-xs font-medium text-primary transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+            >
+              <Settings2 className="h-3.5 w-3.5" aria-hidden="true" />
+              Manage custom profiles
+            </Link>
+          </div>
           <p className="mt-0.5 text-xs leading-[16px] text-muted-foreground">
             Findings are evaluated against the selected document requirements.
           </p>

@@ -113,3 +113,30 @@ def test_apa_selection_persists_apa_snapshot(client):
     resp = _post(client, profile_id=APA_PROFILE_ID)
     assert resp.status_code == 200
     assert resp.json()["profile_snapshot"]["profile_id"] == APA_PROFILE_ID
+
+
+# ---------------------------------------------------------------------------
+# Built-in payload endpoint (Build 3 custom-profile editor)
+# ---------------------------------------------------------------------------
+
+def test_builtin_payload_endpoint_returns_canonical_payload(client):
+    """The editor copies SUC/APA from the authoritative registry payload."""
+    for pid in (SUC_PROFILE_ID, APA_PROFILE_ID):
+        resp = client.get(f"/api/formatting-profiles/{pid}/payload")
+        assert resp.status_code == 200
+        profile = resp.json()["profile"]
+        assert profile["profile_id"] == pid
+        assert profile["profile_source"] == "built_in"
+        assert profile["citation_style"] == "APA 7"
+        assert "body" in profile and "margins" in profile and "role_policy" in profile
+        # Presentation-safe: no snapshot fingerprint, no internals.
+        text = str(profile).lower()
+        assert "fingerprint" not in text
+        assert "schema_version" not in text
+        assert "presetconfig" not in text
+
+
+def test_builtin_payload_endpoint_404_for_unknown(client):
+    resp = client.get("/api/formatting-profiles/nope/payload")
+    assert resp.status_code == 404
+    assert "Traceback" not in resp.json()["detail"]

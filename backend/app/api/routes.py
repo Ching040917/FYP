@@ -1,4 +1,5 @@
-from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Query, Response, Form
+from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Query, Response, Form, Body
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from typing import List, Any, Optional
 import json
@@ -38,6 +39,7 @@ from app.services.profile_resolver import (
     restore_snapshot,
     ProfileResolveError,
 )
+from app.services.custom_profile_validation import validate_custom_profile
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -431,6 +433,29 @@ async def get_audit(audit_id: str, db: Session = Depends(get_db)):
     )
 
 
+@router.post("/api/formatting-profiles/validate")
+async def validate_formatting_profile(payload: dict = Body(...)):
+    """Presentation-safe validation of ONE custom Document Formatting Profile
+    (Build 2).
+
+    Pure and side-effect free: creates no Audit, writes no database row,
+    changes no profile registry, writes no files, retains no submitted
+    profile, and logs no profile content. Uses the authoritative backend
+    `profile_from_dict` + `resolve_snapshot` and their schema ranges and
+    compatibility checks.
+
+    Success → {"valid": true, "profile": <normalized custom profile>}.
+    Invalid → {"valid": false, "errors": [{field, message}, ...]} where
+    `field` is a stable frontend identifier (never a raw Python path) and
+    `message` is friendly English (never a stack trace, exception name,
+    filesystem path, fingerprint, or registry internals).
+    """
+    result = validate_custom_profile(payload)
+    if result["valid"]:
+        return result
+    return JSONResponse(status_code=422, content=result)
+
+
 @router.get("/api/formatting-profiles")
 async def list_formatting_profiles():
     """Read-only listing of available built-in Document Formatting Profiles
@@ -441,6 +466,24 @@ async def list_formatting_profiles():
     """
     from app.services.profile_registry import list_profile_listings
     return {"profiles": list_profile_listings()}
+
+
+@router.get("/api/formatting-profiles/{profile_id}/payload")
+async def get_builtin_profile_payload(profile_id: str):
+    """Read-only canonical payload of ONE built-in Document Formatting
+    Profile (Build 3 custom-profile editor).
+
+    Enables an authoritative copy of a built-in profile into a custom
+    profile: the full canonical payload (identity, requirements, role
+    policy) with built-in identity/source intact. Read-only and
+    presentation-safe — no snapshot fingerprint, no internal objects, no
+    registry mutation. Unknown or non-built-in ids → 404.
+    """
+    from app.services.profile_registry import BUILTIN_PROFILES
+    profile = BUILTIN_PROFILES.get(profile_id)
+    if profile is None:
+        raise HTTPException(status_code=404, detail="Built-in profile not found")
+    return {"profile": profile.to_dict()}
 
 
 @router.get("/api/audits", response_model=List[AuditListResponse])
