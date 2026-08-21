@@ -308,9 +308,20 @@ def make_docx_bytes(
                 _add_word_caption(doc, "Figure", f": Test figure {img_idx + 1}")
 
     if references:
-        doc.add_paragraph("References")
+        # The References header classifies as REFERENCES_HEADING (heading-
+        # like), so it carries an H1 font requirement once effective-font
+        # resolution sees through style inheritance. Give both the header
+        # and the entries explicit conforming formatting so "clean
+        # document" fixtures stay clean under correct detection.
+        refs_header = doc.add_paragraph("References")
+        for run in refs_header.runs:
+            run.font.name = "Times New Roman"
+            run.font.size = Pt(16)  # matches the default preset's H1 size
         for ref in references:
-            doc.add_paragraph(ref)
+            ref_para = doc.add_paragraph(ref)
+            for run in ref_para.runs:
+                run.font.name = font_name
+                run.font.size = Pt(body_size)
 
     buf = io.BytesIO()
     doc.save(buf)

@@ -83,6 +83,15 @@ def is_font_eligible(role: Optional[str]) -> bool:
     return role in _BODY_LIKE or role in _HEADING_LIKE or role in _FONT_ONLY
 
 
+def is_list_item_role(role: Optional[str]) -> bool:
+    """True when the role uses list-item font eligibility.
+
+    LIST_ITEM receives visible-text font checks (family/size) using the
+    BODY requirement, while its spacing policy stays list-specific.
+    """
+    return role in _FONT_ONLY
+
+
 def is_caption_role(role: Optional[str]) -> bool:
     """True when the role uses caption-specific spacing only."""
     return role in _CAPTION_LIKE

@@ -228,9 +228,41 @@ def test_custom_modified_margins_and_heading_size():
     custom.body.font_size_pt = 11.0
     custom.heading.font_family = "Calibri"
     custom.heading.font_size_pt = 14.0
-    file_bytes = _doc(left_margin=1.0, body_ls=1.5, heading_size=14,
-                      body_font="Calibri", body_size=11, heading_font="Calibri")
-    viols = run_static_rules_engine(file_bytes, config=_config(custom))
+
+    # Fully compliant document EXCEPT the left margin: every visible run
+    # carries direct formatting matching the profile. (Effective-font
+    # resolution now detects style-inherited sizes, so an unformatted
+    # References heading would legitimately flag as TNR 12 != Calibri 14.)
+    doc = Document()
+    sec = doc.sections[0]
+    sec.left_margin = Inches(1.0)
+    sec.right_margin = Inches(1.0)
+    sec.top_margin = Inches(1.0)
+    sec.bottom_margin = Inches(1.0)
+
+    p = doc.add_paragraph("Body text that is long enough to be prose here.")
+    p.paragraph_format.line_spacing = 1.5
+    p.alignment = AM.JUSTIFY
+    for r in p.runs:
+        r.font.name = "Calibri"
+        r.font.size = Pt(11)
+
+    h = doc.add_paragraph("1. Introduction", style="Heading 1")
+    h.paragraph_format.line_spacing = 1.0
+    h.alignment = AM.LEFT
+    for r in h.runs:
+        r.font.name = "Calibri"
+        r.font.size = Pt(14)
+
+    refs_h = doc.add_paragraph("References", style="Heading 1")
+    refs_h.paragraph_format.line_spacing = 1.0
+    for r in refs_h.runs:
+        r.font.name = "Calibri"
+        r.font.size = Pt(14)
+
+    buf = io.BytesIO()
+    doc.save(buf)
+    viols = run_static_rules_engine(buf.getvalue(), config=_config(custom))
     assert "MARGIN_LEFT" in _codes(viols)       # 1.0 vs required 1.25
     assert "LINE_SPACING" not in _codes(viols)  # 1.5 matches
     assert "FONT_SIZE" not in _codes(viols)     # 14 pt heading matches

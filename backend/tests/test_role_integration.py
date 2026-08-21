@@ -567,8 +567,16 @@ def test_sanitized_real_doc_cover_findings_removed():
 def test_sanitized_real_doc_score_improves():
     """Score trajectory across builds: 68 (pre-2A) → 78 (Phase 2A cover +
     references typography removed) → 84 (Phase 2B: 3 administrative/rubric
-    Table Caption false positives removed, each MINOR=2pt). Margins remain."""
+    Table Caption false positives removed, each MINOR=2pt) → 72 (effective-
+    font resolution: three style-inherited H1 runs now correctly resolve to
+    12 pt vs the required 16 pt — genuine MAJOR FONT_SIZE findings that were
+    previously invisible when run.font.size returned None)."""
     from app.services.scoring import calculate_weighted_score_detailed
     viols = run_static_rules_engine(_sanitized_real_doc())
     score = calculate_weighted_score_detailed(viols).total
-    assert score == 84, f"expected 84, got {score}"
+    assert score == 72, f"expected 72, got {score}"
+    # The three newly detected violations are heading-size findings on
+    # distinct paragraphs — traceable, not aggregated.
+    font_findings = [v for v in viols if v.rule_code == "FONT_SIZE"]
+    assert len(font_findings) == 3
+    assert {v.location["paragraph_index"] for v in font_findings} == {4, 6, 8}

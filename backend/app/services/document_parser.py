@@ -2,8 +2,221 @@ from docx import Document
 from docx.shared import Pt, Inches, Cm
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.enum.table import WD_TABLE_ALIGNMENT
+from docx.enum.style import WD_STYLE_TYPE
 from typing import List, Dict, Any, Optional
 import io
+
+
+# ---------------------------------------------------------------------------
+# Effective-font resolution (style-hierarchy aware)
+# ---------------------------------------------------------------------------
+#
+# python-docx `run.font.size` / `run.font.name` read ONLY the run's own
+# <w:rPr>. When a run inherits 12 pt from the Normal style (the common real-
+# document case), both return None and the deterministic font checks would
+# silently skip every BODY paragraph. These resolvers walk the full OOXML
+# inheritance chain instead:
+#
+#   1. direct run properties      w:rPr/w:sz | w:rPr/w:rFonts
+#   2. character style chain      run.style + base styles
+#   3. paragraph style chain      para.style + base styles
+#   4. document defaults          w:styles/w:docDefaults/w:rPrDefault/w:rPr
+#
+# Resolution is cycle-safe (visited set), read-only (never mutates
+# python-docx objects), and never invents values it cannot prove.
+
+_FONT_SOURCE_DIRECT = "direct"
+_FONT_SOURCE_CHAR_STYLE = "character_style"
+_FONT_SOURCE_PARA_STYLE = "paragraph_style"
+_FONT_SOURCE_STYLE_CHAIN = "style_chain"
+_FONT_SOURCE_DOC_DEFAULT = "document_default"
+_FONT_SOURCE_UNRESOLVED = "unresolved"
+
+_W_NS = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+
+
+def _sz_val_to_pt(sz_elm) -> Optional[float]:
+    """w:sz val (half-points) -> points, or None when absent/invalid."""
+    if sz_elm is None:
+        return None
+    raw = sz_elm.get(_W_NS + "val")
+    if raw is None:
+        return None
+    try:
+        half_points = int(raw)
+    except ValueError:
+        return None
+    if half_points <= 0:
+        return None
+    return half_points / 2.0
+
+
+def _rpr_sz(rPr) -> Optional[float]:
+    if rPr is None:
+        return None
+    return _sz_val_to_pt(rPr.find(_W_NS + "sz"))
+
+
+def _rpr_family(rPr) -> Optional[str]:
+    """Read an explicit ascii/high-ANSI family from an rPr element.
+
+    Only proven declarations are returned — theme fonts (w:asciiTheme)
+    cannot be resolved to a concrete family name without the theme part,
+    so they are deliberately NOT invented here.
+    """
+    if rPr is None:
+        return None
+    rfonts = rPr.find(_W_NS + "rFonts")
+    if rfonts is None:
+        return None
+    for attr in ("w:ascii", "w:hAnsi"):
+        val = rfonts.get(_W_NS + attr.split(":")[1])
+        if val:
+            return val
+    return None
+
+
+def _style_rpr(style) -> Optional[Any]:
+    try:
+        element = style.element
+    except AttributeError:
+        return None
+    if element is None:
+        return None
+    return element.find(_W_NS + "rPr")
+
+
+def _walk_style_chain(base_style):
+    """Yield (style, source) pairs along the basedOn chain, cycle-safe.
+
+    First yield is the style itself; subsequent yields are its ancestors.
+    Source is 'character_style' for the first hop when the anchor was a
+    character style and 'paragraph_style' when it was a paragraph style;
+    deeper hops are 'style_chain'.
+    """
+    seen = set()
+    current = base_style
+    is_first = True
+    while current is not None:
+        style_id = id(current)
+        if style_id in seen:  # cycle guard
+            break
+        seen.add(style_id)
+        if is_first:
+            # Caller distinguishes char vs para by the anchor type.
+            yield current, None
+            is_first = False
+        else:
+            yield current, _FONT_SOURCE_STYLE_CHAIN
+        try:
+            current = current.base_style
+        except Exception:
+            break
+
+
+def resolve_effective_size(
+    run,
+    para,
+    styles_element=None,
+):
+    """Resolve one run's effective font size in points.
+
+    Returns (size_pt_or_None, source) where source is one of:
+    direct | character_style | paragraph_style | style_chain |
+    document_default | unresolved.
+    """
+    # 1. Direct run properties.
+    size = _rpr_sz(run._element.rPr) if run._element.rPr is not None else None
+    if size is not None:
+        return size, _FONT_SOURCE_DIRECT
+
+    # 2. Run character style + base chain.
+    try:
+        char_style = run.style
+    except Exception:
+        char_style = None
+    if char_style is not None and getattr(char_style, "type", None) == WD_STYLE_TYPE.CHARACTER:
+        for style, source in _walk_style_chain(char_style):
+            if source is None:
+                source = _FONT_SOURCE_CHAR_STYLE
+            size = _rpr_sz(_style_rpr(style))
+            if size is not None:
+                return size, source
+
+    # 3. Paragraph style + base chain.
+    try:
+        para_style = para.style if para is not None else None
+    except Exception:
+        para_style = None
+    if para_style is not None:
+        for style, source in _walk_style_chain(para_style):
+            if source is None:
+                source = _FONT_SOURCE_PARA_STYLE
+            size = _rpr_sz(_style_rpr(style))
+            if size is not None:
+                return size, source
+
+    # 4. Document defaults.
+    if styles_element is not None:
+        defaults = styles_element.find(_W_NS + "docDefaults")
+        if defaults is not None:
+            rpr_default = defaults.find(_W_NS + "rPrDefault")
+            if rpr_default is not None:
+                size = _rpr_sz(rpr_default.find(_W_NS + "rPr"))
+                if size is not None:
+                    return size, _FONT_SOURCE_DOC_DEFAULT
+
+    return None, _FONT_SOURCE_UNRESOLVED
+
+
+def resolve_effective_family(
+    run,
+    para,
+    styles_element=None,
+):
+    """Resolve one run's effective font family name (same precedence)."""
+    # 1. Direct run properties.
+    family = _rpr_family(run._element.rPr) if run._element.rPr is not None else None
+    if family:
+        return family, _FONT_SOURCE_DIRECT
+
+    # 2. Character style chain.
+    try:
+        char_style = run.style
+    except Exception:
+        char_style = None
+    if char_style is not None and getattr(char_style, "type", None) == WD_STYLE_TYPE.CHARACTER:
+        for style, source in _walk_style_chain(char_style):
+            if source is None:
+                source = _FONT_SOURCE_CHAR_STYLE
+            family = _rpr_family(_style_rpr(style))
+            if family:
+                return family, source
+
+    # 3. Paragraph style chain.
+    try:
+        para_style = para.style if para is not None else None
+    except Exception:
+        para_style = None
+    if para_style is not None:
+        for style, source in _walk_style_chain(para_style):
+            if source is None:
+                source = _FONT_SOURCE_PARA_STYLE
+            family = _rpr_family(_style_rpr(style))
+            if family:
+                return family, source
+
+    # 4. Document defaults.
+    if styles_element is not None:
+        defaults = styles_element.find(_W_NS + "docDefaults")
+        if defaults is not None:
+            rpr_default = defaults.find(_W_NS + "rPrDefault")
+            if rpr_default is not None:
+                family = _rpr_family(rpr_default.find(_W_NS + "rPr"))
+                if family:
+                    return family, _FONT_SOURCE_DOC_DEFAULT
+
+    return None, _FONT_SOURCE_UNRESOLVED
 
 
 def parse_document(file_bytes: bytes) -> Document:
@@ -17,21 +230,39 @@ def extract_paragraphs(doc: Document) -> List[Dict[str, Any]]:
     Adds `is_list_item` flag — True when the paragraph carries a <w:numPr>
     element (i.e. it's a numbered or bulleted list item). Used by the
     alignment rule to exempt list items from the justify requirement.
+
+    Each run additionally carries effective font resolution:
+      - font_size / font_size_source
+      - font_name / font_name_source
+    resolved through the OOXML style hierarchy (direct → character style →
+    paragraph style chain → document defaults). `None` means genuinely
+    unresolved — never "matches the requirement".
     """
     from docx.oxml.ns import qn
+
+    styles_element = doc.styles.element
 
     paragraphs = []
     for idx, para in enumerate(doc.paragraphs):
         runs_info = []
         for run_idx, run in enumerate(para.runs):
+            size, size_source = resolve_effective_size(run, para, styles_element)
+            family, family_source = resolve_effective_family(run, para, styles_element)
             runs_info.append({
                 "index": run_idx,
                 "text": run.text,
+                # Keep the original direct-only fields for backward
+                # compatibility with any legacy consumer.
                 "font_name": run.font.name,
                 "font_size": run.font.size.pt if run.font.size else None,
                 "bold": run.font.bold,
                 "italic": run.font.italic,
                 "underline": run.font.underline,
+                # Effective (style-hierarchy-resolved) values + provenance.
+                "effective_font_size": size,
+                "font_size_source": size_source,
+                "effective_font_name": family,
+                "font_name_source": family_source,
             })
 
         pf = para.paragraph_format

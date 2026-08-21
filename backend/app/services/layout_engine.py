@@ -21,6 +21,7 @@ from app.services.role_eligibility import (
     is_font_eligible,
     is_heading_role,
     is_body_role,
+    is_list_item_role,
     is_caption_role,
     is_reference_role,
     typography_skipped,
@@ -89,48 +90,79 @@ def check_font_consistency(
             getattr(preset, "HEADING_FONT_FAMILY", None) if heading else expected_font
         )
 
+        # Group non-compliant runs by effective value; emit the minimum
+        # number of paragraph-level findings. Unresolved (None) effective
+        # families are never fabricated into a finding.
+        noncompliant: Dict[Any, Dict[str, Any]] = {}
         for run in para.get("runs", []):
-            font_name = run.get("font_name")
+            font_name = run.get("effective_font_name")
             if not font_name:
-                continue
-            font_size = run.get("font_size")
+                continue  # unresolved — no scored finding, no invented value
+            font_size = run.get("effective_font_size")
             if has_combos:
                 # Allowed-pair profile (APA): validate family+size together.
-                if not preset.is_font_pair_allowed(font_name, font_size, heading=heading):
-                    if profile_label:
-                        msg = (
-                            f"This text uses {font_name} {font_size or '?'}pt. "
-                            f"The selected {profile_label} profile requires an "
-                            f"allowed font-and-size combination."
-                        )
-                    else:
-                        msg = f"Font '{font_name}' does not match required '{expected_font}'"
-                    violations.append(LayoutViolation(
-                        rule_code="FONT_CONSISTENCY",
-                        severity="MINOR",
-                        location={"paragraph_index": para["index"], "run_index": run["index"]},
-                        message=msg,
-                        expected_value=", ".join(f"{f} {s:g}pt" for f, s in preset.BODY_ALLOWED_FONT_COMBOS) or expected_font,
-                        actual_value=f"{font_name} {font_size or ''}pt",
-                    ))
+                if preset.is_font_pair_allowed(font_name, font_size, heading=heading):
+                    continue
+                key = (font_name, font_size)
+                entry = noncompliant.setdefault(key, {
+                    "run_indexes": [],
+                    "font_name": font_name,
+                    "font_size": font_size,
+                })
+                entry["run_indexes"].append(run["index"])
                 continue
             # Exact-family profile.
             if expected_family and font_name.lower() != expected_family.lower():
+                key = ("__family__", font_name.lower())
+                entry = noncompliant.setdefault(key, {
+                    "run_indexes": [],
+                    "font_name": font_name,
+                    "font_size": font_size,
+                })
+                entry["run_indexes"].append(run["index"])
+
+        for entry in noncompliant.values():
+            run_indexes = entry["run_indexes"]
+            first_run = run_indexes[0]
+            font_name = entry.get("font_name")
+            font_size = entry.get("font_size")
+            location: Dict[str, Any] = {"paragraph_index": para["index"]}
+            if len(run_indexes) == 1:
+                location["run_index"] = first_run
+            else:
+                location["run_index"] = first_run
+                location["run_indexes"] = sorted(run_indexes)
+            if has_combos:
+                if profile_label:
+                    msg = (
+                        f"This text uses {font_name} {font_size or '?'}pt. "
+                        f"The selected {profile_label} profile requires an "
+                        f"allowed font-and-size combination."
+                    )
+                    expected_val = ", ".join(f"{f} {s:g}pt" for f, s in preset.BODY_ALLOWED_FONT_COMBOS) or expected_font
+                else:
+                    msg = f"Font '{font_name}' does not match required '{expected_font}'"
+                    expected_val = expected_font
+                actual_val = f"{font_name} {font_size or ''}pt"
+            else:
                 if profile_label:
                     msg = (
                         f"This text uses {font_name}. The selected {profile_label} "
                         f"profile requires {expected_family}."
                     )
+                    expected_val = expected_family
                 else:
                     msg = f"Font '{font_name}' does not match required '{expected_family}'"
-                violations.append(LayoutViolation(
-                    rule_code="FONT_CONSISTENCY",
-                    severity="MINOR",
-                    location={"paragraph_index": para["index"], "run_index": run["index"]},
-                    message=msg,
-                    expected_value=expected_family,
-                    actual_value=font_name,
-                ))
+                    expected_val = expected_family
+                actual_val = font_name
+            violations.append(LayoutViolation(
+                rule_code="FONT_CONSISTENCY",
+                severity="MINOR",
+                location=location,
+                message=msg,
+                expected_value=expected_val,
+                actual_value=actual_val,
+            ))
     return violations
 
 
@@ -171,9 +203,11 @@ def check_font_size(
             }.get(level)
         elif not level:
             if role is not None:
-                # Role-aware: body-like roles get body size; everything else
-                # (cover, TOC, equations, UNKNOWN...) is skipped.
-                if is_body_role(role):
+                # Role-aware: body-like AND list-item roles use the body
+                # size requirement (LIST_ITEM is font-eligible per the
+                # approved eligibility policy); everything else (cover,
+                # TOC, equations, UNKNOWN...) is skipped.
+                if is_body_role(role) or is_list_item_role(role):
                     expected_size = preset.FONT_SIZE_BODY
             else:
                 expected_size = preset.FONT_SIZE_BODY
@@ -181,16 +215,54 @@ def check_font_size(
         if expected_size is None:
             continue
 
+        # Collect per-run results for this paragraph, then emit the minimum
+        # number of paragraph-level findings that identify each distinct
+        # non-compliant actual value. Runs sharing one effective value are
+        # grouped; run identity is preserved for evidence highlighting.
+        # `None` effective size means UNRESOLVED (inherited value not
+        # provable) — never treated as compliant, never fabricated.
+        noncompliant: Dict[Any, Dict[str, Any]] = {}
         for run in para.get("runs", []):
-            font_size = run.get("font_size")
-            if not font_size:
-                continue
-            font_name = run.get("font_name")
+            font_size = run.get("effective_font_size")
+            if font_size is None:
+                continue  # unresolved — no scored finding, no invented value
+            font_name = run.get("effective_font_name")
             if has_combos:
                 # Allowed-pair profile: flag only when the pair is invalid.
                 if preset.is_font_pair_allowed(font_name, font_size, heading=level is not None):
                     continue
-                severity = "MAJOR" if level else "MINOR"
+                key = (font_name, font_size)
+                entry = noncompliant.setdefault(key, {
+                    "run_indexes": [],
+                    "font_name": font_name,
+                    "font_size": font_size,
+                })
+                entry["run_indexes"].append(run["index"])
+            else:
+                if abs(font_size - expected_size) > 0.5:  # Allow 0.5pt tolerance
+                    key = ("__size__", font_size)
+                    entry = noncompliant.setdefault(key, {
+                        "run_indexes": [],
+                        "font_name": font_name,
+                        "font_size": font_size,
+                    })
+                    entry["run_indexes"].append(run["index"])
+
+        severity = "MAJOR" if level else "MINOR"
+        for entry in noncompliant.values():
+            run_indexes = entry["run_indexes"]
+            first_run = run_indexes[0]
+            font_size = entry["font_size"]
+            font_name = entry.get("font_name")
+            location: Dict[str, Any] = {"paragraph_index": para["index"]}
+            # Preserve enough run identity for evidence highlighting:
+            # single run → scalar; grouped runs → list.
+            if len(run_indexes) == 1:
+                location["run_index"] = first_run
+            else:
+                location["run_index"] = first_run
+                location["run_indexes"] = sorted(run_indexes)
+            if has_combos:
                 if profile_label:
                     msg = (
                         f"This {'heading' if level else 'body'} text uses "
@@ -199,20 +271,12 @@ def check_font_size(
                     )
                 else:
                     msg = f"{style or 'Body'} font size {font_size}pt is not an allowed combination"
-                violations.append(LayoutViolation(
-                    rule_code="FONT_SIZE",
-                    severity=severity,
-                    location={"paragraph_index": para["index"], "run_index": run["index"]},
-                    message=msg,
-                    expected_value=", ".join(f"{f} {s:g}pt" for f, s in (
-                        getattr(preset, "HEADING_ALLOWED_FONT_COMBOS", ()) if level
-                        else getattr(preset, "BODY_ALLOWED_FONT_COMBOS", ())
-                    )) or f"{expected_size}pt",
-                    actual_value=f"{font_name} {font_size:g}pt",
-                ))
-                continue
-            if abs(font_size - expected_size) > 0.5:  # Allow 0.5pt tolerance
-                severity = "MAJOR" if level else "MINOR"
+                expected_value = ", ".join(f"{f} {s:g}pt" for f, s in (
+                    getattr(preset, "HEADING_ALLOWED_FONT_COMBOS", ()) if level
+                    else getattr(preset, "BODY_ALLOWED_FONT_COMBOS", ())
+                )) or f"{expected_size}pt"
+                actual_value = f"{font_name} {font_size:g}pt"
+            else:
                 if profile_label:
                     what = "Heading" if level else "Body"
                     msg = (
@@ -221,14 +285,16 @@ def check_font_size(
                     )
                 else:
                     msg = f"{style or 'Body'} font size {font_size}pt != required {expected_size}pt"
-                violations.append(LayoutViolation(
-                    rule_code="FONT_SIZE",
-                    severity=severity,
-                    location={"paragraph_index": para["index"], "run_index": run["index"]},
-                    message=msg,
-                    expected_value=f"{expected_size}pt",
-                    actual_value=f"{font_size}pt",
-                ))
+                expected_value = f"{expected_size}pt"
+                actual_value = f"{font_size:g}pt"
+            violations.append(LayoutViolation(
+                rule_code="FONT_SIZE",
+                severity=severity,
+                location=location,
+                message=msg,
+                expected_value=expected_value,
+                actual_value=actual_value,
+            ))
     return violations
 
 
