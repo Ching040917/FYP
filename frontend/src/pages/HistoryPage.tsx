@@ -24,6 +24,7 @@ import {
   History,
   Trash2,
   X,
+  PauseCircle,
 } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Card, CardContent } from '../components/ui/card'
@@ -213,6 +214,7 @@ export function HistoryPage() {
             onPrev={() => setPage((p) => Math.max(0, p - 1))}
             onNext={() => setPage((p) => p + 1)}
             onDelete={(a) => setDeleteTarget(a)}
+            onUploadAgain={() => navigate('/dashboard')}
           />
         )}
 
@@ -242,6 +244,7 @@ function HistoryRegister({
   onPrev,
   onNext,
   onDelete,
+  onUploadAgain,
 }: {
   records: AuditListItem[]
   hasNext: boolean
@@ -250,6 +253,7 @@ function HistoryRegister({
   onPrev: () => void
   onNext: () => void
   onDelete: (audit: AuditListItem) => void
+  onUploadAgain: (audit: AuditListItem) => void
 }) {
   const start = page * PAGE_SIZE + 1
   const end = page * PAGE_SIZE + records.length
@@ -320,6 +324,17 @@ function HistoryRegister({
                       Open report
                       <ArrowRight className="h-3 w-3" aria-hidden="true" />
                     </Link>
+                    {a.status === 'interrupted' && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-7 px-2 text-[13px] border-border text-foreground"
+                        onClick={() => onUploadAgain(a)}
+                      >
+                        Upload document again
+                      </Button>
+                    )}
                     <Button
                       type="button"
                       variant="ghost"
@@ -331,6 +346,12 @@ function HistoryRegister({
                       Delete
                     </Button>
                   </div>
+                  {a.status === 'interrupted' && (
+                    <p className="mt-1.5 text-right text-xs leading-[16px] text-muted-foreground">
+                      This audit stopped before processing was completed. Upload the document
+                      again to start a new audit.
+                    </p>
+                  )}
                 </td>
               </tr>
             ))}
@@ -361,7 +382,7 @@ function HistoryRegister({
               </div>
               <div className="mt-2 flex items-center justify-between gap-3">
                 <ScoreCell status={a.status} score={a.weighted_score} />
-                <div className="flex shrink-0 items-center gap-2">
+                <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
                   <Link
                     to={`/audit/${a.id}`}
                     className="inline-flex items-center gap-1 rounded px-2 py-1 text-[13px] font-medium text-primary transition-colors hover:bg-primary/10"
@@ -369,6 +390,17 @@ function HistoryRegister({
                     Open report
                     <ArrowRight className="h-3 w-3" aria-hidden="true" />
                   </Link>
+                  {a.status === 'interrupted' && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-7 px-2 text-[13px] border-border text-foreground"
+                      onClick={() => onUploadAgain(a)}
+                    >
+                      Upload document again
+                    </Button>
+                  )}
                   <Button
                     type="button"
                     variant="ghost"
@@ -381,6 +413,12 @@ function HistoryRegister({
                   </Button>
                 </div>
               </div>
+              {a.status === 'interrupted' && (
+                <p className="mt-2 text-xs leading-[16px] text-muted-foreground">
+                  This audit stopped before processing was completed. Upload the document
+                  again to start a new audit.
+                </p>
+              )}
             </li>
           ))}
         </ul>
@@ -441,6 +479,13 @@ function StatusBadge({ status }: { status: string }) {
     return (
       <Badge variant="outline" className="border-information/40 bg-information/10 text-information">
         <Loader2 className="mr-1 h-3 w-3 animate-spin" /> Processing
+      </Badge>
+    )
+  }
+  if (status === 'interrupted') {
+    return (
+      <Badge variant="outline" className="border-warning/40 bg-warning/10 text-warning">
+        <PauseCircle className="mr-1 h-3 w-3" aria-hidden="true" /> Interrupted
       </Badge>
     )
   }

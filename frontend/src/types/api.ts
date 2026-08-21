@@ -82,9 +82,13 @@ export interface AuditResponse {
   file_size: number
   weighted_score: number
   deploy_mode: string
-  status: 'processing' | 'completed' | 'failed'
+  status: 'processing' | 'completed' | 'failed' | 'interrupted'
   created_at: string
   completed_at: string | null
+  /** Stale Audit recovery (Build 1/2): safe interruption metadata. Null for
+   * non-interrupted audits. reason is a safe category, never paths/errors. */
+  interruption_reason?: string | null
+  interrupted_at?: string | null
   violations: Violation[]
   citation_issues: CitationIssue[]
   score_breakdown?: ScoreBreakdown[]

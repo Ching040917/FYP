@@ -2,9 +2,10 @@ import { useEffect, useState, useCallback, useMemo, useRef, type ReactNode, type
 import { useParams, useNavigate } from 'react-router-dom'
 import { api, downloadBlob } from '../services/api'
 import { useToast } from '../hooks/useToast'
-import { CheckCircle2, ChevronDown, Download, Filter, Info, Loader2, MapPin, Quote, ShieldAlert, X, XCircle } from 'lucide-react'
+import { CheckCircle2, ChevronDown, Download, Filter, Info, Loader2, MapPin, PauseCircle, Quote, ShieldAlert, X, XCircle } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Badge } from '../components/ui/badge'
+import { ConfirmDialog } from '../components/ui/confirm-dialog'
 import { AppNav } from '../components/layout/AppNav'
 import { ErrorList } from '../components/audit/error-list'
 import { VerdictChecklist } from '../components/audit/verdict-checklist'
@@ -13,7 +14,7 @@ import { DocumentPreview } from '../components/audit/document-preview'
 import { categoryForRuleCode, humanizeRuleCode, aiProviderLabel, normalizeAiProvider } from '../lib/audit/adapter'
 import { useFindingMapping } from '../hooks/use-finding-mapping'
 import { invalidateMapping } from '../lib/pdf/mapping-cache.ts'
-import { useRenderedPdf } from '../hooks/use-rendered-pdf.ts'
+import { useRenderedPdf, dropRenderedPdfCache } from '../hooks/use-rendered-pdf.ts'
 import { classifyFindingTarget, resolveFindingNavigation } from '../lib/pdf/finding-navigation.ts'
 import { resolveCitationHighlight, type CitationRect } from '../lib/pdf/citation-highlight.ts'
 import { resolveFormattingHighlight, evidenceFamily } from '../lib/pdf/formatting-highlight.ts'
@@ -34,6 +35,8 @@ import {
   dropPageGeometry,
 } from '../lib/pdf/figure-outlines.ts'
 import { friendlyFindingMessage } from '../lib/friendly-finding'
+import { interruptionMessage } from '../lib/audit/interrupted-audit'
+import { formatAuditDateTime, auditDateTimeAttr } from '../lib/format-date'
 import { PendingNav, hasParagraphIdentity, type NavCommand } from '../lib/pdf/pending-navigation.ts'
 import type { PageGeometry } from '../lib/pdf/pdf-text-extract.ts'
 import { MARGIN_RULES, MARGIN_UNAVAILABLE_MESSAGE, resolveMarginNavigation, resolveMarginMarker, marginMarkerChip, sectionIndexOf } from '../lib/pdf/margin-navigation.ts'
@@ -112,7 +115,11 @@ export function AuditPage() {
   // Finding-to-page navigation (mapping PoC): ONE owner of the rendered PDF
   // bytes shared by the viewer AND the mapper (no duplicate fetch, no byte
   // divergence); session-cached mapping from those exact bytes + blocks.
-  const gatedAuditId = audit && audit.status !== 'processing' ? audit.id : null
+  // Interrupted audits have no rendered preview — never fetch it.
+  const gatedAuditId =
+    audit && audit.status !== 'processing' && audit.status !== 'interrupted'
+      ? audit.id
+      : null
   const renderedPdf = useRenderedPdf(gatedAuditId)
   const { bundle: mappingBundle, status: mappingStatus } = useFindingMapping(
     gatedAuditId,
@@ -471,6 +478,27 @@ export function AuditPage() {
 
   // PDF export — one clear action; guarded against duplicate clicks.
   const [exporting, setExporting] = useState(false)
+
+  // Interrupted-audit deletion — confirmation + progress guard.
+  const [deleteTarget, setDeleteTarget] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+
+  const handleDeleteInterrupted = async () => {
+    if (!auditId || deleting) return
+    setDeleting(true)
+    try {
+      await api.deleteAudit(auditId)
+      invalidateMapping(auditId)
+      dropRenderedPdfCache(auditId)
+      showToast('Interrupted audit deleted.', 'success')
+      navigate('/history')
+    } catch (err: any) {
+      setDeleteTarget(false)
+      showToast(err?.message || 'Could not delete the audit. Please try again.', 'error')
+    } finally {
+      setDeleting(false)
+    }
+  }
 
   const handleExport = async () => {
     if (!auditId || exporting) return
@@ -844,6 +872,13 @@ export function AuditPage() {
           <LoadingState />
         ) : error || !audit ? (
           <ErrorState error={error} onBack={() => navigate('/dashboard')} />
+        ) : audit.status === 'interrupted' ? (
+          <InterruptedPanel
+            audit={audit}
+            onUploadAgain={() => navigate('/dashboard')}
+            onDelete={() => setDeleteTarget(true)}
+            onReturn={() => navigate('/dashboard')}
+          />
         ) : (
           <>
             {/* ────────────── Compact report toolbar ────────────── */}
@@ -1220,6 +1255,20 @@ export function AuditPage() {
           </>
         )}
       </main>
+
+      {/* Interrupted-audit delete confirmation */}
+      {deleteTarget && audit?.status === 'interrupted' && (
+        <ConfirmDialog
+          title="Delete interrupted audit?"
+          description="This removes the interrupted audit record. Your original document is not stored by ACA."
+          confirmLabel="Delete audit"
+          cancelLabel="Cancel"
+          confirmVariant="destructive"
+          busy={deleting}
+          onConfirm={() => void handleDeleteInterrupted()}
+          onCancel={() => setDeleteTarget(false)}
+        />
+      )}
     </div>
   )
 }
@@ -1234,6 +1283,13 @@ function StatusBadge({ status }: { status: string }) {
       </Badge>
     )
   }
+  if (status === 'interrupted') {
+    return (
+      <Badge variant="outline" className="border-warning/40 bg-warning/10 text-warning">
+        <PauseCircle className="mr-1 h-3 w-3" aria-hidden="true" /> Interrupted
+      </Badge>
+    )
+  }
   if (status === 'completed') {
     return (
       <Badge variant="outline" className="border-success/40 bg-success/10 text-success">
@@ -1245,6 +1301,87 @@ function StatusBadge({ status }: { status: string }) {
     <Badge variant="outline" className="border-destructive/40 bg-destructive/10 text-destructive">
       <XCircle className="mr-1 h-3 w-3" /> Failed
     </Badge>
+  )
+}
+
+/* ----------------------------- Interrupted audit ----------------------------- */
+
+function InterruptedPanel({
+  audit,
+  onUploadAgain,
+  onDelete,
+  onReturn,
+}: {
+  audit: AuditResponse
+  onUploadAgain: () => void
+  onDelete: () => void
+  onReturn: () => void
+}) {
+  const message = interruptionMessage(audit.interruption_reason)
+  const snapshot = audit.profile_snapshot
+
+  return (
+    <div className="mx-auto w-full max-w-2xl rounded-md border border-warning/40 bg-warning/5 px-5 py-6">
+      <h2 className="flex items-center gap-2 text-lg font-semibold text-foreground">
+        <PauseCircle className="h-5 w-5 text-warning" aria-hidden="true" />
+        Audit interrupted
+      </h2>
+      <p className="mt-2 text-sm leading-[21px] text-muted-foreground">
+        {message} No compliance result was produced.
+      </p>
+
+      <dl className="mt-4 grid grid-cols-1 gap-x-6 gap-y-1.5 text-sm sm:grid-cols-2">
+        <div>
+          <dt className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">Document</dt>
+          <dd className="break-words text-foreground">{audit.filename}</dd>
+        </div>
+        <div>
+          <dt className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">Created</dt>
+          <dd>
+            <time dateTime={auditDateTimeAttr(audit.created_at) ?? undefined}>{formatAuditDateTime(audit.created_at)}</time>
+          </dd>
+        </div>
+        {audit.interrupted_at && (
+          <div>
+            <dt className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">Interrupted at</dt>
+            <dd>
+              <time dateTime={auditDateTimeAttr(audit.interrupted_at) ?? undefined}>{formatAuditDateTime(audit.interrupted_at)}</time>
+            </dd>
+          </div>
+        )}
+        {snapshot?.profile_name && (
+          <div>
+            <dt className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">Formatting profile</dt>
+            <dd>
+              {snapshot.profile_name}
+              {typeof snapshot.profile_version === 'number' ? ` (v${snapshot.profile_version})` : ''}
+            </dd>
+          </div>
+        )}
+        {snapshot?.citation_style && (
+          <div>
+            <dt className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">Citation style</dt>
+            <dd>{snapshot.citation_style}</dd>
+          </div>
+        )}
+      </dl>
+
+      <p className="mt-4 text-xs leading-[16px] text-muted-foreground">
+        The original document was not retained. Uploading the document again creates a new audit.
+      </p>
+
+      <div className="mt-5 flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+        <Button type="button" className="bg-primary text-primary-foreground hover:bg-primary/90" onClick={onUploadAgain}>
+          Upload document again
+        </Button>
+        <Button type="button" variant="outline" className="border-border text-foreground" onClick={onDelete}>
+          Delete interrupted audit
+        </Button>
+        <Button type="button" variant="ghost" className="text-muted-foreground" onClick={onReturn}>
+          Return to dashboard
+        </Button>
+      </div>
+    </div>
   )
 }
 
