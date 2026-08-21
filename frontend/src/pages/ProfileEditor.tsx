@@ -1,19 +1,18 @@
 /**
- * Custom Profile Editor (Build 3) — editor shell, profile list, creation
+ * Custom Profile Editor (Build 5) — editor shell, profile list, creation
  * paths, and backend-gated save.
  *
- * Scope for this Build:
+ * Scope:
  *   - view built-in and saved custom profiles;
  *   - duplicate SUC Academic Report / APA 7 Student Paper;
  *   - create a safe blank custom profile;
  *   - edit custom profile name + description;
+ *   - Body, Headings, Margins, References, Captions, and Lists controls;
  *   - save ONLY after POST /api/formatting-profiles/validate succeeds;
  *   - return to the upload workflow.
  *
- * Deliberately deferred (Build 4+): Body / Heading / Margin / References /
- * Caption / List controls (shown as disabled placeholders here), deletion
- * (Build 7), and upload-selector integration (Build 6). The editor is a
- * dedicated route — never a full-page modal.
+ * Deliberately deferred: deletion (Build 7) and upload-selector integration
+ * (Build 6). The editor is a dedicated route — never a full-page modal.
  *
  * Accessibility: semantic heading, labelled fields, fieldsets, keyboard
  * reachable list, visible focus, inline field errors, aria-live status, focus
@@ -79,11 +78,20 @@ import {
   setPayloadGroup,
   bodyFromUiModel,
   bodyToUiModel,
+  referencesFromUiModel,
+  referencesToUiModel,
+  captionsFromUiModel,
+  captionsToUiModel,
+  listsFromUiModel,
+  listsToUiModel,
   summarizeProfile,
   upsertAndBump,
   type BodyUiModel,
   type HeadingUiModel,
   type MarginsUiModel,
+  type ReferencesUiModel,
+  type CaptionUiModel,
+  type ListUiModel,
   type AlignmentValue,
   type CreationKind,
   type StoreAdapter,
@@ -116,6 +124,7 @@ function RequirementToggle({
   onChange,
   min,
   max,
+  step,
   unit,
   isSelect,
   options,
@@ -130,6 +139,7 @@ function RequirementToggle({
   onChange: (v: string) => void
   min?: number
   max?: number
+  step?: number
   unit?: string
   isSelect?: boolean
   options?: { value: string; label: string }[]
@@ -168,7 +178,7 @@ function RequirementToggle({
             type="number"
             min={min}
             max={max}
-            step={0.1}
+            step={step ?? 0.1}
             value={value}
             onChange={(e) => onChange(e.target.value)}
             className="w-20 rounded-md border border-border bg-white px-3 py-1.5 text-sm focus:border-ring focus:ring-1 focus:ring-ring focus:outline-none"
@@ -237,6 +247,9 @@ export function ProfileEditor() {
   const [bodyUi, setBodyUi] = React.useState<BodyUiModel | null>(null)
   const [headingUi, setHeadingUi] = React.useState<HeadingUiModel | null>(null)
   const [marginsUi, setMarginsUi] = React.useState<MarginsUiModel | null>(null)
+  const [referencesUi, setReferencesUi] = React.useState<ReferencesUiModel | null>(null)
+  const [captionsUi, setCaptionsUi] = React.useState<CaptionUiModel | null>(null)
+  const [listsUi, setListsUi] = React.useState<ListUiModel | null>(null)
 
   // Inline field errors for requirement controls (mapped from backend/client).
   const [reqFieldErrors, setReqFieldErrors] = React.useState<Record<string, string>>({})
@@ -369,6 +382,9 @@ export function ProfileEditor() {
         if (profile.payload.body) setBodyUi(bodyToUiModel(profile.payload.body as Record<string, unknown>))
         if (profile.payload.heading) setHeadingUi(headingToUiModel(profile.payload.heading as Record<string, unknown>))
         if (profile.payload.margins) setMarginsUi(marginsToUiModel(profile.payload.margins as Record<string, unknown>))
+        if (profile.payload.references) setReferencesUi(referencesToUiModel(profile.payload.references as Record<string, unknown>))
+        if (profile.payload.captions) setCaptionsUi(captionsToUiModel(profile.payload.captions as Record<string, unknown>))
+        if (profile.payload.lists) setListsUi(listsToUiModel(profile.payload.lists as Record<string, unknown>))
       } finally {
         setCreationBusy(null)
       }
@@ -394,6 +410,9 @@ export function ProfileEditor() {
       setBodyUi(profile.payload.body ? bodyToUiModel(profile.payload.body as Record<string, unknown>) : null)
       setHeadingUi(profile.payload.heading ? headingToUiModel(profile.payload.heading as Record<string, unknown>) : null)
       setMarginsUi(profile.payload.margins ? marginsToUiModel(profile.payload.margins as Record<string, unknown>) : null)
+      setReferencesUi(profile.payload.references ? referencesToUiModel(profile.payload.references as Record<string, unknown>) : null)
+      setCaptionsUi(profile.payload.captions ? captionsToUiModel(profile.payload.captions as Record<string, unknown>) : null)
+      setListsUi(profile.payload.lists ? listsToUiModel(profile.payload.lists as Record<string, unknown>) : null)
     },
     [envelope],
   )
@@ -461,6 +480,58 @@ export function ProfileEditor() {
     [draft],
   )
 
+  const updateReferences = React.useCallback(
+    (updater: (prev: ReferencesUiModel) => ReferencesUiModel) => {
+      setReferencesUi((prev) => {
+        if (!prev) return prev
+        const next = updater(prev)
+        if (draft) {
+          const prevRefs = draft.payload.references as Record<string, unknown> | undefined
+          const prevHanging = typeof prevRefs?.hanging_indent_in === 'number'
+            ? prevRefs.hanging_indent_in
+            : null
+          setDraft((d) => d ? { ...d, payload: setPayloadGroup(d.payload, 'references', referencesFromUiModel(next, prevHanging)) } : d)
+        }
+        setDirty(true)
+        setOpStatusSafe({ kind: 'idle' })
+        return next
+      })
+    },
+    [draft],
+  )
+
+  const updateCaptions = React.useCallback(
+    (updater: (prev: CaptionUiModel) => CaptionUiModel) => {
+      setCaptionsUi((prev) => {
+        if (!prev) return prev
+        const next = updater(prev)
+        if (draft) {
+          setDraft((d) => d ? { ...d, payload: setPayloadGroup(d.payload, 'captions', captionsFromUiModel(next)) } : d)
+        }
+        setDirty(true)
+        setOpStatusSafe({ kind: 'idle' })
+        return next
+      })
+    },
+    [draft],
+  )
+
+  const updateLists = React.useCallback(
+    (updater: (prev: ListUiModel) => ListUiModel) => {
+      setListsUi((prev) => {
+        if (!prev) return prev
+        const next = updater(prev)
+        if (draft) {
+          setDraft((d) => d ? { ...d, payload: setPayloadGroup(d.payload, 'lists', listsFromUiModel(next)) } : d)
+        }
+        setDirty(true)
+        setOpStatusSafe({ kind: 'idle' })
+        return next
+      })
+    },
+    [draft],
+  )
+
   // ---------------------------------------------------------------------
   // Save (backend-gated)
   // ---------------------------------------------------------------------
@@ -482,6 +553,10 @@ export function ProfileEditor() {
     'margins.right': 'margin-right',
     'margins.top': 'margin-top',
     'margins.bottom': 'margin-bottom',
+    'references.line_spacing': 'references-line-spacing',
+    'captions.space_before': 'captions-space-before',
+    'captions.space_after': 'captions-space-after',
+    'lists.space_after': 'lists-space-after',
   }
 
   const focusFirstError = React.useCallback((errors: { field: string; message: string }[]) => {
@@ -503,8 +578,15 @@ export function ProfileEditor() {
       payload = setPayloadGroup(payload, 'heading', headingFromUiModel(headingUi, prevAlignment))
     }
     if (marginsUi) payload = setPayloadGroup(payload, 'margins', marginsFromUiModel(marginsUi))
+    if (referencesUi) {
+      const prevR = payload.references as Record<string, unknown> | undefined
+      const prevHanging = typeof prevR?.hanging_indent_in === 'number' ? prevR.hanging_indent_in : null
+      payload = setPayloadGroup(payload, 'references', referencesFromUiModel(referencesUi, prevHanging))
+    }
+    if (captionsUi) payload = setPayloadGroup(payload, 'captions', captionsFromUiModel(captionsUi))
+    if (listsUi) payload = setPayloadGroup(payload, 'lists', listsFromUiModel(listsUi))
     return payload
-  }, [draft, bodyUi, headingUi, marginsUi])
+  }, [draft, bodyUi, headingUi, marginsUi, referencesUi, captionsUi, listsUi])
 
   const saveProfile = React.useCallback(async () => {
     if (!draft || !envelope) return
@@ -567,9 +649,15 @@ export function ProfileEditor() {
         const confirmedBody = confirmed.payload.body
         const confirmedHeading = confirmed.payload.heading
         const confirmedMargins = confirmed.payload.margins
+        const confirmedReferences = confirmed.payload.references
+        const confirmedCaptions = confirmed.payload.captions
+        const confirmedLists = confirmed.payload.lists
         setBodyUi(confirmedBody ? bodyToUiModel(confirmedBody as Record<string, unknown>) : null)
         setHeadingUi(confirmedHeading ? headingToUiModel(confirmedHeading as Record<string, unknown>) : null)
         setMarginsUi(confirmedMargins ? marginsToUiModel(confirmedMargins as Record<string, unknown>) : null)
+        setReferencesUi(confirmedReferences ? referencesToUiModel(confirmedReferences as Record<string, unknown>) : null)
+        setCaptionsUi(confirmedCaptions ? captionsToUiModel(confirmedCaptions as Record<string, unknown>) : null)
+        setListsUi(confirmedLists ? listsToUiModel(confirmedLists as Record<string, unknown>) : null)
         setDirty(false)
         setOpStatusSafe({ kind: 'saved' })
       } else if ('errors' in result) {
@@ -603,7 +691,7 @@ export function ProfileEditor() {
         message: 'The profile could not be validated. Please try again.',
       })
     }
-  }, [draft, envelope, bodyUi, headingUi, marginsUi, buildFinalPayload, focusFirstError])
+  }, [draft, envelope, bodyUi, headingUi, marginsUi, referencesUi, captionsUi, listsUi, buildFinalPayload, focusFirstError])
 
   // ---------------------------------------------------------------------
   // Navigation safety
@@ -710,6 +798,9 @@ export function ProfileEditor() {
     setBodyUi(null)
     setHeadingUi(null)
     setMarginsUi(null)
+    setReferencesUi(null)
+    setCaptionsUi(null)
+    setListsUi(null)
     setFieldErrors({})
     setReqFieldErrors({})
   }, [])
@@ -1863,30 +1954,155 @@ export function ProfileEditor() {
                     </details>
 
                     {/* ------------------------------------------------------------------ */}
-                    {/* Placeholders for future Builds                                       */}
+                    {/* References controls                                                  */}
                     {/* ------------------------------------------------------------------ */}
-                    <fieldset className="mt-4 rounded-md border border-border p-3">
-                      <legend className="px-1 text-sm font-semibold text-foreground">
-                        References, Captions, and Lists
-                      </legend>
-                      <p className="mt-1 text-xs leading-[16px] text-muted-foreground">
-                        These sections are available in a later setup step.
-                      </p>
-                      <ul className="mt-3 space-y-2">
-                        {['References', 'Captions and lists'].map((label) => (
-                          <li
-                            key={label}
-                            className="rounded-md border border-dashed border-border bg-input/10 px-3 py-2.5 text-sm text-muted-foreground"
-                            aria-disabled="true"
+                    <details className="group mt-4 rounded-md border border-border" open={allExpanded || undefined}>
+                      <summary className="cursor-pointer list-none rounded-md px-3 py-2.5 text-sm font-semibold text-foreground select-none transition-colors hover:bg-input/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2">
+                        <div className="flex items-center justify-between">
+                          <span>References</span>
+                          <svg
+                            className="h-4 w-4 text-muted-foreground transition-transform group-open:rotate-90"
+                            aria-hidden="true"
+                            fill="none"
+                            viewBox="0 0 24 24"
+                            stroke="currentColor"
                           >
-                            {label}
-                            <span className="mt-0.5 block text-xs leading-[16px]">
-                              Available in a later setup step
-                            </span>
-                          </li>
-                        ))}
-                      </ul>
-                    </fieldset>
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                          </svg>
+                        </div>
+                      </summary>
+                      <div className="space-y-4 px-3 pb-3 pt-1">
+                        <p className="text-xs leading-[16px] text-muted-foreground">
+                          Turning off a requirement means it will not be checked or included in the score.
+                        </p>
+
+                        <RequirementToggle
+                          label="Reference line spacing"
+                          enabled={referencesUi?.lineSpacingEnabled ?? false}
+                          onToggle={() => updateReferences((u) => ({ ...u, lineSpacingEnabled: !u.lineSpacingEnabled }))}
+                          value={referencesUi?.lineSpacing ?? ''}
+                          onChange={(v) => updateReferences((u) => ({ ...u, lineSpacing: v }))}
+                          min={1}
+                          max={4}
+                          step={0.1}
+                          unit="× (multiplier)"
+                          error={reqFieldErrors['references.line_spacing']}
+                          hint="Off means reference line spacing is not checked."
+                          fieldId="references-line-spacing"
+                        />
+
+                        <div className="rounded-md border border-dashed border-border bg-input/10 px-3 py-2.5">
+                          <p className="text-sm text-muted-foreground">Hanging indentation</p>
+                          <p className="mt-0.5 text-xs leading-[16px] text-muted-foreground">
+                            Hanging indentation checking is not available in this version.
+                          </p>
+                        </div>
+                      </div>
+                    </details>
+
+                    {/* ------------------------------------------------------------------ */}
+                    {/* Captions controls                                                     */}
+                    {/* ------------------------------------------------------------------ */}
+                    <details className="group mt-4 rounded-md border border-border" open={allExpanded || undefined}>
+                      <summary className="cursor-pointer list-none rounded-md px-3 py-2.5 text-sm font-semibold text-foreground select-none transition-colors hover:bg-input/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2">
+                        <div className="flex items-center justify-between">
+                          <span>Captions</span>
+                          <svg
+                            className="h-4 w-4 text-muted-foreground transition-transform group-open:rotate-90"
+                            aria-hidden="true"
+                            fill="none"
+                            viewBox="0 0 24 24"
+                            stroke="currentColor"
+                          >
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                          </svg>
+                        </div>
+                      </summary>
+                      <div className="space-y-4 px-3 pb-3 pt-1">
+                        <p className="text-xs leading-[16px] text-muted-foreground">
+                          Turning off a requirement means it will not be checked or included in the score.
+                        </p>
+
+                        <RequirementToggle
+                          label="Space before captions"
+                          enabled={captionsUi?.spaceBeforeEnabled ?? false}
+                          onToggle={() => updateCaptions((u) => ({ ...u, spaceBeforeEnabled: !u.spaceBeforeEnabled }))}
+                          value={captionsUi?.spaceBefore ?? ''}
+                          onChange={(v) => updateCaptions((u) => ({ ...u, spaceBefore: v }))}
+                          min={0}
+                          max={240}
+                          unit="pt"
+                          error={reqFieldErrors['captions.space_before']}
+                          hint="Range: 0–240 pt. Off means no deterministic check."
+                          fieldId="captions-space-before"
+                        />
+
+                        <RequirementToggle
+                          label="Space after captions"
+                          enabled={captionsUi?.spaceAfterEnabled ?? false}
+                          onToggle={() => updateCaptions((u) => ({ ...u, spaceAfterEnabled: !u.spaceAfterEnabled }))}
+                          value={captionsUi?.spaceAfter ?? ''}
+                          onChange={(v) => updateCaptions((u) => ({ ...u, spaceAfter: v }))}
+                          min={0}
+                          max={240}
+                          unit="pt"
+                          error={reqFieldErrors['captions.space_after']}
+                          hint="Range: 0–240 pt. Off means no deterministic check."
+                          fieldId="captions-space-after"
+                        />
+
+                        <p className="text-[11px] leading-[16px] text-muted-foreground">
+                          Caption spacing applies only to detected academic captions. Administrative,
+                          layout, rubric, and unknown tables are not checked for captions.
+                        </p>
+                      </div>
+                    </details>
+
+                    {/* ------------------------------------------------------------------ */}
+                    {/* Lists controls                                                         */}
+                    {/* ------------------------------------------------------------------ */}
+                    <details className="group mt-4 rounded-md border border-border" open={allExpanded || undefined}>
+                      <summary className="cursor-pointer list-none rounded-md px-3 py-2.5 text-sm font-semibold text-foreground select-none transition-colors hover:bg-input/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2">
+                        <div className="flex items-center justify-between">
+                          <span>Lists</span>
+                          <svg
+                            className="h-4 w-4 text-muted-foreground transition-transform group-open:rotate-90"
+                            aria-hidden="true"
+                            fill="none"
+                            viewBox="0 0 24 24"
+                            stroke="currentColor"
+                          >
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                          </svg>
+                        </div>
+                      </summary>
+                      <div className="space-y-4 px-3 pb-3 pt-1">
+                        <p className="text-xs leading-[16px] text-muted-foreground">
+                          Turning off a requirement means it will not be checked or included in the score.
+                        </p>
+
+                        <RequirementToggle
+                          label="Space after list items"
+                          enabled={listsUi?.spaceAfterEnabled ?? false}
+                          onToggle={() => updateLists((u) => ({ ...u, spaceAfterEnabled: !u.spaceAfterEnabled }))}
+                          value={listsUi?.spaceAfter ?? ''}
+                          onChange={(v) => updateLists((u) => ({ ...u, spaceAfter: v }))}
+                          min={0}
+                          max={240}
+                          unit="pt"
+                          error={reqFieldErrors['lists.space_after']}
+                          hint="Range: 0–240 pt. Off means no deterministic check."
+                          fieldId="lists-space-after"
+                        />
+
+                        <div className="rounded-md border border-dashed border-border bg-input/10 px-3 py-2.5">
+                          <p className="text-sm text-muted-foreground">Space before list items</p>
+                          <p className="mt-0.5 text-xs leading-[16px] text-muted-foreground">
+                            Space before list items is not checked in this version.
+                          </p>
+                        </div>
+                      </div>
+                    </details>
 
                     {/* ------------------------------------------------------------------ */}
                     {/* Profile summary                                                      */}

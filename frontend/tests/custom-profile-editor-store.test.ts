@@ -172,6 +172,86 @@ test('save flow: validation failure keeps the draft, nothing is written', () => 
   assert.equal(after.profiles[0]!.id, id1)
 })
 
+test('save flow: reference/caption/list values survive backend-confirmed save', () => {
+  const adapter = seedStore()
+  let envelope = loadEnvelope(adapter)
+
+  const id = generateProfileId()
+  const draft = {
+    id,
+    name: 'Build 5 Profile',
+    description: '',
+    payload: {
+      ...blankProfilePayload(id, 'Build 5 Profile'),
+      references: { line_spacing: 2, hanging_indent_in: null },
+      captions: { space_before_pt: 6, space_after_pt: 12 },
+      lists: { space_after_pt: 6 },
+    },
+    validationState: 'locally_valid' as const,
+    updatedAt: NOW,
+  }
+  envelope = upsertAndBump(envelope, draft, NOW)
+  assert.equal(persistEnvelope(adapter, envelope, 0).ok, true)
+
+  // Backend-normalized result replaces the draft payload.
+  const confirmed = {
+    ...draft,
+    payload: buildSavePayload(draft as never),
+    validationState: 'backend_confirmed' as const,
+    updatedAt: '2026-08-21T01:00:00.000Z',
+  }
+  envelope = upsertAndBump(loadEnvelope(adapter), confirmed, confirmed.updatedAt)
+  assert.equal(persistEnvelope(adapter, envelope, 1).ok, true)
+
+  const saved = loadEnvelope(adapter).profiles[0]!
+  assert.equal(saved.validationState, 'backend_confirmed')
+  assert.equal(saved.payload.references.line_spacing, 2)
+  assert.equal(saved.payload.captions.space_before_pt, 6)
+  assert.equal(saved.payload.captions.space_after_pt, 12)
+  assert.equal(saved.payload.lists.space_after_pt, 6)
+})
+
+test('save flow: failed validation preserves every draft value incl. Build 5 groups', () => {
+  const adapter = seedStore()
+  let envelope = loadEnvelope(adapter)
+
+  // A conflicting name forces client validation to fail.
+  const id1 = generateProfileId()
+  const first = {
+    id: id1,
+    name: 'Taken',
+    description: '',
+    payload: blankProfilePayload(id1, 'Taken'),
+    validationState: 'backend_confirmed' as const,
+    updatedAt: NOW,
+  }
+  envelope = upsertAndBump(envelope, first, NOW)
+  assert.equal(persistEnvelope(adapter, envelope, 0).ok, true)
+
+  const id2 = generateProfileId()
+  const draft = {
+    id: id2,
+    name: 'taken',
+    description: '',
+    payload: {
+      ...blankProfilePayload(id2, 'taken'),
+      references: { line_spacing: 1.5, hanging_indent_in: null },
+      captions: { space_before_pt: 6, space_after_pt: null },
+      lists: { space_after_pt: null },
+    },
+    validationState: 'locally_valid' as const,
+    updatedAt: NOW,
+  }
+  assert.ok(clientValidate(draft, loadEnvelope(adapter)).some((e) => e.field === 'general.name'))
+
+  // Nothing written; the draft values remain untouched in the caller's copy.
+  const after = loadEnvelope(adapter)
+  assert.equal(after.profiles.length, 1)
+  assert.equal(after.profiles[0]!.id, id1)
+  assert.equal(draft.payload.references.line_spacing, 1.5)
+  assert.equal(draft.payload.captions.space_before_pt, 6)
+})
+
 test('copy from a built-in payload preserves requirements under a custom identity', () => {
   const source = {
     profile_id: 'suc-academic-report',

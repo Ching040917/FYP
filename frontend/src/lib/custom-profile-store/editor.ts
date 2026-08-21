@@ -249,6 +249,9 @@ export const SPACING_PT_MIN = 0
 export const SPACING_PT_MAX = 240
 export const MARGIN_MIN_IN = 0.25
 export const MARGIN_MAX_IN = 4.0
+/** Reference line spacing is a multiplier like body line spacing. */
+export const REFERENCES_LINE_SPACING_MIN = 1.0
+export const REFERENCES_LINE_SPACING_MAX = 4.0
 
 export const ALIGNMENT_OPTIONS = ['left', 'center', 'right', 'justify'] as const
 export type AlignmentValue = (typeof ALIGNMENT_OPTIONS)[number]
@@ -324,9 +327,34 @@ export interface HeadingUiModel {
 
 export type MarginsUiModel = Record<MarginSide, { enabled: boolean; value: string }>
 
+/** References section UI (Build 5). Only line spacing is audited; hanging
+ * indent is stored with the profile but never checked in this release, so it
+ * is never exposed as an editable control. */
+export interface ReferencesUiModel {
+  lineSpacingEnabled: boolean
+  lineSpacing: string
+}
+
+/** Captions section UI (Build 5). Space before/after are independent. */
+export interface CaptionUiModel {
+  spaceBeforeEnabled: boolean
+  spaceBefore: string
+  spaceAfterEnabled: boolean
+  spaceAfter: string
+}
+
+/** Lists section UI (Build 5). Space before is never checked for lists. */
+export interface ListUiModel {
+  spaceAfterEnabled: boolean
+  spaceAfter: string
+}
+
 type BodyGroup = Record<string, unknown>
 type HeadingGroup = Record<string, unknown>
 type MarginGroup = Record<string, unknown>
+type ReferencesGroup = Record<string, unknown>
+type CaptionGroup = Record<string, unknown>
+type ListGroup = Record<string, unknown>
 
 const numStr = (n: unknown): string => {
   if (typeof n === 'number' && Number.isFinite(n)) return String(n)
@@ -533,6 +561,61 @@ export function marginsFromUiModel(ui: MarginsUiModel): MarginGroup {
   }
 }
 
+/** Read the schema-backed References group into the editable UI model. */
+export function referencesToUiModel(references: ReferencesGroup): ReferencesUiModel {
+  return {
+    lineSpacingEnabled: references.line_spacing != null,
+    lineSpacing: numStr(references.line_spacing),
+  }
+}
+
+/** Build the schema-backed References group from the editable UI model.
+ * The stored hanging indent is preserved verbatim (never editable, never
+ * clobbered) so built-in copies keep their exact values — it is not audited
+ * in this release. */
+export function referencesFromUiModel(
+  ui: ReferencesUiModel,
+  preserveHangingIndent: number | null | undefined,
+): ReferencesGroup {
+  return {
+    line_spacing: ui.lineSpacingEnabled ? parseNum(ui.lineSpacing) : null,
+    hanging_indent_in: typeof preserveHangingIndent === 'number' ? preserveHangingIndent : null,
+  }
+}
+
+/** Read the schema-backed Captions group into the editable UI model. */
+export function captionsToUiModel(captions: CaptionGroup): CaptionUiModel {
+  return {
+    spaceBeforeEnabled: captions.space_before_pt != null,
+    spaceBefore: numStr(captions.space_before_pt),
+    spaceAfterEnabled: captions.space_after_pt != null,
+    spaceAfter: numStr(captions.space_after_pt),
+  }
+}
+
+/** Build the schema-backed Captions group from the editable UI model. */
+export function captionsFromUiModel(ui: CaptionUiModel): CaptionGroup {
+  return {
+    space_before_pt: ui.spaceBeforeEnabled ? parseNum(ui.spaceBefore) : null,
+    space_after_pt: ui.spaceAfterEnabled ? parseNum(ui.spaceAfter) : null,
+  }
+}
+
+/** Read the schema-backed Lists group into the editable UI model. */
+export function listsToUiModel(lists: ListGroup): ListUiModel {
+  return {
+    spaceAfterEnabled: lists.space_after_pt != null,
+    spaceAfter: numStr(lists.space_after_pt),
+  }
+}
+
+/** Build the schema-backed Lists group from the editable UI model. */
+export function listsFromUiModel(ui: ListUiModel): ListGroup {
+  return {
+    space_after_pt: ui.spaceAfterEnabled ? parseNum(ui.spaceAfter) : null,
+  }
+}
+
 /**
  * Apply a convenience margin preset. Presets are NOT universal standards —
  * they only pre-fill the four controls, which remain editable and must pass
@@ -730,6 +813,42 @@ export function validateRequirements(
     }
   }
 
+  // References — line spacing only (Build 5).
+  const references = referencesToUiModel((payload.references ?? {}) as ReferencesGroup)
+  const refLs = references.lineSpacingEnabled ? parseNum(references.lineSpacing) : null
+  if (references.lineSpacingEnabled && (refLs === null || refLs < REFERENCES_LINE_SPACING_MIN || refLs > REFERENCES_LINE_SPACING_MAX)) {
+    errors.push({
+      field: 'references.line_spacing',
+      message: `Enter reference line spacing between ${REFERENCES_LINE_SPACING_MIN} and ${REFERENCES_LINE_SPACING_MAX}.`,
+    })
+  }
+
+  // Captions — space before / after, independent (Build 5).
+  const captions = captionsToUiModel((payload.captions ?? {}) as CaptionGroup)
+  for (const [field, label] of [
+    ['captions.space_before', captions.spaceBefore],
+    ['captions.space_after', captions.spaceAfter],
+  ] as const) {
+    const enabled = field === 'captions.space_before' ? captions.spaceBeforeEnabled : captions.spaceAfterEnabled
+    const value = enabled ? parseNum(label) : null
+    if (enabled && (value === null || value < SPACING_PT_MIN || value > SPACING_PT_MAX)) {
+      errors.push({
+        field,
+        message: `Enter caption spacing between ${SPACING_PT_MIN} and ${SPACING_PT_MAX} pt.`,
+      })
+    }
+  }
+
+  // Lists — space after only (Build 5).
+  const lists = listsToUiModel((payload.lists ?? {}) as ListGroup)
+  const listAfter = lists.spaceAfterEnabled ? parseNum(lists.spaceAfter) : null
+  if (lists.spaceAfterEnabled && (listAfter === null || listAfter < SPACING_PT_MIN || listAfter > SPACING_PT_MAX)) {
+    errors.push({
+      field: 'lists.space_after',
+      message: `Enter list spacing between ${SPACING_PT_MIN} and ${SPACING_PT_MAX} pt.`,
+    })
+  }
+
   return errors
 }
 
@@ -818,6 +937,37 @@ export function summarizeProfile(payload: Record<string, unknown>): ProfileSumma
       (s) => `${MARGIN_SIDE_LABELS[s]} ${margins[s].value} in`,
     )
     lines.push(`Margins: ${parts.join(', ')}`)
+  }
+
+  // References (Build 5)
+  const references = referencesToUiModel((payload.references ?? {}) as ReferencesGroup)
+  if (references.lineSpacingEnabled && references.lineSpacing) {
+    lines.push(`References: ${references.lineSpacing} line spacing`)
+  } else {
+    lines.push('References: Not checked')
+  }
+
+  // Captions (Build 5)
+  const captions = captionsToUiModel((payload.captions ?? {}) as CaptionGroup)
+  const captionParts: string[] = []
+  if (captions.spaceBeforeEnabled && captions.spaceBefore) {
+    captionParts.push(`${captions.spaceBefore} pt before`)
+  }
+  if (captions.spaceAfterEnabled && captions.spaceAfter) {
+    captionParts.push(`${captions.spaceAfter} pt after`)
+  }
+  lines.push(
+    captionParts.length > 0
+      ? `Captions: ${captionParts.join(', ')}`
+      : 'Captions: Not checked',
+  )
+
+  // Lists (Build 5)
+  const lists = listsToUiModel((payload.lists ?? {}) as ListGroup)
+  if (lists.spaceAfterEnabled && lists.spaceAfter) {
+    lines.push(`Lists: ${lists.spaceAfter} pt after`)
+  } else {
+    lines.push('Lists: Not checked')
   }
 
   // Disabled check count
