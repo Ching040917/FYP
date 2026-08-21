@@ -25,9 +25,13 @@ import {
   generateProfileId,
   isDirty,
   loadEnvelope,
+  mergeOpStatus,
+  isSuccessOpStatus,
+  OP_STATUS_SUCCESS_MS,
   persistEnvelope,
   resolveUniqueName,
   upsertAndBump,
+  type OpStatus,
 } from '../src/lib/custom-profile-store/editor.ts'
 import { ACTIVE_KEY, RECOVERY_KEY, emptyEnvelope, serializeEnvelope } from '../src/lib/custom-profile-store/store.ts'
 
@@ -256,4 +260,59 @@ test('DEFAULT_PROFILE_NAMES match the spec', () => {
   assert.equal(DEFAULT_PROFILE_NAMES['copy-suc'], 'Copy of SUC Academic Report')
   assert.equal(DEFAULT_PROFILE_NAMES['copy-apa'], 'Copy of APA 7 Student Paper')
   assert.equal(DEFAULT_PROFILE_NAMES.blank, 'Untitled custom profile')
+})
+
+// ---------------------------------------------------------------------------
+// Operation status (Build 5 polish) — one active status at a time
+// ---------------------------------------------------------------------------
+
+test('Save then Delete shows only Delete success', () => {
+  const merged = mergeOpStatus({ kind: 'saved' }, { kind: 'deleted' })
+  assert.equal(merged.kind, 'deleted')
+})
+
+test('Delete then Save shows only Save success', () => {
+  const merged = mergeOpStatus({ kind: 'deleted' }, { kind: 'saved' })
+  assert.equal(merged.kind, 'saved')
+})
+
+test('repeated identical status is not re-announced (same reference)', () => {
+  const prev: OpStatus = { kind: 'saved' }
+  assert.equal(mergeOpStatus(prev, { kind: 'saved' }), prev)
+  const prevErr: OpStatus = { kind: 'error', message: 'boom' }
+  assert.equal(mergeOpStatus(prevErr, { kind: 'error', message: 'boom' }), prevErr)
+})
+
+test('different message with same kind IS re-announced', () => {
+  const prev: OpStatus = { kind: 'error', message: 'a' }
+  const merged = mergeOpStatus(prev, { kind: 'error', message: 'b' })
+  assert.notEqual(merged, prev)
+  assert.equal(merged.message, 'b')
+})
+
+test('errors supersede stale success status', () => {
+  const merged = mergeOpStatus({ kind: 'saved' }, { kind: 'backend-error', errors: ['x'] })
+  assert.equal(merged.kind, 'backend-error')
+  const merged2 = mergeOpStatus({ kind: 'deleted' }, { kind: 'error', message: 'stale tab' })
+  assert.equal(merged2.kind, 'error')
+})
+
+test('success statuses auto-dismiss; errors do not', () => {
+  assert.equal(isSuccessOpStatus('saved'), true)
+  assert.equal(isSuccessOpStatus('deleted'), true)
+  assert.equal(isSuccessOpStatus('already-gone'), true)
+  assert.equal(isSuccessOpStatus('idle'), false)
+  assert.equal(isSuccessOpStatus('error'), false)
+  assert.equal(isSuccessOpStatus('backend-error'), false)
+})
+
+test('auto-dismiss delay is within the 3–5 second window', () => {
+  assert.ok(OP_STATUS_SUCCESS_MS >= 3000 && OP_STATUS_SUCCESS_MS <= 5000)
+})
+
+test('delete success is an auto-dismissing success status (visible after editor unmount)', () => {
+  // The page-level region renders opStatus outside the draft conditional, so
+  // 'deleted' must be classified as success for the 4s timer to apply.
+  assert.equal(isSuccessOpStatus('deleted'), true)
+  assert.equal(OP_STATUS_SUCCESS_MS, 4000)
 })

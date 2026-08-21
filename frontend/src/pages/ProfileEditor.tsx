@@ -33,6 +33,9 @@ import {
   AlertTriangle,
   Info,
   FileText,
+  Trash2,
+  ChevronsDownUp,
+  ChevronsUpDown,
 } from 'lucide-react'
 import { AppNav } from '../components/layout/AppNav'
 import { AppFooter } from '../components/layout/AppFooter'
@@ -50,16 +53,38 @@ import {
   DEFAULT_PROFILE_NAMES,
   MAX_DESCRIPTION_LENGTH,
   blankProfilePayload,
-  buildSavePayload,
-  clientValidate,
   copyProfilePayload,
+  clientValidate,
+  createMemoryStoreAdapter,
+  deleteAndBump,
   friendlySourceName,
   generateProfileId,
+  headingFromUiModel,
+  headingToUiModel,
+  isUnsavedDraft,
   loadEnvelope,
-  createMemoryStoreAdapter,
+  marginsFromUiModel,
+  marginsToUiModel,
+  applyMarginPreset,
+  MARGIN_PRESET_LABELS,
+  MARGIN_SIDE_LABELS,
+  mergeOpStatus,
+  isSuccessOpStatus,
+  OP_STATUS_SUCCESS_MS,
+  type OpStatus,
+  type MarginSide,
+  type MarginPreset,
   persistEnvelope,
   resolveUniqueName,
+  setPayloadGroup,
+  bodyFromUiModel,
+  bodyToUiModel,
+  summarizeProfile,
   upsertAndBump,
+  type BodyUiModel,
+  type HeadingUiModel,
+  type MarginsUiModel,
+  type AlignmentValue,
   type CreationKind,
   type StoreAdapter,
   type StoreEnvelope,
@@ -68,11 +93,107 @@ import {
 import { createBrowserStoreAdapter } from '../lib/custom-profile-store/localstorage-adapter'
 import { cn } from '../lib/utils'
 
+// Known citation-style terms that may appear in profile names. We only warn;
+// we do not block or auto-correct the name.
+const CITATION_STYLE_NAME_HINTS = ['chicago', 'ama', 'mla', 'harvard']
+
+/** Built-in profile ids — never deletable through any path. */
+const BUILTIN_IDS = [SUC_BUILTIN_ID, APA_BUILTIN_ID] as const
+
 interface BuiltinViewModel {
   profileId: string
   name: string
   description: string
   sourceName: string
+}
+
+/** Reusable On/Off requirement toggle with optional numeric input or select. */
+function RequirementToggle({
+  label,
+  enabled,
+  onToggle,
+  value,
+  onChange,
+  min,
+  max,
+  unit,
+  isSelect,
+  options,
+  error,
+  hint,
+  fieldId,
+}: {
+  label: string
+  enabled: boolean
+  onToggle: () => void
+  value: string
+  onChange: (v: string) => void
+  min?: number
+  max?: number
+  unit?: string
+  isSelect?: boolean
+  options?: { value: string; label: string }[]
+  error?: string
+  hint?: string
+  fieldId: string
+}) {
+  return (
+    <fieldset className="rounded-md border border-border p-3">
+      <legend className="px-1 text-sm font-medium text-foreground">{label}</legend>
+      <div className="mt-2 flex items-center gap-2">
+        <button
+          type="button"
+          role="switch"
+          aria-checked={enabled}
+          onClick={onToggle}
+          className={cn(
+            'inline-flex h-6 w-11 shrink-0 items-center rounded-full border transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
+            enabled ? 'bg-primary border-transparent' : 'bg-input border-border',
+          )}
+        >
+          <span className="sr-only">Check {label}</span>
+          <span
+            className={cn(
+              'inline-block h-5 w-5 rounded-full bg-white transition-transform',
+              enabled ? 'translate-x-5' : 'translate-x-0.5',
+            )}
+          />
+        </button>
+        <span className="text-sm text-foreground">{enabled ? 'On' : 'Off'}</span>
+      </div>
+      {enabled && !isSelect && (
+        <div className="mt-2 flex items-center gap-2">
+          <input
+            id={fieldId}
+            type="number"
+            min={min}
+            max={max}
+            step={0.1}
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+            className="w-20 rounded-md border border-border bg-white px-3 py-1.5 text-sm focus:border-ring focus:ring-1 focus:ring-ring focus:outline-none"
+            aria-describedby={hint ? `${fieldId}-hint` : undefined}
+          />
+          {unit && <span className="text-sm text-muted-foreground">{unit}</span>}
+        </div>
+      )}
+      {enabled && isSelect && options && (
+        <select
+          id={fieldId}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          className="mt-2 w-full rounded-md border border-border bg-white px-3 py-1.5 text-sm focus:border-ring focus:ring-1 focus:ring-ring focus:outline-none"
+          aria-describedby={hint ? `${fieldId}-hint` : undefined}
+        >
+          {options.map((o) => (
+            <option key={o.value} value={o.value}>{o.label}</option>
+          ))}
+        </select>
+      )}
+      {error && <p role="alert" className="mt-1 text-xs text-destructive">{error}</p>}
+      {hint && <p id={`${fieldId}-hint`} className="mt-1 text-[11px] text-muted-foreground">{hint}</p>}
+    </fieldset>
+  )
 }
 
 type LoadStatus =
@@ -95,10 +216,30 @@ export function ProfileEditor() {
   const [draft, setDraft] = React.useState<StoredCustomProfile | null>(null)
   const [dirty, setDirty] = React.useState(false)
   const [fieldErrors, setFieldErrors] = React.useState<{ name?: string; description?: string }>({})
-  const [saveStatus, setSaveStatus] = React.useState<
-    { kind: 'idle' } | { kind: 'validating' } | { kind: 'saved' } | { kind: 'error'; message: string } | { kind: 'backend-error'; errors: string[] }
-  >({ kind: 'idle' })
+  // ONE active operation status for the whole editor (save + delete share it),
+  // so a Save never shows alongside a stale Delete success and vice versa.
+  const [opStatus, setOpStatus] = React.useState<OpStatus>({ kind: 'idle' })
+  const setOpStatusSafe = React.useCallback((next: OpStatus) => {
+    setOpStatus((prev) => mergeOpStatus(prev, next))
+  }, [])
+  // Success statuses auto-dismiss; errors persist until superseded/corrected.
+  React.useEffect(() => {
+    if (!isSuccessOpStatus(opStatus.kind)) return
+    const t = setTimeout(() => {
+      setOpStatus((prev) => (isSuccessOpStatus(prev.kind) ? { kind: 'idle' } : prev))
+    }, OP_STATUS_SUCCESS_MS)
+    return () => clearTimeout(t)
+  }, [opStatus])
   const [pendingNavigation, setPendingNavigation] = React.useState<null | { to: string }>(null)
+
+  // Requirement UI models — derived from draft.payload and the single source
+  // of truth for every requirement control in this Build.
+  const [bodyUi, setBodyUi] = React.useState<BodyUiModel | null>(null)
+  const [headingUi, setHeadingUi] = React.useState<HeadingUiModel | null>(null)
+  const [marginsUi, setMarginsUi] = React.useState<MarginsUiModel | null>(null)
+
+  // Inline field errors for requirement controls (mapped from backend/client).
+  const [reqFieldErrors, setReqFieldErrors] = React.useState<Record<string, string>>({})
 
   // Load once
   React.useEffect(() => {
@@ -222,7 +363,12 @@ export function ProfileEditor() {
         setEditingId(profile.id)
         setDirty(true)
         setFieldErrors({})
-        setSaveStatus({ kind: 'idle' })
+        setReqFieldErrors({})
+        setOpStatusSafe({ kind: 'idle' })
+        // Initialize requirement UI models from the newly created payload.
+        if (profile.payload.body) setBodyUi(bodyToUiModel(profile.payload.body as Record<string, unknown>))
+        if (profile.payload.heading) setHeadingUi(headingToUiModel(profile.payload.heading as Record<string, unknown>))
+        if (profile.payload.margins) setMarginsUi(marginsToUiModel(profile.payload.margins as Record<string, unknown>))
       } finally {
         setCreationBusy(null)
       }
@@ -243,7 +389,11 @@ export function ProfileEditor() {
       setEditingId(id)
       setDirty(false)
       setFieldErrors({})
-      setSaveStatus({ kind: 'idle' })
+      setReqFieldErrors({})
+      setOpStatusSafe({ kind: 'idle' })
+      setBodyUi(profile.payload.body ? bodyToUiModel(profile.payload.body as Record<string, unknown>) : null)
+      setHeadingUi(profile.payload.heading ? headingToUiModel(profile.payload.heading as Record<string, unknown>) : null)
+      setMarginsUi(profile.payload.margins ? marginsToUiModel(profile.payload.margins as Record<string, unknown>) : null)
     },
     [envelope],
   )
@@ -254,34 +404,145 @@ export function ProfileEditor() {
       return { ...prev, ...patch }
     })
     setDirty(true)
-    setSaveStatus({ kind: 'idle' })
+    setOpStatusSafe({ kind: 'idle' })
   }
+
+  // ---------------------------------------------------------------------
+  // Requirement control handlers
+  // ---------------------------------------------------------------------
+
+  const updateBody = React.useCallback(
+    (updater: (prev: BodyUiModel) => BodyUiModel) => {
+      setBodyUi((prev) => {
+        if (!prev) return prev
+        const next = updater(prev)
+        if (draft) {
+          setDraft((d) => d ? { ...d, payload: setPayloadGroup(d.payload, 'body', bodyFromUiModel(next)) } : d)
+        }
+        setDirty(true)
+        setOpStatusSafe({ kind: 'idle' })
+        return next
+      })
+    },
+    [draft],
+  )
+
+  const updateHeading = React.useCallback(
+    (updater: (prev: HeadingUiModel) => HeadingUiModel) => {
+      setHeadingUi((prev) => {
+        if (!prev) return prev
+        const next = updater(prev)
+        if (draft) {
+          const prevHeading = draft.payload.heading as Record<string, unknown> | undefined
+          const prevAlignment = typeof prevHeading?.alignment === 'string' ? prevHeading.alignment : null
+          setDraft((d) => d ? { ...d, payload: setPayloadGroup(d.payload, 'heading', headingFromUiModel(next, prevAlignment)) } : d)
+        }
+        setDirty(true)
+        setOpStatusSafe({ kind: 'idle' })
+        return next
+      })
+    },
+    [draft],
+  )
+
+  const updateMargins = React.useCallback(
+    (updater: (prev: MarginsUiModel) => MarginsUiModel) => {
+      setMarginsUi((prev) => {
+        if (!prev) return prev
+        const next = updater(prev)
+        if (draft) {
+          setDraft((d) => d ? { ...d, payload: setPayloadGroup(d.payload, 'margins', marginsFromUiModel(next)) } : d)
+        }
+        setDirty(true)
+        setOpStatusSafe({ kind: 'idle' })
+        return next
+      })
+    },
+    [draft],
+  )
 
   // ---------------------------------------------------------------------
   // Save (backend-gated)
   // ---------------------------------------------------------------------
 
+  /** Map a backend/client error field to the DOM element id we focus. */
+  const FIELD_TO_INPUT_ID: Record<string, string> = {
+    'general.name': 'profile-name',
+    'general.description': 'profile-description',
+    'body.font_pairs': 'body-font-pairs-first-family',
+    'body.alignment': 'body-alignment',
+    'body.line_spacing': 'body-line-spacing',
+    'body.space_before': 'body-space-before',
+    'body.space_after': 'body-space-after',
+    'headings.level_1.font': 'heading-font-behavior',
+    'headings.level_1.alignment': 'heading-alignment',
+    'headings.level_1.space_before': 'heading-space-before',
+    'headings.level_1.space_after': 'heading-space-after',
+    'margins.left': 'margin-left',
+    'margins.right': 'margin-right',
+    'margins.top': 'margin-top',
+    'margins.bottom': 'margin-bottom',
+  }
+
+  const focusFirstError = React.useCallback((errors: { field: string; message: string }[]) => {
+    const first = errors[0]?.field
+    if (!first) return
+    const id = FIELD_TO_INPUT_ID[first] ?? 'profile-name'
+    const el = document.getElementById(id)
+    if (el) el.focus()
+  }, [])
+
+  /** Build the final payload from the current UI models (never save partials). */
+  const buildFinalPayload = React.useCallback((): Record<string, unknown> => {
+    if (!draft) return {}
+    let payload = draft.payload
+    if (bodyUi) payload = setPayloadGroup(payload, 'body', bodyFromUiModel(bodyUi))
+    if (headingUi) {
+      const prevH = payload.heading as Record<string, unknown> | undefined
+      const prevAlignment = typeof prevH?.alignment === 'string' ? prevH.alignment : null
+      payload = setPayloadGroup(payload, 'heading', headingFromUiModel(headingUi, prevAlignment))
+    }
+    if (marginsUi) payload = setPayloadGroup(payload, 'margins', marginsFromUiModel(marginsUi))
+    return payload
+  }, [draft, bodyUi, headingUi, marginsUi])
+
   const saveProfile = React.useCallback(async () => {
     if (!draft || !envelope) return
-    const clientErrors = clientValidate(draft, envelope)
-    if (clientErrors.length > 0) {
+    // Run general + requirements validation together.
+    const allErrors = clientValidate(draft, envelope)
+    if (allErrors.length > 0) {
       setFieldErrors({
-        name: clientErrors.some((e) => e.field === 'general.name')
-          ? clientErrors.find((e) => e.field === 'general.name')!.message
+        name: allErrors.some((e) => e.field === 'general.name')
+          ? allErrors.find((e) => e.field === 'general.name')!.message
           : undefined,
-        description: clientErrors.some((e) => e.field === 'general.description')
-          ? clientErrors.find((e) => e.field === 'general.description')!.message
+        description: allErrors.some((e) => e.field === 'general.description')
+          ? allErrors.find((e) => e.field === 'general.description')!.message
           : undefined,
       })
-      setSaveStatus({ kind: 'error', message: 'Fix the highlighted fields and try again.' })
+      setReqFieldErrors(
+        Object.fromEntries(
+          allErrors
+            .filter((e) => e.field !== 'general.name' && e.field !== 'general.description')
+            .map((e) => [e.field, e.message]),
+        ),
+      )
+      setOpStatusSafe({ kind: 'error', message: 'Fix the highlighted fields and try again.' })
+      focusFirstError(allErrors)
       return
     }
     setFieldErrors({})
-    setSaveStatus({ kind: 'validating' })
+    setReqFieldErrors({})
+    setOpStatusSafe({ kind: 'validating' })
     try {
-      const result = await api.validateCustomProfile(buildSavePayload(draft))
+      const finalPayload = buildFinalPayload()
+      const result = await api.validateCustomProfile({
+        ...finalPayload,
+        profile_name: draft.name.trim(),
+        description: draft.description,
+        profile_source: 'custom',
+        citation_style: CITATION_STYLE,
+      })
       if (result.valid) {
-        // Backend-confirmed normalized payload replaces the local payload.
         const confirmed: StoredCustomProfile = {
           ...draft,
           name: draft.name.trim(),
@@ -293,10 +554,8 @@ export function ProfileEditor() {
         const next = upsertAndBump(envelope, confirmed, confirmed.updatedAt)
         const write = persistEnvelope(adapterRef.current!, next, envelope.revision)
         if (!write.ok) {
-          // Stale write refusal (another tab). Never overwrite the newer
-          // version; keep the draft.
           setEnvelope(loadEnvelope(adapterRef.current!))
-          setSaveStatus({
+          setOpStatusSafe({
             kind: 'error',
             message: 'This profile was updated in another tab. Reload before saving.',
           })
@@ -304,8 +563,15 @@ export function ProfileEditor() {
         }
         setEnvelope(next)
         setDraft(confirmed)
+        // Re-derive UI models from the normalized backend payload.
+        const confirmedBody = confirmed.payload.body
+        const confirmedHeading = confirmed.payload.heading
+        const confirmedMargins = confirmed.payload.margins
+        setBodyUi(confirmedBody ? bodyToUiModel(confirmedBody as Record<string, unknown>) : null)
+        setHeadingUi(confirmedHeading ? headingToUiModel(confirmedHeading as Record<string, unknown>) : null)
+        setMarginsUi(confirmedMargins ? marginsToUiModel(confirmedMargins as Record<string, unknown>) : null)
         setDirty(false)
-        setSaveStatus({ kind: 'saved' })
+        setOpStatusSafe({ kind: 'saved' })
       } else if ('errors' in result) {
         const nameErr = result.errors.find((e) => e.field === 'general.name')
         const descErr = result.errors.find((e) => e.field === 'general.description')
@@ -313,23 +579,31 @@ export function ProfileEditor() {
           name: nameErr?.message,
           description: descErr?.message,
         })
-        setSaveStatus({
+        setReqFieldErrors(
+          Object.fromEntries(
+            result.errors
+              .filter((e) => e.field !== 'general.name' && e.field !== 'general.description')
+              .map((e) => [e.field, e.message]),
+          ),
+        )
+        setOpStatusSafe({
           kind: 'backend-error',
           errors: result.errors.map((e) => e.message),
         })
+        focusFirstError(result.errors)
       } else {
-        setSaveStatus({
+        setOpStatusSafe({
           kind: 'error',
           message: 'The profile could not be validated. Please try again.',
         })
       }
     } catch {
-      setSaveStatus({
+      setOpStatusSafe({
         kind: 'error',
         message: 'The profile could not be validated. Please try again.',
       })
     }
-  }, [draft, envelope])
+  }, [draft, envelope, bodyUi, headingUi, marginsUi, buildFinalPayload, focusFirstError])
 
   // ---------------------------------------------------------------------
   // Navigation safety
@@ -358,6 +632,105 @@ export function ProfileEditor() {
   }, [])
 
   // ---------------------------------------------------------------------
+  // Delete (saved custom profiles only)
+  // ---------------------------------------------------------------------
+
+  const [pendingDelete, setPendingDelete] = React.useState<StoredCustomProfile | null>(null)
+  const [deleting, setDeleting] = React.useState(false)
+
+  const requestDelete = React.useCallback(
+    (profile: StoredCustomProfile) => {
+      if (deleting) return
+      setPendingDelete(profile)
+    },
+    [deleting],
+  )
+
+  const cancelDelete = React.useCallback(() => {
+    if (deleting) return
+    setPendingDelete(null)
+  }, [])
+
+  const confirmDelete = React.useCallback(async () => {
+    if (!pendingDelete || !envelope || deleting) return
+    // Safety: never delete a built-in identity through any path.
+    if ((BUILTIN_IDS as readonly string[]).includes(pendingDelete.id)) {
+      setPendingDelete(null)
+      return
+    }
+    setDeleting(true)
+    setOpStatusSafe({ kind: 'deleting' })
+    try {
+      // Re-read the live envelope: another tab may have changed it.
+      const live = loadEnvelope(adapterRef.current!)
+      const target = live.profiles.find((p) => p.id === pendingDelete.id)
+      if (!target) {
+        // Already removed in another tab — refresh and inform calmly.
+        setEnvelope(live)
+        clearEditorState()
+        setPendingDelete(null)
+        setOpStatusSafe({ kind: 'already-gone' })
+        return
+      }
+      const result = deleteAndBump(live, pendingDelete.id, new Date().toISOString())
+      if (!result.ok) {
+        setOpStatusSafe({ kind: 'error', message: 'The profile could not be deleted. Please try again.' })
+        return
+      }
+      const write = persistEnvelope(adapterRef.current!, result.envelope, live.revision)
+      if (!write.ok) {
+        setEnvelope(live)
+        setOpStatusSafe({
+          kind: 'error',
+          message: 'This profile was updated in another tab. Reload before deleting.',
+        })
+        return
+      }
+      setEnvelope(result.envelope)
+      clearEditorState()
+      setPendingDelete(null)
+      // Replaces any previous Save success — one active status at a time.
+      setOpStatus({ kind: 'deleted' })
+    } finally {
+      setDeleting(false)
+    }
+  }, [pendingDelete, envelope, deleting])
+
+  /** Discard an unsaved draft — never touches saved profiles. */
+  const discardDraft = React.useCallback(() => {
+    clearEditorState()
+    setOpStatusSafe({ kind: 'idle' })
+  }, [])
+
+  /** Clear the editor draft + requirement models without touching storage. */
+  const clearEditorState = React.useCallback(() => {
+    setDraft(null)
+    setEditingId(null)
+    setDirty(false)
+    setBodyUi(null)
+    setHeadingUi(null)
+    setMarginsUi(null)
+    setFieldErrors({})
+    setReqFieldErrors({})
+  }, [])
+
+  // ---------------------------------------------------------------------
+  // Requirements expand/collapse
+  // ---------------------------------------------------------------------
+
+  const [allExpanded, setAllExpanded] = React.useState(false)
+  const requirementsRootRef = React.useRef<HTMLDivElement | null>(null)
+
+  const setAllRequirementsExpanded = React.useCallback((open: boolean) => {
+    setAllExpanded(open)
+    const root = requirementsRootRef.current
+    if (!root) return
+    root.querySelectorAll<HTMLDetailsElement>('details').forEach((d) => {
+      d.open = open
+    })
+  }, [])
+
+  // ---------------------------------------------------------------------
   // Render helpers
   // ---------------------------------------------------------------------
 
@@ -378,7 +751,7 @@ export function ProfileEditor() {
 
       <main
         id="custom-profile-main"
-        className="mx-auto w-full max-w-[1440px] px-4 py-6 md:px-6 md:py-8"
+        className="mx-auto w-full max-w-[1440px] px-4 pt-20 pb-6 md:px-6 md:py-8"
       >
         <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
           <div>
@@ -401,6 +774,76 @@ export function ProfileEditor() {
             Return to upload
           </Button>
         </div>
+
+        {/* Page-level operation status — ONE region, always mounted while a
+            status is active. Lives OUTSIDE the conditional editor/action-bar
+            subtrees so a success message survives editor unmount (e.g. the
+            draft clearing after a successful delete). Only one status is
+            active at a time, so exactly one live region renders here. */}
+        {opStatus.kind !== 'idle' && (
+          <div
+            className={cn(
+              'mt-4 rounded-md border px-3 py-2.5',
+              opStatus.kind === 'error' || opStatus.kind === 'backend-error'
+                ? 'border-destructive/30 bg-destructive/5'
+                : isSuccessOpStatus(opStatus.kind)
+                  ? 'border-secondary/30 bg-secondary/5'
+                  : 'border-border bg-input/20',
+            )}
+          >
+            {opStatus.kind === 'saved' && (
+              <p role="status" aria-live="polite" className="flex items-center gap-1.5 text-sm font-medium text-secondary">
+                <CheckCircle2 className="h-4 w-4 shrink-0" aria-hidden="true" />
+                Custom profile saved
+              </p>
+            )}
+            {opStatus.kind === 'deleted' && (
+              <p role="status" aria-live="polite" className="flex items-center gap-1.5 text-sm font-medium text-secondary">
+                <CheckCircle2 className="h-4 w-4 shrink-0" aria-hidden="true" />
+                Custom profile deleted
+              </p>
+            )}
+            {opStatus.kind === 'already-gone' && (
+              <p role="status" aria-live="polite" className="flex items-center gap-1.5 text-sm text-muted-foreground">
+                <Info className="h-4 w-4 shrink-0" aria-hidden="true" />
+                This profile was already removed. Showing the recommended built-in.
+              </p>
+            )}
+            {opStatus.kind === 'validating' && (
+              <p role="status" aria-live="polite" className="flex items-center gap-1.5 text-sm text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin shrink-0" aria-hidden="true" />
+                Validating…
+              </p>
+            )}
+            {opStatus.kind === 'deleting' && (
+              <p role="status" aria-live="polite" className="flex items-center gap-1.5 text-sm text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin shrink-0" aria-hidden="true" />
+                Deleting…
+              </p>
+            )}
+            {opStatus.kind === 'error' && (
+              <p role="alert" className="flex items-start gap-1.5 text-sm leading-[21px] text-destructive">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+                {opStatus.message}
+              </p>
+            )}
+            {opStatus.kind === 'backend-error' && (
+              <div role="alert" className="text-sm leading-[21px] text-destructive">
+                <p className="flex items-start gap-1.5">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+                  The profile did not pass validation.
+                </p>
+                {(opStatus.errors?.length ?? 0) > 0 && (
+                  <ul className="mt-1 list-disc space-y-1 pl-9 text-xs leading-[16px] text-muted-foreground">
+                    {opStatus.errors!.map((msg, i) => (
+                      <li key={i}>{msg}</li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Layout: list + editor split on large screens, one column small */}
         <div className="mt-6 grid grid-cols-1 items-start gap-6 lg:grid-cols-[5fr_7fr]">
@@ -547,21 +990,32 @@ export function ProfileEditor() {
                                       ? `From ${friendlySourceName(p.sourceId)}`
                                       : 'Custom profile'}
                                     {' · '}
-                                    Last updated {formatAuditDateTime(p.updatedAt)}
+                                    Saved on this device · Updated {formatAuditDateTime(p.updatedAt)}
                                   </p>
                                 </div>
                               </div>
-                              <div className="mt-2">
+                              <div className="mt-2 flex flex-wrap items-center gap-2">
                                 <Button
                                   type="button"
                                   variant="outline"
                                   size="sm"
-                                  className="gap-1.5 border-border text-foreground"
+                                  className="gap-1.5 border-border text-foreground min-h-[44px]"
                                   onClick={() => openProfile(p.id)}
                                   disabled={isEditing}
                                 >
                                   <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
                                   {isEditing ? 'Editing' : 'Edit'}
+                                </Button>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  className="gap-1.5 text-destructive hover:bg-destructive/10 hover:text-destructive min-h-[44px]"
+                                  onClick={() => requestDelete(p)}
+                                  disabled={deleting}
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+                                  Delete profile
                                 </Button>
                               </div>
                             </div>
@@ -707,24 +1161,32 @@ export function ProfileEditor() {
                           )}
                         </div>
 
-                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                          <div>
-                            <span className="text-sm font-medium text-foreground">
-                              Citation style
-                            </span>
-                            <div className="mt-1 rounded-md border border-border bg-input/20 px-3 py-2 text-sm text-muted-foreground">
-                              {CITATION_STYLE}
-                              <span className="ml-2 text-xs">(non-selectable)</span>
-                            </div>
+                        <div>
+                          <span className="text-sm font-medium text-foreground">
+                            Citation style
+                          </span>
+                          <div className="mt-1 rounded-md border border-border bg-input/20 px-3 py-2 text-sm text-muted-foreground">
+                            {CITATION_STYLE}
+                            <span className="ml-2 text-xs">(non-selectable)</span>
                           </div>
-                          <div>
-                            <span className="text-sm font-medium text-foreground">
-                              Source profile
-                            </span>
-                            <div className="mt-1 rounded-md border border-border bg-input/20 px-3 py-2 text-sm text-muted-foreground">
-                              {friendlySourceName(draft.sourceId) ?? 'Custom profile'}
-                            </div>
-                          </div>
+                          <p className="mt-1 text-[11px] leading-[16px] text-muted-foreground">
+                            Custom profiles change document formatting requirements only. Citation
+                            analysis remains APA 7.
+                          </p>
+                          {(() => {
+                            const lowerName = draft.name.toLowerCase()
+                            const hint = CITATION_STYLE_NAME_HINTS.find((h) => lowerName.includes(h))
+                            if (!hint) return null
+                            return (
+                              <p
+                                role="status"
+                                className="mt-1 text-[11px] leading-[16px] text-warning"
+                              >
+                                This name may imply a citation style, but citation analysis remains APA 7.
+                                Consider a name such as “My Course Formatting”.
+                              </p>
+                            )
+                          })()}
                         </div>
 
                         <div>
@@ -735,12 +1197,12 @@ export function ProfileEditor() {
                             {draft.validationState === 'backend_confirmed' ? (
                               <Badge className="bg-secondary/10 text-secondary">
                                 <CheckCircle2 className="h-3 w-3" aria-hidden="true" />
-                                Backend confirmed
+                                Validated and saved
                               </Badge>
                             ) : (
                               <Badge variant="outline" className="border-border text-muted-foreground">
                                 <Info className="h-3 w-3" aria-hidden="true" />
-                                Not yet saved
+                                Draft — not yet saved
                               </Badge>
                             )}
                           </div>
@@ -748,85 +1210,763 @@ export function ProfileEditor() {
                       </div>
                     </fieldset>
 
-                    {/* Requirements placeholders (Build 4+) */}
-                    <fieldset className="rounded-md border border-border p-3">
+                    {/* ------------------------------------------------------------------ */}
+                    {/* Requirements — expand/collapse + real controls (Build 4/5)           */}
+                    {/* ------------------------------------------------------------------ */}
+                    <div
+                      ref={requirementsRootRef}
+                      className="space-y-4"
+                      aria-label="Document formatting requirements"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <h3 className="text-sm font-semibold text-foreground">Requirements</h3>
+                        <div className="flex gap-1">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="gap-1 text-xs text-muted-foreground hover:text-foreground min-h-[44px]"
+                            onClick={() => setAllRequirementsExpanded(true)}
+                          >
+                            <ChevronsUpDown className="h-3.5 w-3.5" aria-hidden="true" />
+                            Expand all
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="gap-1 text-xs text-muted-foreground hover:text-foreground min-h-[44px]"
+                            onClick={() => setAllRequirementsExpanded(false)}
+                          >
+                            <ChevronsDownUp className="h-3.5 w-3.5" aria-hidden="true" />
+                            Collapse all
+                          </Button>
+                        </div>
+                      </div>
+
+                    {/* ------------------------------------------------------------------ */}
+                    {/* Body text controls                                                   */}
+                    {/* ------------------------------------------------------------------ */}
+                    <details className="group rounded-md border border-border" open={allExpanded || undefined}>
+                      <summary className="cursor-pointer list-none rounded-md px-3 py-2.5 text-sm font-semibold text-foreground select-none transition-colors hover:bg-input/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background">
+                        <div className="flex items-center justify-between">
+                          <span>Body text</span>
+                          <svg
+                            className="h-4 w-4 text-muted-foreground transition-transform group-open:rotate-90"
+                            aria-hidden="true"
+                            fill="none"
+                            viewBox="0 0 24 24"
+                            stroke="currentColor"
+                          >
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              strokeWidth={2}
+                              d="M9 5l7 7-7 7"
+                            />
+                          </svg>
+                        </div>
+                      </summary>
+                      <div className="space-y-4 px-3 pb-3 pt-1">
+                        <p className="text-xs leading-[16px] text-muted-foreground">
+                          Turning off a requirement means it will not be checked or included in the score.
+                        </p>
+
+                        {/* Font and size pairs */}
+                        <fieldset className="rounded-md border border-border p-3">
+                          <legend className="px-1 text-sm font-medium text-foreground">
+                            Font and size
+                          </legend>
+                          <div className="mt-2 flex items-center gap-2">
+                            <button
+                              type="button"
+                              role="switch"
+                              aria-checked={bodyUi?.fontEnabled ?? false}
+                              onClick={() => updateBody((u) => ({ ...u, fontEnabled: !u.fontEnabled }))}
+                              className={cn(
+                                'inline-flex h-6 w-11 shrink-0 items-center rounded-full border transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
+                                bodyUi?.fontEnabled
+                                  ? 'bg-primary border-transparent'
+                                  : 'bg-input border-border',
+                              )}
+                            >
+                              <span className="sr-only">Check font and size</span>
+                              <span
+                                className={cn(
+                                  'inline-block h-5 w-5 rounded-full bg-white transition-transform',
+                                  bodyUi?.fontEnabled ? 'translate-x-5' : 'translate-x-0.5',
+                                )}
+                              />
+                            </button>
+                            <span className="text-sm text-foreground">
+                              {bodyUi?.fontEnabled ? 'On' : 'Off'}
+                            </span>
+                          </div>
+                          {bodyUi?.fontEnabled && (
+                            <div className="mt-3 space-y-2" id="body-font-pairs" role="group" aria-label="Accepted font-and-size pairs">
+                              {bodyUi.pairs.map((pair, idx) => (
+                                <div key={idx} className="flex flex-wrap items-center gap-2">
+                                  <input
+                                    type="text"
+                                    value={pair.family}
+                                    onChange={(e) =>
+                                      updateBody((u) => {
+                                        const next = [...u.pairs]
+                                        next[idx] = { ...next[idx], family: e.target.value }
+                                        return { ...u, pairs: next }
+                                      })
+                                    }
+                                    placeholder="Font family"
+                                    className="w-40 rounded-md border border-border bg-white px-3 py-1.5 text-sm focus:border-ring focus:ring-1 focus:ring-ring focus:outline-none"
+                                    aria-label={`Font family for pair ${idx + 1}`}
+                                  />
+                                  <input
+                                    type="number"
+                                    min={6}
+                                    max={72}
+                                    step={0.5}
+                                    value={pair.size}
+                                    onChange={(e) =>
+                                      updateBody((u) => {
+                                        const next = [...u.pairs]
+                                        next[idx] = { ...next[idx], size: e.target.value }
+                                        return { ...u, pairs: next }
+                                      })
+                                    }
+                                    placeholder="Size"
+                                    className="w-20 rounded-md border border-border bg-white px-3 py-1.5 text-sm focus:border-ring focus:ring-1 focus:ring-ring focus:outline-none"
+                                    aria-label={`Font size in points for pair ${idx + 1}`}
+                                  />
+                                  <span className="text-xs text-muted-foreground">pt</span>
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-7 w-7 shrink-0 text-muted-foreground hover:text-foreground"
+                                    onClick={() =>
+                                      updateBody((u) => ({
+                                        ...u,
+                                        pairs: u.pairs.filter((_, i) => i !== idx),
+                                      }))
+                                    }
+                                    aria-label={`Remove font pair ${idx + 1}`}
+                                  >
+                                    <span aria-hidden="true" className="text-lg leading-none">×</span>
+                                  </Button>
+                                </div>
+                              ))}
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="mt-1 border-border text-foreground"
+                                onClick={() =>
+                                  updateBody((u) => ({
+                                    ...u,
+                                    pairs: [...u.pairs, { family: '', size: '' }],
+                                  }))
+                                }
+                              >
+                                Add font pair
+                              </Button>
+                              {reqFieldErrors['body.font_pairs'] && (
+                                <p
+                                  role="alert"
+                                  id="body-font-pairs-error"
+                                  className="mt-1 text-xs leading-[16px] text-destructive"
+                                >
+                                  {reqFieldErrors['body.font_pairs']}
+                                </p>
+                              )}
+                            </div>
+                          )}
+                        </fieldset>
+
+                        {/* Alignment */}
+                        <fieldset className="rounded-md border border-border p-3">
+                          <legend className="px-1 text-sm font-medium text-foreground">
+                            Alignment
+                          </legend>
+                          <div className="mt-2 flex items-center gap-2">
+                            <button
+                              type="button"
+                              role="switch"
+                              aria-checked={bodyUi?.alignmentEnabled ?? false}
+                              onClick={() => updateBody((u) => ({ ...u, alignmentEnabled: !u.alignmentEnabled }))}
+                              className={cn(
+                                'inline-flex h-6 w-11 shrink-0 items-center rounded-full border transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
+                                bodyUi?.alignmentEnabled
+                                  ? 'bg-primary border-transparent'
+                                  : 'bg-input border-border',
+                              )}
+                            >
+                              <span className="sr-only">Check alignment</span>
+                              <span
+                                className={cn(
+                                  'inline-block h-5 w-5 rounded-full bg-white transition-transform',
+                                  bodyUi?.alignmentEnabled ? 'translate-x-5' : 'translate-x-0.5',
+                                )}
+                              />
+                            </button>
+                            <span className="text-sm text-foreground">{bodyUi?.alignmentEnabled ? 'On' : 'Off'}</span>
+                          </div>
+                          {bodyUi?.alignmentEnabled && (
+                            <select
+                              id="body-alignment"
+                              value={bodyUi.alignment}
+                              onChange={(e) => updateBody((u) => ({ ...u, alignment: e.target.value as AlignmentValue }))}
+                              className="mt-2 w-full rounded-md border border-border bg-white px-3 py-1.5 text-sm focus:border-ring focus:ring-1 focus:ring-ring focus:outline-none"
+                              aria-describedby="body-alignment-hint"
+                            >
+                              <option value="left">Left</option>
+                              <option value="center">Center</option>
+                              <option value="right">Right</option>
+                              <option value="justify">Justified</option>
+                            </select>
+                          )}
+                          {reqFieldErrors['body.alignment'] && (
+                            <p role="alert" className="mt-1 text-xs text-destructive">{reqFieldErrors['body.alignment']}</p>
+                          )}
+                          <p id="body-alignment-hint" className="mt-1 text-[11px] text-muted-foreground">
+                            Off means no deterministic alignment check.
+                          </p>
+                        </fieldset>
+
+                        {/* Line spacing */}
+                        <fieldset className="rounded-md border border-border p-3">
+                          <legend className="px-1 text-sm font-medium text-foreground">
+                            Line spacing
+                          </legend>
+                          <div className="mt-2 flex items-center gap-2">
+                            <button
+                              type="button"
+                              role="switch"
+                              aria-checked={bodyUi?.lineSpacingEnabled ?? false}
+                              onClick={() => updateBody((u) => ({ ...u, lineSpacingEnabled: !u.lineSpacingEnabled }))}
+                              className={cn(
+                                'inline-flex h-6 w-11 shrink-0 items-center rounded-full border transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
+                                bodyUi?.lineSpacingEnabled
+                                  ? 'bg-primary border-transparent'
+                                  : 'bg-input border-border',
+                              )}
+                            >
+                              <span className="sr-only">Check line spacing</span>
+                              <span
+                                className={cn(
+                                  'inline-block h-5 w-5 rounded-full bg-white transition-transform',
+                                  bodyUi?.lineSpacingEnabled ? 'translate-x-5' : 'translate-x-0.5',
+                                )}
+                              />
+                            </button>
+                            <span className="text-sm text-foreground">{bodyUi?.lineSpacingEnabled ? 'On' : 'Off'}</span>
+                          </div>
+                          {bodyUi?.lineSpacingEnabled && (
+                            <div className="mt-2 flex items-center gap-2">
+                              <input
+                                id="body-line-spacing"
+                                type="number"
+                                min={1}
+                                max={4}
+                                step={0.1}
+                                value={bodyUi.lineSpacing}
+                                onChange={(e) => updateBody((u) => ({ ...u, lineSpacing: e.target.value }))}
+                                className="w-20 rounded-md border border-border bg-white px-3 py-1.5 text-sm focus:border-ring focus:ring-1 focus:ring-ring focus:outline-none"
+                                aria-describedby="body-line-spacing-hint"
+                              />
+                              <span className="text-sm text-muted-foreground">× (multiplier)</span>
+                            </div>
+                          )}
+                          {reqFieldErrors['body.line_spacing'] && (
+                            <p role="alert" className="mt-1 text-xs text-destructive">{reqFieldErrors['body.line_spacing']}</p>
+                          )}
+                          <p id="body-line-spacing-hint" className="mt-1 text-[11px] text-muted-foreground">
+                            Range: 1.0–4.0. Off means no deterministic check.
+                          </p>
+                        </fieldset>
+
+                        {/* Space before */}
+                        <RequirementToggle
+                          label="Space before"
+                          enabled={bodyUi?.spaceBeforeEnabled ?? false}
+                          onToggle={() => updateBody((u) => ({ ...u, spaceBeforeEnabled: !u.spaceBeforeEnabled }))}
+                          value={bodyUi?.spaceBefore ?? ''}
+                          onChange={(v) => updateBody((u) => ({ ...u, spaceBefore: v }))}
+                          min={0}
+                          max={240}
+                          unit="pt"
+                          error={reqFieldErrors['body.space_before']}
+                          hint="Range: 0–240 pt. Off means no deterministic check."
+                          fieldId="body-space-before"
+                        />
+
+                        {/* Space after */}
+                        <RequirementToggle
+                          label="Space after"
+                          enabled={bodyUi?.spaceAfterEnabled ?? false}
+                          onToggle={() => updateBody((u) => ({ ...u, spaceAfterEnabled: !u.spaceAfterEnabled }))}
+                          value={bodyUi?.spaceAfter ?? ''}
+                          onChange={(v) => updateBody((u) => ({ ...u, spaceAfter: v }))}
+                          min={0}
+                          max={240}
+                          unit="pt"
+                          error={reqFieldErrors['body.space_after']}
+                          hint="Range: 0–240 pt. Off means no deterministic check."
+                          fieldId="body-space-after"
+                        />
+
+                        {/* First-line indent — unavailable */}
+                        <div className="rounded-md border border-dashed border-border bg-input/10 px-3 py-2.5">
+                          <p className="text-sm text-muted-foreground">
+                            First-line indentation
+                          </p>
+                          <p className="mt-0.5 text-xs leading-[16px] text-muted-foreground">
+                            First-line indentation checking is not available in this version.
+                          </p>
+                        </div>
+                      </div>
+                    </details>
+
+                    {/* ------------------------------------------------------------------ */}
+                    {/* Heading controls                                                     */}
+                    {/* ------------------------------------------------------------------ */}
+                    <details className="group mt-4 rounded-md border border-border" open={allExpanded || undefined}>
+                      <summary className="cursor-pointer list-none rounded-md px-3 py-2.5 text-sm font-semibold text-foreground select-none transition-colors hover:bg-input/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2">
+                        <div className="flex items-center justify-between">
+                          <span>Headings</span>
+                          <svg
+                            className="h-4 w-4 text-muted-foreground transition-transform group-open:rotate-90"
+                            aria-hidden="true"
+                            fill="none"
+                            viewBox="0 0 24 24"
+                            stroke="currentColor"
+                          >
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                          </svg>
+                        </div>
+                      </summary>
+                      <div className="space-y-4 px-3 pb-3 pt-1">
+                        <p className="text-xs leading-[16px] text-muted-foreground">
+                          Turning off a requirement means it will not be checked or included in the score.
+                        </p>
+
+                        {/* Font behavior — shared across all heading levels */}
+                        <fieldset className="rounded-md border border-border p-3">
+                          <legend className="px-1 text-sm font-medium text-foreground">
+                            Font behavior
+                          </legend>
+                          <p className="mb-2 text-[11px] leading-[16px] text-muted-foreground">
+                            Applies to all heading levels.
+                          </p>
+                          <div className="mt-2 space-y-2" role="radiogroup" aria-label="Heading font behavior">
+                            {[
+                              { value: 'inherit' as const, label: 'Use the body font and size' },
+                              { value: 'explicit' as const, label: 'Use separate accepted font and size' },
+                              { value: 'disabled' as const, label: 'No heading font requirement' },
+                            ].map(({ value, label }) => (
+                              <label key={value} className="flex cursor-pointer items-center gap-2 text-sm">
+                                <input
+                                  type="radio"
+                                  name="heading-font-behavior"
+                                  value={value}
+                                  checked={headingUi?.fontBehavior === value}
+                                  onChange={() =>
+                                    updateHeading((u) => ({ ...u, fontBehavior: value }))
+                                  }
+                                  className="h-4 w-4 accent-primary"
+                                />
+                                {label}
+                              </label>
+                            ))}
+                          </div>
+                          {headingUi?.fontBehavior === 'inherit' && !bodyUi?.fontEnabled && (
+                            <p role="alert" className="mt-2 text-xs leading-[16px] text-destructive">
+                              Heading 1 cannot inherit the body font when no body font is enabled.
+                            </p>
+                          )}
+                          {headingUi?.fontBehavior === 'explicit' && (
+                            <div className="mt-3 space-y-2">
+                              {headingUi.pairs.map((pair, idx) => (
+                                <div key={idx} className="flex flex-wrap items-center gap-2">
+                                  <input
+                                    type="text"
+                                    value={pair.family}
+                                    onChange={(e) =>
+                                      updateHeading((u) => {
+                                        const next = [...u.pairs]
+                                        next[idx] = { ...next[idx], family: e.target.value }
+                                        return { ...u, pairs: next }
+                                      })
+                                    }
+                                    placeholder="Font family"
+                                    className="w-40 rounded-md border border-border bg-white px-3 py-1.5 text-sm focus:border-ring focus:ring-1 focus:ring-ring focus:outline-none"
+                                    aria-label={`Font family for heading pair ${idx + 1}`}
+                                  />
+                                  <input
+                                    type="number"
+                                    min={6}
+                                    max={72}
+                                    step={0.5}
+                                    value={pair.size}
+                                    onChange={(e) =>
+                                      updateHeading((u) => {
+                                        const next = [...u.pairs]
+                                        next[idx] = { ...next[idx], size: e.target.value }
+                                        return { ...u, pairs: next }
+                                      })
+                                    }
+                                    placeholder="Size"
+                                    className="w-20 rounded-md border border-border bg-white px-3 py-1.5 text-sm focus:border-ring focus:ring-1 focus:ring-ring focus:outline-none"
+                                    aria-label={`Font size in points for heading pair ${idx + 1}`}
+                                  />
+                                  <span className="text-xs text-muted-foreground">pt</span>
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-7 w-7 shrink-0 text-muted-foreground hover:text-foreground"
+                                    onClick={() =>
+                                      updateHeading((u) => ({
+                                        ...u,
+                                        pairs: u.pairs.filter((_, i) => i !== idx),
+                                      }))
+                                    }
+                                    aria-label={`Remove heading font pair ${idx + 1}`}
+                                  >
+                                    <span aria-hidden="true" className="text-lg leading-none">×</span>
+                                  </Button>
+                                </div>
+                              ))}
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="border-border text-foreground"
+                                onClick={() =>
+                                  updateHeading((u) => ({
+                                    ...u,
+                                    pairs: [...u.pairs, { family: '', size: '' }],
+                                  }))
+                                }
+                              >
+                                Add font pair
+                              </Button>
+                              {reqFieldErrors['headings.level_1.font'] && (
+                                <p role="alert" className="mt-1 text-xs text-destructive">{reqFieldErrors['headings.level_1.font']}</p>
+                              )}
+                            </div>
+                          )}
+                        </fieldset>
+
+                        {/* Alignment — shared across all heading levels */}
+                        <RequirementToggle
+                          label="Alignment (applies to all heading levels)"
+                          enabled={headingUi?.alignmentEnabled ?? false}
+                          onToggle={() => updateHeading((u) => ({ ...u, alignmentEnabled: !u.alignmentEnabled }))}
+                          value={headingUi?.alignment ?? ''}
+                          onChange={(v) => updateHeading((u) => ({ ...u, alignment: v as AlignmentValue }))}
+                          isSelect
+                          options={[
+                            { value: '', label: 'Disabled' },
+                            { value: 'left', label: 'Left' },
+                            { value: 'center', label: 'Center' },
+                            { value: 'right', label: 'Right' },
+                            { value: 'justify', label: 'Justified' },
+                          ]}
+                          error={reqFieldErrors['headings.level_1.alignment']}
+                          hint="Off means no deterministic alignment check."
+                          fieldId="heading-alignment"
+                        />
+
+                        {/* Space before/after — shared across all heading levels */}
+                        <RequirementToggle
+                          label="Space before (applies to all heading levels)"
+                          enabled={headingUi?.spaceBeforeEnabled ?? false}
+                          onToggle={() => updateHeading((u) => ({ ...u, spaceBeforeEnabled: !u.spaceBeforeEnabled }))}
+                          value={headingUi?.spaceBefore ?? ''}
+                          onChange={(v) => updateHeading((u) => ({ ...u, spaceBefore: v }))}
+                          min={0}
+                          max={240}
+                          unit="pt"
+                          error={reqFieldErrors['headings.level_1.space_before']}
+                          hint="Range: 0–240 pt. Off means no deterministic check."
+                          fieldId="heading-space-before"
+                        />
+
+                        <RequirementToggle
+                          label="Space after (applies to all heading levels)"
+                          enabled={headingUi?.spaceAfterEnabled ?? false}
+                          onToggle={() => updateHeading((u) => ({ ...u, spaceAfterEnabled: !u.spaceAfterEnabled }))}
+                          value={headingUi?.spaceAfter ?? ''}
+                          onChange={(v) => updateHeading((u) => ({ ...u, spaceAfter: v }))}
+                          min={0}
+                          max={240}
+                          unit="pt"
+                          error={reqFieldErrors['headings.level_1.space_after']}
+                          hint="Range: 0–240 pt. Off means no deterministic check."
+                          fieldId="heading-space-after"
+                        />
+
+                        {/* Per-level groups (H1/H2/H3) — independent sections */}
+                        <p className="text-[11px] leading-[16px] text-muted-foreground">
+                          Each heading level below is an independent section.
+                        </p>
+                        {[
+                          { label: 'Heading 1', ui: headingUi?.level1, idx: 0 },
+                          { label: 'Heading 2', ui: headingUi?.level2, idx: 1 },
+                          { label: 'Heading 3', ui: headingUi?.level3, idx: 2 },
+                        ].map(({ label, ui, idx }) => (
+                          <details key={idx} className="rounded-md border border-border" open={allExpanded || undefined}>
+                            <summary className="cursor-pointer list-none px-3 py-2 text-sm font-medium text-foreground select-none hover:bg-input/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2">
+                              {label}
+                            </summary>
+                            <div className="space-y-3 px-3 pb-3 pt-1">
+                              <p className="text-[11px] leading-[16px] text-muted-foreground">
+                                Bold and italic are stored with the profile for APA-style
+                                differentiation; not audited in this release.
+                              </p>
+                              <label className="flex items-center gap-2 text-sm">
+                                <input
+                                  type="checkbox"
+                                  checked={ui?.bold ?? false}
+                                  onChange={(e) =>
+                                    updateHeading((u) => {
+                                      const setBold = (v: boolean) =>
+                                        idx === 0 ? { ...u, level1: { ...u.level1, bold: v } }
+                                          : idx === 1 ? { ...u, level2: { ...u.level2, bold: v } }
+                                            : { ...u, level3: { ...u.level3, bold: v } }
+                                      return setBold(e.target.checked)
+                                    })
+                                  }
+                                  className="h-4 w-4 accent-primary"
+                                />
+                                Bold
+                              </label>
+                              <label className="flex items-center gap-2 text-sm">
+                                <input
+                                  type="checkbox"
+                                  checked={ui?.italic ?? false}
+                                  onChange={(e) =>
+                                    updateHeading((u) => {
+                                      const setItalic = (v: boolean) =>
+                                        idx === 0 ? { ...u, level1: { ...u.level1, italic: v } }
+                                          : idx === 1 ? { ...u, level2: { ...u.level2, italic: v } }
+                                            : { ...u, level3: { ...u.level3, italic: v } }
+                                      return setItalic(e.target.checked)
+                                    })
+                                  }
+                                  className="h-4 w-4 accent-primary"
+                                />
+                                Italic
+                              </label>
+                            </div>
+                          </details>
+                        ))}
+                      </div>
+                    </details>
+                    </div>{/* end requirements wrapper */}
+
+                    {/* ------------------------------------------------------------------ */}
+                    {/* Margin controls                                                      */}
+                    {/* ------------------------------------------------------------------ */}
+                    <details className="group mt-4 rounded-md border border-border" open={allExpanded || undefined}>
+                      <summary className="cursor-pointer list-none rounded-md px-3 py-2.5 text-sm font-semibold text-foreground select-none transition-colors hover:bg-input/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2">
+                        <div className="flex items-center justify-between">
+                          <span>Margins</span>
+                          <svg className="h-4 w-4 text-muted-foreground transition-transform group-open:rotate-90" aria-hidden="true" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                          </svg>
+                        </div>
+                      </summary>
+                      <div className="space-y-4 px-3 pb-3 pt-1">
+                        <p className="text-xs leading-[16px] text-muted-foreground">
+                          Turning off a requirement means it will not be checked or included in the score.
+                        </p>
+
+                        {/* Presets */}
+                        <div className="flex flex-wrap gap-2">
+                          {(Object.keys(MARGIN_PRESET_LABELS) as MarginPreset[]).map((preset) => (
+                            <Button
+                              key={preset}
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="border-border text-foreground min-h-[44px]"
+                              onClick={() => setMarginsUi((prev) => prev ? { ...prev, ...applyMarginPreset(preset) } : prev)}
+                            >
+                              {MARGIN_PRESET_LABELS[preset]}
+                            </Button>
+                          ))}
+                        </div>
+
+                        {/* Four sides */}
+                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                          {(['left', 'right', 'top', 'bottom'] as MarginSide[]).map((side) => {
+                            const m = marginsUi?.[side] ?? { enabled: false, value: '' }
+                            return (
+                              <fieldset key={side} className="rounded-md border border-border p-3">
+                                <legend className="px-1 text-sm font-medium text-foreground">
+                                  {MARGIN_SIDE_LABELS[side]} margin
+                                </legend>
+                                <div className="mt-2 flex items-center gap-2">
+                                  <button
+                                    type="button"
+                                    role="switch"
+                                    aria-checked={m.enabled}
+                                    onClick={() =>
+                                      updateMargins((u) => ({
+                                        ...u,
+                                        [side]: { enabled: !u[side].enabled, value: !u[side].enabled ? '1' : '' },
+                                      }))
+                                    }
+                                    className={cn(
+                                      'inline-flex h-6 w-11 shrink-0 items-center rounded-full border transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
+                                      m.enabled ? 'bg-primary border-transparent' : 'bg-input border-border',
+                                    )}
+                                  >
+                                    <span className="sr-only">Check {MARGIN_SIDE_LABELS[side]} margin</span>
+                                    <span className={cn('inline-block h-5 w-5 rounded-full bg-white transition-transform', m.enabled ? 'translate-x-5' : 'translate-x-0.5')} />
+                                  </button>
+                                  <span className="text-sm text-foreground">{m.enabled ? 'On' : 'Off'}</span>
+                                </div>
+                                {m.enabled && (
+                                  <div className="mt-2 flex items-center gap-2">
+                                    <input
+                                      id={`margin-${side}`}
+                                      type="number"
+                                      min={0.25}
+                                      max={4}
+                                      step={0.25}
+                                      value={m.value}
+                                      onChange={(e) =>
+                                        updateMargins((u) => ({
+                                          ...u,
+                                          [side]: { ...u[side], value: e.target.value },
+                                        }))
+                                      }
+                                      className="w-20 rounded-md border border-border bg-white px-3 py-1.5 text-sm focus:border-ring focus:ring-1 focus:ring-ring focus:outline-none"
+                                      aria-describedby={`margin-${side}-hint`}
+                                    />
+                                    <span className="text-sm text-muted-foreground">in</span>
+                                  </div>
+                                )}
+                                {reqFieldErrors[`margins.${side}`] && (
+                                  <p role="alert" className="mt-1 text-xs text-destructive">{reqFieldErrors[`margins.${side}`]}</p>
+                                )}
+                                <p id={`margin-${side}-hint`} className="mt-1 text-[11px] text-muted-foreground">
+                                  {m.enabled ? 'Range: 0.25–4.0 in. Disabled = null.' : 'Off means no deterministic check.'}
+                                </p>
+                              </fieldset>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    </details>
+
+                    {/* ------------------------------------------------------------------ */}
+                    {/* Placeholders for future Builds                                       */}
+                    {/* ------------------------------------------------------------------ */}
+                    <fieldset className="mt-4 rounded-md border border-border p-3">
                       <legend className="px-1 text-sm font-semibold text-foreground">
-                        Requirements
+                        References, Captions, and Lists
                       </legend>
                       <p className="mt-1 text-xs leading-[16px] text-muted-foreground">
-                        Detailed formatting requirements are configured in the next setup step.
+                        These sections are available in a later setup step.
                       </p>
                       <ul className="mt-3 space-y-2">
-                        {['Body text', 'Headings', 'Margins', 'References', 'Captions and lists'].map(
-                          (label) => (
-                            <li
-                              key={label}
-                              className="rounded-md border border-dashed border-border bg-input/10 px-3 py-2.5 text-sm text-muted-foreground"
-                              aria-disabled="true"
-                            >
-                              {label}
-                              <span className="mt-0.5 block text-xs leading-[16px]">
-                                Available in the next setup step
-                              </span>
-                            </li>
-                          ),
-                        )}
+                        {['References', 'Captions and lists'].map((label) => (
+                          <li
+                            key={label}
+                            className="rounded-md border border-dashed border-border bg-input/10 px-3 py-2.5 text-sm text-muted-foreground"
+                            aria-disabled="true"
+                          >
+                            {label}
+                            <span className="mt-0.5 block text-xs leading-[16px]">
+                              Available in a later setup step
+                            </span>
+                          </li>
+                        ))}
                       </ul>
                     </fieldset>
 
-                    {/* Save */}
-                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                      <div className="flex items-center gap-2" aria-live="polite">
-                        {saveStatus.kind === 'saved' && (
-                          <span className="flex items-center gap-1.5 text-sm font-medium text-secondary">
-                            <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
-                            Custom profile saved
-                          </span>
-                        )}
-                        {saveStatus.kind === 'validating' && (
-                          <span className="flex items-center gap-1.5 text-sm text-muted-foreground">
-                            <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-                            Validating…
-                          </span>
-                        )}
-                        {saveStatus.kind === 'error' && (
-                          <span className="flex items-start gap-1.5 text-sm leading-[21px] text-destructive">
-                            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
-                            {saveStatus.message}
-                          </span>
-                        )}
-                        {saveStatus.kind === 'backend-error' && (
-                          <span className="flex items-start gap-1.5 text-sm leading-[21px] text-destructive">
-                            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
-                            The profile did not pass validation.
-                          </span>
-                        )}
-                      </div>
-                      <Button
-                        type="button"
-                        onClick={() => void saveProfile()}
-                        disabled={saveStatus.kind === 'validating' || !dirty}
-                        className="bg-primary text-primary-foreground hover:bg-primary/90"
-                      >
-                        {saveStatus.kind === 'validating' ? (
-                          <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />
-                        ) : (
-                          <Save className="mr-2 h-4 w-4" aria-hidden="true" />
-                        )}
-                        Save custom profile
-                      </Button>
-                    </div>
+                    {/* ------------------------------------------------------------------ */}
+                    {/* Profile summary                                                      */}
+                    {/* ------------------------------------------------------------------ */}
+                    {draft && (() => {
+                      const currentPayload = bodyUi
+                        ? setPayloadGroup(draft.payload, 'body', bodyFromUiModel(bodyUi))
+                        : draft.payload
+                      const summary = summarizeProfile(currentPayload)
+                      return (
+                        <div className="mt-4 rounded-md border border-border bg-input/20 px-3 py-3">
+                          <p className="text-sm font-semibold text-foreground">
+                            Profile summary
+                          </p>
+                          <ul className="mt-2 space-y-1 text-xs leading-[16px] text-muted-foreground">
+                            {summary.lines.map((line, i) => (
+                              <li key={i} className="font-mono">{line}</li>
+                            ))}
+                            <li aria-live="polite" className="font-mono text-muted-foreground">
+                              {summary.disabledCount} requirements will not be checked or included in the score.
+                            </li>
+                          </ul>
+                        </div>
+                      )
+                    })()}
 
-                    {saveStatus.kind === 'backend-error' && saveStatus.errors.length > 0 && (
-                      <div
-                        role="alert"
-                        className="rounded-md border border-border bg-input/20 px-3 py-2.5"
-                      >
-                        <ul className="list-disc space-y-1 pl-4 text-xs leading-[16px] text-muted-foreground">
-                          {saveStatus.errors.map((msg, i) => (
-                            <li key={i}>{msg}</li>
-                          ))}
-                        </ul>
+                    {/* Action bar — in flow (never floats over content) */}
+                    {draft && (
+                      <div className="mt-4 rounded-md border border-border bg-input/20 px-3 py-3">
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                          <div className="flex min-w-0 flex-wrap items-center gap-2">
+                            {/* Operation messages render in the page-level
+                                status region above — this bar only shows the
+                                draft-state indicator and actions. */}
+                            {opStatus.kind === 'idle' && !dirty && (
+                              <span className="text-xs text-muted-foreground">No unsaved changes</span>
+                            )}
+                            {dirty && opStatus.kind !== 'validating' && opStatus.kind !== 'deleting' && (
+                              <span className="text-xs font-medium text-warning">Unsaved changes</span>
+                            )}
+                          </div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            {/* Discard for unsaved drafts; Delete for saved custom profiles only. */}
+                            {isUnsavedDraft(draft, envelope) ? (
+                              <Button
+                                type="button"
+                                variant="outline"
+                                onClick={discardDraft}
+                                disabled={deleting || opStatus.kind === 'validating'}
+                                className="border-border text-foreground min-h-[44px]"
+                              >
+                                Discard draft
+                              </Button>
+                            ) : (
+                              <Button
+                                type="button"
+                                variant="destructive"
+                                onClick={() => requestDelete(draft)}
+                                disabled={deleting || opStatus.kind === 'validating'}
+                                className="min-h-[44px]"
+                              >
+                                <Trash2 className="mr-2 h-4 w-4" aria-hidden="true" />
+                                Delete profile
+                              </Button>
+                            )}
+                            <Button
+                              type="button"
+                              onClick={() => void saveProfile()}
+                              disabled={opStatus.kind === 'validating' || !dirty}
+                              className="bg-primary text-primary-foreground hover:bg-primary/90 min-h-[44px]"
+                            >
+                              {opStatus.kind === 'validating' ? (
+                                <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />
+                              ) : (
+                                <Save className="mr-2 h-4 w-4" aria-hidden="true" />
+                              )}
+                              Save custom profile
+                            </Button>
+                          </div>
+                        </div>
                       </div>
                     )}
                   </>
@@ -868,6 +2008,20 @@ export function ProfileEditor() {
           confirmVariant="destructive"
           onConfirm={discardAndGo}
           onCancel={cancelLeave}
+        />
+      )}
+
+      {/* Delete confirmation — saved custom profiles only */}
+      {pendingDelete && (
+        <ConfirmDialog
+          title="Delete custom profile?"
+          description={`“${pendingDelete.name}” will be removed from this device. Completed audits that used this profile will not be changed.`}
+          confirmLabel="Delete profile"
+          cancelLabel="Cancel"
+          confirmVariant="destructive"
+          busy={deleting}
+          onConfirm={() => void confirmDelete()}
+          onCancel={cancelDelete}
         />
       )}
     </div>

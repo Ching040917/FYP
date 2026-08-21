@@ -176,15 +176,6 @@ def _editor_checks(profile: Any) -> List[Dict[str, str]]:
                 break
             seen.add(combo)
 
-    # First-line indentation is NOT consumed by the deterministic adapter in
-    # this release — accepting a set value would imply a check that never
-    # runs (a misleading requirement). Reject it so the editor cannot save it.
-    if profile.body.first_line_indent_in is not None:
-        errors.append({
-            "field": "body.first_line_indent",
-            "message": "First-line indentation is not supported yet.",
-        })
-
     if profile.heading.inherit_body_font:
         body = profile.body
         body_font_enabled = (

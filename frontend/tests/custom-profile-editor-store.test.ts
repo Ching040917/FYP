@@ -14,7 +14,9 @@ import {
   clientValidate,
   copyProfilePayload,
   createMemoryStoreAdapter,
+  deleteAndBump,
   generateProfileId,
+  isUnsavedDraft,
   loadEnvelope,
   persistEnvelope,
   resolveUniqueName,
@@ -225,4 +227,93 @@ test('ACTIVE/RECOVERY round trip preserves the saved custom profile', () => {
   const reloaded = loadEnvelope(adapter2)
   assert.equal(reloaded.profiles[0]!.name, 'Persistent Profile')
   assert.equal(reloaded.profiles[0]!.validationState, 'backend_confirmed')
+})
+
+// ---------------------------------------------------------------------------
+// Deletion (Build 5)
+// ---------------------------------------------------------------------------
+
+function makeStored(name: string, overrides: Record<string, unknown> = {}) {
+  const id = generateProfileId()
+  return {
+    id,
+    name,
+    description: '',
+    payload: blankProfilePayload(id, name),
+    validationState: 'backend_confirmed' as const,
+    updatedAt: NOW,
+    ...overrides,
+  }
+}
+
+test('delete removes only the target profile and bumps revision', () => {
+  const a = makeStored('Alpha')
+  const b = makeStored('Beta')
+  const adapter = seedStore([a, b])
+  const env = loadEnvelope(adapter)
+
+  const result = deleteAndBump(env, a.id, NOW)
+  assert.equal(result.ok, true)
+  assert.equal(persistEnvelope(adapter, result.envelope, env.revision).ok, true)
+
+  const after = loadEnvelope(adapter)
+  assert.equal(after.profiles.length, 1)
+  assert.equal(after.profiles[0]!.id, b.id) // sibling survives
+  assert.equal(after.revision, env.revision + 1)
+})
+
+test('delete of selected profile resets selection to recommended built-in', () => {
+  const a = makeStored('Selected')
+  let env = { ...loadEnvelope(seedStore([a])), selected_id: a.id }
+  const result = deleteAndBump(env, a.id, NOW)
+  assert.equal(result.ok, true)
+  assert.equal(result.envelope.selected_id, 'suc-academic-report')
+})
+
+test('delete refuses unknown profiles', () => {
+  const adapter = seedStore([])
+  const result = deleteAndBump(loadEnvelope(adapter), 'missing-id', NOW)
+  assert.deepEqual(result, { ok: false, reason: 'not-found' })
+})
+
+test('stale revision refuses deletion and keeps the profile', () => {
+  const a = makeStored('Target')
+  const adapter = seedStore([a])
+  const env = loadEnvelope(adapter)
+
+  // Another tab writes first.
+  const newer = { ...env, revision: env.revision + 5 }
+  adapter.set(ACTIVE_KEY, serializeEnvelope(newer))
+
+  // This tab still expects the old revision → refused.
+  const result = deleteAndBump(env, a.id, NOW)
+  assert.equal(result.ok, true)
+  const write = persistEnvelope(adapter, result.envelope, env.revision)
+  assert.deepEqual(write, { ok: false, reason: 'stale-revision' })
+
+  // Profile still present.
+  assert.equal(loadEnvelope(adapter).profiles.length, 1)
+})
+
+test('already-deleted in another tab: live read finds nothing', () => {
+  const a = makeStored('Gone')
+  const adapter = seedStore([a])
+  // Another tab removed it.
+  const emptied = { ...loadEnvelope(adapter), profiles: [], revision: 9 }
+  adapter.set(ACTIVE_KEY, serializeEnvelope(emptied))
+
+  const live = loadEnvelope(adapter)
+  assert.equal(live.profiles.find((p) => p.id === a.id), undefined)
+})
+
+test('isUnsavedDraft distinguishes drafts from saved profiles', () => {
+  const saved = makeStored('Saved')
+  const adapter = seedStore([saved])
+  const env = loadEnvelope(adapter)
+  assert.equal(isUnsavedDraft(saved, env), false)
+
+  const draftOnly = makeStored('Draft')
+  assert.equal(isUnsavedDraft(draftOnly, env), true)
+  assert.equal(isUnsavedDraft(null, env), false)
+  assert.equal(isUnsavedDraft(draftOnly, null), false)
 })

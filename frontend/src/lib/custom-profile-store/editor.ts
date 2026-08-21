@@ -17,6 +17,7 @@ import {
   loadStore,
   saveStore,
   upsertProfile,
+  deleteProfile,
   type StoreAdapter,
   type StoreEnvelope,
   type StoredCustomProfile,
@@ -840,6 +841,54 @@ export function summarizeProfile(payload: Record<string, unknown>): ProfileSumma
 const capitalize = (s: string): string => (s ? s[0].toUpperCase() + s.slice(1) : s)
 
 // ---------------------------------------------------------------------------
+// Operation status (Build 5 polish) — ONE active status at a time
+// ---------------------------------------------------------------------------
+
+export type OpStatusKind =
+  | 'idle'
+  | 'validating'
+  | 'deleting'
+  | 'saved'
+  | 'deleted'
+  | 'already-gone'
+  | 'error'
+  | 'backend-error'
+
+export interface OpStatus {
+  kind: OpStatusKind
+  message?: string
+  errors?: string[]
+}
+
+/** Success statuses auto-dismiss after this long (within the 3–5 s window). */
+export const OP_STATUS_SUCCESS_MS = 4000
+
+export function isSuccessOpStatus(kind: OpStatusKind): boolean {
+  return kind === 'saved' || kind === 'deleted' || kind === 'already-gone'
+}
+
+export function isErrorOpStatus(kind: OpStatusKind): boolean {
+  return kind === 'error' || kind === 'backend-error'
+}
+
+function opStatusSame(a: OpStatus, b: OpStatus): boolean {
+  if (a.kind !== b.kind) return false
+  if ((a.message ?? '') !== (b.message ?? '')) return false
+  const ae = a.errors ?? []
+  const be = b.errors ?? []
+  return ae.length === be.length && ae.every((m, i) => m === be[i])
+}
+
+/**
+ * Merge the next operation status into the current one. Returns the PREVIOUS
+ * object reference when the status is identical so React never re-renders
+ * (and aria-live never re-announces) the same message twice.
+ */
+export function mergeOpStatus(prev: OpStatus, next: OpStatus): OpStatus {
+  return opStatusSame(prev, next) ? prev : next
+}
+
+// ---------------------------------------------------------------------------
 // Envelope building + persistence (revision-gated)
 // ---------------------------------------------------------------------------
 
@@ -861,6 +910,42 @@ export function upsertAndBump(
     revision: next.envelope.revision + 1,
     updated_at: nowIso,
   }
+}
+
+/**
+ * Remove ONE stored custom profile, bump the revision, and reset the store
+ * selection to the recommended built-in when the deleted profile was
+ * selected. Refuses to remove a profile that does not exist. Never touches
+ * built-in definitions, Audit data, or anything outside the local envelope.
+ */
+export function deleteAndBump(
+  envelope: StoreEnvelope,
+  id: string,
+  nowIso: string,
+): { ok: true; envelope: StoreEnvelope } | { ok: false; reason: 'not-found' } {
+  const result = deleteProfile(envelope, id)
+  if (!result.ok) return result
+  return {
+    ok: true,
+    envelope: {
+      ...result.envelope,
+      revision: result.envelope.revision + 1,
+      updated_at: nowIso,
+    },
+  }
+}
+
+/**
+ * True when the draft has never been persisted to the store (a freshly
+ * created blank/copy draft). Such drafts use "Discard draft", never
+ * "Delete profile".
+ */
+export function isUnsavedDraft(
+  draft: StoredCustomProfile | null,
+  envelope: StoreEnvelope | null,
+): boolean {
+  if (!draft || !envelope) return false
+  return !envelope.profiles.some((p) => p.id === draft.id)
 }
 
 /**
