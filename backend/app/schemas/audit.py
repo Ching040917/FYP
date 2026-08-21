@@ -103,6 +103,10 @@ class AuditResponse(BaseModel):
     status: str
     created_at: datetime
     completed_at: Optional[datetime] = None
+    # Stale Audit recovery (Build 1): safe interruption metadata. Null for
+    # non-interrupted audits. Never carries paths or error internals.
+    interruption_reason: Optional[str] = None
+    interrupted_at: Optional[datetime] = None
     violations: List[ViolationResponse] = []
     citation_issues: List[CitationIssueResponse] = []
     # NEW — included here too so the polling detail page gets the same data

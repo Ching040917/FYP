@@ -122,6 +122,13 @@ class Settings(BaseSettings):
     # Tests and dev set this to a temp dir.
     PREVIEW_STORAGE_DIR: str = ""
 
+    # Stale Audit recovery (Build 1). Startup reconciliation of abandoned
+    # `processing` rows is enabled by default for the supported local,
+    # single-process FastAPI deployment. Multi-worker or shared-database
+    # deployments are unsupported without a persisted ownership/heartbeat
+    # design; disabling leaves `processing` rows unchanged.
+    AUDIT_RECONCILE_ON_START: bool = True
+
     # SUC Preset (default)
     PRESET: PresetConfig = PresetConfig()
 

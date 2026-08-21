@@ -20,6 +20,16 @@ class AuditRecord(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     completed_at = Column(DateTime, nullable=True)
 
+    # Stale Audit recovery (Build 1). Rows abandoned by an earlier Backend
+    # process (status `processing`, created strictly before the current
+    # process started) transition to terminal `interrupted`. `interrupted_at`
+    # records when reconciliation claimed the row; `interruption_reason` holds
+    # only a safe non-sensitive category (allowed Build 1 value:
+    # `application_restart`). Never stores paths, stack traces, exception
+    # strings, document text, or provider responses.
+    interruption_reason = Column(String(50), nullable=True)
+    interrupted_at = Column(DateTime, nullable=True)
+
     # Document statistics computed at audit time and persisted. Nullable —
     # records created before these columns existed have NULL values, and the
     # API/UI must treat NULL as "stats unavailable", never as zero counts.

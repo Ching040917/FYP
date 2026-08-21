@@ -162,8 +162,16 @@ def mock_ai_task(monkeypatch):
 
 @pytest.fixture
 def mock_init_db(monkeypatch):
-    """Prevent the startup event from writing to ./audit.db."""
+    """Prevent the startup event from writing to ./audit.db.
+
+    Also no-ops startup stale-audit reconciliation so the app's own
+    (separate) in-memory engine is never queried without its tables.
+    """
     monkeypatch.setattr("app.main.init_db", lambda: None)
+    monkeypatch.setattr(
+        "app.main.reconcile_stale_audits",
+        lambda *args, **kwargs: 0,
+    )
 
 
 # (client fixtures defined above after small_file_cap)

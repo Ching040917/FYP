@@ -400,6 +400,10 @@ async def get_audit(audit_id: str, db: Session = Depends(get_db)):
         status=audit.status,
         created_at=audit.created_at,
         completed_at=audit.completed_at,
+        # Stale Audit recovery (Build 1): safe interruption metadata, null
+        # for non-interrupted audits. Never exposes paths or error internals.
+        interruption_reason=audit.interruption_reason,
+        interrupted_at=audit.interrupted_at,
         violations=violation_responses,
         citation_issues=citation_responses,
         score_breakdown=breakdown_responses,
@@ -541,6 +545,11 @@ async def export_audit_pdf(audit_id: str, db: Session = Depends(get_db)):
         raise HTTPException(
             status_code=409,
             detail="This audit is still being processed. Please try again shortly.",
+        )
+    if audit.status == "interrupted":
+        raise HTTPException(
+            status_code=409,
+            detail="This audit was interrupted and did not complete, so there is nothing to export.",
         )
     if audit.status == "failed" and not (audit.violations or audit.citation_issues):
         raise HTTPException(
