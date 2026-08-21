@@ -15,6 +15,7 @@
 import * as React from 'react'
 import { UploadCard } from '../components/audit/upload-card'
 import { ComplianceSummary } from '../components/audit/compliance-summary'
+import { AuditCompletionPanel } from '../components/audit/audit-completion-panel'
 import { AppNav } from '../components/layout/AppNav'
 import { AppFooter } from '../components/layout/AppFooter'
 import {
@@ -24,6 +25,14 @@ import {
   CardTitle,
   CardDescription,
 } from '../components/ui/card'
+import {
+  createSessionStorageAdapter,
+  clearCompletionSnapshot,
+  loadCompletionSnapshot,
+  saveCompletionSnapshot,
+  toCompletionSnapshot,
+  type AuditCompletionSnapshot,
+} from '../lib/audit/audit-completion'
 import type { AuditResult } from '../types/audit'
 
 /**
@@ -32,22 +41,106 @@ import type { AuditResult } from '../types/audit'
  */
 export function DashboardContent() {
   const [result, setResult] = React.useState<AuditResult | null>(null)
+  const [completion, setCompletion] = React.useState<AuditCompletionSnapshot | null>(null)
+  const completionStorageRef = React.useRef(
+    // Lazily bound once per mount. If unavailable, completion persists only
+    // for the current mounted session (upload still completes normally).
+    createSessionStorageAdapter(),
+  )
+  const didHydrateCompletionRef = React.useRef(false)
 
-  // AI-review status now travels with the audit result (ai_review_status /
-  // ai_provider), so the summary no longer needs request-time cloud state.
-  const handleResult = (r: AuditResult, _cloudEnabled: boolean) => {
-    setResult(r)
-  }
+  const dismissCompletion = React.useCallback(() => {
+    setCompletion(null)
+    clearCompletionSnapshot(completionStorageRef.current)
+  }, [])
 
-  const handleReset = () => {
+  // Restore a validated completion across a same-tab remount (navigate away
+  // → Return to upload) or a hard refresh. Structural validation is inside
+  // loadCompletionSnapshot — malformed / future-version records are removed.
+  React.useEffect(() => {
+    if (didHydrateCompletionRef.current) return
+    didHydrateCompletionRef.current = true
+    const restored = loadCompletionSnapshot(completionStorageRef.current)
+    if (!restored) return
+    setCompletion(restored)
+  }, [])
+
+  // Snapshot the exact completed-audit from the POST response — never from
+  // History, filename, or selected profile. Each success replaces the
+  // previous completion (newer audit wins). Failures do not create one and
+  // do not restore a stale predecessor.
+  const handleResult = React.useCallback(
+    (r: AuditResult, _cloudEnabled: boolean) => {
+      setResult(r)
+      const snap = toCompletionSnapshot({
+        audit_id: r.audit_id,
+        score: r.weighted_compliance_score,
+        major_count: r.major_count ?? 0,
+        minor_count: r.minor_count ?? 0,
+        completed_at: r.audited_at,
+      })
+      if (!snap) return
+      setCompletion(snap)
+      saveCompletionSnapshot(completionStorageRef.current, snap)
+    },
+    [],
+  )
+
+  // Do NOT clear the completion on file pick — a new valid submission
+  // starts is the replacement gate (see UploadCard's onUpload/run-success
+  // sequence). Clearing on pick would punish a user who corrects a file
+  // name before retrying. For the file-to-audit association, Dashboard
+  // clears the result summary only when the user explicitly picks a new file
+  // if they choose to; for Build 6+ the completion panel is only cleared on
+  // Dismiss / View audit / newer successful audit — not on pick.
+  const handleReset = React.useCallback(() => {
     setResult(null)
-  }
+  }, [])
 
+  return (
+    <DashboardShell
+      result={result}
+      completion={completion}
+      onViewAudit={(id) => {
+        clearCompletionSnapshot(completionStorageRef.current)
+        setCompletion(null)
+        // Use the exact stored id, never a recomputed one.
+        window.location.assign(`/audit/${encodeURIComponent(id)}`)
+      }}
+      onDismissCompletion={dismissCompletion}
+      onResult={handleResult}
+      onReset={handleReset}
+    />
+  )
+}
+
+function DashboardShell({
+  result,
+  completion,
+  onViewAudit,
+  onDismissCompletion,
+  onResult,
+  onReset,
+}: {
+  result: AuditResult | null
+  completion: AuditCompletionSnapshot | null
+  onViewAudit: (auditId: string) => void
+  onDismissCompletion: () => void
+  onResult: (r: AuditResult, cloudEnabled: boolean) => void
+  onReset: () => void
+}) {
   return (
     <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-2 xl:grid-cols-[5fr_7fr]">
       {/* Intake — upload + specification */}
       <div className="min-w-0 space-y-6">
-        <UploadCard onResult={handleResult} onReset={handleReset} />
+        {completion ? (
+          <AuditCompletionPanel
+            model={{ source: 'snapshot', value: completion }}
+            onViewAudit={onViewAudit}
+            onDismiss={onDismissCompletion}
+          />
+        ) : null}
+        <UploadCard onResult={onResult} onReset={onReset} />
         <SpecCard />
       </div>
 

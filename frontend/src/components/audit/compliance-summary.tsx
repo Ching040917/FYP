@@ -105,10 +105,11 @@ export function ComplianceSummary({
         {auditId ? (
           <Button
             type="button"
+            aria-label={`View audit ${auditId}`}
             className="w-full bg-primary text-primary-foreground hover:bg-primary/90"
             onClick={() => navigate(`/audit/${auditId}`)}
           >
-            Open full audit report
+            View audit
             <ArrowRight className="ml-2 h-4 w-4" aria-hidden="true" />
           </Button>
         ) : (

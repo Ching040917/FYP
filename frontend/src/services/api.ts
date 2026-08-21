@@ -37,10 +37,16 @@ async function handleResponse<T>(response: Response): Promise<T> {
 export const api = {
   async auditDocument(
     file: File,
-    options: { cloud?: boolean; profileId?: string } = {},
+    options: { cloud?: boolean; profileId?: string; customProfile?: Record<string, unknown> } = {},
   ): Promise<AuditSubmitResponse> {
+    if (options.profileId && options.customProfile) {
+      throw new Error('provide either profileId or customProfile, not both')
+    }
     const formData = new FormData()
     formData.append('file', file)
+    if (options.customProfile) {
+      formData.append('custom_profile', JSON.stringify(options.customProfile))
+    }
     const params = new URLSearchParams()
     if (options.cloud) params.set('cloud', '1')
     if (options.profileId) params.set('profile_id', options.profileId)
