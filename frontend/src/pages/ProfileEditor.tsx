@@ -45,6 +45,15 @@ import { ConfirmDialog } from '../components/ui/confirm-dialog'
 import { api } from '../services/api'
 import { formatAuditDateTime } from '../lib/format-date'
 import {
+  clearDraftRecovery,
+  createSessionDraftRecoveryAdapter,
+  decideDraftRecovery,
+  loadDraftRecovery,
+  saveDraftRecovery,
+  NEW_DRAFT_ID,
+} from '../lib/custom-profile-store/draft-recovery'
+import type { ProfileDraftRecovery } from '../lib/custom-profile-store/draft-recovery'
+import {
   APA_BUILTIN_ID,
   SUC_BUILTIN_ID,
   CITATION_STYLE,
@@ -253,6 +262,103 @@ export function ProfileEditor() {
 
   // Inline field errors for requirement controls (mapped from backend/client).
   const [reqFieldErrors, setReqFieldErrors] = React.useState<Record<string, string>>({})
+
+  // ---------------------------------------------------------------------
+  // Unsaved draft recovery (sessionStorage, tab-scoped)
+  // ---------------------------------------------------------------------
+  const draftRecoveryAdapterRef = React.useRef(createSessionDraftRecoveryAdapter())
+  const [recoveryNotice, setRecoveryNotice] = React.useState<string | null>(null)
+
+  /** Persist the current unsaved draft for same-tab reload recovery. */
+  const persistDraftRecovery = React.useCallback(
+    (d: StoredCustomProfile | null, envRevision: number) => {
+      if (!d) return
+      const isNew = !envelope?.profiles.some((p) => p.id === d.id)
+      const recovery: ProfileDraftRecovery = {
+        schema_version: 1,
+        profile_id: isNew ? NEW_DRAFT_ID : d.id,
+        base_revision: envRevision,
+        payload: d.payload,
+        updated_at: new Date().toISOString(),
+      }
+      saveDraftRecovery(draftRecoveryAdapterRef.current, recovery)
+    },
+    [envelope],
+  )
+
+  // Save the unsaved draft whenever it changes (only while dirty).
+  React.useEffect(() => {
+    if (!dirty || !draft || !envelope) return
+    persistDraftRecovery(draft, envelope.revision)
+  }, [draft, dirty, envelope, persistDraftRecovery])
+
+  // Clear the recovery record after successful Save / Discard / Delete.
+  React.useEffect(() => {
+    if (opStatus.kind === 'saved' || opStatus.kind === 'deleted') {
+      clearDraftRecovery(draftRecoveryAdapterRef.current)
+      setRecoveryNotice(null)
+    }
+  }, [opStatus.kind])
+
+  // On mount (same-tab reload), restore a structurally valid recovery that
+  // belongs to the selected profile or new draft and whose confirmed revision
+  // has not changed. Stale/conflicting records are never applied silently.
+  React.useEffect(() => {
+    if (loadStatus.state !== 'ready' && loadStatus.state !== 'error') return
+    if (!envelope) return
+    const recovery = loadDraftRecovery(draftRecoveryAdapterRef.current)
+    if (!recovery) return
+    if (draft) return // an editor session is already active — nothing to do
+
+    if (recovery.profile_id === NEW_DRAFT_ID) {
+      // Fresh-draft recovery needs a user decision; surface a notice rather
+      // than silently re-creating a profile.
+      setRecoveryNotice(
+        'Recovered unsaved changes — use one of the creation actions to start again, then re-apply your edits.',
+      )
+      return
+    }
+
+    const target = envelope.profiles.find((p) => p.id === recovery.profile_id)
+    if (!target) {
+      // Profile deleted elsewhere — remove stale recovery.
+      clearDraftRecovery(draftRecoveryAdapterRef.current)
+      setRecoveryNotice(null)
+      return
+    }
+    const decision = decideDraftRecovery(recovery, target.id, envelope.revision)
+    if (decision.action === 'apply') {
+      openProfileFromRecovery(target, decision.recovery.payload)
+      setRecoveryNotice('Recovered unsaved changes')
+    } else if (decision.action === 'conflict') {
+      setRecoveryNotice(
+        'Recovered changes conflict with updates from another tab. The saved version is shown; your unsaved edits were not applied.',
+      )
+    } else {
+      clearDraftRecovery(draftRecoveryAdapterRef.current)
+      setRecoveryNotice(null)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadStatus.state, envelope])
+
+  /** Restore an unsaved payload over a stored profile as a dirty draft. */
+  const openProfileFromRecovery = React.useCallback(
+    (profile: StoredCustomProfile, recoveredPayload: Record<string, unknown>) => {
+      setDraft({ ...profile, payload: recoveredPayload })
+      setEditingId(profile.id)
+      setDirty(true)
+      setFieldErrors({})
+      setReqFieldErrors({})
+      setOpStatusSafe({ kind: 'idle' })
+      setBodyUi(recoveredPayload.body ? bodyToUiModel(recoveredPayload.body as Record<string, unknown>) : null)
+      setHeadingUi(recoveredPayload.heading ? headingToUiModel(recoveredPayload.heading as Record<string, unknown>) : null)
+      setMarginsUi(recoveredPayload.margins ? marginsToUiModel(recoveredPayload.margins as Record<string, unknown>) : null)
+      setReferencesUi(recoveredPayload.references ? referencesToUiModel(recoveredPayload.references as Record<string, unknown>) : null)
+      setCaptionsUi(recoveredPayload.captions ? captionsToUiModel(recoveredPayload.captions as Record<string, unknown>) : null)
+      setListsUi(recoveredPayload.lists ? listsToUiModel(recoveredPayload.lists as Record<string, unknown>) : null)
+    },
+    [],
+  )
 
   // Load once
   React.useEffect(() => {
@@ -775,6 +881,8 @@ export function ProfileEditor() {
         return
       }
       setEnvelope(result.envelope)
+      clearDraftRecovery(draftRecoveryAdapterRef.current)
+      setRecoveryNotice(null)
       clearEditorState()
       setPendingDelete(null)
       // Replaces any previous Save success — one active status at a time.
@@ -786,6 +894,8 @@ export function ProfileEditor() {
 
   /** Discard an unsaved draft — never touches saved profiles. */
   const discardDraft = React.useCallback(() => {
+    clearDraftRecovery(draftRecoveryAdapterRef.current)
+    setRecoveryNotice(null)
     clearEditorState()
     setOpStatusSafe({ kind: 'idle' })
   }, [])
@@ -865,6 +975,18 @@ export function ProfileEditor() {
             Return to upload
           </Button>
         </div>
+
+        {/* Draft-recovery notice — shown after a same-tab reload restored
+            (or declined to restore) unsaved edits. Dismissable, never a
+            substitute for the Save/Delete status region below. */}
+        {recoveryNotice && (
+          <div className="mt-4 rounded-md border border-border bg-input/20 px-3 py-2.5">
+            <p role="status" aria-live="polite" className="flex items-start gap-1.5 text-sm leading-[21px] text-muted-foreground">
+              <Info className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+              {recoveryNotice}
+            </p>
+          </div>
+        )}
 
         {/* Page-level operation status — ONE region, always mounted while a
             status is active. Lives OUTSIDE the conditional editor/action-bar
