@@ -14,6 +14,7 @@
 
 import * as React from 'react'
 import { UploadCard } from '../components/audit/upload-card'
+import { ReadinessCard } from '../components/dashboard/readiness-card'
 import { ComplianceSummary } from '../components/audit/compliance-summary'
 import { AuditCompletionPanel } from '../components/audit/audit-completion-panel'
 import { AppNav } from '../components/layout/AppNav'
@@ -140,6 +141,7 @@ function DashboardShell({
             onDismiss={onDismissCompletion}
           />
         ) : null}
+        <ReadinessCard />
         <UploadCard onResult={onResult} onReset={onReset} />
         <SpecCard />
       </div>

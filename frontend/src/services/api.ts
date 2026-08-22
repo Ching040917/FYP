@@ -72,6 +72,18 @@ export const api = {
   },
 
   /**
+   * Read-only setup readiness (Build B1). `refresh=true` bypasses the
+   * Backend 30s cache (`?refresh=1`). Returns the raw payload; callers
+   * validate through adaptReadiness — never expose raw errors to the UI.
+   */
+  async getReadiness(refresh = false): Promise<unknown> {
+    const url = refresh ? `${API_BASE}/readiness?refresh=1` : `${API_BASE}/readiness`
+    const response = await fetchWithTimeout(url, {}, POLL_TIMEOUT_MS)
+    if (!response.ok) throw new Error(`HTTP ${response.status}`)
+    return response.json()
+  },
+
+  /**
    * Read-only canonical payload of ONE built-in formatting profile (Build 3).
    * Used to authoritatively copy a built-in profile into a custom one.
    */
