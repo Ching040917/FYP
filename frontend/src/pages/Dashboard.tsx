@@ -143,7 +143,6 @@ function DashboardShell({
         ) : null}
         <ReadinessCard />
         <UploadCard onResult={onResult} onReset={onReset} />
-        <SpecCard />
       </div>
 
       {/* Result — concise summary or guidance */}
@@ -194,46 +193,6 @@ export function Dashboard() {
       </main>
 
       <AppFooter />
-    </div>
-  )
-}
-
-/* ----------------------------- Specification summary ----------------------------- */
-
-// Spec values mirror the authoritative backend preset (backend/app/config.py
-// → PresetConfig). Hardcoded duplication is tracked as technical debt — a
-// preset API is out of scope for this Build. Keep this card in sync when
-// the preset changes.
-
-function SpecCard() {
-  return (
-    <Card className="border-border bg-card">
-      <CardHeader className="pb-3">
-        <CardTitle className="text-base font-semibold">Current formatting specification</CardTitle>
-        <CardDescription>
-          Values reflect the configured default preset applied during audit.
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <dl className="space-y-1.5">
-          <SpecRow label="Body font" value="Times New Roman, 12pt" />
-          <SpecRow label="Heading font" value="Times New Roman, 12–16pt by level" />
-          <SpecRow label="Line spacing" value="1.5×" />
-          <SpecRow label="Body alignment" value="Justified" />
-          <SpecRow label="Left margin" value="1.5″" />
-          <SpecRow label="Top / right / bottom margin" value="1″" />
-          <SpecRow label="Citation style" value="APA 7th edition (opt-in AI)" />
-        </dl>
-      </CardContent>
-    </Card>
-  )
-}
-
-function SpecRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex items-baseline justify-between gap-3 border-b border-border/50 pb-1.5 last:border-0 last:pb-0">
-      <dt className="text-[13px] text-muted-foreground">{label}</dt>
-      <dd className="font-mono text-[13px] text-foreground">{value}</dd>
     </div>
   )
 }
