@@ -129,6 +129,12 @@ class Settings(BaseSettings):
     # design; disabling leaves `processing` rows unchanged.
     AUDIT_RECONCILE_ON_START: bool = True
 
+    # Local AI citation review (Ollama). Disabling marks Ollama and the
+    # configured local model as intentionally-not-configured in setup
+    # readiness and skips their network probes. Deterministic auditing is
+    # unaffected either way.
+    LOCAL_AI_ENABLED: bool = True
+
     # SUC Preset (default)
     PRESET: PresetConfig = PresetConfig()
 

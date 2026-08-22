@@ -437,6 +437,24 @@ async def get_audit(audit_id: str, db: Session = Depends(get_db)):
     )
 
 
+@router.get("/api/readiness")
+async def get_readiness(refresh: bool = Query(False, description="Bypass the 30s readiness cache")):
+    """Setup readiness (Build A) — read-only, presentation-safe component probe.
+
+    Aggregates independent component states so users see whether ACA is ready
+    without terminals or configuration knowledge. Read-only: performs no
+    filesystem writes, no DB writes, no migrations, no process spawns, no
+    LibreOffice execution, and never loads or pulls a model.
+
+    Cached for 30 seconds; `?refresh=1` forces a fresh probe pass. Payload is
+    strict — never carries paths, hosts/ports, env values, keys, provider
+    responses, or document data.
+    """
+    from app.services.setup_readiness import get_readiness as build_readiness
+
+    return await build_readiness(force_refresh=refresh)
+
+
 @router.post("/api/formatting-profiles/validate")
 async def validate_formatting_profile(payload: dict = Body(...)):
     """Presentation-safe validation of ONE custom Document Formatting Profile
