@@ -49,6 +49,7 @@ export function DashboardContent() {
     createSessionStorageAdapter(),
   )
   const didHydrateCompletionRef = React.useRef(false)
+  const [cloudAvailable, setCloudAvailable] = React.useState<boolean | null>(null)
 
   const dismissCompletion = React.useCallback(() => {
     setCompletion(null)
@@ -102,6 +103,8 @@ export function DashboardContent() {
     <DashboardShell
       result={result}
       completion={completion}
+      cloudAvailable={cloudAvailable}
+      onCloudAvailable={setCloudAvailable}
       onViewAudit={(id) => {
         clearCompletionSnapshot(completionStorageRef.current)
         setCompletion(null)
@@ -118,6 +121,8 @@ export function DashboardContent() {
 function DashboardShell({
   result,
   completion,
+  cloudAvailable,
+  onCloudAvailable,
   onViewAudit,
   onDismissCompletion,
   onResult,
@@ -125,6 +130,8 @@ function DashboardShell({
 }: {
   result: AuditResult | null
   completion: AuditCompletionSnapshot | null
+  cloudAvailable: boolean | null
+  onCloudAvailable: (available: boolean | null) => void
   onViewAudit: (auditId: string) => void
   onDismissCompletion: () => void
   onResult: (r: AuditResult, cloudEnabled: boolean) => void
@@ -141,8 +148,8 @@ function DashboardShell({
             onDismiss={onDismissCompletion}
           />
         ) : null}
-        <ReadinessCard />
-        <UploadCard onResult={onResult} onReset={onReset} />
+        <ReadinessCard onCloudAvailable={onCloudAvailable} />
+        <UploadCard onResult={onResult} onReset={onReset} cloudAvailable={cloudAvailable} />
       </div>
 
       {/* Result — concise summary or guidance */}

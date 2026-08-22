@@ -26,6 +26,7 @@ import {
   overallHeadline,
   overallSupporting,
   issueCountSentence,
+  isCloudAvailableFromModel,
   type ReadinessComponentRow,
   type ReadinessModel,
 } from '../../lib/readiness'
@@ -33,7 +34,11 @@ import { cn } from '../../lib/utils'
 
 type CardState = 'checking' | 'loaded' | 'error'
 
-export function ReadinessCard() {
+export function ReadinessCard({
+  onCloudAvailable: onCloudAvailableProp,
+}: {
+  onCloudAvailable?: (available: boolean | null) => void
+}) {
   const [state, setState] = React.useState<CardState>('checking')
   const [model, setModel] = React.useState<ReadinessModel | null>(null)
   const [expanded, setExpanded] = React.useState(false)
@@ -41,6 +46,23 @@ export function ReadinessCard() {
   const [refreshError, setRefreshError] = React.useState(false)
   const fetchingRef = React.useRef(false)
   const mountedRef = React.useRef(false)
+  const onCloudAvailableRef = React.useRef(onCloudAvailableProp)
+  React.useEffect(() => {
+    onCloudAvailableRef.current = onCloudAvailableProp
+  }, [onCloudAvailableProp])
+
+  // Bubble the derived Cloud availability after each load/error, exactly once
+  // per fetch completion (not during fetch). `null` means checking/fetch
+  // failure — caller treats it as not-available.
+  const publishCloudAvailable = React.useCallback(
+    (m: ReadinessModel | null, isChecking: boolean) => {
+      const cb = onCloudAvailableRef.current
+      if (!cb) return
+      if (isChecking && m === null) cb(null)
+      else cb(isCloudAvailableFromModel(m))
+    },
+    [],
+  )
 
   const fetchReadiness = React.useCallback(async (refresh: boolean) => {
     if (fetchingRef.current) return
@@ -55,6 +77,7 @@ export function ReadinessCard() {
         if (!model) {
           setState('error')
           setModel(null)
+          publishCloudAvailable(null, false)
         } else {
           setRefreshError(true)
         }
@@ -63,9 +86,11 @@ export function ReadinessCard() {
       setModel(parsed)
       setState('loaded')
       setRefreshError(false)
+      publishCloudAvailable(parsed, false)
     } catch {
       if (!model) {
         setState('error')
+        publishCloudAvailable(null, false)
       } else {
         setRefreshError(true)
       }
@@ -73,12 +98,13 @@ export function ReadinessCard() {
       fetchingRef.current = false
       setRefreshing(false)
     }
-  }, [model])
+  }, [model, publishCloudAvailable])
 
   // Initial mount: one request, uses Backend cache.
   React.useEffect(() => {
     if (mountedRef.current) return
     mountedRef.current = true
+    publishCloudAvailable(null, true)
     void fetchReadiness(false)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])

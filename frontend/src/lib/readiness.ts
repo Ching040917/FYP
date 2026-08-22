@@ -164,3 +164,22 @@ export function issueCountSentence(
   }
   return ''
 }
+
+/**
+ * Cloud AI availability for gating the UploadCard toggle.
+ * Only `ready` enables the switch; all other states (including `optional`
+ * and `unknown` — the latter used when readiness has not been fetched yet)
+ * keep it disabled and safe. The optional `unknown` path makes
+ * deterministic checks remain available regardless.
+ */
+export function isCloudAvailable(rows: ReadinessComponentRow[]): boolean {
+  const c = rows.find((r) => r.id === 'cloud_ai')
+  return c !== undefined && c.state === 'ready'
+}
+
+export function isCloudAvailableFromModel(
+  model: ReadinessModel | null,
+): boolean | null {
+  if (!model) return null
+  return isCloudAvailable(model.rows)
+}

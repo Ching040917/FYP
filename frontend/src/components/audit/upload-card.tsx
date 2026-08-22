@@ -75,6 +75,8 @@ export interface UploadCardProps {
   onResult: (result: AuditResult, cloudEnabled: boolean) => void
   onReset?: () => void
   trySampleSignal?: number
+  /** Derived from Dashboard's Readiness result: true only when cloud_ai is ready. */
+  cloudAvailable?: boolean | null
   /**
    * Post-audit navigation: the Dashboard passes a value tied to lastAuditId so
    * a completed Audit shows a persistent "View audit" action in its completion
@@ -87,7 +89,7 @@ export interface UploadCardProps {
   onDismissCompletion?: () => void
 }
 
-export function UploadCard({ onResult, onReset, trySampleSignal = 0 }: UploadCardProps) {
+export function UploadCard({ onResult, onReset, trySampleSignal = 0, cloudAvailable }: UploadCardProps) {
   const { showToast } = useToast()
   const [file, setFile] = React.useState<File | null>(null)
   const [cloudEnabled, setCloudEnabled] = React.useState(false)
@@ -104,6 +106,24 @@ export function UploadCard({ onResult, onReset, trySampleSignal = 0 }: UploadCar
   const [envelopeRevision, setEnvelopeRevision] = React.useState<number>(0)
   const [customProfilesWarning, setCustomProfilesWarning] = React.useState<string | null>(null)
   const firstVisitRef = React.useRef(true)
+  const cloudAvailableRef = React.useRef<boolean | null>(cloudAvailable ?? null)
+  React.useEffect(() => {
+    cloudAvailableRef.current = cloudAvailable ?? null
+  }, [cloudAvailable])
+
+  const isCloudAvailable = cloudAvailable === true
+
+  // Cloud switch may be enabled only when cloud_ai.state === "ready".
+  // If Cloud becomes unavailable (optional/unavailable/misconfigured/
+  // unknown/checking/error) while ON, force it Off before any future
+  // submission — preserve DOCX and Profile, keep Run Audit enabled, never
+  // auto-enable Cloud.
+  React.useEffect(() => {
+    if (!isCloudAvailable && cloudEnabled) {
+      setCloudEnabled(false)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isCloudAvailable])
 
   const setSelection = React.useCallback((v: string | null) => {
     setSelectedValue(v)
@@ -379,7 +399,7 @@ export function UploadCard({ onResult, onReset, trySampleSignal = 0 }: UploadCar
           cloud?: boolean
           profileId?: string
           customProfile?: Record<string, unknown>
-        } = { cloud: cloudEnabled }
+        } = { cloud: cloudAvailableRef.current === true ? cloudEnabled : false }
         if (frozen.kind === 'builtin') baseOpts.profileId = frozen.profileId
         else if (frozen.kind === 'custom') baseOpts.customProfile = frozen.payload
         const raw = await api.auditDocument(target, baseOpts)
@@ -725,20 +745,28 @@ export function UploadCard({ onResult, onReset, trySampleSignal = 0 }: UploadCar
             )}
             <div>
               <Label htmlFor="cloud-toggle" className="text-sm font-medium cursor-pointer">
-                Optional AI-assisted citation review
+                Use cloud AI-assisted review
               </Label>
               <p className="mt-0.5 flex items-start gap-1 text-xs leading-[16px] text-muted-foreground">
                 <Info className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
-                Off by default. When on, citation paragraphs are sent to the cloud AI for APA 7
-                suggestions. Deterministic formatting checks run the same either way.
+                Local AI is used by default when available. Deterministic checks always run.
               </p>
+              {!isCloudAvailable && (
+                <p
+                  role="status"
+                  aria-live="polite"
+                  className="mt-1 text-xs leading-[16px] text-muted-foreground"
+                >
+                  Cloud AI review is unavailable. Deterministic checks remain available.
+                </p>
+              )}
             </div>
           </div>
           <Switch
             id="cloud-toggle"
-            checked={cloudEnabled}
+            checked={cloudEnabled && isCloudAvailable}
             onCheckedChange={setCloudEnabled}
-            disabled={isUploading}
+            disabled={isUploading || !isCloudAvailable}
           />
         </div>
 
