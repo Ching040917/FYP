@@ -15,6 +15,10 @@ backend/*.db.backup*
 backend/*.sqlite
 backend/*.sqlite3
 
+# Windows packaging PoC outputs (PyInstaller one-folder)
+/backend/build/
+/backend/dist/
+
 # Local-only project documents (tracked until Build 5 commit, now local-only)
 /AGENTS.md
 /Architecture.md
