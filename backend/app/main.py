@@ -33,6 +33,16 @@ app.add_middleware(
 
 app.include_router(routes.router)
 
+# Production Frontend (Packaging Phase 1): when a built `frontend/dist`
+# exists, serve static assets and explicit SPA fallback routes. Registered
+# AFTER the API router so `/api/*`, `/health`, `/docs`, `/openapi.json` keep
+# precedence. Missing dist → Backend-only development, unchanged.
+from app.static_frontend import register_static_frontend, resolve_frontend_dist
+
+_frontend_dist = resolve_frontend_dist()
+if _frontend_dist is not None:
+    register_static_frontend(app, _frontend_dist)
+
 logger = logging.getLogger(__name__)
 
 
