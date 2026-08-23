@@ -13,6 +13,8 @@ import os
 # engine instead of targeting backend/audit.db.
 os.environ["DATABASE_URL"] = "sqlite:///:memory:"
 
+import logging
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -26,6 +28,34 @@ from app.database import Base, get_db
 from app.config import settings, PresetConfig
 from app.main import app
 from app.api import routes as api_routes
+
+
+@pytest.fixture(autouse=True)
+def _restore_logging_state():
+    """Prevent Alembic fileConfig from leaking disabled loggers to next test."""
+    import logging
+    orig = {name: lg.disabled for name, lg in logging.Logger.manager.loggerDict.items() if isinstance(lg, logging.Logger)}
+    # Also snapshot root
+    orig_root_disabled = logging.getLogger().disabled
+    orig_root_level = logging.getLogger().level
+    yield
+    for name, was_disabled in orig.items():
+        try:
+            logging.getLogger(name).disabled = was_disabled
+        except Exception:
+            pass
+    # Re-enable any logger that was disabled by fileConfig and not in orig
+    for name, lg in list(logging.Logger.manager.loggerDict.items()):
+        if isinstance(lg, logging.Logger) and name not in orig and lg.disabled:
+            try:
+                lg.disabled = False
+            except Exception:
+                pass
+    try:
+        logging.getLogger().disabled = orig_root_disabled
+        logging.getLogger().setLevel(orig_root_level)
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------------------
