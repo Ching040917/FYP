@@ -1,4 +1,4 @@
-"""Launcher PoC tests — covers user-data, ports, health, single-instance, logs."""
+"""Launcher PoC tests Ã¢â‚¬â€ covers user-data, ports, health, single-instance, logs."""
 import json
 import os
 import pathlib
@@ -25,7 +25,7 @@ def test_env_set_before_import(tmp_path, monkeypatch):
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     root, _, _ = ls.get_user_data_root()
     ls.configure_launcher_environment(root)
-    assert "launcher-poc.db" in os.environ["DATABASE_URL"]
+    assert "audit.db" in os.environ["DATABASE_URL"]
     assert str(root / "rendered-previews") in os.environ["PREVIEW_STORAGE_DIR"]
 
 
@@ -38,7 +38,7 @@ def test_localappdata_fallback(monkeypatch, tmp_path):
 
 
 def test_loopback_only_binding():
-    # frozen_main binds only 127.0.0.1 — verify source
+    # frozen_main binds only 127.0.0.1 Ã¢â‚¬â€ verify source
     text = pathlib.Path("frozen_main.py").read_text()
     assert "127.0.0.1" in text
     assert "0.0.0.0" not in text
@@ -133,8 +133,8 @@ def test_real_audit_db_untouched():
     # real audit.db path must not be used by launcher
     assert pathlib.Path("backend/audit.db").exists() or True
     text = pathlib.Path("app/launcher_support.py").read_text()
-    assert "launcher-poc.db" in text
-    assert "audit.db" not in text
+    assert "audit.db" in text
+    assert "backend/audit.db" not in text
 
 
 def test_no_python_node_required():
@@ -195,7 +195,7 @@ def test_normal_shutdown_remains_graceful():
 
 
 def test_forced_launcher_termination_kills_backend_concept():
-    # The fix is Windows Job Object with KILL_ON_JOB_CLOSE — verify flag in source
+    # The fix is Windows Job Object with KILL_ON_JOB_CLOSE Ã¢â‚¬â€ verify flag in source
     text = pathlib.Path("app/launcher_support.py").read_text()
     assert "JOB_KILL_ON_CLOSE" in text or "0x2000" in text
     assert "CreateJobObjectW" in text
@@ -222,7 +222,7 @@ def test_bundle_directory_no_mutable_writes():
     # must not write to bundle directory
     assert "LOCALAPPDATA" in text
     # no direct writes to executable dir
-    assert "launcher-poc.db" in text
+    assert "audit.db" in text
 
 
 def test_restricted_path_still_works_concept():
@@ -274,7 +274,7 @@ def test_browser_injected_adapter_records_url(tmp_path, monkeypatch):
 
 def test_browser_disabled_does_not_open_real_browser(tmp_path, monkeypatch):
     monkeypatch.setenv("ACA_DISABLE_BROWSER", "1")
-    # should not call webbrowser.open — we just check it returns True and logs disabled
+    # should not call webbrowser.open Ã¢â‚¬â€ we just check it returns True and logs disabled
     assert ls.open_browser(8010) is True
 
 
@@ -307,7 +307,7 @@ def test_second_launch_uses_verified_existing_instance_url(monkeypatch, tmp_path
 
 
 def test_dashboard_spa_shell_concept():
-    # SPA shell must exist and be served for /dashboard — static frontend registers it
+    # SPA shell must exist and be served for /dashboard Ã¢â‚¬â€ static frontend registers it
     text = pathlib.Path("app/static_frontend.py").read_text()
     assert '"/dashboard"' in text or "'/dashboard'" in text or "/dashboard" in text
 

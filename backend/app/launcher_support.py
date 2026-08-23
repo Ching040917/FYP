@@ -49,9 +49,13 @@ def get_user_data_root():
         return fb, True, "Using a temporary data location for this session."
 
 
+def _sqlite_url(db_path: Path) -> str:
+    return f"sqlite:///{db_path.as_posix()}"
+
+
 def configure_launcher_environment(root: Path):
-    db_path = (root / "poc" / "launcher-poc.db").as_posix()
-    os.environ["DATABASE_URL"] = f"sqlite:///{db_path}"
+    db_path = root / "audit.db"
+    os.environ["DATABASE_URL"] = _sqlite_url(db_path)
     os.environ["PREVIEW_STORAGE_DIR"] = str(root / "rendered-previews")
     os.environ.setdefault("GEMINI_API_KEY", "")
 

@@ -64,6 +64,60 @@ def _launcher():
 
     configure_launcher_environment(root)
 
+    # --- Phase 3A: database preflight before backend import ---
+    from pathlib import Path as _P
+    from app.db_lifecycle import inspect_state, init_fresh_database, verify_after_init
+
+    db_url = os.environ["DATABASE_URL"]
+    # Derive filesystem path from sqlite url
+    if db_url.startswith("sqlite:///"):
+        raw = db_url[len("sqlite:///"):]
+        db_path = _P(raw) if raw.startswith("/") else _P(raw).resolve()
+        # Handle sqlite://// case (absolute with extra /)
+        if db_url.startswith("sqlite:////") :
+            db_path = _P("/" + raw.lstrip("/"))
+    else:
+        db_path = None
+
+    if db_path is not None:
+        state = inspect_state(db_path)
+        if state in ("missing", "zero_byte"):
+            msg = init_fresh_database(db_path, db_url, logger)
+            if msg:
+                print(msg)
+                logger.info("db_init_failed state=%s", state)
+                release_mutex(mutex)
+                return 1
+            logger.info("db_fresh_initialized")
+        elif state == "at_head":
+            vmsg = verify_after_init(db_path)
+            if vmsg:
+                print("Database verification failed. Please try again.")
+                logger.info("db_verify_failed msg=%s", vmsg)
+                release_mutex(mutex)
+                return 1
+            logger.info("db_at_head_verified")
+        elif state == "old_head":
+            print("This database requires a safe upgrade before ACA can start.")
+            logger.info("db_old_head_refused")
+            release_mutex(mutex)
+            return 1
+        elif state == "unstamped":
+            print("This database is not supported. Please contact support.")
+            logger.info("db_unstamped_refused")
+            release_mutex(mutex)
+            return 1
+        elif state in ("future_head", "unknown_head"):
+            print("This database is from a newer version and cannot be used.")
+            logger.info("db_future_unknown_refused state=%s", state)
+            release_mutex(mutex)
+            return 1
+        elif state == "corrupt":
+            print("Database file is corrupt. Please contact support.")
+            logger.info("db_corrupt_refused")
+            release_mutex(mutex)
+            return 1
+
     # handle Ctrl+C / console close
     should_exit = {"flag": False}
 
