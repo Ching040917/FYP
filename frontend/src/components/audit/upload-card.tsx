@@ -507,6 +507,22 @@ export function UploadCard({ onResult, onReset, trySampleSignal = 0, cloudAvaila
     return selectorOptions.find((o) => o.value === selectedValue) ?? null
   }, [selectorOptions, selectedValue])
 
+  // Compact profile summary resets when the selection changes.
+  const [showFullRequirements, setShowFullRequirements] = React.useState(false)
+  React.useEffect(() => {
+    setShowFullRequirements(false)
+  }, [selectedValue])
+
+  const compactRequirementRe = /margin|body|line spacing|references|will not be checked/i
+  const compactReqLines = React.useMemo(() => {
+    if (!selectedOption) return []
+    return selectedOption.keyRequirements.filter((r) => compactRequirementRe.test(r))
+  }, [selectedOption])
+  const extraReqLines = React.useMemo(() => {
+    if (!selectedOption) return []
+    return selectedOption.keyRequirements.filter((r) => !compactRequirementRe.test(r))
+  }, [selectedOption])
+
   return (
     <Card className="border-border bg-card">
       <CardHeader className="pb-4">
@@ -528,6 +544,8 @@ export function UploadCard({ onResult, onReset, trySampleSignal = 0, cloudAvaila
       </CardHeader>
       <CardContent className="space-y-4">
         <label
+          id="upload-dropzone"
+          tabIndex={-1}
           onDragOver={(e) => {
             e.preventDefault()
             setIsDragging(true)
@@ -717,10 +735,10 @@ export function UploadCard({ onResult, onReset, trySampleSignal = 0, cloudAvaila
                         </Badge>
                       )}
                     </div>
-                    <p>{opt.description || (opt.isBuiltIn ? '' : 'Custom formatting profile')}</p>
-                    {opt.keyRequirements.length > 0 && (
+
+                    {compactReqLines.length > 0 && (
                       <ul className="list-disc space-y-0.5 pl-4">
-                        {opt.keyRequirements.map((req) => (
+                        {compactReqLines.map((req) => (
                           <li key={req}>{req}</li>
                         ))}
                       </ul>
@@ -729,6 +747,32 @@ export function UploadCard({ onResult, onReset, trySampleSignal = 0, cloudAvaila
                       <Info className="h-3 w-3 shrink-0" aria-hidden="true" />
                       Citation style: {opt.citationStyle}
                     </p>
+
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
+                      aria-expanded={showFullRequirements}
+                      aria-controls="profile-full-requirements"
+                      onClick={() => setShowFullRequirements((s) => !s)}
+                    >
+                      {showFullRequirements ? 'Hide full requirements' : 'View full requirements'}
+                    </Button>
+                    <div
+                      id="profile-full-requirements"
+                      hidden={!showFullRequirements}
+                      className="space-y-1.5"
+                    >
+                      {opt.description && <p className="break-words">{opt.description}</p>}
+                      {extraReqLines.length > 0 && (
+                        <ul className="list-disc space-y-0.5 pl-4">
+                          {extraReqLines.map((req) => (
+                            <li key={req}>{req}</li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
                   </div>
                 )
               })()}
@@ -749,7 +793,7 @@ export function UploadCard({ onResult, onReset, trySampleSignal = 0, cloudAvaila
               </Label>
               <p className="mt-0.5 flex items-start gap-1 text-xs leading-[16px] text-muted-foreground">
                 <Info className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
-                Local AI is used by default when available. Deterministic checks always run.
+                Local AI is used by default when available.
               </p>
               {!isCloudAvailable && (
                 <p
@@ -757,7 +801,7 @@ export function UploadCard({ onResult, onReset, trySampleSignal = 0, cloudAvaila
                   aria-live="polite"
                   className="mt-1 text-xs leading-[16px] text-muted-foreground"
                 >
-                  Cloud AI review is unavailable. Deterministic checks remain available.
+                  Cloud AI review is unavailable.
                 </p>
               )}
             </div>

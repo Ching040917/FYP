@@ -36,8 +36,14 @@ type CardState = 'checking' | 'loaded' | 'error'
 
 export function ReadinessCard({
   onCloudAvailable: onCloudAvailableProp,
+  expandSignal = 0,
+  detailsSlot,
 }: {
   onCloudAvailable?: (available: boolean | null) => void
+  /** Increment to programmatically expand + focus this card (e.g. from guidance). */
+  expandSignal?: number
+  /** Optional extra content rendered at the bottom of expanded details. */
+  detailsSlot?: React.ReactNode
 }) {
   const [state, setState] = React.useState<CardState>('checking')
   const [model, setModel] = React.useState<ReadinessModel | null>(null)
@@ -109,6 +115,18 @@ export function ReadinessCard({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // External expand signal (e.g. first-run guidance "View system readiness").
+  const lastExpandSignal = React.useRef(0)
+  React.useEffect(() => {
+    if (expandSignal > 0 && expandSignal !== lastExpandSignal.current) {
+      lastExpandSignal.current = expandSignal
+      setExpanded(true)
+      const el = document.getElementById('readiness-heading')
+      el?.scrollIntoView({ block: 'center' })
+      ;(el as HTMLElement | null)?.focus?.({ preventScroll: true })
+    }
+  }, [expandSignal])
+
   const headline =
     state === 'checking'
       ? 'Checking system readiness'
@@ -132,7 +150,11 @@ export function ReadinessCard({
       className="rounded-md border border-border bg-card py-4"
     >
       <CardHeader className="pb-3">
-        <CardTitle id="readiness-heading" className="text-base font-semibold">
+        <CardTitle
+          id="readiness-heading"
+          tabIndex={-1}
+          className="text-base font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded"
+        >
           System readiness
         </CardTitle>
         <div
@@ -225,6 +247,7 @@ export function ReadinessCard({
                 {m.rows.map((row) => (
                   <ReadinessRow key={row.id} row={row} />
                 ))}
+                {detailsSlot && <div className="pt-1">{detailsSlot}</div>}
               </div>
             )}
               </>

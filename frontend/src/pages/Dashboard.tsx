@@ -15,10 +15,12 @@
 import * as React from 'react'
 import { UploadCard } from '../components/audit/upload-card'
 import { ReadinessCard } from '../components/dashboard/readiness-card'
+import { GuidancePanel } from '../components/dashboard/guidance-panel'
 import { ComplianceSummary } from '../components/audit/compliance-summary'
 import { AuditCompletionPanel } from '../components/audit/audit-completion-panel'
 import { AppNav } from '../components/layout/AppNav'
 import { AppFooter } from '../components/layout/AppFooter'
+import { Button } from '../components/ui/button'
 import {
   Card,
   CardContent,
@@ -34,6 +36,13 @@ import {
   toCompletionSnapshot,
   type AuditCompletionSnapshot,
 } from '../lib/audit/audit-completion'
+import {
+  clearGuidance,
+  createBrowserGuidanceAdapter,
+  createMemoryGuidanceAdapter,
+  loadGuidanceDismissed,
+  saveGuidanceDismissed,
+} from '../lib/guidance'
 import type { AuditResult } from '../types/audit'
 
 /**
@@ -50,6 +59,14 @@ export function DashboardContent() {
   )
   const didHydrateCompletionRef = React.useRef(false)
   const [cloudAvailable, setCloudAvailable] = React.useState<boolean | null>(null)
+  const [expandSignal, setExpandSignal] = React.useState(0)
+
+  // First-run guidance: hydrated once from versioned localStorage. Null until
+  // hydration completes so returning users never see a dismissal flash.
+  const guidanceAdapterRef = React.useRef(
+    createBrowserGuidanceAdapter() ?? createMemoryGuidanceAdapter(),
+  )
+  const [guidanceDismissed, setGuidanceDismissed] = React.useState<boolean | null>(null)
 
   const dismissCompletion = React.useCallback(() => {
     setCompletion(null)
@@ -65,6 +82,27 @@ export function DashboardContent() {
     const restored = loadCompletionSnapshot(completionStorageRef.current)
     if (!restored) return
     setCompletion(restored)
+  }, [])
+
+  // Hydrate guidance dismissal once. No usable record (first visit, corrupted
+  // record removed, storage unavailable) → guidance shows.
+  const didHydrateGuidanceRef = React.useRef(false)
+  React.useEffect(() => {
+    if (didHydrateGuidanceRef.current) return
+    didHydrateGuidanceRef.current = true
+    setGuidanceDismissed(loadGuidanceDismissed(guidanceAdapterRef.current))
+  }, [])
+
+  const dismissGuidance = React.useCallback(() => {
+    setGuidanceDismissed(true)
+    saveGuidanceDismissed(guidanceAdapterRef.current, true)
+  }, [])
+
+  const reopenGuidance = React.useCallback(() => {
+    // Reopen clears the persisted dismissal so the panel behaves like a
+    // first visit again (and stays visible across refreshes until dismissed).
+    clearGuidance(guidanceAdapterRef.current)
+    setGuidanceDismissed(false)
   }, [])
 
   // Snapshot the exact completed-audit from the POST response — never from
@@ -105,6 +143,11 @@ export function DashboardContent() {
       completion={completion}
       cloudAvailable={cloudAvailable}
       onCloudAvailable={setCloudAvailable}
+      guidanceDismissed={guidanceDismissed}
+      expandSignal={expandSignal}
+      onExpandSignal={() => setExpandSignal((s) => s + 1)}
+      onDismissGuidance={dismissGuidance}
+      onReopenGuidance={reopenGuidance}
       onViewAudit={(id) => {
         clearCompletionSnapshot(completionStorageRef.current)
         setCompletion(null)
@@ -123,6 +166,11 @@ function DashboardShell({
   completion,
   cloudAvailable,
   onCloudAvailable,
+  guidanceDismissed,
+  expandSignal,
+  onExpandSignal,
+  onReopenGuidance,
+  onDismissGuidance,
   onViewAudit,
   onDismissCompletion,
   onResult,
@@ -132,11 +180,31 @@ function DashboardShell({
   completion: AuditCompletionSnapshot | null
   cloudAvailable: boolean | null
   onCloudAvailable: (available: boolean | null) => void
+  /** null = still hydrating; true = dismissed; false = show guidance. */
+  guidanceDismissed: boolean | null
+  expandSignal: number
+  onExpandSignal: () => void
+  onReopenGuidance: () => void
+  onDismissGuidance: () => void
   onViewAudit: (auditId: string) => void
   onDismissCompletion: () => void
   onResult: (r: AuditResult, cloudEnabled: boolean) => void
   onReset: () => void
 }) {
+  const focusDropzone = React.useCallback(() => {
+    const el = document.getElementById('upload-dropzone')
+    if (!el) return
+    el.scrollIntoView({ block: 'center' })
+    ;(el as HTMLElement).focus({ preventScroll: true })
+  }, [])
+
+  const focusReadiness = React.useCallback(() => {
+    const el = document.getElementById('readiness-heading')
+    if (!el) return
+    el.scrollIntoView({ block: 'center' })
+    ;(el as HTMLElement).focus?.({ preventScroll: true })
+  }, [])
+
   return (
     <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-2 xl:grid-cols-[5fr_7fr]">
       {/* Intake — upload + specification */}
@@ -148,8 +216,52 @@ function DashboardShell({
             onDismiss={onDismissCompletion}
           />
         ) : null}
-        <ReadinessCard onCloudAvailable={onCloudAvailable} />
-        <UploadCard onResult={onResult} onReset={onReset} cloudAvailable={cloudAvailable} />
+        <ReadinessCard
+          onCloudAvailable={onCloudAvailable}
+          expandSignal={expandSignal}
+          detailsSlot={
+            guidanceDismissed === true ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-8 px-2 text-xs text-muted-foreground hover:text-foreground"
+                onClick={onReopenGuidance}
+              >
+                Show setup guidance
+              </Button>
+            ) : undefined
+          }
+        />
+        <UploadCard
+          onResult={onResult}
+          onReset={onReset}
+          cloudAvailable={cloudAvailable}
+        />
+      </div>
+
+      {/* Result / guidance — priority: audit result > first-run guidance > no-audit */}
+      <div className="min-w-0">
+        {result ? (
+          <ComplianceSummary result={result} />
+        ) : guidanceDismissed !== true ? (
+          <GuidancePanel
+            readiness={
+              cloudAvailable === null ? 'unavailable' : cloudAvailable ? 'ready' : 'degraded'
+            }
+            onStartAuditing={() => {
+              onDismissGuidance()
+              requestAnimationFrame(focusDropzone)
+            }}
+            onViewReadiness={() => {
+              onExpandSignal()
+              requestAnimationFrame(focusReadiness)
+            }}
+            onDismiss={onDismissGuidance}
+          />
+        ) : (
+          <InitialGuidance />
+        )}
       </div>
 
       {/* Result — concise summary or guidance */}
