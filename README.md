@@ -41,7 +41,7 @@ See the [Installation Guide](docs/INSTALLATION.md) for packaged and source setup
 | Component | Purpose |
 |---|---|
 | Git | Clone this repository |
-| Python 3.11+ (verified with 3.13.x) | Backend runtime |
+| Python 3.11 or 3.12 (3.12 verified for release builds) | Backend runtime |
 | Node.js 18 LTS+ (24.x verified) | Frontend build tooling |
 
 Optional for both modes:

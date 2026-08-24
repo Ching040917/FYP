@@ -119,7 +119,7 @@ The configured model is `qwen3.5:4b` (`OLLAMA_HOST=http://localhost:11434`). Wit
 | Tool | Version | Check |
 |---|---|---|
 | Git | any recent | `git --version` |
-| Python | 3.11+ (verified with 3.13.x) | `python --version` |
+| Python | 3.11 or 3.12 | `python --version` | 3.12 is the verified Windows release-build version. 3.13 is currently unsupported: the pinned dependency set lacks required Windows wheels for a clean install. |
 | Node.js | 18 LTS+ (24.x verified) | `node --version` |
 | npm | ships with Node | `npm --version` |
 
