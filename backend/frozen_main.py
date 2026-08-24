@@ -98,10 +98,15 @@ def _launcher():
                 return 1
             logger.info("db_at_head_verified")
         elif state == "old_head":
-            print("This database requires a safe upgrade before ACA can start.")
-            logger.info("db_old_head_refused")
-            release_mutex(mutex)
-            return 1
+            from app.db_lifecycle import upgrade_existing_database
+            msg = upgrade_existing_database(db_path, db_url, root, logger)
+            if msg:
+                print(msg)
+                logger.info("db_upgrade_failed")
+                release_mutex(mutex)
+                return 1
+            logger.info("db_upgraded")
+            # Re-verify after upgrade already done inside upgrade_existing_database
         elif state == "unstamped":
             print("This database is not supported. Please contact support.")
             logger.info("db_unstamped_refused")
