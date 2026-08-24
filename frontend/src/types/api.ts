@@ -80,10 +80,10 @@ export interface AuditResponse {
   id: string
   filename: string
   file_size: number
-  weighted_score: number
+  weighted_score: number | null
   deploy_mode: string
   status: 'processing' | 'completed' | 'failed' | 'interrupted'
-  created_at: string
+  created_at: string | null
   completed_at: string | null
   /** Stale Audit recovery (Build 1/2): safe interruption metadata. Null for
    * non-interrupted audits. reason is a safe category, never paths/errors. */
@@ -108,9 +108,9 @@ export interface AuditResponse {
 export interface AuditListItem {
   id: string
   filename: string
-  weighted_score: number
+  weighted_score: number | null
   status: string
-  created_at: string
+  created_at: string | null
 }
 
 /** Presentation-safe built-in Document Formatting Profile listing (Build 5). */

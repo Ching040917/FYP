@@ -462,8 +462,8 @@ function HistoryRegister({
 
 /* ----------------------------- Cells and badges ----------------------------- */
 
-function ScoreCell({ status, score }: { status: string; score: number }) {
-  if (status !== 'completed') {
+function ScoreCell({ status, score }: { status: string; score: number | null }) {
+  if (status !== 'completed' || score == null) {
     return <span className="text-[13px] text-muted-foreground">Unavailable</span>
   }
   return (
@@ -510,7 +510,8 @@ function StatusBadge({ status }: { status: string }) {
   )
 }
 
-function formatDate(iso: string): string {
+function formatDate(iso: string | null): string {
+  if (!iso) return 'Unavailable'
   return formatAuditDateTime(iso)
 }
 

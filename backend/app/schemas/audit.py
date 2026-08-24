@@ -98,10 +98,10 @@ class AuditResponse(BaseModel):
     id: str
     filename: str
     file_size: int
-    weighted_score: int
+    weighted_score: Optional[int] = None
     deploy_mode: str
     status: str
-    created_at: datetime
+    created_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
     # Stale Audit recovery (Build 1): safe interruption metadata. Null for
     # non-interrupted audits. Never carries paths or error internals.
@@ -131,6 +131,6 @@ class AuditListResponse(BaseModel):
 
     id: str
     filename: str
-    weighted_score: int
+    weighted_score: Optional[int] = None
     status: str
-    created_at: datetime
+    created_at: Optional[datetime] = None

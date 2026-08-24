@@ -559,6 +559,12 @@ async def export_audit_pdf(audit_id: str, db: Session = Depends(get_db)):
     if not audit:
         raise HTTPException(status_code=404, detail="Audit not found")
 
+    if audit.weighted_score is None:
+        raise HTTPException(
+            status_code=409,
+            detail="This audit has no score available for export.",
+        )
+
     if audit.status == "processing":
         raise HTTPException(
             status_code=409,
