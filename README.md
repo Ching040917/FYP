@@ -80,7 +80,8 @@ For the full Windows PowerShell steps, database migration notes, and verificatio
 - [User Guide](docs/USER_GUIDE.md) — starting ACA, Dashboard, upload, profiles, audit, history, and export
 - [Privacy](docs/PRIVACY.md) — local data, browser storage, Local and Cloud AI, deletion and backups
 - [Troubleshooting](docs/TROUBLESHOOTING.md) — symptom → cause → safe action for common failures
-- Known limitations *(planned)*
+- [Known Limitations](docs/KNOWN_LIMITATIONS.md) — verified platform, packaging, audit-scope, and data limitations
+- [Release Checklist](docs/RELEASE_CHECKLIST.md) — reproducible gate for producing a packaged release
 - Third-party notices *(planned)*
 
 ## License status
