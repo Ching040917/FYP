@@ -77,9 +77,9 @@ For the full Windows PowerShell steps, database migration notes, and verificatio
 ## Documentation
 
 - [Installation Guide](docs/INSTALLATION.md) — packaged release and source setup, local data, database lifecycle, and limitations
-- User guide *(planned)*
-- Privacy notes *(planned)*
-- Troubleshooting *(planned)*
+- [User Guide](docs/USER_GUIDE.md) — starting ACA, Dashboard, upload, profiles, audit, history, and export
+- [Privacy](docs/PRIVACY.md) — local data, browser storage, Local and Cloud AI, deletion and backups
+- [Troubleshooting](docs/TROUBLESHOOTING.md) — symptom → cause → safe action for common failures
 - Known limitations *(planned)*
 - Third-party notices *(planned)*
 
