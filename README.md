@@ -82,7 +82,7 @@ For the full Windows PowerShell steps, database migration notes, and verificatio
 - [Troubleshooting](docs/TROUBLESHOOTING.md) — symptom → cause → safe action for common failures
 - [Known Limitations](docs/KNOWN_LIMITATIONS.md) — verified platform, packaging, audit-scope, and data limitations
 - [Release Checklist](docs/RELEASE_CHECKLIST.md) — reproducible gate for producing a packaged release
-- Third-party notices *(planned)*
+- [Third-Party Notices](THIRD_PARTY_NOTICES.md) — verified licenses for bundled software and assets
 
 ## License status
 
