@@ -28,3 +28,7 @@ frontend/.vite/
 /AGENTS.md
 /Architecture.md
 /PRD.md
+
+# Python virtual environments
+.venv/
+backend/.venv/
