@@ -44,13 +44,12 @@ All versions below are the exact declared pins from `backend/requirements.txt` a
 | python-docx | 1.1.0 | direct | yes | DOCX parsing | MIT | `python_docx-1.1.0.dist-info/LICENSE` |
 | python-multipart | 0.0.6 | direct | yes | multipart uploads | Apache-2.0 | `python_multipart-0.0.6.dist-info/licenses/LICENSE.txt` |
 | httpx | 0.27.2 | direct | yes | async HTTP client (Ollama/readiness) | BSD-3-Clause | `httpx-0.27.2.dist-info/licenses/LICENSE.md` |
-| Ollama Python client | 0.3.1 | direct | **not bundled** | declared but not imported at runtime | MIT | `ollama-0.3.1.dist-info/LICENSE` |
 | Google Generative AI SDK | 0.7.2 | direct | yes | Cloud AI provider client | Apache-2.0 | `google_generativeai-0.7.2.dist-info/LICENSE` |
 | python-dotenv | 1.0.1 | direct | yes | `.env` loading | BSD-3-Clause | `python_dotenv-1.0.1.dist-info/LICENSE` |
 | ReportLab | 4.0.7 | direct | yes | PDF report generation | BSD | `reportlab-4.0.7.dist-info/LICENSE` |
 | pypdf | 6.16.1 | direct | yes | PDF parsing (page counts) | BSD-3-Clause | `pypdf-6.16.1.dist-info/licenses/LICENSE` |
 
-> **Ollama client note:** `ollama==0.3.1` is pinned in `backend/requirements.txt` but is not imported by any ACA module and is **not** present in the clean frozen bundle. It is listed for completeness; it does not need a bundled notice.
+> **Ollama integration note:** Ollama is accessed via direct HTTP (`httpx` to `/api/tags` and `/api/generate`); no Python `ollama` client package is required and none is bundled.
 
 ### Verified transitive dependencies (bundled)
 
@@ -103,7 +102,7 @@ The following transitive runtime dependencies are collected in the clean frozen 
 | watchfiles | 1.2.0 | MIT | `_internal/watchfiles` |
 | websockets | 17.0.1 | BSD-3-Clause | `_internal/websockets-17.0.1.dist-info` |
 
-Not bundled in the clean build (verified absent): pandas, scipy, pyarrow, matplotlib, numpy, tzdata, ollama.
+Not bundled in the clean build (verified absent): pandas, scipy, pyarrow, matplotlib, numpy, tzdata.
 
 ## 4. Bundled Frontend dependencies and assets
 
@@ -120,9 +119,7 @@ Versions are the exact locked versions from `frontend/package-lock.json`. All ar
 | @radix-ui/react-slot | 1.3.0 | MIT | slot pattern |
 | @radix-ui/react-switch | 1.3.1 | MIT | toggle |
 | lucide-react | 0.303.0 | ISC (Feather-derived MIT portions) | icons |
-| mammoth | 1.12.0 | BSD-2-Clause | DOCX → HTML extraction |
 | pdfjs-dist | 5.7.284 | Apache-2.0 | PDF rendering/worker |
-| recharts | 3.8.1 | MIT | charts |
 | class-variance-authority | 0.7.1 | Apache-2.0 | styling variants |
 | clsx | 2.1.1 | MIT | className helper |
 | tailwind-merge | 3.6.0 | MIT | Tailwind class merging |
@@ -194,7 +191,6 @@ ACA never bundles the qwen3.5:4b model, LibreOffice, Ollama, or any Cloud AI pro
 ## 10. Unresolved or release-blocking items
 
 - **ACA project license is not selected** — public redistribution of the ACA source and package is blocked pending an owner decision. This document does not resolve that.
-- **Ollama client pin (`ollama==0.3.1`) is unused** — declared but not imported; not bundled. Consider removing or documenting it in a future dependency cleanup.
 - Some transitive license identifiers are derived from `dist-info` `License` fields and classifier metadata shipped with the installed packages; full text files were verified for the items where a local file exists. Where a license field was empty, the SPDX identifier was confirmed from the shipped `LICENSE`/`COPYING` file or the package's official metadata.
 
 ## 11. Evidence and update policy
