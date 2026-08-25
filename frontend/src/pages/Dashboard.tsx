@@ -263,15 +263,6 @@ function DashboardShell({
           <InitialGuidance />
         )}
       </div>
-
-      {/* Result — concise summary or guidance */}
-      <div className="min-w-0">
-        {result ? (
-          <ComplianceSummary result={result} />
-        ) : (
-          <InitialGuidance />
-        )}
-      </div>
     </div>
   )
 }

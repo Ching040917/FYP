@@ -56,6 +56,7 @@ import {
   ENABLED_CHECKS_SUFFIX,
   profileDisclosure,
 } from '../lib/audit/enabled-checks-wording'
+import { isScoreAvailable } from '../lib/score-display'
 
 // Concise user-facing notices for non-navigable findings (Task 3).
 const OBJECT_NOTICE =
@@ -906,10 +907,14 @@ export function AuditPage() {
                   Score (enabled checks)
                 </div>
                 <div className="flex items-baseline justify-end gap-1.5">
-                  <span className="font-mono text-lg font-semibold text-foreground">
-                    {audit.weighted_score}
-                  </span>
-                  <span className="text-[13px] text-muted-foreground">/100</span>
+                  {isScoreAvailable(audit.weighted_score) ? (
+                    <>
+                      <span className="font-mono text-lg font-semibold text-foreground">{audit.weighted_score}</span>
+                      <span className="text-[13px] text-muted-foreground">/100</span>
+                    </>
+                  ) : (
+                    <span className="font-mono text-lg font-semibold text-foreground">Unavailable</span>
+                  )}
                 </div>
                 <div className="mt-0.5 text-right text-[12px] leading-4 text-muted-foreground">
                   {ENABLED_CHECKS_SUFFIX}

@@ -35,6 +35,7 @@ import { api, TimeoutError } from '../services/api'
 import { useToast } from '../hooks/useToast'
 import { formatAuditDateTime, auditDateTimeAttr } from '../lib/format-date'
 import { dropRenderedPdfCache } from '../hooks/use-rendered-pdf'
+import { isScoreAvailable } from '../lib/score-display'
 import type { AuditListItem } from '../types/api'
 
 type LoadState = 'loading' | 'success' | 'error' | 'empty'
@@ -462,8 +463,8 @@ function HistoryRegister({
 
 /* ----------------------------- Cells and badges ----------------------------- */
 
-function ScoreCell({ status, score }: { status: string; score: number | null }) {
-  if (status !== 'completed' || score == null) {
+function ScoreCell({ status, score }: { status: string; score: number | null | undefined }) {
+  if (status !== 'completed' || !isScoreAvailable(score)) {
     return <span className="text-[13px] text-muted-foreground">Unavailable</span>
   }
   return (

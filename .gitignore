@@ -19,6 +19,11 @@ backend/*.sqlite3
 /backend/build/
 /backend/dist/
 
+# Generated frontend build output and Vite cache (never track)
+frontend/dist/
+frontend/.vite/
+.vite/
+
 # Local-only project documents (tracked until Build 5 commit, now local-only)
 /AGENTS.md
 /Architecture.md

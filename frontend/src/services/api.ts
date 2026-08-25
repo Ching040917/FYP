@@ -129,7 +129,7 @@ export const api = {
   },
 
   async listAudits(limit = 20, offset = 0): Promise<AuditListItem[]> {
-    const response = await fetch(`${API_BASE}/audits?limit=${limit}&offset=${offset}`)
+    const response = await fetchWithTimeout(`${API_BASE}/audits?limit=${limit}&offset=${offset}`, {}, POLL_TIMEOUT_MS)
     return handleResponse<AuditListItem[]>(response)
   },
 
@@ -143,7 +143,7 @@ export const api = {
   },
 
   async healthCheck(): Promise<{ status: string }> {
-    const response = await fetch('/health')
+    const response = await fetchWithTimeout('/health', {}, POLL_TIMEOUT_MS)
     return handleResponse<{ status: string }>(response)
   },
 
