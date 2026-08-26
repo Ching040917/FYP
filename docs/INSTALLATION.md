@@ -183,13 +183,35 @@ Then open `http://localhost:5173` — the Dashboard readiness card should show *
 
 ### Reproducible packaging workflow
 
-Do not commit `frontend/dist` build artifacts manually. To produce a verified one-folder release from source:
+**Packaging requires Python 3.12.** The build runs **only** through the repository-controlled `backend/.venv` interpreter — never a global Python, never a PATH-resolved `pyinstaller`, and never Python 3.13. `frontend/dist` build artifacts are never committed.
+
+Prepare the controlled packaging environment once (Python 3.12 must be the interpreter that created `.venv`):
+
+```powershell
+cd backend
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+pip install -r requirements-dev.txt   # owns the exact PyInstaller pin
+```
+
+Then produce a verified one-folder release from the repository root:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File backend/scripts/build-packaging-poc.ps1
 ```
 
-The script always rebuilds the Frontend, verifies required route markers (`/dashboard`, `/history`, `/profiles/custom`, `System readiness`), staleness, and hash parity, runs PyInstaller (`ACA.spec`), and runs a frozen smoke suite. It restores tracked `frontend/dist` to `HEAD` afterwards. `backend/dist` and `backend/build` remain ignored.
+The script:
+
+1. Verifies the controlled interpreter exists and is Python 3.12.x, and that the repository-owned `PyInstaller==6.22.2` pin is importable — failing **before** any build output is touched if any prerequisite is missing or mismatched.
+2. Always rebuilds the Frontend (`npm ci` + `npm run build`).
+3. Verifies required route markers (`/dashboard`, `/history`, `/profiles/custom`, `System readiness`), staleness, and source-to-bundled frontend hash parity.
+4. Runs PyInstaller (`ACA.spec`) via `backend/.venv/Scripts/python.exe -m PyInstaller` — no global PATH fallback.
+5. Rejects the bundle if it contains any prohibited package (`numpy`, `pandas`, `scipy`, `matplotlib`, `pyarrow`, `ollama`), checked against `_internal` directories and PyInstaller TOC files.
+6. Rejects the bundle if it exceeds the size ceiling (250 MB) — a clean Python 3.12 build is ~189 MB; larger output signals dependency contamination.
+7. Runs an isolated frozen smoke suite (127.0.0.1 binding, port selection, SPA direct routes, health, database init, process cleanup) against a temporary data root.
+
+`backend/dist` and `backend/build` remain ignored. `frontend/dist` is left in place after a build so you can inspect the exact frontend the bundle shipped; it is ignored and never committed.
 
 ### Stopping source mode
 

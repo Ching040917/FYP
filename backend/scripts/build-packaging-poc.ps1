@@ -1,4 +1,9 @@
-﻿# Reproducible packaging build - always fresh Frontend before PyInstaller.
+# Reproducible packaging build - always fresh Frontend before PyInstaller.
+#
+# Packaging is strictly bound to the repository-controlled backend Python 3.12
+# virtual environment (backend/.venv). Global Python, PATH-resolved PyInstaller,
+# and Python 3.13 are NEVER used. Missing or mismatched prerequisites fail
+# BEFORE any build output is touched.
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
@@ -7,10 +12,94 @@ $BackendDir = (Resolve-Path (Join-Path $ScriptDir "..")).Path
 $RepoRoot = (Resolve-Path (Join-Path $BackendDir "..")).Path
 $FrontendDir = Join-Path $RepoRoot "frontend"
 $FrontendDist = Join-Path $FrontendDir "dist"
+$VenvDir = Join-Path $BackendDir ".venv"
+$VenvPython = Join-Path $VenvDir "Scripts\python.exe"
+
+# Repository-owned exact PyInstaller pin (must match requirements-dev.txt).
+$RequiredPythonMajorMinor = "3.12"
+$RequiredPyInstallerVersion = "6.22.2"
+
+# Prohibited packages must never be bundled, regardless of the build machine.
+$ProhibitedPackages = @("numpy", "pandas", "scipy", "matplotlib", "pyarrow", "ollama")
+
+# Size regression ceiling. Clean Python 3.12 bundles are ~189 MB; the guard
+# allows headroom but still rejects the contaminated ~388 MB build.
+$MaxBundleBytes = 250MB
 
 function Fail($msg) { Write-Host "FAIL: $msg" -ForegroundColor Red; exit 1 }
 
+# Log an explicit override (never disables contamination checks).
+function Log-Override($msg) { Write-Host "OVERRIDE: $msg" -ForegroundColor Yellow }
+
+function Test-Python312PackageEnv {
+    if (-not (Test-Path $VenvPython)) {
+        Fail @"
+The controlled packaging interpreter is missing.
+  Expected: $VenvPython
+To create it, run (from $BackendDir):
+  python -m venv .venv
+  .venv\Scripts\Activate.ps1
+  pip install -r requirements.txt
+  pip install -r requirements-dev.txt
+"@
+    }
+
+    $pyVer = & $VenvPython -c "import sys; print('%s.%s' % (sys.version_info.major, sys.version_info.minor))" 2>&1
+    if ($LASTEXITCODE -ne 0) { Fail "Could not query the venv interpreter: $pyVer" }
+    if ($pyVer -ne $RequiredPythonMajorMinor) {
+        Fail @"
+Packaging requires Python $RequiredPythonMajorMinor.x, but the controlled
+interpreter reports '$($pyVer.Trim())'.
+  Interpreter: $VenvPython
+Recreate the environment with a Python $RequiredPythonMajorMinor interpreter, then:
+  pip install -r requirements.txt
+  pip install -r requirements-dev.txt
+"@
+    }
+
+    $piVer = & $VenvPython -m PyInstaller --version 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Fail @"
+PyInstaller is not installed in the controlled environment.
+  Interpreter: $VenvPython
+Install the repository-owned dev dependencies:
+  $VenvPython -m pip install -r requirements-dev.txt
+"@
+    }
+    $piVer = ($piVer | Select-Object -First 1).Trim()
+    if ($piVer -ne $RequiredPyInstallerVersion) {
+        Fail "PyInstaller version $piVer does not match the repository pin $RequiredPyInstallerVersion. Install exactly PyInstaller==$RequiredPyInstallerVersion via requirements-dev.txt."
+    }
+    Write-Host "Packaging interpreter OK: $($pyVer.Trim()) via backend/.venv (Python $RequiredPythonMajorMinor.x)"
+    Write-Host "PyInstaller OK: $piVer"
+}
+
+function Test-BundleChecks {
+    param($BundleRoot)
+    $tocArg = Join-Path $BackendDir "build\ACA"
+    $pyChecks = Join-Path $BackendDir "scripts\packaging_checks.py"
+    $out = & $VenvPython $pyChecks $BundleRoot $tocArg 2>&1
+    $exit = $LASTEXITCODE
+    $out | ForEach-Object { Write-Host $_ }
+    if ($exit -ne 0) {
+        $override = $env:ACA_ALLOW_OVERSIZE
+        if ($exit -eq 3 -and $override -eq "1") {
+            # Size guard explicitly overridden (contamination checks already passed at exit 0).
+            Log-Override "Bundle exceeds the size ceiling but ACA_ALLOW_OVERSIZE=1 is set. Contamination checks remain active."
+            return
+        }
+        if ($exit -eq 3) {
+            Fail "Bundle exceeds the configured size ceiling. A clean Python 3.12 build is ~189 MB; >250 MB indicates dependency contamination. Recreate backend/.venv and rebuild."
+        }
+        Fail "Bundle validation failed: $out"
+    }
+    Write-Host "Contamination check OK: none of $($ProhibitedPackages -join ', ') present"
+}
+
 try {
+    Write-Host "=== 0. Packaging environment (Python 3.12, backend/.venv only) ==="
+    Test-Python312PackageEnv
+
     Write-Host "=== 1. npm ci ==="
     Push-Location $FrontendDir
     try {
@@ -50,10 +139,10 @@ try {
     }
     Write-Host "Staleness check OK"
 
-    Write-Host "=== 4. PyInstaller ACA.spec ==="
+    Write-Host "=== 4. PyInstaller via controlled interpreter (no PATH fallback) ==="
     Push-Location $BackendDir
     try {
-        & pyinstaller ACA.spec --noconfirm
+        & $VenvPython -m PyInstaller ACA.spec --noconfirm
         if ($LASTEXITCODE -ne 0) { Fail "PyInstaller failed $LASTEXITCODE" }
     } finally { Pop-Location }
 
@@ -70,26 +159,29 @@ try {
     if ($srcHtmlHash -ne $bHtmlHash) { Fail "HTML hash mismatch" }
     Write-Host "Hash match OK"
 
-    Write-Host "=== 6. Frozen smoke ==="
+    Write-Host "=== 6. Bundle contamination + size guards ==="
+    $BundleRoot = Join-Path $BackendDir "dist/run-frozen"
+    Test-BundleChecks -BundleRoot $BundleRoot
+
+    Write-Host "=== 7. Frozen smoke (isolated runtime root) ==="
     $env:ACA_DISABLE_BROWSER = "1"
     Remove-Item Env:\ACA_BROWSER_RECORD_FILE -ErrorAction SilentlyContinue
-    Remove-Item "$env:LOCALAPPDATA\AcademicComplianceAuditor\instance.json" -Force -ErrorAction SilentlyContinue
-    $staleCheck = Join-Path $env:LOCALAPPDATA "AcademicComplianceAuditor/instance.json"
-    if (Test-Path $staleCheck) {
-        try { $s = Get-Content $staleCheck -Raw | ConvertFrom-Json; $sp = Get-Process -Id $s.pid -ErrorAction SilentlyContinue; if (-not $sp) { Remove-Item $staleCheck -Force -ErrorAction SilentlyContinue; Write-Host "Cleaned stale instance.json" } } catch { Remove-Item $staleCheck -Force -ErrorAction SilentlyContinue }
-    }
+    $smokeRoot = Join-Path $env:TEMP ("aca_smoke_" + [guid]::NewGuid().ToString("N"))
+    New-Item -ItemType Directory -Force -Path $smokeRoot | Out-Null
+    $previousLocalAppData = $env:LOCALAPPDATA
+    $env:LOCALAPPDATA = $smokeRoot
+    $instPath = Join-Path $env:LOCALAPPDATA "AcademicComplianceAuditor\instance.json"
     $exe = Join-Path $BackendDir "dist/run-frozen/run-frozen.exe"
     $p = Start-Process $exe -WindowStyle Hidden -PassThru
     $launcherPid = $p.Id
-    Write-Host "Launcher PID $launcherPid"
+    Write-Host "Launcher PID $launcherPid (isolated data root: <temp>/aca_smoke_*)"
     $ok = $false
-    for ($i=0; $i -lt 15; $i++) {
+    for ($i=0; $i -lt 20; $i++) {
         Start-Sleep 1
         try { $r = Invoke-RestMethod "http://127.0.0.1:8010/health" -TimeoutSec 2; if ($r.status -eq "healthy") { $ok=$true; break } } catch {}
         if ($p.HasExited) { Fail "Launcher exited early $($p.ExitCode)" }
     }
     if (-not $ok) { Fail "Health not ready" }
-    $instPath = Join-Path $env:LOCALAPPDATA "AcademicComplianceAuditor/instance.json"
     $port = 8010
     if (Test-Path $instPath) { try { $port = (Get-Content $instPath -Raw | ConvertFrom-Json).port } catch {} }
     $base = "http://127.0.0.1:$port"
@@ -120,7 +212,8 @@ try {
     Start-Sleep 2
     $left = Get-CimInstance Win32_Process -Filter "Name='run-frozen.exe'" -ErrorAction SilentlyContinue
     if ($left) { $fails += "ACA processes remain" }
-    Remove-Item $instPath -Force -ErrorAction SilentlyContinue
+    $env:LOCALAPPDATA = $previousLocalAppData
+    if (Test-Path $smokeRoot) { Remove-Item $smokeRoot -Recurse -Force -ErrorAction SilentlyContinue }
     Remove-Item Env:\ACA_DISABLE_BROWSER -ErrorAction SilentlyContinue
     if ($fails.Count -gt 0) { Fail "Smoke failures: $($fails -join '; ')" }
     Write-Host "Smoke OK"
@@ -129,10 +222,9 @@ try {
 finally {
     Remove-Item Env:\ACA_DISABLE_BROWSER -ErrorAction SilentlyContinue
     Remove-Item Env:\ACA_BROWSER_RECORD_FILE -ErrorAction SilentlyContinue
-    Push-Location $RepoRoot -ErrorAction SilentlyContinue
-    try {
-        & git restore frontend/dist 2>&1 | Out-Null
-        & git clean -fd -- frontend/dist 2>&1 | Out-Null
-        Write-Host "Restored tracked frontend/dist to HEAD"
-    } catch {} finally { Pop-Location -ErrorAction SilentlyContinue }
+    Remove-Item Env:\ACA_ALLOW_OVERSIZE -ErrorAction SilentlyContinue
+    # frontend/dist is generated, ignored, and untracked. It is left in place
+    # (never removed with destructive Git cleanup) so a developer can inspect
+    # the exact frontend the bundle shipped. The repository stays clean because
+    # the directory is ignored.
 }

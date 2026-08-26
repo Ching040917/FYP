@@ -18,10 +18,13 @@ Complete every section before publishing a packaged Windows release. Each checkb
 - [ ] Complete Frontend suite passes.
 - [ ] TypeScript check passes (`npx tsc --noEmit`).
 - [ ] Production Frontend build succeeds (`npm run build`).
-- [ ] PyInstaller one-folder build succeeds (`backend/ACA.spec`).
+- [ ] PyInstaller one-folder build succeeds via `backend/.venv` Python 3.12 (`build-packaging-poc.ps1`), never global/PATH PyInstaller.
+- [ ] Build log confirms Python 3.12.x and the repository-owned `PyInstaller==6.22.2` pin.
 - [ ] Required Frontend route markers present in bundled JS (`/dashboard`, `/history`, `/profiles/custom`, `System readiness`).
 - [ ] Source and bundled asset hashes match.
-- [ ] Tracked `frontend/dist` restored to HEAD after packaging.
+- [ ] Bundle contains no prohibited packages (`numpy`, `pandas`, `scipy`, `matplotlib`, `pyarrow`, `ollama`).
+- [ ] Bundle size within the 250 MB ceiling (clean ~189 MB) and file count reported.
+- [ ] `frontend/dist` is ignored and untracked (never committed; not restored/cleaned by the build script).
 - [ ] `git diff --check` clean.
 
 ## Frozen package
