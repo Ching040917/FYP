@@ -84,6 +84,12 @@ class AuditRecord(Base):
     rendered_preview_converted_at = Column(DateTime, nullable=True)
     rendered_preview_error = Column(String(50), nullable=True)
 
+    # Paragraph→physical rendered-page mapping (Build friendly locations):
+    # nullable JSON dict { "paragraph_index": page_number } with 1-based
+    # physical pages. NULL for historical audits and when preview/mapping was
+    # unavailable. Stores integers only, no document text.
+    paragraph_page_mapping = Column(JSON, nullable=True)
+
     violations = relationship("Violation", back_populates="audit", cascade="all, delete-orphan")
     citation_issues = relationship("CitationIssue", back_populates="audit", cascade="all, delete-orphan")
 

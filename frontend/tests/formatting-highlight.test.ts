@@ -87,7 +87,7 @@ test('run-level without run text on single-line paragraph → exact full-line hi
   const r = resolveFormattingHighlight(finding('f1', 'FONT_SIZE', 2, 0), b)
   assert.equal(r.kind, 'run') // single visible line = single text unit
   assert.equal(r.message, null)
-  assert.equal(r.label, 'Font size · Paragraph 3, Run 1')
+  assert.equal(r.label, 'Font size · Page 1 · Paragraph 3')
 })
 
 test('run-level without run text on multi-line paragraph → paragraph fallback', () => {
@@ -98,7 +98,7 @@ test('run-level without run text on multi-line paragraph → paragraph fallback'
   assert.equal(r.kind, 'paragraph')
   assert.ok(r.pageRects.length === 1)
   assert.equal(r.message, RUN_FALLBACK_MESSAGE)
-  assert.equal(r.label, 'Font size · Paragraph 3, Run 1')
+  assert.equal(r.label, 'Font size · Page 1 · Paragraph 3')
 })
 
 test('run-level with exact run text highlights only that run', () => {
@@ -215,9 +215,9 @@ test('labels use user-facing names and one-based identity', () => {
   const pages = [page(1, [item(BODY, 100, 700)])]
   const b = bundle(pages, [{ index: 5, text: BODY }], () => 1)
   const run = resolveFormattingHighlight(finding('f1', 'FONT_SIZE', 5, 1), b)
-  assert.equal(run.label, 'Font size · Paragraph 6, Run 2')
+  assert.equal(run.label, 'Font size · Page 1 · Paragraph 6')
   const para = resolveFormattingHighlight(finding('f2', 'ALIGNMENT', 5), b)
-  assert.equal(para.label, 'Alignment · Paragraph 6')
+  assert.equal(para.label, 'Alignment · Page 1 · Paragraph 6')
 })
 
 test('enclose pads and clamps the envelope', () => {

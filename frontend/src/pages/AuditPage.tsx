@@ -458,9 +458,18 @@ export function AuditPage() {
       if (mappingBundle) {
         const decision = resolveFindingNavigation(v, mappingBundle.byIndex)
         if (decision.locationLabel) labels.set(v.id, decision.locationLabel)
-      } else if (mappingStatus === 'error' && hasParagraphIdentity(v)) {
+      } else if (hasParagraphIdentity(v)) {
         const para = v.location?.paragraph_index as number
-        labels.set(v.id, `Paragraph ${para + 1} · Page unavailable`)
+        // Fallback to persisted mapping when preview is unavailable (e.g. LibreOffice missing)
+        const persisted = (audit as any).paragraph_page_mapping as Record<string, number> | null | undefined
+        const page = persisted?.[String(para)]
+        if (page != null) {
+          labels.set(v.id, `Page ${page} · Paragraph ${para + 1}`)
+        } else if (mappingStatus === 'error') {
+          labels.set(v.id, `Paragraph ${para + 1} · Page unavailable`)
+        } else {
+          labels.set(v.id, `Paragraph ${para + 1}`)
+        }
       }
     }
     return labels
@@ -1595,7 +1604,7 @@ function CitationSection({
     body = (
       <p className="mt-2 flex items-start gap-2 text-[13px] leading-[19px] text-muted-foreground">
         <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-        This finding was verified by deterministic checks. AI-assisted guidance is available for
+        This finding was verified by automated formatting checks. AI-assisted guidance is available for
         citation findings — select one from the list to see it.
       </p>
     )

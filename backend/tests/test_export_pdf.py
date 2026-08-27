@@ -763,7 +763,9 @@ def test_consecutive_paragraph_locations_compacted_into_ranges(client, test_engi
     audit_id = _seed_audit(test_engine, status="completed", weighted_score=80,
                            violations=violations)
     text = _pdf_text(_export(client, audit_id).content)
-    assert "Paragraphs 1-5 (Run 1, Run 3, Run 5, Run 7, Run 9)" in text
+    assert "Paragraphs 1-5" in text
+    assert "Run 1" not in text
+    assert "Run 3" not in text
 
 
 def test_appendix_lands_on_new_landscape_page_split_by_severity(client, test_engine):

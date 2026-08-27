@@ -90,6 +90,10 @@ class AuditSubmitResponse(BaseModel):
     # The identical snapshot POSTed is returned; null for historical audits
     # ("Legacy formatting requirements"). Never carries document content.
     profile_snapshot: Optional[Any] = None
+    # NEW — paragraph→physical rendered-page mapping (Build friendly locations).
+    # Nullable JSON {paragraph_index: page_number} with 1-based pages. NULL for
+    # historical audits or when preview was unavailable.
+    paragraph_page_mapping: Optional[Any] = None
 
 
 class AuditResponse(BaseModel):
@@ -124,6 +128,8 @@ class AuditResponse(BaseModel):
     # Null for historical audits. GET returns stored data, never a
     # re-resolution.
     profile_snapshot: Optional[Any] = None
+    # NEW — paragraph→physical rendered-page mapping (Build friendly locations).
+    paragraph_page_mapping: Optional[Any] = None
 
 
 class AuditListResponse(BaseModel):

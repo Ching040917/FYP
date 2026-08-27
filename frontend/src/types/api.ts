@@ -60,6 +60,8 @@ export interface AuditSubmitResponse {
   /** NEW — AI-assisted citation review execution summary (Build 7D). Null = status not recorded. */
   ai_review_status?: string | null
   ai_provider?: string | null
+  /** Paragraph→physical rendered-page mapping (Build friendly locations). Null when unavailable. */
+  paragraph_page_mapping?: Record<string, number> | null
 }
 
 /** Section boundary metadata (PoC) — mirrors backend SectionMetadata. */
@@ -103,6 +105,8 @@ export interface AuditResponse {
   sections?: SectionMetadata[] | null
   /** Immutable per-Audit Formatting Profile snapshot. Null for historical audits. */
   profile_snapshot?: ProfileSnapshot | null
+  /** Paragraph→physical rendered-page mapping (Build friendly locations). Null when unavailable. */
+  paragraph_page_mapping?: Record<string, number> | null
 }
 
 export interface AuditListItem {

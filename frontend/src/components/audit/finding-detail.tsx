@@ -76,7 +76,7 @@ export function FindingDetail({ violation }: { violation: Violation | null }) {
         </Badge>
         <span className="inline-flex items-center gap-1.5 text-[13px] leading-[19px] text-muted-foreground">
           <ShieldCheck className="h-3.5 w-3.5 text-success" aria-hidden="true" />
-          Deterministic check
+          Automated formatting check
         </span>
       </div>
 
@@ -94,7 +94,7 @@ export function FindingDetail({ violation }: { violation: Violation | null }) {
         )}
         <div className="flex items-baseline gap-3">
           <dt className="w-28 shrink-0 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-            Specification
+            Rule reference
           </dt>
           <dd className="font-mono text-[13px] leading-[19px] text-foreground">{v.rule_code}</dd>
         </div>

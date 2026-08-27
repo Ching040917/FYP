@@ -117,9 +117,19 @@ export function resolveFormattingHighlight(
   // Spacing side: computed once from ruleCode, used by overlay renderer.
   const spacingSide = rule === 'SPACE_BEFORE' ? 'before' : rule === 'SPACE_AFTER' ? 'after' : null
   const isRunLevel = rule === 'FONT_CONSISTENCY' || rule === 'FONT_SIZE'
-  const runIndex = getRunIndex(finding.location)
   const paragraphNumber = paraIndex + 1
-  const runLabel = isRunLevel && runIndex !== null ? `${ruleLabel(rule)} · Paragraph ${paragraphNumber}, Run ${runIndex + 1}` : `${ruleLabel(rule)} · Paragraph ${paragraphNumber}`
+  // User-facing label never shows Run (internal DOCX concept); keep run
+  // indexes only for precise evidence highlighting. Show physical page.
+  const pagePart = mapped.pageNumber != null ? `Page ${mapped.pageNumber} · ` : ''
+  const block = bundle.blocks?.find((b) => b.index === paraIndex)
+  const isHeading = block?.role?.startsWith('HEADING_') || block?.role === 'REFERENCES_HEADING' || block?.role === 'APPENDIX_HEADING'
+  let headingExcerpt: string | null = null
+  if (isHeading && block?.text) {
+    const txt = block.text.trim().replace(/\s+/g, ' ')
+    if (txt) headingExcerpt = txt.length > 60 ? txt.slice(0, 60).trim() + '…' : txt
+  }
+  const locPart = headingExcerpt ? `Heading “${headingExcerpt}”` : `Paragraph ${paragraphNumber}`
+  const runLabel = `${ruleLabel(rule)} · ${pagePart}${locPart}`
 
   // Run-level: exact highlight only with unambiguous run text evidence.
   if (isRunLevel) {
@@ -426,6 +436,8 @@ function getRunIndex(location: Record<string, unknown> | null | undefined): numb
   const n = location?.run_index
   return typeof n === 'number' && n >= 0 ? n : null
 }
+// Keep run-index helper for internal detection (not user-facing)
+void getRunIndex
 
 function clamp01(v: number): number {
   return Math.min(1, Math.max(0, v))

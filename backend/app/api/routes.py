@@ -34,6 +34,7 @@ from app.services.document_parser import (
 from app.services.docx_pdf_converter import convert_docx_to_pdf, DocxConversionError
 from app.services import preview_storage
 from app.services.pdf_report import generate_audit_pdf, build_export_filename
+from app.services.page_mapping import compute_paragraph_page_mapping
 from app.services.profile_resolver import (
     resolve_request_profile,
     restore_snapshot,
@@ -120,6 +121,7 @@ async def audit_document(
     # True once *we* wrote the rendered preview file — the only case where
     # cleanup (removal) is ours to perform.
     preview_pdf_written = False
+    preview_pdf_bytes: bytes | None = None
 
     try:
         # ---- Rendered PDF preview (Build 2): best-effort, never fails the audit ----
@@ -129,6 +131,7 @@ async def audit_document(
         preview_started = time.perf_counter()
         try:
             pdf_bytes = convert_docx_to_pdf(file_bytes)
+            preview_pdf_bytes = pdf_bytes
             meta = preview_storage.store_pdf(audit.id, pdf_bytes)
             preview_pdf_written = True
             audit.rendered_preview_status = preview_storage.PREVIEW_STATUS_AVAILABLE
@@ -196,6 +199,24 @@ async def audit_document(
         # Section boundary metadata (PoC): persisted so POST, GET, refresh,
         # and History all see identical metadata. Historical rows stay NULL.
         audit.section_metadata = section_metadata
+
+        # Paragraph→physical rendered-page mapping (Build friendly locations):
+        # computed only when preview bytes are validated and paragraphs are
+        # available. Stored as {paragraph_index: page_number} with 1-based
+        # physical pages. NULL for historical/unavailable cases. Never stores
+        # document text; never fails the audit.
+        try:
+            if preview_pdf_bytes is not None and audit.rendered_preview_status == preview_storage.PREVIEW_STATUS_AVAILABLE:
+                audit.paragraph_page_mapping = compute_paragraph_page_mapping(
+                    paragraphs,
+                    preview_pdf_bytes,
+                    rendered_preview_pages=audit.rendered_preview_pages,
+                )
+            else:
+                audit.paragraph_page_mapping = None
+        except Exception:
+            logger.info("page_mapping failed audit=%s", audit.id)
+            audit.paragraph_page_mapping = None
 
         # Immutable Document Formatting Profile snapshot (Build 3): resolved
         # BEFORE deterministic processing and persisted in the SAME
@@ -300,6 +321,7 @@ async def audit_document(
             ai_provider=ai_result.provider,
             sections=[SectionMetadata(**s) for s in section_metadata],
             profile_snapshot=profile_snapshot.to_dict(),
+            paragraph_page_mapping=audit.paragraph_page_mapping,
         )
 
     except HTTPException:
@@ -434,6 +456,7 @@ async def get_audit(audit_id: str, db: Session = Depends(get_db)):
             and restore_snapshot(audit.profile_snapshot) is not None
             else None
         ),
+        paragraph_page_mapping=audit.paragraph_page_mapping if isinstance(audit.paragraph_page_mapping, dict) else None,
     )
 
 

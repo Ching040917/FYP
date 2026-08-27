@@ -247,21 +247,281 @@ _LOCATION_KEYS = (
     ("paragraph_index", "Paragraph {n}"),
     ("section_index", "Section {n}"),
     ("table_index", "Table {n}"),
-    ("image_index", "Image {n}"),
-    ("run_index", "Run {n}"),
+    ("image_index", "Figure {n}"),
 )
+
+# Internal location keys (never shown to users) — preserved for detection.
+_INTERNAL_LOCATION_KEYS = ("run_index", "run_indexes", "block_index")
+
+
+def _heading_text_for_paragraph(paragraph_index, document_blocks):
+    """Return heading text for a paragraph index when it is a heading, else None."""
+    if paragraph_index is None or not isinstance(document_blocks, list):
+        return None
+    for block in document_blocks:
+        if block.get("index") == paragraph_index:
+            level = block.get("heading_level")
+            text = (block.get("text") or "").strip()
+            if isinstance(level, int) and 1 <= level <= 6 and text:
+                # Normalize whitespace, truncate to 60 chars for display.
+                txt = re.sub(r"\s+", " ", text).strip()
+                if len(txt) > 60:
+                    txt = txt[:60].rstrip() + "…"
+                return txt
+            return None
+    return None
 
 
 def location_text(location) -> str:
-    """Compact, human-readable location. Indexes are shown one-based."""
+    """Compact, human-readable location for ordinary users. Never shows Run."""
     if not location:
         return "—"
+    # Heading detection requires blocks; without blocks, fall back to paragraph.
+    # This simple formatter is used in contexts without block access (e.g.
+    # appendix when blocks unavailable). For full page-aware formatting, use
+    # friendly_location_text.
     parts = []
     for key, fmt in _LOCATION_KEYS:
         value = location.get(key)
         if value is not None:
             parts.append(fmt.format(n=value + 1))
     return ", ".join(parts) or "—"
+
+
+def friendly_location_text(location, document_blocks=None) -> str:
+    """User-facing location without Run, with Heading/Figure wording."""
+    if not location:
+        return "Entire document"
+    # Table / Figure take precedence over paragraph.
+    if location.get("table_index") is not None:
+        return f"Table {location['table_index'] + 1}"
+    if location.get("image_index") is not None:
+        return f"Figure {location['image_index'] + 1}"
+    if location.get("section_index") is not None:
+        return f"Section {location['section_index'] + 1}"
+    para_idx = location.get("paragraph_index")
+    if para_idx is not None:
+        heading = _heading_text_for_paragraph(para_idx, document_blocks)
+        if heading:
+            return f'Heading “{heading}”'
+        return f"Paragraph {para_idx + 1}"
+    return "Entire document"
+
+
+def _sanitize_mapping_for_pdf(raw, rendered_pages=None):
+    """Validate stored mapping: {paragraph_index: page_number} integers only."""
+    if not isinstance(raw, dict):
+        return {}
+    cleaned = {}
+    for k, v in raw.items():
+        try:
+            ik = int(str(k))
+            iv = int(v)
+            if ik < 0 or iv < 1:
+                continue
+            if rendered_pages is not None and iv > rendered_pages:
+                continue
+            cleaned[str(ik)] = iv
+        except (TypeError, ValueError):
+            continue
+    return cleaned
+
+
+def _page_for_paragraph(paragraph_index, mapping, rendered_pages=None):
+    if paragraph_index is None or not isinstance(mapping, dict):
+        return None
+    key = str(paragraph_index)
+    page = mapping.get(key)
+    if page is None:
+        return None
+    try:
+        iv = int(page)
+        if 1 <= iv and (rendered_pages is None or iv <= rendered_pages):
+            return iv
+    except (TypeError, ValueError):
+        return None
+    return None
+
+
+def _pages_for_section(section_index, section_metadata, mapping, rendered_pages=None):
+    """Derive pages for a section via its paragraph range, if reliable."""
+    if section_index is None or not isinstance(section_metadata, list) or not isinstance(mapping, dict):
+        return None, None
+    for sec in section_metadata:
+        if sec.get("section_index") == section_index:
+            start = sec.get("start_paragraph_index")
+            end = sec.get("end_paragraph_index")
+            pages = []
+            if start is not None:
+                p = _page_for_paragraph(start, mapping, rendered_pages)
+                if p is not None:
+                    pages.append(p)
+            if end is not None and end != start:
+                p2 = _page_for_paragraph(end, mapping, rendered_pages)
+                if p2 is not None:
+                    pages.append(p2)
+            if len(pages) == 2 and pages[0] != pages[1]:
+                return (min(pages), max(pages))
+            if len(pages) == 1:
+                return (pages[0], pages[0])
+            return None, None
+    return None, None
+
+
+def page_label_for_location(location, mapping, document_blocks=None, section_metadata=None, rendered_pages=None):
+    """
+    Return a user-facing page label for a single finding location.
+    Returns (label, value) e.g. ("Original document page", "12") or
+    ("Original document page", "Unavailable") or ("Original document pages", "12–18")
+    or ("Starting original document page", "12").
+    Physical rendered pages only, one-based, never 0/null/empty.
+    """
+    if not location:
+        return ("Original document page", "Document-wide")
+    # Document-wide: no paragraph/section/table/image
+    if all(location.get(k) is None for k in ("paragraph_index", "section_index", "table_index", "image_index")):
+        return ("Original document page", "Document-wide")
+    # Table / Figure: page from paragraph_index if present
+    para_idx = location.get("paragraph_index")
+    if location.get("table_index") is not None or location.get("image_index") is not None:
+        page = _page_for_paragraph(para_idx, mapping, rendered_pages)
+        if page is not None:
+            return ("Original document page", str(page))
+        return ("Original document page", "Unavailable")
+    # Section: try range via section_metadata
+    if location.get("section_index") is not None:
+        start_page, end_page = _pages_for_section(location["section_index"], section_metadata, mapping, rendered_pages)
+        if start_page is not None and end_page is not None and start_page != end_page:
+            return ("Original document pages", f"{start_page}–{end_page}")
+        if start_page is not None:
+            # Only reliable start page — use Starting... per contract
+            return ("Starting original document page", str(start_page))
+        return ("Original document page", "Unavailable")
+    # Paragraph / Heading
+    if para_idx is not None:
+        page = _page_for_paragraph(para_idx, mapping, rendered_pages)
+        if page is not None:
+            return ("Original document page", str(page))
+        return ("Original document page", "Unavailable")
+    return ("Original document page", "Unavailable")
+
+
+def _compact_pages(pages):
+    """Compact sorted unique pages into '18, 20–21' style."""
+    if not pages:
+        return ""
+    uniq = sorted(set(pages))
+    spans = []
+    start = prev = uniq[0]
+    for n in uniq[1:]:
+        if n == prev + 1:
+            prev = n
+        else:
+            spans.append((start, prev))
+            start = prev = n
+    spans.append((start, prev))
+    parts = []
+    for a, b in spans:
+        if a == b:
+            parts.append(str(a))
+        else:
+            parts.append(f"{a}–{b}")
+    return ", ".join(parts)
+
+
+# Maximum excerpt length for affected text — reuse existing 140 char snippet
+# convention but shorter for conciseness; 80 chars is small and documented.
+_AFFECTED_TEXT_MAX = 80
+
+
+def _affected_text_info(violation, document_blocks):
+    """
+    Return (label, value) for affected content/text, or None.
+
+    - Whole paragraph affected → ("Affected content", "Entire paragraph")
+    - Part of paragraph with safe excerpt → ("Affected text", "“excerpt”")
+    - Table/Figure/Section → no affected text line (location already specific)
+    - Otherwise → None (omit)
+    """
+    loc = violation.location or {}
+    # Table/Figure/Section findings are self-contained; no paragraph excerpt.
+    if loc.get("table_index") is not None or loc.get("image_index") is not None or loc.get("section_index") is not None:
+        return None
+    para_idx = loc.get("paragraph_index")
+    if para_idx is None:
+        return None
+    # Determine if whole paragraph is affected.
+    has_run = loc.get("run_index") is not None or loc.get("run_indexes") is not None
+    # Whole-paragraph rules always affect entire paragraph.
+    whole_rules = {"ALIGNMENT", "LINE_SPACING", "SPACE_BEFORE", "SPACE_AFTER", "HEADING_HIERARCHY"}
+    if violation.rule_code in whole_rules:
+        return ("Affected content", "Entire paragraph")
+    if not has_run:
+        return ("Affected content", "Entire paragraph")
+    # Part of paragraph: try to produce excerpt from document_blocks text.
+    if isinstance(document_blocks, list):
+        for block in document_blocks:
+            if block.get("index") == para_idx:
+                raw = (block.get("text") or "").strip()
+                if raw:
+                    norm = re.sub(r"\s+", " ", raw).strip()
+                    if len(norm) >= 8:
+                        if len(norm) > _AFFECTED_TEXT_MAX:
+                            norm = norm[:_AFFECTED_TEXT_MAX].rstrip() + "…"
+                        return ("Affected text", f"“{norm}”")
+                break
+    # Fallback: try actual_value if it looks like text (not a measurement)
+    # Only for non-measurement actuals; otherwise omit.
+    return None
+
+
+def _friendly_required_action(violation, friendly_loc, affected_info):
+    """
+    Friendly Required Action without Run. Uses ordinary-user wording.
+
+    Examples:
+      - Whole paragraph: "Change the font size of Paragraph 14 from 12 pt to 16 pt."
+      - Part with excerpt: "Change “1. Introduction” in Paragraph 14 from 12 pt to 16 pt."
+      - Heading: "Review Heading “3.2 System Architecture” and change..."
+    """
+    code = violation.rule_code
+    exp = _student_clean(violation.expected_value) if violation.expected_value else None
+    act = _student_clean(violation.actual_value) if violation.actual_value else None
+
+    # Citation has its own friendly action.
+    if code == "CITATION_MISMATCH":
+        return _citation_action(violation)
+
+    # Use friendly location without Run.
+    loc_label = friendly_loc  # e.g. "Paragraph 14", "Heading “...”", "Table 3"
+    # If we have affected text excerpt, prefer it; else use location.
+    affected_label, affected_value = affected_info if affected_info else (None, None)
+
+    # Whole paragraph affected → "Change space before for Paragraph 19 from 18 pt to 0 pt."
+    if affected_label == "Affected content" and affected_value == "Entire paragraph":
+        prop = _PROP_NAME.get(code, "value")
+        if exp and act:
+            return f"Change {prop} for {loc_label} from {act} to {exp}."
+        if exp:
+            return f"Update {loc_label} to meet the required {prop} ({exp})."
+        return _REQUIRED_ACTIONS.get(code, "Review the finding and apply the required formatting.")
+
+    # Part of paragraph with excerpt → "Change “excerpt” in Paragraph 14 from X to Y."
+    if affected_label == "Affected text" and affected_value:
+        prop = _PROP_NAME.get(code, "value")
+        if exp and act:
+            return f"Change {affected_value} in {loc_label} from {act} to {exp}."
+        if exp:
+            return f"Update {affected_value} in {loc_label} to {exp}."
+        return f"Review {affected_value} in {loc_label}."
+
+    # Generic fallback with friendly location.
+    prop = _PROP_NAME.get(code, "value")
+    if exp and act and loc_label != "—" and loc_label != "Entire document":
+        return f"Review {loc_label} and change the {prop} from {act} to {exp}."
+    if exp and loc_label != "—":
+        return f"Review {loc_label} and update to {exp}."
+    return _REQUIRED_ACTIONS.get(code, "Review the finding and apply the required formatting.")
 
 
 def split_apa_suggestion(suggestion: str) -> dict:
@@ -364,40 +624,47 @@ def _panel(header_left, header_right, rows) -> Table:
     return table
 
 
-def _priority_table(pid, v) -> Table:
+def _priority_table(pid, v, audit=None) -> Table:
     """Individual Major finding panel: P### header, details, specific action."""
     rows = []
-    loc = location_text(v.location)
-    if loc != "—":
-        rows.append(("Location", loc))
+    # Friendly page + location (never shows Run, never 0/null).
+    mapping = _sanitize_mapping_for_pdf(
+        getattr(audit, "paragraph_page_mapping", None) if audit else None,
+        getattr(audit, "rendered_preview_pages", None) if audit else None,
+    ) if audit else {}
+    blocks = getattr(audit, "document_blocks", None) if audit else None
+    sections = getattr(audit, "section_metadata", None) if audit else None
+    rendered_pages = getattr(audit, "rendered_preview_pages", None) if audit else None
+    page_label, page_value = page_label_for_location(v.location or {}, mapping, blocks, sections, rendered_pages)
+    rows.append((page_label, page_value))
+    friendly_loc = friendly_location_text(v.location, blocks)
+    rows.append(("Location", friendly_loc))
+    affected = _affected_text_info(v, blocks)
+    if affected:
+        rows.append(affected)
     rows.append(("Issue", _student_clean(v.message) or ""))
     if v.expected_value:
         rows.append(("Expected", _student_clean(v.expected_value)))
     if v.actual_value:
         rows.append(("Actual", _student_clean(v.actual_value)))
-    rows.append(("Required Action", required_action(v)))
+    # Friendly required action without Run.
+    rows.append(("Required Action", _friendly_required_action(v, friendly_loc, affected)))
     return _panel(f"{pid} — {_rule_name(v.rule_code)}", v.severity, rows)
 
 
-def _location_summary(violations) -> str:
-    """Compact location list: consecutive paragraphs become ranges; run indexes kept."""
-    paras = {}
+def _location_summary(violations, document_blocks=None) -> str:
+    """Compact location list: consecutive paragraphs become ranges; no Run."""
+    paras = set()
     others = []
     for v in violations:
         loc = v.location or {}
         pi = loc.get("paragraph_index")
         if pi is None:
-            text = location_text(loc)
-            if text != "—":
+            text = friendly_location_text(loc, document_blocks)
+            if text != "—" and text != "Entire document":
                 others.append(text)
         else:
-            ri = loc.get("run_index")
-            if ri is not None:
-                if pi not in paras or paras[pi] is None:
-                    paras[pi] = set()
-                paras[pi].add(ri)
-            elif pi not in paras:
-                paras[pi] = None
+            paras.add(pi)
     parts = []
     if paras:
         nums = sorted(paras)
@@ -411,29 +678,99 @@ def _location_summary(violations) -> str:
                 start = prev = n
         spans.append((start, prev))
         for a, b in spans:
-            label = f"Paragraph {a + 1}" if a == b else f"Paragraphs {a + 1}-{b + 1}"
-            runs = set()
-            for n in range(a, b + 1):
-                rs = paras.get(n)
-                if rs:
-                    runs.update(rs)
-            if runs:
-                label += " (" + ", ".join(f"Run {r + 1}" for r in sorted(runs)) + ")"
-            parts.append(label)
+            # Check if any paragraph in this span is a heading
+            heading = None
+            if document_blocks and a == b:
+                heading = _heading_text_for_paragraph(a, document_blocks)
+            if heading:
+                parts.append(f'Heading “{heading}”')
+            else:
+                label = f"Paragraph {a + 1}" if a == b else f"Paragraphs {a + 1}-{b + 1}"
+                parts.append(label)
     parts.extend(sorted(set(others)))
     return ", ".join(parts) or "—"
 
 
-def _group_panel(gid, members, rule_code, exp_val, action) -> Table:
+def _pages_summary_for_group(violations, audit):
+    """Compact page list for grouped findings, with availability disclosure."""
+    mapping = _sanitize_mapping_for_pdf(
+        getattr(audit, "paragraph_page_mapping", None) if audit else None,
+        getattr(audit, "rendered_preview_pages", None) if audit else None,
+    )
+    rendered_pages = getattr(audit, "rendered_preview_pages", None) if audit else None
+    sections = getattr(audit, "section_metadata", None) if audit else None
+    pages = []
+    unavailable = 0
+    for v in violations:
+        loc = v.location or {}
+        pi = loc.get("paragraph_index")
+        si = loc.get("section_index")
+        if pi is not None:
+            p = _page_for_paragraph(pi, mapping, rendered_pages)
+            if p is not None:
+                pages.append(p)
+            else:
+                unavailable += 1
+        elif si is not None:
+            sp, ep = _pages_for_section(si, sections, mapping, rendered_pages)
+            if sp is not None and ep is not None:
+                if sp != ep:
+                    pages.extend(range(sp, ep + 1))
+                else:
+                    pages.append(sp)
+            elif sp is not None:
+                pages.append(sp)
+            else:
+                unavailable += 1
+        elif loc.get("table_index") is not None or loc.get("image_index") is not None:
+            p = _page_for_paragraph(loc.get("paragraph_index"), mapping, rendered_pages)
+            if p is not None:
+                pages.append(p)
+            else:
+                unavailable += 1
+        else:
+            unavailable += 1
+    compact = _compact_pages(pages) if pages else ""
+    return compact, unavailable
+
+
+def _group_panel(gid, members, rule_code, exp_val, action, audit=None) -> Table:
     """Info panel for a grouped minor finding: header, comparison, locations, action."""
     names = sorted(set(str(v.actual_value) for v in members if v.actual_value))
+    blocks = getattr(audit, "document_blocks", None) if audit else None
+    compact_pages, unavailable = _pages_summary_for_group(members, audit)
     rows = [
         ("Issue", _student_clean(members[0].message) or ""),
         ("Required", _student_clean(exp_val) or "—"),
         ("Observed", " · ".join(_student_clean(n) for n in names) or "—"),
-        ("Affected Locations", _location_summary(members)),
-        ("Required Action", action),
     ]
+    # Page handling for grouped findings per contract.
+    if compact_pages:
+        if unavailable > 0:
+            rows.append(("Original document pages", compact_pages))
+            rows.append(("Page availability", "Some affected locations unavailable"))
+        else:
+            # Check if single page vs multiple vs range already handled by compact
+            if "–" in compact_pages or "," in compact_pages:
+                rows.append(("Original document pages", compact_pages))
+            else:
+                rows.append(("Original document page", compact_pages))
+            if unavailable:
+                rows.append(("Page availability", "Some affected locations unavailable"))
+        # Also add unavailable flag if partial
+        if unavailable > 0 and not compact_pages:
+            rows.append(("Original document page", "Unavailable"))
+            rows.append(("Page availability", "Some affected locations unavailable"))
+    else:
+        # No pages known at all
+        if unavailable > 0:
+            rows.append(("Original document page", "Unavailable"))
+            rows.append(("Page availability", "Some affected locations unavailable"))
+        else:
+            rows.append(("Original document page", "Unavailable"))
+    rows.append(("Affected Locations", _location_summary(members, blocks)))
+    # If no compact but unavailable, already added. Ensure page line exists.
+    rows.append(("Required Action", action))
     return _panel(f"{gid} — {_rule_name(rule_code)}", f"Minor · {len(members)} finding(s)", rows)
 
 
@@ -447,16 +784,35 @@ def _rule_cell(v) -> Paragraph:
     )
 
 
-def _appendix_table(entries) -> Table:
+def _appendix_table(entries, audit=None) -> Table:
     """Register rows: ID, Severity, Friendly Rule, Location, Actual, Expected."""
     rows = [[_p(h, size=8, font="Helvetica-Bold", color=colors.white) for h in
              ("ID", "Severity", "Friendly Rule", "Location", "Actual", "Expected")]]
     for f_idx, v in entries:
+        # Friendly location without Run; include page when available
+        friendly_loc = friendly_location_text(v.location, getattr(audit, "document_blocks", None) if audit else None)
+        # For appendix, combine page and location in same cell for compactness
+        if audit and hasattr(audit, "paragraph_page_mapping"):
+            mapping = _sanitize_mapping_for_pdf(
+                getattr(audit, "paragraph_page_mapping", None),
+                getattr(audit, "rendered_preview_pages", None),
+            )
+            page_label, page_value = page_label_for_location(
+                v.location or {}, mapping,
+                getattr(audit, "document_blocks", None),
+                getattr(audit, "section_metadata", None),
+                getattr(audit, "rendered_preview_pages", None),
+            )
+            # Only show page if not Document-wide (which is its own location)
+            if page_value not in ("Document-wide",):
+                friendly_loc = f"{page_label}: {page_value}<br/>{friendly_loc}"
+            else:
+                friendly_loc = f"{friendly_loc} ({page_value})"
         rows.append([
             _p(_f_id(f_idx), size=8),
             _p(v.severity, size=8, font="Helvetica-Bold" if v.severity == "MAJOR" else "Helvetica"),
             _rule_cell(v),
-            _p(location_text(v.location), size=8),
+            _p(friendly_loc, size=8),
             _p(_student_clean(v.actual_value or ""), size=8),
             _p(_student_clean(v.expected_value or ""), size=8),
         ])
@@ -688,7 +1044,7 @@ def generate_audit_pdf(audit, violations, citation_issues, profile_snapshot=None
 
         # Major findings — individual panels with P### IDs
         for i, v in enumerate(major):
-            story.append(KeepTogether([_priority_table(_p_id(i + 1), v)]))
+            story.append(KeepTogether([_priority_table(_p_id(i + 1), v, audit)]))
             story.append(Spacer(1, 3 * mm))
 
     # ---- Citation Guidance ----
@@ -748,10 +1104,13 @@ def generate_audit_pdf(audit, violations, citation_issues, profile_snapshot=None
         group_idx = 0
         for (rule_code, exp_val), members in groups.items():
             if len(members) == 1:
-                action = required_action(members[0])
+                # Use friendly action without Run
+                friendly_loc = friendly_location_text(members[0].location, getattr(audit, "document_blocks", None))
+                affected = _affected_text_info(members[0], getattr(audit, "document_blocks", None))
+                action = _friendly_required_action(members[0], friendly_loc, affected)
             else:
                 action = _group_action(rule_code, exp_val)
-            story.append(KeepTogether([_group_panel(_g_id(group_idx + 1), members, rule_code, exp_val, action)]))
+            story.append(KeepTogether([_group_panel(_g_id(group_idx + 1), members, rule_code, exp_val, action, audit)]))
             story.append(Spacer(1, 4 * mm))
             group_idx += 1
 
@@ -824,7 +1183,7 @@ def generate_audit_pdf(audit, violations, citation_issues, profile_snapshot=None
         if major_entries:
             story.append(_p("Major Findings", size=9.5, font="Helvetica-Bold", color=NAVY))
             story.append(Spacer(1, 1.5 * mm))
-            story.append(_appendix_table(major_entries))
+            story.append(_appendix_table(major_entries, audit))
             story.append(Spacer(1, 5 * mm))
 
         minor_entries = []
@@ -839,7 +1198,7 @@ def generate_audit_pdf(audit, violations, citation_issues, profile_snapshot=None
         if minor_entries:
             story.append(_p("Minor Findings", size=9.5, font="Helvetica-Bold", color=NAVY))
             story.append(Spacer(1, 1.5 * mm))
-            story.append(_appendix_table(minor_entries))
+            story.append(_appendix_table(minor_entries, audit))
 
     buf = io.BytesIO()
     doc = BaseDocTemplate(
