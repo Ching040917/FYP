@@ -9,7 +9,11 @@
     "preview": "vite preview",
     "test:map": "node --test tests/paragraph-mapping.test.ts",
     "test:navigation": "node --test tests/finding-navigation.test.ts",
-    "test:all": "node --test"
+    "test:all": "node --test",
+    "test:e2e": "playwright test",
+    "test:e2e:headed": "playwright test --headed",
+    "test:e2e:update-snapshots": "playwright test --update-snapshots",
+    "test:e2e:evidence": "node e2e/evidence-report.mjs"
   },
   "dependencies": {
     "@radix-ui/react-label": "^2.1.10",
@@ -28,6 +32,8 @@
     "tailwindcss-animate": "^1.0.7"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.13.0",
+    "@playwright/test": "^1.62.1",
     "@types/react": "^18.2.0",
     "@types/react-dom": "^18.2.0",
     "@vitejs/plugin-react": "^4.2.0",

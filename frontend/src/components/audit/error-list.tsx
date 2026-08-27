@@ -167,7 +167,7 @@ export function ErrorList({
             value={severityFilter}
             onValueChange={(v) => setSeverityFilter(v as ViolationSeverity | 'all')}
           >
-            <SelectTrigger size="sm" className="w-[120px] text-xs">
+            <SelectTrigger size="sm" className="w-[120px] text-xs" aria-label="Filter by severity">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -180,7 +180,7 @@ export function ErrorList({
             value={categoryFilterValue}
             onValueChange={handleCategoryChange}
           >
-            <SelectTrigger size="sm" className="w-[160px] text-xs">
+            <SelectTrigger size="sm" className="w-[160px] text-xs" aria-label="Filter by category">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>

@@ -24,6 +24,12 @@ frontend/dist/
 frontend/.vite/
 .vite/
 
+# Playwright E2E outputs (screenshots, traces, reports, temp DB) — never track
+frontend/test-results/
+frontend/playwright-report/
+frontend/e2e/screenshots/
+frontend/e2e/.tmp/
+
 # Local-only project documents (tracked until Build 5 commit, now local-only)
 /AGENTS.md
 /Architecture.md

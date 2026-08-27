@@ -22,10 +22,10 @@ export default {
         'popover-foreground': '#1F2328',
         primary: '#1E3A5F',             // primary action
         'primary-foreground': '#FFFFFF',
-        secondary: '#1F7A4D',           // pass
+        secondary: '#1B6A42',           // pass — darkened with success
         'secondary-foreground': '#FFFFFF',
         muted: '#E8ECF4',               // selected
-        'muted-foreground': '#5F666E',  // ink muted
+        'muted-foreground': '#5A6068',  // ink muted — darkened for 4.5:1 on #D9DCE1
         accent: '#E8ECF4',              // selected
         'accent-foreground': '#1F2328',
         destructive: '#B3261E',         // fail
@@ -33,9 +33,9 @@ export default {
         border: '#D9DCE1',              // rule
         input: '#D9DCE1',
         ring: '#1E3A5F',                // focus ring
-        success: '#1F7A4D',             // pass
-        warning: '#8A5A00',
-        information: '#2563EB',
+        success: '#1B6A42',             // pass — darkened for 4.5:1 on #E8ECF4 selected bg
+        warning: '#845600',             // darkened for 4.5:1 on #E8ECF4 selected bg
+        information: '#2461E9',         // darkened for 4.5:1 on #FFFFFF 10% tint
         'ai-assisted': '#4A4458',
         selected: '#E8ECF4',
         'chart-1': '#1E3A5F',

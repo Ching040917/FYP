@@ -453,8 +453,11 @@ export function RenderedPreview({
       {/* Bounded internal scrolling; no page-level horizontal overflow */}
       <div
         ref={containerRef}
+        tabIndex={0}
+        role="region"
+        aria-label="Rendered document preview"
         className={cn(
-          'overflow-auto rounded-md border border-border bg-input/30 p-4 scrollbar-thin',
+          'overflow-auto rounded-md border border-border bg-input/30 p-4 scrollbar-thin focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-card',
           fitRegion ? 'min-h-0 flex-1' : 'max-h-[560px]',
         )}
       >

@@ -473,9 +473,17 @@ export function AuditPage() {
   const detailScrollRef = useRef<HTMLDivElement>(null)
 
   // Category filter — single source shared by the overview and Findings.
+  // Popover semantics: intentionally NON-MODAL (role="dialog" +
+  // aria-modal="false"). The category buttons update the background Findings
+  // list live while the popover is open, so trapping focus would hide that
+  // feedback; Tab/Shift+Tab may therefore leave the panel freely.
   const [categoryFilter, setCategoryFilter] = useState<AuditCategory | 'all'>('all')
   const [categoryOpen, setCategoryOpen] = useState(false)
+  // Wraps trigger + panel (outside-click containment)…
   const categoryPanelRef = useRef<HTMLDivElement>(null)
+  const categoryTriggerRef = useRef<HTMLButtonElement>(null)
+  // …and the dialog surface itself owns initial-focus targeting.
+  const categoryDialogRef = useRef<HTMLDivElement>(null)
 
   // PDF export — one clear action; guarded against duplicate clicks.
   const [exporting, setExporting] = useState(false)
@@ -520,7 +528,8 @@ export function AuditPage() {
   const drawerRef = useRef<HTMLDivElement>(null)
   const drawerTriggerRef = useRef<HTMLElement | null>(null)
 
-  // Close the category popover on outside click / Escape.
+  // Close the non-modal category popover on outside click; Escape closes AND
+  // returns focus to the trigger so keyboard users are not stranded.
   useEffect(() => {
     if (!categoryOpen) return
     const onPointerDown = (e: PointerEvent) => {
@@ -529,7 +538,10 @@ export function AuditPage() {
       }
     }
     const onKeyDown = (e: globalThis.KeyboardEvent) => {
-      if (e.key === 'Escape') setCategoryOpen(false)
+      if (e.key === 'Escape') {
+        setCategoryOpen(false)
+        categoryTriggerRef.current?.focus()
+      }
     }
     document.addEventListener('pointerdown', onPointerDown)
     document.addEventListener('keydown', onKeyDown)
@@ -537,6 +549,24 @@ export function AuditPage() {
       document.removeEventListener('pointerdown', onPointerDown)
       document.removeEventListener('keydown', onKeyDown)
     }
+  }, [categoryOpen])
+
+  // On open, move focus to the first meaningful interactive element — the
+  // first selectable category button inside the verdict checklist. Focus
+  // synchronously in the same effect pass (the panel mounts with this state
+  // update); a retry covers late re-renders without stealing focus back.
+  useEffect(() => {
+    if (!categoryOpen) return
+    const focusFirst = () => {
+      if (categoryDialogRef.current?.contains(document.activeElement)) return true
+      categoryDialogRef.current
+        ?.querySelector<HTMLButtonElement>('button:not([disabled])')
+        ?.focus()
+      return false
+    }
+    focusFirst()
+    const frame = requestAnimationFrame(() => focusFirst())
+    return () => cancelAnimationFrame(frame)
   }, [categoryOpen])
 
   const handleCategorySelect = (category: string) => {
@@ -921,12 +951,16 @@ export function AuditPage() {
                 </div>
               </div>
 
-              {/* Category overview trigger — compact, never expanded by default */}
+              {/* Category overview trigger — compact, never expanded by default.
+                  Exposes popover semantics: haspopup="dialog" + aria-expanded +
+                  aria-controls relationship to the dialog panel below. */}
               {breakdown.length > 0 && (
                 <div className="relative" ref={categoryPanelRef}>
                   <Button
+                    ref={categoryTriggerRef}
                     variant="outline"
                     size="sm"
+                    aria-haspopup="dialog"
                     aria-expanded={categoryOpen}
                     aria-controls="category-panel"
                     onClick={() => setCategoryOpen((o) => !o)}
@@ -939,7 +973,11 @@ export function AuditPage() {
                   </Button>
                   {categoryOpen && (
                     <div
+                      ref={categoryDialogRef}
                       id="category-panel"
+                      role="dialog"
+                      aria-modal="false"
+                      aria-label="Filter findings by category"
                       className="absolute right-0 top-full z-40 mt-2 max-h-[70vh] w-[min(600px,90vw)] overflow-y-auto rounded-md border border-border bg-card p-4 shadow-tonal-high"
                     >
                       <VerdictChecklist
@@ -1214,7 +1252,10 @@ export function AuditPage() {
                 </div>
                 <div
                   ref={detailScrollRef}
-                  className="min-h-0 min-w-0 space-y-6 overflow-y-auto pr-1"
+                  tabIndex={0}
+                  role="region"
+                  aria-label="Finding details"
+                  className="min-h-0 min-w-0 space-y-6 overflow-y-auto pr-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background"
                 >
                   {renderDetailStack(audit)}
                 </div>
@@ -1251,7 +1292,12 @@ export function AuditPage() {
                       <X className="h-4 w-4" aria-hidden="true" />
                     </Button>
                   </div>
-                  <div className="min-h-0 flex-1 space-y-6 overflow-y-auto px-4 py-4">
+                  <div
+                    tabIndex={0}
+                    role="region"
+                    aria-label="Finding details"
+                    className="min-h-0 flex-1 space-y-6 overflow-y-auto px-4 py-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                  >
                     {renderDetailStack(audit)}
                   </div>
                 </div>

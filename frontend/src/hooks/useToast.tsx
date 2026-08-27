@@ -40,6 +40,10 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 }
 
 function ToastContainer({ toasts, onDismiss }: { toasts: Toast[]; onDismiss: (id: string) => void }) {
+  // Intentionally NOT a live region: each toast item carries its own
+  // role="status"/"alert" so a newly mounted toast is announced exactly once.
+  // A live region on the container would re-announce the whole list every
+  // time another toast is added or dismissed (duplicate announcements).
   return (
     <div className="fixed bottom-4 right-4 z-50 flex flex-col gap-2 pointer-events-none">
       {toasts.map(toast => (
@@ -65,12 +69,15 @@ function ToastItem({ toast, onDismiss }: { toast: Toast; onDismiss: (id: string)
   }
 
   return (
+    /* role="alert" for urgent failures; role="status" for normal feedback.
+       Both imply the correct aria-live politeness and announce once on mount. */
     <div
+      role={toast.type === 'error' ? 'alert' : 'status'}
       className={`flex items-center gap-3 px-4 py-3 rounded-lg border shadow-tonal-high min-w-[280px] max-w-md pointer-events-auto animate-slide-in ${typeStyles[toast.type]}`}
     >
       {icons[toast.type]}
       <p className="text-body-md flex-1">{toast.message}</p>
-      <button type="button" onClick={() => onDismiss(toast.id)} className="text-current opacity-70 hover:opacity-100">
+      <button type="button" aria-label="Dismiss notification" onClick={() => onDismiss(toast.id)} className="text-current opacity-70 hover:opacity-100">
         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
       </button>
     </div>
