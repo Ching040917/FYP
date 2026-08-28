@@ -18,6 +18,7 @@
  */
 import {
   normalizeText,
+  type BlockLike,
   type BlockMapping,
   type PageText,
   type TextItemLike,
@@ -74,7 +75,7 @@ export type FindingLike = {
 export type EvidenceBundle = {
   byIndex: Map<number, BlockMapping>
   pages: PageText[]
-  blocks?: Array<{ index: number; text: string }>
+  blocks?: BlockLike[]
 }
 
 /** Overlay family for a rule: citation, formatting, or none. */

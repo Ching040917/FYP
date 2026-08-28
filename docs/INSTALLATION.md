@@ -11,7 +11,13 @@ This guide covers two distinct audiences. Choose the one that matches how you ob
 
 ### What you receive
 
-The verified packaged release is a one-folder distribution produced by PyInstaller:
+The verified packaged release is distributed as a single **Windows installer**:
+`AcademicComplianceAuditor-Setup-<version>.exe` (a Setup EXE produced by Inno
+Setup 6). The installer packages the complete PyInstaller one-folder runtime
+(`run-frozen.exe` plus the full `_internal` directory) and installs it per-user
+with no administrator rights.
+
+For reference, the underlying one-folder distribution is produced by PyInstaller:
 
 ```
 backend/dist/run-frozen/
@@ -22,21 +28,59 @@ backend/dist/run-frozen/
     ...
 ```
 
-Keep the entire extracted folder together. `run-frozen.exe` must stay alongside `_internal`; moving or renaming either will break the application. Do not treat `frontend/dist` tracked in the repository as the release bundle — the bundle is only `backend/dist/run-frozen`.
+Keep the entire installed application folder together. `run-frozen.exe` must
+stay alongside `_internal`; moving or renaming either will break the
+application. Do not treat `frontend/dist` tracked in the repository as the
+release bundle — the bundle is only `backend/dist/run-frozen`.
 
-The release is currently **unsigned** unless signing is configured in your build. Windows may show a SmartScreen or security warning on first launch. This is expected for unsigned builds.
+The installer (and the packaged application) are **unsigned** unless signing is
+configured in the build. Windows may show a SmartScreen or security warning on
+first launch. This is expected for unsigned builds.
 
-### How to run
+### How to install and run
 
-1. Obtain the verified one-folder release through your distribution channel and extract it to a local folder (for example, `C:\Apps\ACA`).
-2. Double-click `run-frozen.exe`.
-3. ACA binds only to `127.0.0.1` (loopback). It tries `8010` first, then `8011–8015` if the preferred port is occupied.
-4. The Launcher waits for `GET http://127.0.0.1:<port>/health` to return `{"status":"healthy"}`.
-5. After health succeeds, your default browser opens to `http://127.0.0.1:<port>/dashboard`.
-6. A second launch while ACA is running does not start another Backend — it reuses the healthy instance after verifying process, executable, and health, then opens the existing Dashboard.
-7. Closing the Launcher window stops only the owned Backend (Windows Job Object with `KILL_ON_JOB_CLOSE`). It never stops Ollama, LibreOffice, browsers, or unrelated Python or Node processes.
+1. Obtain the verified Setup EXE through your distribution channel.
+2. Double-click `AcademicComplianceAuditor-Setup-<version>.exe`.
+3. Accept the defaults (per-user installation, no administrator rights).
+4. Choose whether to create an optional desktop shortcut (the Start Menu
+   shortcut "Academic Compliance Auditor" is always created).
+5. The Finish page can launch ACA immediately. Alternatively launch ACA from
+   the Start Menu shortcut.
+6. ACA binds only to `127.0.0.1` (loopback). It tries `8010` first, then
+   `8011–8015` if the preferred port is occupied.
+7. The Launcher waits for `GET http://127.0.0.1:<port>/health` to return
+   `{"status":"healthy"}`.
+8. After health succeeds, your default browser opens to
+   `http://127.0.0.1:<port>/dashboard`.
+9. A second launch while ACA is running does not start another Backend — it
+   reuses the healthy instance after verifying process, executable, and health,
+   then opens the existing Dashboard.
+10. Closing the Launcher window stops only the owned Backend (Windows Job
+    Object with `KILL_ON_JOB_CLOSE`). It never stops Ollama, LibreOffice,
+    browsers, or unrelated Python or Node processes.
 
-Python and Node.js are **not** runtime prerequisites for the packaged release. ACA runs from its bundled dependencies.
+Python and Node.js are **not** runtime prerequisites for the packaged release.
+ACA runs from its bundled dependencies.
+
+### Install, upgrade, and uninstall behavior
+
+- **Install location:** `%LOCALAPPDATA%\Programs\AcademicComplianceAuditor`
+  (per-user; no administrator rights required). Mutable user data is never
+  installed into the program folder.
+- **Upgrade:** re-running the Setup EXE over an existing installation updates
+  program files in place and preserves all user data under
+  `%LOCALAPPDATA%\AcademicComplianceAuditor` (audit history, database, backups,
+  previews, logs). The database lifecycle (verified backup before migration,
+  Alembic upgrade to the bundled head) remains handled by the Launcher.
+- **Uninstall:** uninstalling removes program files and shortcuts and the
+  Installed-apps entry. User data under `%LOCALAPPDATA%\AcademicComplianceAuditor`
+  is **always preserved** by the uninstaller — no optional data-deletion
+  checkbox is offered because Inno Setup provides no reliable way to read such
+  an option from its Pascal Script. To fully remove local data after uninstall,
+  delete the `%LOCALAPPDATA%\AcademicComplianceAuditor` folder yourself.
+- **Reproducibility:** the installer is built by `scripts/build-installer.ps1`
+  from `installer/AcademicComplianceAuditor.iss`. See "Reproducible packaging
+  workflow" below for the full controlled build.
 
 ### Local data
 
@@ -102,10 +146,10 @@ The configured model is `qwen3.5:4b` (`OLLAMA_HOST=http://localhost:11434`). Wit
 
 ### Packaging limitations
 
-- The packaged release is unsigned unless signing is actually configured — expect a Windows security prompt.
+- The packaged release and the Setup EXE are unsigned unless signing is actually configured — expect a Windows SmartScreen prompt.
 - Keep the entire one-folder distribution together; do not run `run-frozen.exe` in isolation.
 - Mobile local execution is unsupported.
-- No automatic updater or installer is included yet.
+- No automatic updater is included yet.
 - Antivirus compatibility is not guaranteed; no specific allowance is documented.
 
 ---
@@ -212,6 +256,33 @@ The script:
 7. Runs an isolated frozen smoke suite (127.0.0.1 binding, port selection, SPA direct routes, health, database init, process cleanup) against a temporary data root.
 
 `backend/dist` and `backend/build` remain ignored. `frontend/dist` is left in place after a build so you can inspect the exact frontend the bundle shipped; it is ignored and never committed.
+
+### Reproducible installer workflow
+
+Requires **Inno Setup 6** (version `6.7.3` is the verified pin) with its
+command-line compiler `ISCC.exe`. It is not auto-installed — obtain it from
+jrsoftware.org or `winget install --id JRSoftware.InnoSetup`.
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-installer.ps1
+```
+
+The script:
+
+1. Locates `ISCC.exe` safely (PATH, `%LOCALAPPDATA%\Programs\Inno Setup*`,
+   `Program Files`) and verifies the installed version matches the pin.
+2. Verifies the controlled `backend/.venv` Python 3.12 interpreter and the
+   repository-owned PyInstaller pin, then validates (or builds) the clean
+   one-folder runtime with the repository-owned contamination and size checks.
+3. Compiles `installer/AcademicComplianceAuditor.iss` with
+   `/DAppVersion=1.0.0`.
+4. Validates the output (non-zero size, PE `MZ` header, required runtime files)
+   and computes SHA-256.
+5. Writes `release-output/AcademicComplianceAuditor-Setup-<version>.exe`
+   (the `release-output/` directory is gitignored; the Setup EXE is never
+   committed and never published from this repository).
+
+Focused source-contract checks live in `installer/installer-contract-tests.ps1`.
 
 ### Stopping source mode
 

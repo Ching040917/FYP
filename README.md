@@ -20,15 +20,22 @@ ACA is a local-first web application that audits academic DOCX documents against
 
 ## Packaged release overview
 
-A Windows one-folder release is built with PyInstaller (`backend/dist/run-frozen/run-frozen.exe`). The packaged application:
+A Windows release is distributed as a single installer,
+`AcademicComplianceAuditor-Setup-<version>.exe` (Inno Setup 6), which packages
+the complete verified PyInstaller one-folder runtime
+(`backend/dist/run-frozen/run-frozen.exe` + `_internal`). The packaged
+application:
 
 - Requires no Python or Node.js at runtime.
 - Bundles the production Frontend and all Python dependencies.
 - Stores all mutable data under `%LOCALAPPDATA%\AcademicComplianceAuditor` (see Installation Guide for layout and database lifecycle).
 - Binds only to `127.0.0.1` on ports `8010–8015`, opens the default browser after health succeeds, reuses a healthy instance on second launch, and stops only the owned Backend on close via a Windows Job Object.
 - Creates fresh production databases automatically through Alembic and upgrades known older packaged databases only after a verified SQLite backup (three newest verified backups retained). Unsupported databases are refused without deletion.
+- Installs per-user with no administrator rights, creates a Start Menu shortcut (optional desktop shortcut), and uninstalls while preserving all user data under `%LOCALAPPDATA%\AcademicComplianceAuditor`.
 
-No public download URL is published in this repository. Obtain the verified one-folder release through your distribution channel and keep the entire extracted folder together (`run-frozen.exe` and `_internal` must stay together).
+No public download URL is published in this repository. Obtain the verified
+Setup EXE through your distribution channel. The installer is unsigned unless
+signing is configured; expect a SmartScreen warning.
 
 See the [Installation Guide](docs/INSTALLATION.md) for packaged and source setup.
 

@@ -12,7 +12,12 @@ Every limitation below reflects verified behavior of the current source, tests, 
 ## Packaged Windows release
 
 - The one-folder package (`run-frozen.exe` + `_internal`) is **unsigned** unless signing is configured in the build. Windows SmartScreen or antivirus may warn on first launch; no specific allowance is documented.
-- No installer, automatic updater, or code signing is included.
+- No automatic updater or code signing is included.
+- The Windows installer (Setup EXE) uninstalls cleanly but **always preserves**
+  user data under `%LOCALAPPDATA%\AcademicComplianceAuditor`. There is no
+  optional data-deletion checkbox during uninstall because Inno Setup provides
+  no reliable Pascal Script API to read an uninstall-task selection. To fully
+  remove local data, delete that folder manually after uninstalling.
 - The complete one-folder distribution must remain intact — `run-frozen.exe` and `_internal` must stay together. Moving or renaming either breaks ACA.
 - Only one Backend instance per machine is supported. Multiple Backend instances sharing the same database are unsupported and are prevented by the Launcher mutex.
 - The Backend never listens outside loopback; no LAN exposure exists by design.

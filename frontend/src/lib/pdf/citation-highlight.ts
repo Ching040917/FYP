@@ -14,6 +14,7 @@
  */
 import {
   normalizeText,
+  type BlockLike,
   type BlockMapping,
   type PageText,
   type TextItemLike,
@@ -126,7 +127,7 @@ function citationSpan(value: string | null | undefined): CitationEvidence | null
  */
 export function resolveCitationHighlight(
   finding: { id: string; ruleCode?: string | null; message?: string | null; actualValue?: string | null; location?: Record<string, unknown> | null },
-  bundle: { byIndex: Map<number, BlockMapping>; pages: PageText[]; blocks?: Array<{ index: number; text: string }> } | null | undefined,
+  bundle: { byIndex: Map<number, BlockMapping>; pages: PageText[]; blocks?: BlockLike[] } | null | undefined,
 ): CitationHighlightResult {
   if (!bundle || finding.ruleCode !== 'CITATION_MISMATCH') {
     return { rects: null, label: null, message: null }

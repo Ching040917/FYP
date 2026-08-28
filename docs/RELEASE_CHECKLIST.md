@@ -83,10 +83,25 @@ Complete every section before publishing a packaged Windows release. Each checkb
 - [ ] Rollback behavior documented (no automatic restore; preserve backups for diagnosis).
 - [ ] Uninstall behavior documented (app folder removal does not delete user data).
 
+## Installer
+
+- [ ] Inno Setup 6 compiler available; version matches the pinned `6.7.3`.
+- [ ] `installer/AcademicComplianceAuditor.iss` contract tests pass (`installer/installer-contract-tests.ps1`).
+- [ ] `scripts/build-installer.ps1` builds `release-output/AcademicComplianceAuditor-Setup-1.0.0.exe` end-to-end.
+- [ ] Setup EXE packages the complete clean one-folder runtime (`run-frozen.exe` + `_internal`, never the launcher alone).
+- [ ] Per-user install to `%LOCALAPPDATA%\Programs\AcademicComplianceAuditor` with no administrator rights.
+- [ ] Start Menu shortcut created; optional desktop shortcut works.
+- [ ] Uninstall entry appears in Windows Installed Apps with correct name and version.
+- [ ] Install/upgrade preserves `%LOCALAPPDATA%\AcademicComplianceAuditor` user data.
+- [ ] Uninstall preserves user data by default (no optional data deletion offered; documented manual cleanup).
+- [ ] Setup EXE SHA-256 recorded; unsigned status stated honestly.
+- [ ] `release-output/` is gitignored; Setup EXE is not committed or published.
+- [ ] Manual end-user checklist maintained (`docs/END_USER_INSTALLATION_TEST.md`).
+
 ## Not implemented (do not claim)
 
 - Code signing.
-- Installer or automatic updater.
+- Automatic updater.
 - Public download URL.
 - Multi-user or LAN deployment.
 - Mobile execution.
