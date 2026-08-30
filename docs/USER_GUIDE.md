@@ -14,6 +14,15 @@ The Dashboard shows **Audit Dashboard** with an editorial header, a left intake 
 
 Required: deterministic formatting checks. Optional: LibreOffice (rendered-page preview), Ollama `qwen3.5:4b` (local AI), Cloud AI (explicit opt-in). Missing optional components show a degraded readiness state but do not block audits.
 
+**Optional setup pathways.** When an optional component is unavailable, the System Readiness card explains the feature and offers safe setup actions:
+
+- **Download LibreOffice** opens the official LibreOffice website (`https://www.libreoffice.org/download/`) in a new tab. LibreOffice is third-party software; third-party websites have their own terms and privacy policies. Install it yourself if you want rendered-page previews and original-document page locations.
+- **Download Ollama** opens the official Ollama website (`https://ollama.com/download/windows`) in a new tab. Ollama is third-party software. Install it yourself if you want local AI citation suggestions.
+- **Local AI model:** when Ollama is running but the required model is missing, the card shows the exact model name and a `ollama pull <model>` command with **Copy installation command**. Run the copied command yourself in a terminal. The model download requires internet access, may take time, and may require substantial disk storage. ACA never starts the download automatically.
+- **Check again** re-checks readiness after you install something — no restart needed.
+
+ACA never downloads, installs, or executes third-party software. Deterministic audit checks remain available without every optional component. When everything is ready, the download guidance is hidden.
+
 ## 4. Uploading a DOCX document
 
 In the left intake panel, use the upload dropzone (`upload-dropzone`). Drag a `.docx` or browse to select one. Documents are processed locally by default.

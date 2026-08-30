@@ -320,3 +320,41 @@ def test_no_process_name_wide_termination_in_tests():
         assert "Get-Process run-frozen |" not in content
         assert "taskkill /IM run-frozen" not in content
         assert "pkill run-frozen" not in content
+
+
+# ---- Optional-component pathways: default-browser contract (no Edge force) ----
+
+def test_browser_uses_default_browser_mechanism():
+    # ACA opens the OS-configured default browser via stdlib webbrowser;
+    # no explicit browser executable is launched.
+    text = pathlib.Path("app/launcher_support.py").read_text()
+    assert "import webbrowser" in text
+    assert "webbrowser.open" in text
+
+
+def test_browser_does_not_force_edge_chrome_firefox():
+    text = pathlib.Path("app/launcher_support.py").read_text().lower()
+    assert "msedge" not in text
+    assert "chrome.exe" not in text
+    assert "firefox.exe" not in text
+    assert "program files" not in text  # no browser-install path probing
+
+
+def test_browser_url_is_loopback_only():
+    text = pathlib.Path("app/launcher_support.py").read_text()
+    assert "http://127.0.0.1:" in text
+    assert "0.0.0.0" not in text
+
+
+def test_browser_open_failure_is_caught_and_logged():
+    text = pathlib.Path("app/launcher_support.py").read_text()
+    # open_browser wraps fn(url) in try/except and returns bool - backend
+    # keeps running regardless of the browser result.
+    assert "browser_open_failed" in text
+
+
+def test_browser_open_after_health():
+    text = pathlib.Path("frozen_main.py").read_text()
+    # health_ok gates write_instance and open_browser
+    assert "if health_ok:" in text
+    assert text.find("check_health") < text.find("open_browser")

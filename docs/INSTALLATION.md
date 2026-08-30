@@ -51,7 +51,10 @@ first launch. This is expected for unsigned builds.
 7. The Launcher waits for `GET http://127.0.0.1:<port>/health` to return
    `{"status":"healthy"}`.
 8. After health succeeds, your default browser opens to
-   `http://127.0.0.1:<port>/dashboard`.
+   `http://127.0.0.1:<port>/dashboard`. ACA uses the browser Windows has
+   configured as default; if Microsoft Edge is your default browser, Edge
+   opens. ACA never forces a specific browser and does not add a
+   browser-selection setting.
 9. A second launch while ACA is running does not start another Backend — it
    reuses the healthy instance after verifying process, executable, and health,
    then opens the existing Dashboard.
@@ -131,7 +134,9 @@ Do **not** run `python -m alembic upgrade head` yourself for the packaged releas
 
 ### Optional components
 
-**LibreOffice** — enables rendered-page preview. ACA searches `C:\Program Files\LibreOffice\program\soffice.com` (and `.exe`, plus `Program Files (x86)` equivalents) and respects `SOFFICE_EXECUTABLE` if set. Without LibreOffice, audits still complete and extracted-text evidence remains available.
+Optional components are never required: deterministic auditing always works without them. ACA never downloads, installs, or executes third-party software. When an optional component is missing, the Dashboard **System readiness** card offers safe setup guidance with official download links and a **Check again** action (no restart needed).
+
+**LibreOffice** — enables rendered-page preview. ACA searches `C:\Program Files\LibreOffice\program\soffice.com` (and `.exe`, plus `Program Files (x86)` equivalents) and respects `SOFFICE_EXECUTABLE` if set. Without LibreOffice, audits still complete and extracted-text evidence remains available. Use **Download LibreOffice** in the readiness card to open the official LibreOffice website; LibreOffice is third-party software with its own terms and privacy policies.
 
 **Ollama** — enables local AI-assisted citation review. Install from `https://ollama.com`, then:
 
@@ -140,7 +145,7 @@ ollama pull qwen3.5:4b
 ollama list   # must show qwen3.5:4b
 ```
 
-The configured model is `qwen3.5:4b` (`OLLAMA_HOST=http://localhost:11434`). Without Ollama, deterministic checks are unaffected.
+The configured model is `qwen3.5:4b` (`OLLAMA_HOST=http://localhost:11434`). Without Ollama, deterministic checks are unaffected. Use **Download Ollama** in the readiness card to open the official Ollama website (third-party software). When Ollama is running but the model is missing, use **Copy installation command** to copy the exact `ollama pull <model>` command, then run it yourself in a terminal — the model download requires internet access, may take time, and may require substantial disk storage; ACA does not start the download automatically.
 
 **Cloud AI (Gemini)** — explicit opt-in per audit. It requires a user-provided `GEMINI_API_KEY`; no credential is bundled. Leave the toggle off unless you intend to send citation snippets to the configured provider. No example key value is included in documentation.
 

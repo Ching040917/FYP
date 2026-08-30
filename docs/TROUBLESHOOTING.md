@@ -84,7 +84,7 @@ Each entry is symptom → cause → safe action. No command exposes credentials,
 
 **Cause:** LibreOffice not installed or not found at `C:\Program Files\LibreOffice\...` or `C:\Program Files (x86)\LibreOffice\...` nor via `SOFFICE_EXECUTABLE`.
 
-**Action:** Install LibreOffice or set `SOFFICE_EXECUTABLE`. Without it, audits still complete; rendered-page preview shows as unavailable.
+**Action:** Use **Download LibreOffice** in the System Readiness card — it opens the official LibreOffice website. Install it yourself (ACA never installs third-party software), or set `SOFFICE_EXECUTABLE`. Without it, audits still complete; rendered-page preview shows as unavailable. Use **Check again** after installing.
 
 ## 15. Rendered Preview unavailable
 
@@ -102,13 +102,13 @@ Each entry is symptom → cause → safe action. No command exposes credentials,
 
 **Cause:** Ollama service not running at `http://localhost:11434`.
 
-**Action:** Start Ollama or install it. Deterministic checks are unaffected. Readiness shows `ollama: unavailable`.
+**Action:** Use **Download Ollama** in the System Readiness card — it opens the official Ollama website. Install and start it yourself (ACA never installs third-party software). Deterministic checks are unaffected. Use **Check again** after installing.
 
 ## 18. Configured model missing
 
 **Cause:** Model `qwen3.5:4b` not installed.
 
-**Action:** Run `ollama pull qwen3.5:4b` and verify `ollama list` shows it. Readiness shows `local_model: unavailable` until installed.
+**Action:** Use **Copy installation command** in the System Readiness card — it copies the exact `ollama pull <model>` command shown in the card. Run the copied command yourself in a terminal (internet access required; the download may take time and substantial storage; ACA never downloads automatically), then verify with `ollama list` or **Check again**. Readiness shows `local_model: unavailable` until installed.
 
 ## 19. Cloud AI unavailable
 

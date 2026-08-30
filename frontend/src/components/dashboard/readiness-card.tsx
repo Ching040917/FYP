@@ -30,6 +30,17 @@ import {
   type ReadinessComponentRow,
   type ReadinessModel,
 } from '../../lib/readiness'
+import {
+  SETUP_COPY,
+  SETUP_COMPONENTS,
+  OFFICIAL_URLS,
+  EXTERNAL_LINK_ATTRS,
+  isLibreOfficeMissing,
+  isOllamaMissing,
+  isModelMissing,
+  modelNameFromDetail,
+  modelInstallCommand,
+} from '../../lib/setup-paths'
 import { cn } from '../../lib/utils'
 
 type CardState = 'checking' | 'loaded' | 'error'
@@ -245,7 +256,13 @@ export function ReadinessCard({
                 className="space-y-2 border-t border-border pt-3"
               >
                 {m.rows.map((row) => (
-                  <ReadinessRow key={row.id} row={row} />
+                  <ReadinessRow
+                    key={row.id}
+                    row={row}
+                    rows={m.rows}
+                    onCheckAgain={() => void fetchReadiness(true)}
+                    refreshing={refreshing}
+                  />
                 ))}
                 {detailsSlot && <div className="pt-1">{detailsSlot}</div>}
               </div>
@@ -259,8 +276,19 @@ export function ReadinessCard({
   )
 }
 
-function ReadinessRow({ row }: { row: ReadinessComponentRow }) {
+function ReadinessRow({
+  row,
+  rows,
+  onCheckAgain,
+  refreshing,
+}: {
+  row: ReadinessComponentRow
+  rows: ReadinessComponentRow[]
+  onCheckAgain: () => void
+  refreshing: boolean
+}) {
   const Icon = iconFor(row)
+  const setup = setupPathwayFor(row, rows)
   return (
     <div className="flex flex-col gap-1 rounded-md border border-border bg-input/20 px-3 py-2.5 min-w-0">
       <div className="flex min-w-0 items-center gap-2">
@@ -276,6 +304,149 @@ function ReadinessRow({ row }: { row: ReadinessComponentRow }) {
       {row.detail && (
         <p className="min-w-0 text-xs leading-[16px] text-muted-foreground break-words">
           {row.detail}
+        </p>
+      )}
+      {setup && (
+        <SetupPathway
+          setup={setup}
+          onCheckAgain={onCheckAgain}
+          refreshing={refreshing}
+        />
+      )}
+    </div>
+  )
+}
+
+/** Resolve the optional-component setup pathway for a row (or null). */
+function setupPathwayFor(
+  row: ReadinessComponentRow,
+  rows: ReadinessComponentRow[],
+): { kind: 'libreoffice' | 'ollama' | 'model'; url?: string; linkLabel?: string; body: string; command?: string } | null {
+  if (!SETUP_COMPONENTS.has(row.id) || row.state !== 'unavailable') return null
+  if (isLibreOfficeMissing(row)) {
+    return {
+      kind: 'libreoffice',
+      url: OFFICIAL_URLS.libreoffice,
+      linkLabel: SETUP_COPY.libreoffice.linkLabel,
+      body: SETUP_COPY.libreoffice.body,
+    }
+  }
+  if (isOllamaMissing(row)) {
+    return {
+      kind: 'ollama',
+      url: OFFICIAL_URLS.ollama,
+      linkLabel: SETUP_COPY.ollama.linkLabel,
+      body: SETUP_COPY.ollama.body,
+    }
+  }
+  if (isModelMissing(row, rows)) {
+    const name = modelNameFromDetail(row.detail)
+    return {
+      kind: 'model',
+      body: SETUP_COPY.model.body,
+      command: name ? modelInstallCommand(name) : undefined,
+    }
+  }
+  return null
+}
+
+/**
+ * Optional-component setup pathway: plain-language explanation, official
+ * download link (LibreOffice/Ollama) or copyable model command, and a
+ * Check again action that reuses the card's readiness refresh. Display only
+ * — ACA never downloads, installs, or executes anything.
+ */
+function SetupPathway({
+  setup,
+  onCheckAgain,
+  refreshing,
+}: {
+  setup: { kind: 'libreoffice' | 'ollama' | 'model'; url?: string; linkLabel?: string; body: string; command?: string }
+  onCheckAgain: () => void
+  refreshing: boolean
+}) {
+  const [copyState, setCopyState] = React.useState<'idle' | 'copied' | 'failed'>('idle')
+  const command = setup.kind === 'model' && setup.command ? setup.command : null
+
+  async function copyCommand() {
+    if (!command) return
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(command)
+        setCopyState('copied')
+      } else {
+        setCopyState('failed')
+      }
+    } catch {
+      setCopyState('failed')
+    }
+  }
+
+  return (
+    <div className="mt-1 space-y-2 rounded-md border border-border bg-background/60 px-3 py-2.5">
+      <p className="text-xs font-medium text-foreground">
+        {SETUP_COPY.optionalNote} —{' '}
+        {setup.kind === 'libreoffice'
+          ? SETUP_COPY.libreoffice.title
+          : setup.kind === 'ollama'
+            ? SETUP_COPY.ollama.title
+            : SETUP_COPY.model.title}
+      </p>
+      <p className="text-xs leading-[16px] text-muted-foreground break-words">{setup.body}</p>
+      {setup.url && setup.linkLabel && (
+        <p className="text-xs text-muted-foreground break-words">{SETUP_COPY.thirdPartyNote}</p>
+      )}
+      {command !== null && (
+        <div>
+          <p className="mb-1 text-xs font-medium text-foreground">Local AI model</p>
+          <code
+            data-testid="model-command"
+            className="block select-all rounded border border-border bg-input/40 px-2 py-1.5 font-mono text-xs text-foreground break-all"
+          >
+            {command}
+          </code>
+        </div>
+      )}
+      <div className="flex flex-wrap items-center gap-2">
+        {setup.url && setup.linkLabel && (
+          <a
+            href={setup.url}
+            {...EXTERNAL_LINK_ATTRS}
+            className="inline-flex min-h-[44px] items-center rounded-md border border-border bg-card px-3 text-sm font-medium text-foreground underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            {setup.linkLabel}
+          </a>
+        )}
+        {command !== null && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="border-border text-foreground min-h-[44px]"
+            onClick={() => void copyCommand()}
+          >
+            {copyState === 'copied' ? SETUP_COPY.model.copiedLabel : SETUP_COPY.model.copyLabel}
+          </Button>
+        )}
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="border-border text-foreground min-h-[44px]"
+          onClick={onCheckAgain}
+          disabled={refreshing}
+        >
+          {refreshing ? (
+            <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+          ) : null}
+          Check again
+        </Button>
+      </div>
+      {copyState !== 'idle' && (
+        <p role="status" aria-live="polite" className="text-xs text-muted-foreground">
+          {copyState === 'copied'
+            ? SETUP_COPY.model.copiedLabel
+            : SETUP_COPY.model.copyFailedLabel}
         </p>
       )}
     </div>
