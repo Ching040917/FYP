@@ -45,6 +45,11 @@ WizardStyle=modern
 SetupLogging=yes
 SetupMutex=AcademicComplianceAuditorSetupInstaller
 UninstallDisplayName=Academic Compliance Auditor
+; ACA icon: Setup EXE + installer wizard; shortcuts and the Installed Apps
+; entry inherit it through [Icons] and UninstallDisplayIcon.
+SetupIconFile=..\assets\branding\aca-icon.ico
+WizardSmallImageFile=..\assets\branding\aca-icon-wizard.bmp
+UninstallDisplayIcon={app}\run-frozen.exe
 VersionInfoVersion={#AppVersion}
 VersionInfoProductName=Academic Compliance Auditor
 VersionInfoProductVersion={#AppVersion}
@@ -65,8 +70,8 @@ Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription
 Source: "..\backend\dist\run-frozen\*"; DestDir: "{app}"; Flags: recursesubdirs ignoreversion createallsubdirs
 
 [Icons]
-Name: "{autoprograms}\Academic Compliance Auditor"; Filename: "{app}\run-frozen.exe"; WorkingDir: "{app}"; Comment: "Launch Academic Compliance Auditor"
-Name: "{autodesktop}\Academic Compliance Auditor"; Filename: "{app}\run-frozen.exe"; WorkingDir: "{app}"; Tasks: desktopicon; Comment: "Launch Academic Compliance Auditor"
+Name: "{autoprograms}\Academic Compliance Auditor"; Filename: "{app}\run-frozen.exe"; WorkingDir: "{app}"; IconFilename: "{app}\run-frozen.exe"; Comment: "Launch Academic Compliance Auditor"
+Name: "{autodesktop}\Academic Compliance Auditor"; Filename: "{app}\run-frozen.exe"; WorkingDir: "{app}"; IconFilename: "{app}\run-frozen.exe"; Tasks: desktopicon; Comment: "Launch Academic Compliance Auditor"
 
 ; Launch ACA from the Finish page (checkbox, checked by default). Skipped in
 ; silent installs. Launches the packaged launcher only.

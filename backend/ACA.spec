@@ -61,6 +61,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon='../assets/branding/aca-icon.ico',
 )
 
 coll = COLLECT(

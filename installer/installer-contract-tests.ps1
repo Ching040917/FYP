@@ -82,6 +82,35 @@ Assert (-not $b.Contains("& winget install")) "Build script never runs winget to
 Assert (-not $b.Contains("choco install")) "Build script never auto-installs the compiler"
 Assert ($b.Contains("The installer build never auto-installs the compiler.")) "Build script documents manual compiler install only"
 
+Write-Host "=== Branding ==="
+$icoPath = Join-Path $RepoRoot "assets\branding\aca-icon.ico"
+Assert (Test-Path $icoPath) "Generated multi-resolution ICO exists"
+$srcPng = Join-Path $RepoRoot "assets\branding\aca-icon-source.png"
+Assert (Test-Path $srcPng) "Branding source PNG preserved"
+$src = & (Join-Path $RepoRoot "backend\.venv\Scripts\python.exe") -c "
+from PIL import Image
+import struct
+ico = Image.open(r'$icoPath')
+sizes = sorted(ico.info.get('sizes'))
+required = {(16,16),(24,24),(32,32),(48,48),(64,64),(128,128),(256,256)}
+print('ICO_OK' if required.issubset(set(sizes)) else 'ICO_BAD')
+data = open(r'$icoPath','rb').read()
+reserved, ico_type, count = struct.unpack('<HHH', data[:6])
+print('COUNT=%d' % count)
+"
+Assert ($src -match "ICO_OK") "ICO contains all 7 required resolutions (16-256)"
+Assert ($src -match "COUNT=7") "ICO has exactly 7 entries"
+Assert ($iss.Contains("SetupIconFile=..\assets\branding\aca-icon.ico")) "Setup EXE uses ACA icon"
+Assert ($iss.Contains("WizardSmallImageFile=..\assets\branding\aca-icon-wizard.bmp")) "Installer wizard uses ACA icon (32x32 BMP required by Inno)"
+Assert ($iss.Contains("UninstallDisplayIcon={app}\run-frozen.exe")) "Installed Apps entry uses the ACA icon"
+Assert ($iss.Contains('IconFilename: "{app}\run-frozen.exe"')) "Shortcuts explicitly use the icon-embedded launcher"
+$spec = Get-Content (Join-Path $RepoRoot "backend\ACA.spec") -Raw
+Assert ($spec.Contains("icon='../assets/branding/aca-icon.ico'")) "PyInstaller embeds the ACA icon in run-frozen.exe"
+$favHtml = Get-Content (Join-Path $RepoRoot "frontend\index.html") -Raw
+Assert ($favHtml.Contains('/assets/favicon.ico')) "Browser favicon references /assets/favicon.ico"
+$favFile = Join-Path $RepoRoot "frontend\public\assets\favicon.ico"
+Assert (Test-Path $favFile) "Favicon asset exists in frontend public assets"
+
 Write-Host "=== Release output location ==="
 $gi = Get-Content (Join-Path $RepoRoot ".gitignore") -Raw
 Assert ($gi.Contains("release-output/")) "release-output/ is gitignored"
