@@ -2,8 +2,6 @@
 
 Academic Compliance Auditor (ACA) is a Windows application that reviews academic DOCX documents for formatting and APA 7 citation issues. All checks run locally on your machine. Findings are guidance for your own review — ACA does not guarantee institutional acceptance or complete academic compliance.
 
-![Academic Compliance Auditor Dashboard showing System Readiness, setup guidance, and the DOCX audit upload area.](docs/images/aca-dashboard.png)
-
 ## Download
 
 Academic Compliance Auditor is currently distributed privately for evaluation.
@@ -30,6 +28,8 @@ Please note:
 6. Review findings and export the PDF report.
 
 Python and Node.js are not required.
+
+![Academic Compliance Auditor Dashboard showing System Readiness, setup guidance, and the DOCX audit upload area.](docs/images/aca-dashboard.png)
 
 ## Review Findings with Page Evidence
 
