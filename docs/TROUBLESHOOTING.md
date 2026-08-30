@@ -1,180 +1,177 @@
 # Troubleshooting — Academic Compliance Auditor
 
-Each entry is symptom → cause → safe action. No command exposes credentials, document text, or absolute packaged database paths.
+Each entry follows: the problem, what it means, and what to do. For deeper technical diagnosis (developer/evaluator level), see [Technical Troubleshooting](developer/TECHNICAL_TROUBLESHOOTING.md).
 
-## 1. ACA does not open
+## ACA does not open
 
-**Cause:** Missing `_internal` or `frontend-dist`, port conflict, or database initialization failure.
+### What it means
 
-**Action:** Keep the entire one-folder distribution together, close other ACA windows, and try again. Check `logs\launcher.log` for a safe category. For source mode, verify `python -m uvicorn app.main:app --host 127.0.0.1 --port 8000` starts.
+The application did not start, or it closed immediately after launch.
 
-## 2. Browser does not open automatically
+### What to do
 
-**Cause:** Default browser association missing or blocked.
+1. Wait about a minute on first launch — the first start creates ACA's local data and can take longer.
+2. Start ACA again from the Start Menu. Starting ACA twice while it is already running is safe — the second start simply focuses the running instance.
+3. Restart the computer if the problem persists, then try again.
+4. If ACA still will not open, contact the project owner. No information you need to fix this is stored outside your machine.
 
-**Action:** ACA is running at `http://127.0.0.1:<port>/dashboard` (shown in the Launcher console and log). Open that URL manually. The Backend keeps running.
+## Browser does not open
 
-## 3. Port 8010 is occupied
+### What it means
 
-**Cause:** Preferred port in use.
+ACA itself is running, but your web browser did not open automatically.
 
-**Action:** The Launcher tries `8010–8015` on `127.0.0.1` (loopback only) and opens the first healthy port. If all six are busy, it reports that all ports are in use — close the application using the port and retry.
+### What to do
 
-## 4. Second launch behavior
+1. Open your web browser yourself and go to the Dashboard address shown in the ACA launcher window (it looks like `http://127.0.0.1:<port>/dashboard`).
+2. ACA uses the browser Windows has set as default. If no default browser is configured, set one in **Windows Settings > Apps > Default apps**, then start ACA again.
 
-**Cause:** ACA is already running.
+The application keeps running while you do this — nothing is lost.
 
-**Action:** A second launch verifies the existing instance (`pid`, executable, `GET /health`). If healthy, it opens the existing Dashboard and exits without starting another Backend. Closing the second window does not stop the first.
+## Windows displays a security warning
 
-## 5. `System readiness could not be checked`
+### What it means
 
-**Cause:** Readiness probe timed out or optional service unreachable.
+The ACA installer is not digitally signed, so Windows SmartScreen may show *Unknown publisher* or a similar warning when you run it. This is expected for the current release and does not mean the file is unsafe.
 
-**Action:** Use the Dashboard refresh action. This state does not block deterministic audits; optional features appear as unavailable.
+### What to do
 
-## 6. Database requires attention
+1. Confirm you obtained the installer from the project owner or your approved evaluation channel (see [Installation](INSTALLATION.md)).
+2. If you verified a supplied SHA-256 checksum, the file is intact.
+3. On the SmartScreen dialog, choose **More info**, then **Run anyway**.
+4. Antivirus software may also ask about the file the first time. If you trust the source, allow it.
 
-**Cause:** Packaged `audit.db` is at an older known revision.
+Do not disable Windows SmartScreen or your antivirus to install ACA.
 
-**Action:** The Launcher automatically creates a verified backup (`backups\`), runs `alembic upgrade head`, verifies `integrity_check`, `foreign_key_check`, head match, and required tables and columns, then starts. For the packaged release, do **not** run `python -m alembic upgrade head` yourself. For source development, see `docs/INSTALLATION.md` — upgrade manually with that command while the Backend is stopped.
+## System Readiness cannot be checked
 
-## 7. Database upgrade fails
+### What it means
 
-**Cause:** Migration threw, backup verification failed, or post-upgrade verification failed.
+ACA could not finish its readiness check — for example, an optional component did not respond in time.
 
-**Action:** ACA refuses to start and preserves the verified pre-upgrade backup. Message: *The database upgrade did not complete. Your backup was preserved. ACA cannot start until the database is recovered.* Preserve `backups\` and `audit.db` for diagnosis. Do not delete sidecars or downgrade automatically.
+### What to do
 
-## 8. Verified database backup location
+1. Click **Refresh** (or **Check again** in the details view) and wait a few seconds.
+2. If it still fails, restart ACA and check again.
+3. This does not block audits: deterministic checks run regardless, and optional features simply show as unavailable.
 
-**Location:** `%LOCALAPPDATA%\AcademicComplianceAuditor\backups\audit.db.r<source>_to_<head>.<timestamp>-<rand>.bak`
+## Audit does not start
 
-**Verification:** `PRAGMA integrity_check == ok`, `PRAGMA foreign_key_check` returns no rows, backup retains the source revision, and the file is non-empty. Only verified backups are retained.
+### What it means
 
-## 9. Unsupported unstamped database
+The audit could not begin — usually because of the uploaded file.
 
-**Cause:** Tables exist but `alembic_version` is absent (legacy schema).
+### What to do
 
-**Action:** ACA reports that this database is not supported and refuses to start without modification. Do not stamp or manually add columns. Use a later explicit import workflow if provided or contact support. The database is left unchanged.
+1. Make sure the file is a `.docx` document (not `.doc`, `.pdf`, or `.odt`).
+2. Check the file is 10 MB or smaller.
+3. Try **Try with the sample thesis** — if the sample works, the issue is with the specific file.
+4. If the document came from an older Word version, open it in Word and re-save it as `.docx`, then upload again.
 
-## 10. Corrupt or future-version database
+## Audit remains in processing
 
-**Cause:** `PRAGMA integrity_check` fails, unknown revision, future head, multiple heads, or branch ambiguity.
+### What it means
 
-**Action:** ACA reports the database is corrupt or from a newer version and refuses to start. Do not delete or replace the file automatically.
+The audit is still running, or ACA was closed before it could finish.
 
-## 11. History cannot load
+### What to do
 
-**Cause:** `GET /api/audits` returns 500, often due to a legacy audit with `NULL weighted_score` on an older frontend bundle, or a database that failed verification.
+1. Wait for the audit to complete — large documents take longer.
+2. If ACA was closed or the computer restarted mid-audit, the audit is marked as *interrupted* on next start. It cannot be resumed or exported — upload the document again.
 
-**Action:** Fresh packaged databases and upgraded databases with the current head return `200` with `weighted_score: null` displayed as **Unavailable**. If History fails after an upgrade, verify the Launcher created a fresh database via `alembic upgrade head` and that the frontend bundle is the freshly built `index-*.js` (packaging script rebuilds Frontend every run).
+## DOCX upload is rejected
 
-## 12. Audit is stuck at Processing
+### What it means
 
-**Cause:** Previous Backend terminated before marking the audit complete.
+The file did not meet ACA's upload requirements.
 
-**Action:** On next startup, stale-Audit recovery transitions `processing` rows created before the new process started to `interrupted` (`application_restart`) in one transaction. The audit then shows as interrupted.
+### What to do
 
-## 13. Interrupted Audit
+1. Confirm the file is a `.docx` up to 10 MB.
+2. Check the error message — it states which requirement was not met.
+3. Reduce the file size (remove large embedded images) or split the document, then upload again.
+4. No partial audit is created from a rejected upload, so nothing needs cleaning up.
 
-**Cause:** Previous process died mid-audit.
+## LibreOffice is unavailable
 
-**Action:** The audit is terminal `interrupted` with unavailable preview metadata. It cannot be exported or resumed. Upload the document again.
+### What it means
 
-## 14. LibreOffice unavailable
+The optional LibreOffice integration is not installed, so rendered-page previews and original-document page locations are not available. Extracted-text evidence still works, and audits are unaffected.
 
-**Cause:** LibreOffice not installed or not found at `C:\Program Files\LibreOffice\...` or `C:\Program Files (x86)\LibreOffice\...` nor via `SOFFICE_EXECUTABLE`.
+### What to do
 
-**Action:** Use **Download LibreOffice** in the System Readiness card — it opens the official LibreOffice website. Install it yourself (ACA never installs third-party software), or set `SOFFICE_EXECUTABLE`. Without it, audits still complete; rendered-page preview shows as unavailable. Use **Check again** after installing.
+1. In the Dashboard's **System readiness** card, choose **Download LibreOffice** — it opens the official LibreOffice website.
+2. Install LibreOffice yourself (ACA never installs third-party software for you).
+3. Click **Check again** in the readiness card — no restart needed.
 
-## 15. Rendered Preview unavailable
+## Page preview is unavailable
 
-**Cause:** Conversion timeout, invalid PDF, or storage failure.
+### What it means
 
-**Action:** The audit still completes with `rendered_preview_status: UNAVAILABLE` and a safe error category (`libreoffice_missing`, `timeout`, `conversion_failed`, `persistence_failed`). No findings are lost.
+A page preview could not be generated for this audit — for example, LibreOffice was missing at audit time, or the conversion failed.
 
-## 16. Extracted Text fallback
+### What to do
 
-**Cause:** Rendered preview failed or file was later removed.
+1. Findings still link to the exact paragraph in the extracted text view — use that evidence instead.
+2. Install LibreOffice (see above), then run a new audit — new audits gain page previews automatically.
 
-**Action:** Findings still link to the exact paragraph in the extracted text viewer. A missing preview returns `410` with the message that extracted text remains available.
+## Ollama is unavailable
 
-## 17. Ollama unavailable
+### What it means
 
-**Cause:** Ollama service not running at `http://localhost:11434`.
+The optional local AI service is not installed or not running, so local AI citation guidance is unavailable. Deterministic checks are unaffected.
 
-**Action:** Use **Download Ollama** in the System Readiness card — it opens the official Ollama website. Install and start it yourself (ACA never installs third-party software). Deterministic checks are unaffected. Use **Check again** after installing.
+### What to do
 
-## 18. Configured model missing
+1. In the **System readiness** card, choose **Download Ollama** — it opens the official Ollama website.
+2. Install Ollama yourself and start it.
+3. Click **Check again**. If you continue without Ollama, everything else keeps working.
 
-**Cause:** Model `qwen3.5:4b` not installed.
+## Local AI model is missing
 
-**Action:** Use **Copy installation command** in the System Readiness card — it copies the exact `ollama pull <model>` command shown in the card. Run the copied command yourself in a terminal (internet access required; the download may take time and substantial storage; ACA never downloads automatically), then verify with `ollama list` or **Check again**. Readiness shows `local_model: unavailable` until installed.
+### What it means
 
-## 19. Cloud AI unavailable
+Ollama is installed and running, but the AI model ACA uses has not been downloaded yet.
 
-**Cause:** Cloud toggle is off (default) or `GEMINI_API_KEY` not set.
+### What to do
 
-**Action:** Cloud AI is explicit opt-in per audit. Without a user-provided key, it is unavailable and deterministic checks continue. When available, only citation-review context is sent.
+1. In the **System readiness** card, find the model entry and choose **Copy installation command**.
+2. Paste the copied command into a terminal (Command Prompt or PowerShell) and run it yourself. The model download needs internet access, may take time, and needs noticeable disk space.
+3. When the download finishes, click **Check again**.
+4. On a low-memory computer you can also simply continue without local AI — deterministic checks are unaffected.
 
-## 20. Audit upload failure
+## PDF export is unavailable
 
-**Cause:** Wrong file type, file too large, or network error.
+### What it means
 
-**Action:** ACA accepts only `.docx` up to 10 MB. Check the error message, retry with a supported file, or use the bundled sample thesis.
+A PDF report could not be produced for this audit.
 
-## 21. File exceeds size limit
+### What to do
 
-**Cause:** File larger than 10 MB.
+1. This happens for audits with no score — for example, interrupted audits or very old audits. Run a new audit to get an exportable report.
+2. If a completed audit still will not export, restart ACA and try again.
 
-**Action:** Reduce the file size or split the document. ACA rejects the upload with a safe size error; no partial audit is created.
+## Audit History does not appear
 
-## 22. Custom Profile validation failure
+### What it means
 
-**Cause:** Invalid profile JSON, missing required fields, or unknown profile id.
+The History page did not load, or a past audit is missing.
 
-**Action:** The editor shows per-field friendly messages (field path and message), never raw Python paths or stack traces. Fix the highlighted fields and validate again.
+### What to do
 
-## 23. Custom Profile conflict from another tab
+1. Refresh the page in your browser (F5).
+2. Restart ACA and open History again.
+3. History is stored locally on your machine — it survives closing ACA and even uninstalling (uninstall preserves your data by default). If History is truly empty after reinstalling on the same Windows account, contact the project owner.
 
-**Cause:** Another tab saved a newer revision.
+## Find or remove local data
 
-**Action:** The selector merges external changes; a stale write is refused with a revision guard. Reload the selector and retry with the latest revision.
+### What it means
 
-## 24. Corrupted Custom Profile storage
+All ACA data lives in one local folder — audit history, backups, previews, and logs.
 
-**Cause:** localStorage contains corrupted or future-version JSON, or storage is unavailable.
+### What to do
 
-**Action:** ACA discards the corrupted store, restores built-ins, and continues. Built-ins remain available even when the custom list is empty or storage is unavailable.
-
-## 25. PDF Export unavailable
-
-**Cause:** Audit is `processing` or `interrupted` (no score), or `failed` with no findings.
-
-**Action:** The endpoint returns `409` with a friendly unavailable message and never fabricates a score. Complete a new audit to export.
-
-## 26. Legacy Audit score shows `Unavailable`
-
-**Cause:** Audits created at older revisions had no computed `weighted_score` (`NULL`).
-
-**Action:** History and detail pages preserve `null` and display **Unavailable** (never `0` or `0/100`), do not re-score, and do not update the historical row. PDF export for such audits returns `409`.
-
-## 27. Windows security or antivirus warning for an unsigned executable
-
-**Cause:** The one-folder release is unsigned unless signing is configured.
-
-**Action:** Windows SmartScreen or antivirus may warn on first launch. Verify you obtained the release through your distribution channel, keep the folder together, and allow the executable if you trust the source. No special antivirus allowance is documented.
-
-## 28. Clean shutdown and stale instance recovery
-
-**Cause:** Launcher was force-terminated or the system shut down.
-
-**Action:** The Launcher holds a Windows Job Object (`KILL_ON_JOB_CLOSE`) so a forced Launcher termination kills the owned Backend. A stale `instance.json` is validated (`pid`, executable match, `GET /health`) before reuse; invalid metadata with a held mutex shows a safe already-running message, while stale metadata with no mutex is removed and a new instance starts.
-
-## 29. Where logs and user data are stored
-
-- **Packaged:** `%LOCALAPPDATA%\AcademicComplianceAuditor\audit.db`, `backups\`, `rendered-previews\`, `logs\launcher.log`, `instance.json` (while running), `tmp\`.
-- **Source:** `backend\audit.db`, preview storage via `PREVIEW_STORAGE_DIR` or `%LOCALAPPDATA%\AcademicComplianceAuditor\rendered-previews`.
-- **Launcher log** is rotating `1 MB × 5` and contains only lifecycle, port, health timing, mutex, browser result, and safe error categories — never document text, filenames, profile payloads, API keys, or provider payloads.
-- **Backups** are verified before migration; three newest verified backups are retained, unrelated files are ignored, and failed migrations preserve all existing backups.
-
-For source-development database issues, see `docs/INSTALLATION.md` — do not delete `backend\audit.db` to fix a migration mismatch; run `python -m alembic upgrade head` while the Backend is stopped.
+1. Press **Win+R**, type `%LOCALAPPDATA%\AcademicComplianceAuditor`, press Enter.
+2. Inside: `audit.db` is your audit history; `backups\` holds automatic database backups; `rendered-previews\` holds generated page previews; `logs\` holds diagnostic logs.
+3. To remove everything after uninstalling, delete that entire folder. **Back it up first** if you might need your history later — removal is permanent.
+4. Deleting individual audits from within ACA is the normal way to remove a single audit's data. See [Privacy](PRIVACY.md) for what each item contains.

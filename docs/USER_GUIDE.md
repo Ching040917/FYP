@@ -1,115 +1,96 @@
 # User Guide — Academic Compliance Auditor
 
-This guide is for ordinary Windows desktop users running the packaged release. For developer setup, see [Installation Guide](INSTALLATION.md).
+This guide is for ordinary Windows desktop users of the packaged ACA application. For installation help, see [Installation](INSTALLATION.md).
 
-## 1. Starting ACA
+## 1. Start ACA
 
-Double-click `run-frozen.exe` in the extracted one-folder release. Keep `run-frozen.exe` and `_internal` together. ACA binds only to `127.0.0.1` (`8010` then `8011–8015` if needed), waits for health, then opens `http://127.0.0.1:<port>/dashboard`. A second launch reuses the healthy instance; closing the Launcher stops only the owned Backend.
+Open **ACA** from the **Windows Start Menu** (a desktop shortcut also works if you created one during installation). After a short start-up, your web browser opens automatically at the ACA Dashboard. ACA uses the browser Windows has set as default — if Edge is your default browser, Edge opens.
 
-## 2. Dashboard and System Readiness
+Closing the ACA application window stops ACA. Closing the browser tab alone does not.
 
-The Dashboard shows **Audit Dashboard** with an editorial header, a left intake column and a right result column. The **System Readiness** card (from `ReadinessCard`) reports whether ACA and optional components are ready. Use its refresh action when you install or remove an optional component.
+## 2. Check System Readiness
 
-## 3. Required versus optional components
+The Dashboard's **System readiness** card shows whether ACA and its optional components are ready. Expand **View details** for per-component status, and use **Refresh** or **Check again** after installing or removing an optional component.
 
-Required: deterministic formatting checks. Optional: LibreOffice (rendered-page preview), Ollama `qwen3.5:4b` (local AI), Cloud AI (explicit opt-in). Missing optional components show a degraded readiness state but do not block audits.
+## 3. Upload a DOCX Document
 
-**Optional setup pathways.** When an optional component is unavailable, the System Readiness card explains the feature and offers safe setup actions:
+In the left intake panel, drag a `.docx` file into the upload area or click to browse. The maximum file size is 10 MB.
 
-- **Download LibreOffice** opens the official LibreOffice website (`https://www.libreoffice.org/download/`) in a new tab. LibreOffice is third-party software; third-party websites have their own terms and privacy policies. Install it yourself if you want rendered-page previews and original-document page locations.
-- **Download Ollama** opens the official Ollama website (`https://ollama.com/download/windows`) in a new tab. Ollama is third-party software. Install it yourself if you want local AI citation suggestions.
-- **Local AI model:** when Ollama is running but the required model is missing, the card shows the exact model name and a `ollama pull <model>` command with **Copy installation command**. Run the copied command yourself in a terminal. The model download requires internet access, may take time, and may require substantial disk storage. ACA never starts the download automatically.
-- **Check again** re-checks readiness after you install something — no restart needed.
+No document? Use **Try with the sample thesis** to see ACA work on a bundled example.
 
-ACA never downloads, installs, or executes third-party software. Deterministic audit checks remain available without every optional component. When everything is ready, the download guidance is hidden.
+Documents are processed locally on your machine. Your original DOCX file is read once for the audit and is not kept as a source file — to audit it again later, upload it again.
 
-## 4. Uploading a DOCX document
+## 4. Select a Formatting Profile
 
-In the left intake panel, use the upload dropzone (`upload-dropzone`). Drag a `.docx` or browse to select one. Documents are processed locally by default.
-
-## 5. Maximum supported upload size
-
-10 MB (`MAX_FILE_SIZE=10485760`). Larger files are rejected with a safe error.
-
-## 6. Selecting a Formatting Profile
-
-Above the upload card, select one of:
+Above the upload area, choose one of:
 
 - **SUC Academic Report** (recommended default)
 - **APA 7 Student Paper**
-- **Custom Formatting Profiles** (your saved profiles, listed by name)
+- One of your **custom profiles**, if you have created any
 
-Selection persists in browser storage.
+You can create custom profiles with your own font, spacing, margins, and citation settings. Each profile is validated in-app before it can be saved, and your selection is remembered for next time.
 
-## 7. Custom Formatting Profiles
+## 5. Run an Audit
 
-**Creating:** In the profile selector, create a custom profile — set font, spacing, margins, and citation style. Use the in-app **Validate** action; only a backend-confirmed valid profile can be saved.
+Select a profile, add your document, then start the audit. ACA reports progress while it checks your document.
 
-**Editing:** Open a saved custom profile, edit fields, and validate again before saving. The editor shows per-field friendly messages, never raw Python paths.
+An audit that could not finish (for example, because the application was closed mid-run) is shown as *interrupted* and cannot be exported — simply upload the document again.
 
-**Saving:** Saving writes a validated profile to browser localStorage with versioned identity (`profile_id`, `profile_version`). The saved profile appears in the selector.
+## 6. Understand the Results
 
-**Recovering:** If you close the tab mid-edit, an unsaved draft is recovered on return when the editor reloads (draft recovery from localStorage). A corrupted or future-version store is discarded and built-ins remain available.
+Results open in the Audit Workspace:
 
-**Deleting:** Delete a custom profile from the selector or editor. Deleting the currently selected custom profile resets the selection to the SUC built-in.
+- **Score** — a weighted compliance score out of 100 for the checks your profile enables. Major findings deduct more than minor ones. Very old audits may show *Unavailable* instead of a score.
+- **Findings list** — grouped by category and severity (major findings first).
+- **Expected and Actual** — what your profile requires versus what was found in the document.
+- **Not checked** — a profile requirement can be switched off (for example, margins); this means the check does not apply, not that it passed.
 
-**Conflict from another tab:** A profile created in another tab appears after the selector merges external changes. Version conflicts use a revision guard — a stale write is refused and you are prompted to reload.
+ACA reports the checks it supports. **It does not guarantee institutional acceptance or complete academic compliance** — treat findings as guidance for your own review.
 
-## 8. Disabled requirements and `Not checked`
+## 7. View Finding Evidence
 
-Some profile requirements can be `null` (for example, margins `left_in: null`). Disabled requirements show as **Not checked** and do not produce findings. This is not a pass — it means the check is not applicable for that profile.
+Selecting a finding shows its evidence:
 
-## 9. Local AI when Cloud AI is Off
+- **Location** — the finding's location in plain language, such as a heading, paragraph, figure, or table (never internal numbering).
+- **Rendered-page preview** — a page preview of your document with the finding highlighted. This needs the optional LibreOffice integration.
+- **Extracted text** — when page preview is unavailable, the finding links to the exact paragraph in the extracted text view instead.
 
-When Cloud AI is Off (default), local AI via Ollama may still run if installed. Deterministic checks always run. `qwen3.5:4b` availability is shown in readiness. Local AI receives only citation snippets, not the full document.
+The preview is a locally generated copy of your document; the original Word file is not stored or modified.
 
-## 10. Cloud AI opt-in
+## 8. Export a PDF Report
 
-Cloud AI (Gemini) is off by default. It runs only when you explicitly enable it for that audit. Credentials are user-provided (`GEMINI_API_KEY`), never bundled. When enabled, citation-review context may be sent to the configured provider; deterministic checks continue independently. If local Ollama is unavailable, Cloud may fall back to local per build logic.
+Use **Export PDF** in the Audit Workspace to save a PDF report containing your findings, locations, and required actions. Export is offline and deterministic — it reads the stored audit only. Audits without a score (interrupted or very old) cannot be exported.
 
-## 11. Running an Audit
+## 9. Use Audit History
 
-Select a profile, upload a `.docx`, optionally toggle Cloud AI, then run the audit. Results appear in the right column as a compliance summary. The full evidence report is not duplicated on the Dashboard — it opens in the Audit Workspace.
+**History** lists your past audits with score, status, and date. Open any audit to review its findings again. History is stored locally on your machine.
 
-## 12. Understanding results
+## 10. Delete an Audit
 
-- **Score** — weighted compliance score out of 100 (major findings deduct more than minor). Unavailable for historical audits with no computed score.
-- **Major and Minor findings** — counts and per-category breakdown.
-- **Expected and Actual values** — the profile requirement versus what was found in the document.
-- **Rendered-page evidence** — a PDF preview of the document pages, generated via LibreOffice when available.
-- **Extracted Text fallback** — when rendered preview is unavailable, findings still link to the exact paragraph in the extracted text viewer.
-- **Location unavailable** — some findings have no precise paragraph mapping; they are still listed with their rule and message.
+Delete an audit from History or the Audit Workspace. **Deletion is permanent** — a deleted audit cannot be recovered from within ACA. Note that older database backups on disk may still contain a copy of the deleted audit, as explained in [Privacy](PRIVACY.md).
 
-ACA does not guarantee academic compliance; it reports the checks it supports.
+## 11. Set Up Optional Features
 
-## 13. Opening the exact completed Audit
+Optional components extend ACA but are never required — core audits work without them.
 
-After a successful audit, use **View audit** in the completion panel or Dashboard summary. The exact stored `audit_id` is used (`/audit/<id>`), never a recomputed one.
+**LibreOffice** (page previews and original-document page locations):
 
-## 14. History
+- When LibreOffice is missing, the System readiness card shows **Download LibreOffice**, which opens the official LibreOffice website (`https://www.libreoffice.org/download/`) in your browser. LibreOffice is third-party software with its own terms and privacy policies.
+- Install it yourself, then click **Check again** — no restart needed.
 
-History (`/history`) lists past audits with score, status, and date. Use it to reopen any audit. History is local — it reads `audit.db` under `%LOCALAPPDATA%\AcademicComplianceAuditor`.
+**Ollama and its model** (local AI citation guidance):
 
-## 15. PDF Export
+- When Ollama is missing, the card shows **Download Ollama**, which opens the official Ollama website (`https://ollama.com/download/windows`). Install and start it yourself.
+- When Ollama is running but its AI model is missing, the card shows the exact model needed with a **Copy installation command** button. Paste the command into a terminal and run it yourself — the model download needs internet access, may take time, and needs noticeable disk space.
+- Local AI performance depends on your computer's processor and memory. On a low-memory computer you can simply continue without local AI — deterministic checks are unaffected.
 
-In the Audit Workspace, export the audit report as PDF. Export is deterministic and offline — it reads persisted findings only. If no score is available, export returns an unavailable response instead of a fabricated score.
+**ACA never downloads, installs, or runs third-party software by itself** — every download or installation is performed by you.
 
-## 16. Interrupted Audits
+**Cloud AI** is a separate, explicit opt-in for a single audit. It stays off unless you turn it on for that audit and provide your own API key. When enabled, only the citation snippets relevant to confirmed findings are sent for review.
 
-If the Backend restarts while an audit is `processing` and the record was created before the new process started, it transitions to `interrupted` with reason `application_restart` and unavailable preview metadata. Interrupted audits cannot be exported.
+## 12. Get Help
 
-## 17. Uploading the document again
-
-Use **Upload again** to return to the Dashboard with a fresh dropzone. The original DOCX is never retained; you must re-upload the file.
-
-## 18. Deleting an Audit
-
-Delete an audit from History or the Audit Workspace. This removes the audit row and its child violations and citation issues (cascade), and removes its rendered preview file best-effort. Deletion is permanent.
-
-## 19. First-run guidance and reopening setup guidance
-
-On first visit, a guidance panel explains supported checks and how to start. Dismiss it with **Dismiss** — the dismissal is stored in versioned localStorage. Use **Show setup guidance** in the readiness card details to reopen it.
-
-## Platform notes
-
-Windows 10/11 desktop, 768 px minimum supported width, 1280 px or wider recommended. Mobile local execution is unsupported.
+- Something not working? See [Troubleshooting](TROUBLESHOOTING.md).
+- Questions about your data? See [Privacy](PRIVACY.md).
+- What ACA does not support: [Known Limitations](KNOWN_LIMITATIONS.md).
+- Installing or updating ACA: [Installation](INSTALLATION.md).

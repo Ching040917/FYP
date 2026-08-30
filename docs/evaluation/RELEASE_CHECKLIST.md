@@ -73,9 +73,9 @@ Complete every section before publishing a packaged Windows release. Each checkb
 
 ## Release artifact
 
-- [ ] Version recorded.
-- [ ] Archive name follows convention.
-- [ ] SHA-256 checksum computed and published alongside archive.
+- [ ] Version recorded (expected: 1.0.0).
+- [ ] Installer name follows convention (`AcademicComplianceAuditor-Setup-1.0.0.exe`).
+- [ ] SHA-256 checksum computed and distributed with the installer (never hard-coded in documentation; every rebuild produces a new checksum). Distribution remains private for evaluation — no public publication.
 - [ ] Clean Windows VM validation performed (no dev tools installed).
 - [ ] Unsigned-executable SmartScreen warning documented.
 - [ ] User-data location `%LOCALAPPDATA%\AcademicComplianceAuditor\` documented.
@@ -96,7 +96,7 @@ Complete every section before publishing a packaged Windows release. Each checkb
 - [ ] Uninstall preserves user data by default (no optional data deletion offered; documented manual cleanup).
 - [ ] Setup EXE SHA-256 recorded; unsigned status stated honestly.
 - [ ] `release-output/` is gitignored; Setup EXE is not committed or published.
-- [ ] Manual end-user checklist maintained (`docs/END_USER_INSTALLATION_TEST.md`).
+- [ ] Manual end-user checklist maintained (`docs/evaluation/END_USER_INSTALLATION_TEST.md`).
 
 ## Not implemented (do not claim)
 
