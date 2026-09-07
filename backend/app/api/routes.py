@@ -2,10 +2,13 @@ from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Query, 
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from typing import List, Any, Optional
+import hashlib
+import io
 import json
 import logging
 import time
 import uuid
+import zipfile
 from datetime import datetime
 
 from app.database import get_db
@@ -41,6 +44,18 @@ from app.services.profile_resolver import (
     ProfileResolveError,
 )
 from app.services.custom_profile_validation import validate_custom_profile
+from app.services.guided_fix import (
+    apply_guided_fixes,
+    build_corrected_filename,
+    GuidedFixFailed,
+    GuidedFixSelectionRequest,
+    LEGACY_DETAIL,
+    MISMATCH_DETAIL,
+    VERIFY_FAIL_DETAIL,
+    ZERO_DETAIL,
+    _content_disposition,
+    _summary_header,
+)
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -110,6 +125,7 @@ async def audit_document(
         id=str(uuid.uuid4()),
         filename=file.filename,
         file_size=len(file_bytes),
+        document_sha256=hashlib.sha256(file_bytes).hexdigest(),
         weighted_score=0,
         deploy_mode=deploy_mode,
         status="processing",
@@ -706,6 +722,115 @@ async def get_rendered_preview(audit_id: str, db: Session = Depends(get_db)):
             "Content-Disposition": 'inline; filename="preview.pdf"',
             "X-Content-Type-Options": "nosniff",
             "Cache-Control": "private, no-store",
+        },
+    )
+
+
+@router.post("/api/audit/{audit_id}/guided-fixes")
+async def apply_guided_fixes_endpoint(
+    audit_id: str,
+    file: UploadFile = File(...),
+    selection: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    """Guided Fixes (Beta) — apply whitelisted fixes to a verified copy.
+
+    Multipart: `file` = the exact original DOCX (SHA-256 verified against
+    the audit); `selection` = JSON string {"violation_ids": [...]}.
+
+    Read-only toward the audit: the audit row, violations, score, and
+    findings are never modified and no finding is marked resolved. The
+    corrected DOCX is produced in memory and returned for download — never
+    persisted. Logs carry only the audit id, counts, and skip-category
+    strings — never filenames, document text, excerpts, run contents, or
+    target values.
+    """
+    # 1. Extension gate.
+    if not file.filename.endswith(".docx"):
+        raise HTTPException(status_code=400, detail="Unsupported file format. Only .docx files are accepted.")
+
+    # 2. Size gate.
+    file_bytes = await file.read()
+    if len(file_bytes) > settings.MAX_FILE_SIZE:
+        raise HTTPException(status_code=400, detail="File size exceeds the 10MB security boundary.")
+
+    # 3. Zip magic gate.
+    if not zipfile.is_zipfile(io.BytesIO(file_bytes)):
+        raise HTTPException(status_code=400, detail="The uploaded file is not a valid DOCX.")
+
+    # 4. Selection payload validation.
+    try:
+        payload = json.loads(selection)
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="Invalid selection payload.")
+    if not isinstance(payload, dict) or not payload.get("violation_ids"):
+        raise HTTPException(status_code=400, detail="Select at least one supported finding.")
+    try:
+        GuidedFixSelectionRequest.model_validate(payload)
+    except Exception:
+        raise HTTPException(status_code=422, detail="Invalid selection payload.")
+
+    # 5-6. Audit existence.
+    try:
+        preview_storage.validate_audit_id(audit_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Audit not found")
+    audit = db.query(AuditRecord).filter(AuditRecord.id == audit_id).first()
+    if not audit:
+        raise HTTPException(status_code=404, detail="Audit not found")
+
+    # 7. Completed-only.
+    if audit.status != "completed":
+        raise HTTPException(status_code=409, detail="This audit is not completed yet.")
+
+    # 8-9. Document identity — SHA-256 only, never filename/size fallbacks.
+    if audit.document_sha256 is None:
+        raise HTTPException(status_code=409, detail=LEGACY_DETAIL)
+    if hashlib.sha256(file_bytes).hexdigest() != audit.document_sha256:
+        raise HTTPException(status_code=409, detail=MISMATCH_DETAIL)
+
+    # 10. Dedupe ids preserving first occurrence; ownership gate.
+    seen = set()
+    ordered_ids: List[str] = []
+    for vid in payload["violation_ids"]:
+        if vid in seen:
+            continue
+        seen.add(vid)
+        ordered_ids.append(vid)
+
+    owned = {v.id for v in audit.violations}
+    if any(vid not in owned for vid in ordered_ids):
+        raise HTTPException(status_code=422, detail="A selected finding does not belong to this audit.")
+    selected_violations = [v for v in audit.violations if v.id in ordered_ids]
+    selected_violations.sort(key=lambda v: ordered_ids.index(v.id))
+
+    # 11. Apply (in-memory only).
+    try:
+        corrected, applied, skipped = apply_guided_fixes(audit, file_bytes, selected_violations)
+    except GuidedFixFailed:
+        raise HTTPException(status_code=422, detail=VERIFY_FAIL_DETAIL)
+    except Exception:
+        logger.exception("guided_fixes failed audit=%s", audit_id)
+        raise HTTPException(status_code=500, detail="Guided Fixes failed. No file was produced.")
+
+    # 12. Nothing applied → nothing to download.
+    if not applied:
+        raise HTTPException(status_code=422, detail=ZERO_DETAIL)
+
+    # 13. Success — corrected DOCX for download.
+    logger.info(
+        "guided_fixes audit=%s applied=%d skipped=%d failed=0",
+        audit_id, len(applied), len(skipped),
+    )
+    name = build_corrected_filename(audit.filename or "document.docx")
+    return Response(
+        content=corrected,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={
+            "Content-Disposition": _content_disposition(name),
+            "X-Content-Type-Options": "nosniff",
+            "Cache-Control": "private, no-store",
+            "X-Repair-Summary": _summary_header(len(applied), len(skipped), 0),
         },
     )
 

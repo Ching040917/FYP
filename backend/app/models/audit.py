@@ -14,6 +14,12 @@ class AuditRecord(Base):
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     filename = Column(String(255), nullable=False)
     file_size = Column(Integer, nullable=False)
+
+    # SHA-256 of the uploaded DOCX bytes (lowercase hex). Nullable —
+    # historical rows predate the column; Guided Fixes is unavailable for
+    # them. The DOCX is never stored.
+    document_sha256 = Column(String(64), nullable=True)
+
     weighted_score = Column(Integer, default=0)
     deploy_mode = Column(String(10), nullable=False, default="LOCAL")
     status = Column(String(20), nullable=False, default="processing")
