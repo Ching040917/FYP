@@ -39,6 +39,7 @@ import { interruptionMessage } from '../lib/audit/interrupted-audit'
 import { formatAuditDateTime, auditDateTimeAttr } from '../lib/format-date'
 import { PendingNav, hasParagraphIdentity, type NavCommand } from '../lib/pdf/pending-navigation.ts'
 import type { PageGeometry } from '../lib/pdf/pdf-text-extract.ts'
+import { GuidedFixesPanel } from '../components/audit/guided-fixes-panel'
 import { MARGIN_RULES, MARGIN_UNAVAILABLE_MESSAGE, resolveMarginNavigation, resolveMarginMarker, marginMarkerChip, sectionIndexOf } from '../lib/pdf/margin-navigation.ts'
 import { mapAllSections, type SectionMetadataLike, type SectionRange } from '../lib/pdf/section-mapping.ts'
 import {
@@ -1002,6 +1003,13 @@ export function AuditPage() {
               {/* Export PDF — completed: enabled; processing: disabled with a
                   clear tooltip; failed: enabled so the backend decides (409 when
                   there is nothing meaningful to export). */}
+              {audit.status === 'completed' && (
+                <GuidedFixesPanel
+                  auditId={audit.id}
+                  violations={audit.violations}
+                  locationLabels={locationLabels}
+                />
+              )}
               <Button
                 type="button"
                 variant="outline"

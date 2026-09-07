@@ -198,6 +198,86 @@ export const api = {
       return { ok: false, status: 0, detail: err?.message ?? 'Network error' }
     }
   },
+
+  /**
+   * Guided Fixes (Beta) — apply whitelisted fixes to a verified copy of the
+   * exact original DOCX (POST /api/audit/{id}/guided-fixes).
+   *
+   * Multipart contract (authoritative backend): `file` = the original DOCX,
+   * `selection` = JSON string {"violation_ids": [...]}. The client sends
+   * violation IDs ONLY — never paragraph/run indexes, values, or rule codes.
+   * The backend SHA-256 check is the sole identity proof.
+   *
+   * Privacy: this method logs nothing and never reads the response body
+   * beyond the Blob handoff; the summary header carries counts only.
+   */
+  async applyGuidedFixes(
+    auditId: string,
+    file: File,
+    violationIds: string[],
+  ): Promise<{ blob: Blob; filename: string | null; summary: GuidedRepairSummary | null }> {
+    const formData = new FormData()
+    formData.append('file', file)
+    formData.append('selection', JSON.stringify({ violation_ids: violationIds }))
+    const response = await fetchWithTimeout(
+      `${API_BASE}/audit/${auditId}/guided-fixes`,
+      { method: 'POST', body: formData },
+      UPLOAD_TIMEOUT_MS,
+    )
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: 'Unknown error' }))
+      throw new Error(error.detail || `HTTP ${response.status}`)
+    }
+    const blob = await response.blob()
+    return {
+      blob,
+      filename: parseContentDispositionFilename(response.headers.get('content-disposition')),
+      summary: parseRepairSummary(response.headers.get('x-repair-summary')),
+    }
+  },
+}
+
+/**
+ * Counts-only repair summary from the backend X-Repair-Summary header
+ * (URL-encoded JSON {"applied":N,"skipped":N,"failed":N}).
+ */
+export interface GuidedRepairSummary {
+  applied: number
+  skipped: number
+  failed: number
+}
+
+/**
+ * Conservatively parse the X-Repair-Summary header. Missing, malformed, or
+ * non-numeric payloads yield null — the download must still work. Never
+ * throws.
+ */
+function parseRepairSummary(header: string | null): GuidedRepairSummary | null {
+  if (!header) return null
+  let text = header
+  try {
+    const decoded = decodeURIComponent(header)
+    if (decoded.startsWith('{')) text = decoded
+  } catch {
+    // keep the raw value; JSON.parse decides
+  }
+  try {
+    const parsed = JSON.parse(text)
+    if (typeof parsed !== 'object' || parsed === null) return null
+    const applied = parsed.applied
+    const skipped = parsed.skipped
+    const failed = parsed.failed
+    if (
+      typeof applied !== 'number' || !Number.isFinite(applied) ||
+      typeof skipped !== 'number' || !Number.isFinite(skipped) ||
+      typeof failed !== 'number' || !Number.isFinite(failed)
+    ) {
+      return null
+    }
+    return { applied, skipped, failed }
+  } catch {
+    return null
+  }
 }
 
 /**
