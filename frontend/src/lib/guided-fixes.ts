@@ -29,9 +29,22 @@ export const CORRECTED_FALLBACK_FILENAME = 'ACA_corrected.docx'
 
 /** Stable, user-facing copy for the Beta surface. */
 export const BETA_WARNING =
-  'Beta feature. ACA creates a corrected copy and never changes your original document. Review the corrected document before submission.'
+  'Beta feature. ACA creates a corrected copy and never changes your original document. Review the corrected copy before submission.'
 export const BETA_SCOPE =
   'Only selected supported formatting issues are considered. Some findings require manual correction.'
+/** Concise dialog introduction (replaces the two longer Beta paragraphs). */
+export const GF_INTRO =
+  'Guided Fixes creates a corrected copy and never changes your original document. Select supported formatting issues, review the proposed changes, then upload the original DOCX.'
+export const GF_SECONDARY =
+  'Some findings require manual correction. Review the corrected copy before submission.'
+
+/** Non-interactive workflow steps (presentation order is authoritative). */
+export const WORKFLOW_STEPS = [
+  'Select fixes',
+  'Review changes',
+  'Upload original',
+  'Download copy',
+] as const
 
 /** The backend's exact safe error details (verbatim contract, verified). */
 export const MISMATCH_DETAIL =
@@ -103,6 +116,82 @@ export function dedupeSelection(ids: readonly string[]): string[] {
 /** True when the current selection already contains this id. */
 export function isGuidedSelected(current: readonly string[], id: string): boolean {
   return current.includes(id)
+}
+
+/**
+ * Filtered-view selection: add every *currently visible* supported finding
+ * id without duplicates and never past the backend cap. Manual findings are
+ * never selected. Deterministic order (caller supplies the view order).
+ */
+export function selectAllInView(
+  current: readonly string[],
+  visibleSupportedIds: readonly string[],
+  limit: number = MAX_SELECTED,
+): string[] {
+  const next = [...current]
+  const seen = new Set(next)
+  for (const id of visibleSupportedIds) {
+    if (next.length >= limit) break
+    if (seen.has(id)) continue
+    seen.add(id)
+    next.push(id)
+  }
+  return next
+}
+
+/** Remove only the given (visible supported) ids — hidden/manual kept. */
+export function deselectInView(
+  current: readonly string[],
+  visibleSupportedIds: readonly string[],
+): string[] {
+  const target = new Set(visibleSupportedIds)
+  return current.filter((id) => !target.has(id))
+}
+
+/** Count line: "6 selected · 8 available for Guided Fix · Maximum 20". */
+export function guidedCountLine(
+  selectedCount: number,
+  availableCount: number,
+): string {
+  if (selectedCount >= MAX_SELECTED) {
+    return `${selectedCount} selected · Maximum reached`
+  }
+  if (selectedCount === 0) {
+    return `No findings selected · ${availableCount} available for Guided Fix · Maximum ${MAX_SELECTED}`
+  }
+  return `${selectedCount} selected · ${availableCount} available for Guided Fix · Maximum ${MAX_SELECTED}`
+}
+
+/** Limit notice shown when a select-all attempt was truncated by the cap. */
+export function guidedLimitNotice(selectedCount: number, availableCount: number): string | null {
+  if (selectedCount < MAX_SELECTED) return null
+  if (availableCount <= MAX_SELECTED) return null
+  return `${MAX_SELECTED} selected. Guided Fixes can process up to ${MAX_SELECTED} findings at a time.`
+}
+
+/** Primary review action label, singular below two selections. */
+export function guidedReviewLabel(selectedCount: number): string {
+  return selectedCount === 1
+    ? 'Review 1 selected change'
+    : `Review ${selectedCount} selected changes`
+}
+
+/** Workflow indicator step for a stage (null for idle). */
+export function workflowStepForStage(stage: string): number | null {
+  switch (stage) {
+    case 'selecting':
+      return 0
+    case 'reviewing':
+      return 1
+    case 'ready_to_upload':
+    case 'error':
+      return 2
+    case 'applying':
+    case 'completed':
+      return 3
+    default:
+      return null
+  }
 }
 
 /**

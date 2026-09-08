@@ -95,7 +95,10 @@ describe('guided selection', () => {
     assert.equal(typeof toggleGuidedSelection, 'function')
     assert.equal(typeof dedupeSelection, 'function')
     const exported = Object.keys(await import('../src/lib/guided-fixes.ts'))
-    assert.ok(!exported.some((k) => /apply.*all|select.*all/i.test(k)))
+    // View-aware helpers like selectAllInView are allowed; only action-style
+    // exports (applyAll/SelectAll-violations) must not exist.
+    const banned = exported.filter((k) => /apply.*all|select.*all.*violation/i.test(k))
+    assert.deepEqual(banned, [])
   })
 
   test('selection deduplicates ids preserving first occurrence', () => {
@@ -361,14 +364,14 @@ describe('success and privacy invariants', () => {
     assert.ok(!apiCalls.includes('auditDocument'))
   })
 
-  test('Beta warning remains visible in the panel source', () => {
+  test('intro copy is present and concise in the panel source', () => {
     const src = readFileSync(new URL('../src/components/audit/guided-fixes-panel.tsx', import.meta.url), 'utf8')
     const lib = readFileSync(new URL('../src/lib/guided-fixes.ts', import.meta.url), 'utf8')
-    // The panel renders the constant; the literal lives in the lib.
-    assert.ok(src.includes('BETA_WARNING'))
-    assert.ok(src.includes('BETA_SCOPE'))
-    assert.ok(lib.includes('Beta feature. ACA creates a corrected copy and never changes your original document.'))
-    assert.ok(lib.includes('Only selected supported formatting issues are considered. Some findings require manual correction.'))
+    // The panel renders the concise intro constants; the literals live in the lib.
+    assert.ok(src.includes('GF_INTRO'))
+    assert.ok(src.includes('GF_SECONDARY'))
+    assert.ok(lib.includes('Guided Fixes creates a corrected copy and never changes your original document.'))
+    assert.ok(lib.includes('Some findings require manual correction. Review the corrected copy before submission.'))
   })
 
   test('no automatic upload or re-audit exists', () => {

@@ -54,7 +54,6 @@ import type { AuditCategory, LayoutError } from '../types/audit'
 import {
   ALL_ENABLED_CHECKS_PASSED,
   ENABLED_CHECKS_CAUTION,
-  ENABLED_CHECKS_SUFFIX,
   profileDisclosure,
 } from '../lib/audit/enabled-checks-wording'
 import { isScoreAvailable } from '../lib/score-display'
@@ -901,7 +900,6 @@ export function AuditPage() {
       <AppNav
         current="audit"
         title="Audit Report"
-        subtitle={audit?.filename ?? 'Academic Compliance Auditor'}
         backTo="/dashboard"
       />
 
@@ -922,117 +920,134 @@ export function AuditPage() {
           />
         ) : (
           <>
-            {/* ────────────── Compact report toolbar ────────────── */}
-            <section className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-2 border-b border-border pb-3 lg:pb-4">
-              <div className="min-w-0 flex-1">
-                <h1 className="truncate font-serif text-lg font-semibold leading-6 text-foreground md:text-xl">
+            {/* ────────────── Report toolbar, restructured ──────────────
+             * Level 1: title (full-name tooltip) + score.
+             * Level 2: status · counts · profile disclosure.
+             * Actions: categories · Guided Fixes · Export PDF.
+             * Score label is level-1 only; suffix moves to an aria-label so
+             * the meaning is preserved without repeating on the visual face.
+             */}
+            <div className="shrink-0 border-b border-border pb-3 lg:pb-4">
+              {/* Level 1: title + score */}
+              <div className="flex flex-wrap items-start gap-x-6 gap-y-2">
+                <h1
+                  className="min-w-0 flex-1 basis-[320px] truncate font-serif text-lg font-semibold leading-6 text-foreground md:text-xl"
+                  title={audit.filename}
+                  aria-label={`Audit report for ${audit.filename}`}
+                >
                   {audit.filename}
                 </h1>
-                <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px] text-muted-foreground">
-                  <StatusBadge status={audit.status} />
-                  {audit.status === 'completed' && (
-                    <span>
-                      {audit.major_count ?? 0} major · {audit.minor_count ?? 0} minor findings
-                    </span>
-                  )}
-                  {audit.status === 'completed' && profileDisclosure(audit.profile_snapshot) && (
-                    <span className="inline-flex items-center gap-1">
-                      {profileDisclosure(audit.profile_snapshot)}
-                    </span>
-                  )}
-                </div>
-              </div>
-              <div className="shrink-0 text-right">
-                <div className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-                  Score (enabled checks)
-                </div>
-                <div className="flex items-baseline justify-end gap-1.5">
-                  {isScoreAvailable(audit.weighted_score) ? (
-                    <>
-                      <span className="font-mono text-lg font-semibold text-foreground">{audit.weighted_score}</span>
-                      <span className="text-[13px] text-muted-foreground">/100</span>
-                    </>
-                  ) : (
-                    <span className="font-mono text-lg font-semibold text-foreground">Unavailable</span>
-                  )}
-                </div>
-                <div className="mt-0.5 text-right text-[12px] leading-4 text-muted-foreground">
-                  {ENABLED_CHECKS_SUFFIX}
-                </div>
-              </div>
-
-              {/* Category overview trigger — compact, never expanded by default.
-                  Exposes popover semantics: haspopup="dialog" + aria-expanded +
-                  aria-controls relationship to the dialog panel below. */}
-              {breakdown.length > 0 && (
-                <div className="relative" ref={categoryPanelRef}>
-                  <Button
-                    ref={categoryTriggerRef}
-                    variant="outline"
-                    size="sm"
-                    aria-haspopup="dialog"
-                    aria-expanded={categoryOpen}
-                    aria-controls="category-panel"
-                    onClick={() => setCategoryOpen((o) => !o)}
+                <div className="shrink-0 text-right">
+                  <div
+                    className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground"
+                    aria-label="Score covers only the enabled checks"
                   >
-                    <Filter className="h-3.5 w-3.5" aria-hidden="true" />
-                    Categories · {breakdown.length}
-                    {catCounts.fail > 0 && <span className="text-destructive">{catCounts.fail} fail</span>}
-                    {catCounts.warn > 0 && <span className="text-warning">{catCounts.warn} warn</span>}
-                    {catCounts.pass > 0 && <span className="text-success">{catCounts.pass} pass</span>}
-                  </Button>
-                  {categoryOpen && (
-                    <div
-                      ref={categoryDialogRef}
-                      id="category-panel"
-                      role="dialog"
-                      aria-modal="false"
-                      aria-label="Filter findings by category"
-                      className="absolute right-0 top-full z-40 mt-2 max-h-[70vh] w-[min(600px,90vw)] overflow-y-auto rounded-md border border-border bg-card p-4 shadow-tonal-high"
-                    >
-                      <VerdictChecklist
-                        breakdown={breakdown}
-                        selectedCategory={categoryFilter}
-                        onSelectCategory={handleCategorySelect}
-                      />
-                    </div>
-                  )}
+                    Score
+                  </div>
+                  <div className="flex items-baseline justify-end gap-1.5">
+                    {isScoreAvailable(audit.weighted_score) ? (
+                      <>
+                        <span className="font-mono text-lg font-semibold text-foreground">
+                          {audit.weighted_score}
+                        </span>
+                        <span className="text-[13px] text-muted-foreground">/100</span>
+                      </>
+                    ) : (
+                      <span className="font-mono text-lg font-semibold text-foreground">
+                        Unavailable
+                      </span>
+                    )}
+                  </div>
                 </div>
-              )}
+              </div>
 
-              {/* Export PDF — completed: enabled; processing: disabled with a
-                  clear tooltip; failed: enabled so the backend decides (409 when
-                  there is nothing meaningful to export). */}
-              {audit.status === 'completed' && (
-                <GuidedFixesPanel
-                  auditId={audit.id}
-                  violations={audit.violations}
-                  locationLabels={locationLabels}
-                />
-              )}
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={handleExport}
-                disabled={exporting || isProcessing}
-                title={
-                  isProcessing
-                    ? 'The PDF is available once the audit finishes processing.'
-                    : exporting
-                      ? 'Preparing your PDF…'
-                      : 'Download this audit report as a PDF'
-                }
-                aria-busy={exporting}
-              >
-                {exporting ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-                ) : (
-                  <Download className="h-3.5 w-3.5" aria-hidden="true" />
+              {/* Level 2: status + counts + profile disclosure */}
+              <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px] text-muted-foreground">
+                <StatusBadge status={audit.status} />
+                {audit.status === 'completed' && (
+                  <span>
+                    {audit.major_count ?? 0} major · {audit.minor_count ?? 0} minor findings
+                  </span>
                 )}
-                {exporting ? 'Preparing PDF…' : 'Export PDF'}
-              </Button>
-            </section>
+                {audit.status === 'completed' && profileDisclosure(audit.profile_snapshot) && (
+                  <span className="inline-flex items-center gap-1">
+                    {profileDisclosure(audit.profile_snapshot)}
+                  </span>
+                )}
+              </div>
+
+              {/* Actions row */}
+              <div className="mt-3 flex flex-wrap items-center gap-2 lg:justify-end">
+                {/* Category overview trigger — compact, never expanded by default.
+                    Exposes popover semantics: haspopup="dialog" + aria-expanded +
+                    aria-controls relationship to the dialog panel below. */}
+                {breakdown.length > 0 && (
+                  <div className="relative" ref={categoryPanelRef}>
+                    <Button
+                      ref={categoryTriggerRef}
+                      variant="outline"
+                      size="sm"
+                      aria-haspopup="dialog"
+                      aria-expanded={categoryOpen}
+                      aria-controls="category-panel"
+                      onClick={() => setCategoryOpen((o) => !o)}
+                    >
+                      <Filter className="h-3.5 w-3.5" aria-hidden="true" />
+                      Categories · {breakdown.length}
+                      {catCounts.fail > 0 && <span className="text-destructive">{catCounts.fail} fail</span>}
+                      {catCounts.warn > 0 && <span className="text-warning">{catCounts.warn} warn</span>}
+                      {catCounts.pass > 0 && <span className="text-success">{catCounts.pass} pass</span>}
+                    </Button>
+                    {categoryOpen && (
+                      <div
+                        ref={categoryDialogRef}
+                        id="category-panel"
+                        role="dialog"
+                        aria-modal="false"
+                        aria-label="Filter findings by category"
+                        className="absolute right-0 top-full z-40 mt-2 max-h-[70vh] w-[min(600px,90vw)] overflow-y-auto rounded-md border border-border bg-card p-4 shadow-tonal-high"
+                      >
+                        <VerdictChecklist
+                          breakdown={breakdown}
+                          selectedCategory={categoryFilter}
+                          onSelectCategory={handleCategorySelect}
+                        />
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {audit.status === 'completed' && (
+                  <GuidedFixesPanel
+                    auditId={audit.id}
+                    violations={audit.violations}
+                    locationLabels={locationLabels}
+                  />
+                )}
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={handleExport}
+                  disabled={exporting || isProcessing}
+                  title={
+                    isProcessing
+                      ? 'The PDF is available once the audit finishes processing.'
+                      : exporting
+                        ? 'Preparing your PDF…'
+                        : 'Download this audit report as a PDF'
+                  }
+                  aria-busy={exporting}
+                >
+                  {exporting ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                  ) : (
+                    <Download className="h-3.5 w-3.5" aria-hidden="true" />
+                  )}
+                  {exporting ? 'Preparing PDF…' : 'Export PDF'}
+                </Button>
+              </div>
+            </div>
 
             {isProcessing && <ProcessingBanner pollAttempts={pollAttempts} />}
             {audit.status === 'failed' && <FailedBanner />}

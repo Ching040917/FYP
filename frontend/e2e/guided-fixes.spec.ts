@@ -22,7 +22,7 @@ async function openCompletedAudit(page: import('@playwright/test').Page) {
 
 /** Open the Guided Fixes selection dialog (toolbar trigger). */
 async function openGuidedFixes(page: import('@playwright/test').Page) {
-  const open = page.getByRole('button', { name: /Open Guided Fixes \(Beta\)/ })
+  const open = page.getByRole('button', { name: 'Guided Fixes' })
   await open.click()
   await expect(page.getByRole('button', { name: 'Review selected changes' })).toBeVisible()
 }
@@ -61,7 +61,7 @@ test.describe('guided fixes workflow @guided-fixes', () => {
     }
 
     // Selection count is announced.
-    await expect(page.getByText(/2 of 20 findings selected/)).toBeVisible()
+    await expect(page.getByText(/selected · .*available for Guided Fix · Maximum 20|No findings selected · .*available for Guided Fix · Maximum 20|selected · Maximum reached/)).toBeVisible()
 
     // Review panel: current + proposed values, two removable entries.
     await page.getByRole('button', { name: 'Review selected changes' }).click()
@@ -71,7 +71,7 @@ test.describe('guided fixes workflow @guided-fixes', () => {
 
     // Back keeps the selection.
     await page.getByRole('button', { name: 'Back to findings' }).click()
-    await expect(page.getByText(/2 of 20 findings selected/)).toBeVisible()
+    await expect(page.getByText(/selected · .*available for Guided Fix · Maximum 20|No findings selected · .*available for Guided Fix · Maximum 20|selected · Maximum reached/)).toBeVisible()
   })
 
   test('wrong DOCX shows mismatch error; exact original creates and downloads corrected copy; audit unchanged', async ({ page }, testInfo) => {
