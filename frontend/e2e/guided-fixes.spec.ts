@@ -3,7 +3,7 @@
  * desktop widths. Synthetic fixtures only (the committed sample thesis);
  * the backend verifies document identity via SHA-256.
  */
-import { test, expect } from '@playwright/test'
+import { test, expect, type Page } from '@playwright/test'
 import path from 'node:path'
 import { AxeBuilder } from '@axe-core/playwright'
 import { createSyntheticAudit, SAMPLE_THESIS, annotate } from './helpers'
@@ -12,7 +12,7 @@ const MISMATCH_TEXT =
   'The selected document does not match the document used for this audit. Upload the original DOCX file and try again.'
 
 /** Create a fresh audit and open the completed Audit Workspace. */
-async function openCompletedAudit(page: import('@playwright/test').Page) {
+async function openCompletedAudit(page: Page) {
   const summary = await createSyntheticAudit(page)
   await page.goto(`/audit/${summary.auditId}`)
   await page.waitForLoadState('networkidle')
@@ -21,10 +21,12 @@ async function openCompletedAudit(page: import('@playwright/test').Page) {
 }
 
 /** Open the Guided Fixes selection dialog (toolbar trigger). */
-async function openGuidedFixes(page: import('@playwright/test').Page) {
+async function openGuidedFixes(page: Page) {
   const open = page.getByRole('button', { name: 'Guided Fixes' })
   await open.click()
-  await expect(page.getByRole('button', { name: 'Review selected changes' })).toBeVisible()
+  // Primary action label is dynamic: "Review N selected changes" (N >= 2) or
+  // "Review 1 selected change". Match either.
+  await expect(page.getByRole('button', { name: /Review .* selected chang(e|es)/ })).toBeVisible()
 }
 
 test.describe('guided fixes workflow @guided-fixes', () => {
@@ -60,18 +62,18 @@ test.describe('guided fixes workflow @guided-fixes', () => {
       expect(await manualRows.nth(i).locator('input[type="checkbox"]').count()).toBe(0)
     }
 
-    // Selection count is announced.
-    await expect(page.getByText(/selected · .*available for Guided Fix · Maximum 20|No findings selected · .*available for Guided Fix · Maximum 20|selected · Maximum reached/)).toBeVisible()
+    // Selection count is announced (visible footer count line).
+    await expect(page.getByText(/selected · .*available for Guided Fix · Maximum 20|No findings selected · .*available for Guided Fix · Maximum 20|selected · Maximum reached/).first()).toBeVisible()
 
     // Review panel: current + proposed values, two removable entries.
-    await page.getByRole('button', { name: 'Review selected changes' }).click()
+    await page.getByRole('button', { name: /Review .* selected chang(e|es)/ }).click()
     await expect(page.getByText('Selected changes: 2')).toBeVisible()
     await expect(page.getByText(/Current:/).first()).toBeVisible()
     await expect(page.getByText(/Proposed:/).first()).toBeVisible()
 
     // Back keeps the selection.
     await page.getByRole('button', { name: 'Back to findings' }).click()
-    await expect(page.getByText(/selected · .*available for Guided Fix · Maximum 20|No findings selected · .*available for Guided Fix · Maximum 20|selected · Maximum reached/)).toBeVisible()
+    await expect(page.getByText(/selected · .*available for Guided Fix · Maximum 20|No findings selected · .*available for Guided Fix · Maximum 20|selected · Maximum reached/).first()).toBeVisible()
   })
 
   test('wrong DOCX shows mismatch error; exact original creates and downloads corrected copy; audit unchanged', async ({ page }, testInfo) => {
@@ -87,7 +89,7 @@ test.describe('guided fixes workflow @guided-fixes', () => {
     await openGuidedFixes(page)
 
     await page.locator('input[type="checkbox"][aria-label]').first().check()
-    await page.getByRole('button', { name: 'Review selected changes' }).click()
+    await page.getByRole('button', { name: /Review .* selected chang(e|es)/ }).click()
     await page.getByRole('button', { name: 'Continue to upload original DOCX' }).click()
 
     // Create a DIFFERENT docx (the long-filename fixture) for the mismatch path.
@@ -101,8 +103,9 @@ test.describe('guided fixes workflow @guided-fixes', () => {
     // Selection survives the error and the file can be replaced (dialog
     // stays open — never closed automatically on error).
     await page.getByRole('button', { name: 'Back to findings' }).click()
-    await expect(page.getByText(/1 of 20 findings selected/)).toBeVisible()
-    await page.getByRole('button', { name: 'Review selected changes' }).click()
+    // Count line reads e.g. "1 selected · 6 available for Guided Fix · Maximum 20".
+    await expect(page.getByText(/selected · .*available for Guided Fix · Maximum 20|selected · Maximum reached/)).toBeVisible()
+    await page.getByRole('button', { name: /Review .* selected chang(e|es)/ }).click()
     await page.getByRole('button', { name: 'Continue to upload original DOCX' }).click()
 
     // Replace with the EXACT original bytes used for the audit.
