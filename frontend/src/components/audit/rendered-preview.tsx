@@ -19,7 +19,6 @@ import {
   ChevronLeft,
   ChevronRight,
   FileQuestion,
-  Info,
   Loader2,
   Maximize,
   Maximize2,
@@ -46,10 +45,6 @@ interface RenderedPreviewProps {
   pendingPage?: { page: number; seq: number } | null
   /** Exact citation highlight rects (normalized 0..1, one per visual line). */
   citationRects?: Array<{ page: number; x: number; y: number; width: number; height: number }> | null
-  /** Accessible label for the highlight (citation evidence text). */
-  citationLabel?: string | null
-  /** Truthful message when exact highlighting failed (page still shown). */
-  highlightMessage?: string | null
   /** Formatting evidence (Build 7): kind + per-page normalized rects. */
   formattingEvidence?: {
     kind: 'run' | 'paragraph'
@@ -57,19 +52,11 @@ interface RenderedPreviewProps {
   } | null
   /** 'before' = mark top boundary, 'after' = mark bottom boundary, null = no side marker. */
   formattingSpacingSide?: 'before' | 'after' | null
-  formattingLabel?: string | null
-  formattingMessage?: string | null
-  /** Table/Figure object navigation status (compact chip only). */
-  objectStatus?: { label: string | null; message: string | null } | null
   /** Exact Figure outline (Build 8F): one normalized rect + compact label. */
   figureOutline?: {
     rect: { page: number; x: number; y: number; width: number; height: number }
     label: string
   } | null
-  /** Truthful message when the exact Figure boundary is unavailable. */
-  figureMessage?: string | null
-  /** Margin section navigation status (compact chip only). */
-  marginStatus?: { label: string | null; message: string | null } | null
   /** Margin page-edge marker (Build: Margin markers): side + section range. */
   marginMarker?: {
     side: 'left' | 'right' | 'top' | 'bottom'
@@ -77,8 +64,6 @@ interface RenderedPreviewProps {
     endPage: number
     sectionNumber: number
   } | null
-  /** Compact margin marker chip label (`Right margin · Section 1 · Pages 1–3`). */
-  marginChipLabel?: string | null
 }
 
 
@@ -102,18 +87,10 @@ export function RenderedPreview({
   fitRegion = false,
   pendingPage = null,
   citationRects = null,
-  citationLabel = null,
-  highlightMessage = null,
   formattingEvidence = null,
   formattingSpacingSide = null,
-  formattingLabel = null,
-  formattingMessage = null,
-  objectStatus = null,
   figureOutline = null,
-  figureMessage = null,
-  marginStatus = null,
   marginMarker = null,
-  marginChipLabel = null,
 }: RenderedPreviewProps) {
   const [pdfDoc, setPdfDoc] = React.useState<PDFDocumentProxy | null>(null)
   const [docLoading, setDocLoading] = React.useState(false)
@@ -311,7 +288,15 @@ export function RenderedPreview({
   }
   const zoomOut = () => {
     setFitMode('manual')
-    setScale((cur) => clampScale((cur ?? appliedScale ?? 1) * ZOOM_STEP_OUT))
+    setScale((cur) => {
+      const base = cur ?? appliedScale ?? 1
+      const next = clampScale(base * ZOOM_STEP_OUT)
+      // A fit scale may sit below the manual minimum (small viewport). Raising
+      // it back to ZOOM_MIN here would make "zoom out" enlarge the page, so the
+      // step is a no-op instead — the same behaviour as pressing zoom out when
+      // manual zoom is already at its bound.
+      return next < base ? next : base
+    })
   }
   const switchFitMode = (mode: FitMode) => {
     if (mode === fitMode) return
@@ -433,88 +418,9 @@ export function RenderedPreview({
         </div>
       </div>
 
-      {/* Compact selected-evidence chip — neutral surface, subtle border,
-          icon + text (non-color indicator); ~30px tall, fits 375px. */}
-      {citationRects && citationRects.length > 0 && citationLabel && (
-        <span className="inline-flex w-fit shrink-0 items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-[12px] leading-[16px] text-foreground">
-          <Info className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
-          Selected evidence
-          <span className="font-medium text-destructive">: {citationLabel}</span>
-        </span>
-      )}
-      {highlightMessage && (!citationRects || citationRects.length === 0) && (
-        <span className="inline-flex w-fit shrink-0 items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-[12px] leading-[16px] text-muted-foreground">
-          <Info className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
-          {highlightMessage}
-        </span>
-      )}
-
-      {/* Compact formatting-evidence chip (Build 7) — neutral, amber accent. */}
-      {formattingEvidence && formattingLabel && (
-        <span className="inline-flex w-fit shrink-0 items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-[12px] leading-[16px] text-foreground">
-          <Info className="h-3.5 w-3.5 shrink-0 text-warning" aria-hidden="true" />
-          Selected evidence
-          <span className="font-medium text-warning">: {formattingLabel}</span>
-        </span>
-      )}
-      {formattingMessage && !formattingEvidence && (
-        <span className="inline-flex w-fit shrink-0 items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-[12px] leading-[16px] text-muted-foreground">
-          <Info className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
-          {formattingMessage}
-        </span>
-      )}
-
-      {/* Compact Table/Figure object status (Build: object navigation). */}
-      {objectStatus && objectStatus.label && !objectStatus.message && (
-        <span className="inline-flex w-fit shrink-0 items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-[12px] leading-[16px] text-foreground">
-          <Info className="h-3.5 w-3.5 shrink-0 text-warning" aria-hidden="true" />
-          Selected object
-          <span className="font-medium text-warning">: {objectStatus.label}</span>
-        </span>
-      )}
-      {objectStatus && objectStatus.message && (
-        <span className="inline-flex w-fit shrink-0 items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-[12px] leading-[16px] text-muted-foreground">
-          <Info className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
-          {objectStatus.label ? `${objectStatus.label} · ` : ''}{objectStatus.message}
-        </span>
-      )}
-
-      {/* Exact Figure outline chip (Build 8F) — compact amber evidence. */}
-      {figureOutline && (
-        <span className="inline-flex w-fit shrink-0 items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-[12px] leading-[16px] text-foreground">
-          <Info className="h-3.5 w-3.5 shrink-0 text-warning" aria-hidden="true" />
-          Selected figure
-          <span className="font-medium text-warning">: {figureOutline.label}</span>
-        </span>
-      )}
-      {figureMessage && !figureOutline && (
-        <span className="inline-flex w-fit shrink-0 items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-[12px] leading-[16px] text-muted-foreground">
-          <Info className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
-          {figureMessage}
-        </span>
-      )}
-
-      {/* Margin section navigation chip (Build: Section page-range navigation). */}
-      {marginChipLabel && (
-        <span className="inline-flex w-fit shrink-0 items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-[12px] leading-[16px] text-foreground">
-          <Info className="h-3.5 w-3.5 shrink-0 text-warning" aria-hidden="true" />
-          Selected margin
-          <span className="font-medium text-warning">: {marginChipLabel}</span>
-        </span>
-      )}
-      {marginStatus && marginStatus.label && !marginChipLabel && (
-        <span className="inline-flex w-fit shrink-0 items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-[12px] leading-[16px] text-foreground">
-          <Info className="h-3.5 w-3.5 shrink-0 text-warning" aria-hidden="true" />
-          Selected margin
-          <span className="font-medium text-warning">: {marginStatus.label}</span>
-        </span>
-      )}
-      {marginStatus && marginStatus.message && (
-        <span className="inline-flex w-fit shrink-0 items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-[12px] leading-[16px] text-muted-foreground">
-          <Info className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
-          {marginStatus.label ? `${marginStatus.label} · ` : ''}{marginStatus.message}
-        </span>
-      )}
+      {/* The selected-evidence summary lives in the Document Preview heading
+          (compact inline chip) so it never consumes a full row above the
+          rendered page. */}
 
       {/* Screen-reader status for page/zoom changes */}
       <p aria-live="polite" className="sr-only">

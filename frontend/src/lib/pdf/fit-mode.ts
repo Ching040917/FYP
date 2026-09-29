@@ -1,11 +1,11 @@
 /**
  * Pure fit-page / fit-width scale math for the rendered PDF viewer.
  *
- * Reuses the viewer's existing ZOOM bounds and the fit-width formula
- * (width only, no page 1 reset, no re-render loop). `fitScale` returns
- * the page scale that makes the complete physical page fit the preview
- * viewport (the smaller of width- and height-fit), clamped to the same
- * bounds as manual zoom.
+ * `ZOOM_MIN`/`ZOOM_MAX` bound MANUAL zoom only. Fit modes are bounded by the
+ * safe maximum alone: a fit scale may go below `ZOOM_MIN` when the viewport is
+ * small, because raising it back to the manual minimum would crop the page
+ * (Fit page) or overflow the rendering viewport (Fit width). Aspect ratio is
+ * preserved by construction — both formulas are a single uniform scale factor.
  */
 
 export const ZOOM_MIN = 0.5
@@ -19,8 +19,10 @@ export type FitMode = 'fit-width' | 'fit-page' | 'manual'
  * Fit-page scale: the whole page visible in one viewport.
  * `pageWidthPt`/`pageHeightPt` are scale-1 viewport dimensions;
  * `viewportW`/`viewportH` are the available CSS px (container minus
- * padding/scrollbar allowance). The result is independent of the page
- * number — switching pages or fit modes never resets anything else.
+ * padding/scrollbar allowance). Returns `min(width-fit, height-fit)` capped at
+ * the safe maximum so the COMPLETE page is shown — never raised to `ZOOM_MIN`.
+ * The result is independent of the page number — switching pages or fit modes
+ * never resets anything else.
  */
 export function fitScale(
   pageWidthPt: number,
@@ -32,13 +34,18 @@ export function fitScale(
     return 1
   }
   const s = Math.min(viewportW / pageWidthPt, viewportH / pageHeightPt)
-  return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, s))
+  return Math.min(ZOOM_MAX, s)
 }
 
-/** Fit-width scale — the exact existing formula (width-fit, vertical scroll expected). */
+/**
+ * Fit-width scale — width-fit only (vertical scrolling is expected). Capped at
+ * the safe maximum and NOT raised to `ZOOM_MIN`: in a narrow rendering viewport
+ * the manual minimum would make the page wider than the container and force
+ * horizontal scrolling.
+ */
 export function fitWidthScale(pageWidthPt: number, viewportW: number): number {
   if (pageWidthPt <= 0 || viewportW <= 0) return 1
-  return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, viewportW / pageWidthPt))
+  return Math.min(ZOOM_MAX, viewportW / pageWidthPt)
 }
 
 /** Clamp a manual scale into the supported range. */

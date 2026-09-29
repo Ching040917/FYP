@@ -358,6 +358,96 @@ test.describe('workspace vertical space @vertical-space', () => {
     await expectNoHorizontalOverflow(page)
   })
 
+  test('Fit page keeps the complete page visible in a short viewport (no minimum-zoom crop)', async ({ page }, testInfo) => {
+    annotate(testInfo, {
+      id: 'VS-FIT-PAGE-SHORT',
+      objective: 'In a viewport too short for the 50% manual minimum, Fit page must still show the complete physical page: the canvas fits the rendering viewport content box and the region never scrolls.',
+      precondition: 'Completed synthetic audit at 1366x700 with the rendered viewer available.',
+      steps: ['Open at 1366x700', 'Select Fit page', 'Measure canvas + region', 'Assert complete page'],
+      expected: 'Canvas inside the content box (padding excluded) with zero region overflow.',
+      severity: 'high',
+    })
+    await openCompletedAudit(page, 1366, 700)
+    test.skip(!(await renderedViewerVisible(page)), 'Rendered PDF viewer unavailable in this environment.')
+    await waitForCanvas(page)
+    await page.getByRole('button', { name: 'Fit page', exact: true }).click()
+    await page.waitForTimeout(1200)
+
+    const v = await readViewer(page)
+    expect(v, 'rendered viewer must expose a canvas').not.toBeNull()
+    expect(
+      v!.canvasHeight,
+      `complete page: canvas ${v!.canvasHeight}px must fit the content box ${v!.regionClientHeight - 32}px`,
+    ).toBeLessThanOrEqual(v!.regionClientHeight - 32)
+    expect(v!.canvasWidth).toBeLessThanOrEqual(v!.regionClientWidth - 32)
+    expect(
+      v!.regionScrollHeight,
+      'Fit page must not scroll or crop, even below the manual zoom minimum',
+    ).toBeLessThanOrEqual(v!.regionClientHeight)
+  })
+
+  test('selected evidence is an inline chip in the preview heading, never its own row', async ({ page }, testInfo) => {
+    annotate(testInfo, {
+      id: 'VS-EVIDENCE-CHIP',
+      objective: 'The selected-evidence summary sits inside the Document Preview heading as one compact, single-line chip: no full-width evidence row above the page, no extra toolbar row, and the full summary stays available as the accessible value and tooltip.',
+      precondition: 'Completed synthetic audit at 1366x768 with a finding selected.',
+      steps: ['Open at 1366x768', 'Assert chip is inside the heading', 'Assert one-line height', 'Assert no dedicated row between toolbar and page'],
+      expected: 'Chip inside <header>, height <= 26px, gap between the page toolbar and the rendering viewport equals the container gap, toolbar stays at <= 2 rows.',
+      severity: 'high',
+    })
+    await openCompletedAudit(page, 1366, 768)
+    // The evidence summary follows a real selection (the load-time preselection
+    // reads the mapping before citation rects exist), so select the first
+    // finding explicitly — the same path a reviewer takes.
+    const firstFinding = page.locator('#ws-panel-findings .scrollbar-thin button[aria-pressed]').first()
+    await expect(firstFinding).toBeVisible()
+    await firstFinding.click()
+    // Three preview instances are mounted (mobile/tablet/xl); scope to the
+    // visible desktop panel so the locator resolves to one element.
+    const chip = page.locator('#ws-panel-preview [data-testid="preview-evidence-chip"]')
+    await expect(chip).toBeVisible()
+
+    const info = await page.evaluate(() => {
+      const scope = document.querySelector('#ws-panel-preview')
+      const header = scope?.querySelector('header')
+      // Scope to the visible panel: the mobile/tablet instances are hidden and
+      // their chip has a zero-size box.
+      const chipEl = scope?.querySelector('[data-testid="preview-evidence-chip"]') ?? null
+      const region = scope?.querySelector<HTMLElement>(
+        'div[aria-label="Rendered document preview"].overflow-auto',
+      )
+      const root = region?.parentElement
+      const toolbar = root?.children[0]
+      return {
+        insideHeading: !!header && !!chipEl && header.contains(chipEl),
+        chipHeight: Math.round(chipEl?.getBoundingClientRect().height ?? 0),
+        chipTitle: chipEl?.getAttribute('title') ?? null,
+        chipText: (chipEl?.textContent ?? '').trim(),
+        chipWidth: Math.round(chipEl?.getBoundingClientRect().width ?? 0),
+        gapToolbarToRegion:
+          region && toolbar
+            ? Math.round(region.getBoundingClientRect().top - toolbar.getBoundingClientRect().bottom)
+            : -1,
+        containerGap: root ? Number.parseFloat(getComputedStyle(root).rowGap || '0') : -1,
+      }
+    })
+
+    expect(info.insideHeading, 'the evidence summary must live in the preview heading').toBe(true)
+    expect(info.chipHeight, 'one compact line, never a 38px row').toBeLessThanOrEqual(26)
+    expect(info.chipTitle, 'full value must be exposed for hover/AT').toBeTruthy()
+    expect(info.chipTitle, 'the accessible text is the full summary').toBe(info.chipText)
+    expect(info.chipText.length).toBeGreaterThan(0)
+    expect(info.chipWidth, 'the chip stays on the heading line').toBeGreaterThan(100)
+    expect(
+      info.gapToolbarToRegion,
+      'no dedicated evidence row may sit between the page toolbar and the rendering viewport',
+    ).toBeLessThanOrEqual(info.containerGap + 1)
+
+    const g = await readGeometry(page)
+    expect(g.toolbarRows, 'toolbar must stay at one or two rows at 1366').toBeLessThanOrEqual(2)
+    expect(g.toolbarHeight).toBeLessThanOrEqual(MAX_PREVIEW_TOOLBAR_PX)
+  })
+
   test('1024 two-column workspace keeps a usable single-row preview toolbar and fills the height', async ({ page }, testInfo) => {
     annotate(testInfo, {
       id: 'VS-1024',

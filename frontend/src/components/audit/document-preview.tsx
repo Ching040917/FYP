@@ -18,8 +18,9 @@
  */
 import * as React from 'react'
 import type { ReactNode } from 'react'
-import { AlertOctagon, AlertTriangle, Check, FileText, Loader2, ScrollText } from 'lucide-react'
+import { AlertOctagon, AlertTriangle, Check, FileText, Info, Loader2, ScrollText } from 'lucide-react'
 import { cn } from '../../lib/utils'
+import { evidenceSummary } from '../../lib/audit/evidence-summary.ts'
 import type { DocumentBlock, Violation } from '../../types/api'
 import { RenderedPreview } from './rendered-preview'
 import type { RenderedPdfState } from '../../hooks/use-rendered-pdf.ts'
@@ -187,6 +188,46 @@ export function DocumentPreview({
   // with `ml-auto` so they wrap as ONE group (a group that fits the narrowest
   // supported preview column, 544px at 1280 with both side panels open).
   // In focus mode and in the 1024 two-column layout everything fits one line.
+  // The compact selected-evidence summary lives on the heading line instead of
+  // its own full-width row above the page (that row cost 38px, 54px when the
+  // message wrapped). Wording/precedence come from the pure helper so they stay
+  // identical to the previous chip set; `null` renders no chip at all, so no
+  // empty evidence space is reserved.
+  const evidence = evidenceSummary({
+    citationRects,
+    citationLabel,
+    highlightMessage,
+    formattingEvidence,
+    formattingLabel,
+    formattingMessage,
+    objectStatus,
+    figureOutline,
+    figureMessage,
+    marginStatus,
+    marginChipLabel,
+  })
+  // The inline chip keeps one line: the visible text ellipsises, while the DOM
+  // text (and therefore the accessible name) stays complete; `title` exposes
+  // the full value on hover. Nothing is truncated for assistive technology.
+  const evidenceChip = evidence ? (
+    <span
+      data-testid="preview-evidence-chip"
+      title={evidence.text}
+      className="flex min-w-[140px] max-w-[420px] shrink flex-1 items-center gap-1.5 rounded-full border border-border bg-card px-2.5 py-1 text-[11px] leading-[16px] text-foreground"
+    >
+      <Info
+        className={cn(
+          'h-3.5 w-3.5 shrink-0',
+          evidence.tone === 'destructive' && 'text-destructive',
+          evidence.tone === 'warning' && 'text-warning',
+          evidence.tone === 'muted' && 'text-muted-foreground',
+        )}
+        aria-hidden="true"
+      />
+      <span className="min-w-0 truncate">{evidence.text}</span>
+    </span>
+  ) : null
+
   const header = (
     <header className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1">
       <h2 className="flex shrink-0 items-center gap-1.5 text-[13px] font-medium leading-[19px] text-foreground">
@@ -198,6 +239,7 @@ export function DocumentPreview({
           {locatableCount} finding{locatableCount > 1 ? 's' : ''} located in document
         </span>
       )}
+      {evidenceChip}
       <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
         {workspaceControls}
         {hasRendered && renderedAvailable && (
@@ -263,18 +305,10 @@ export function DocumentPreview({
             fitRegion={fitRegion}
             pendingPage={pendingPage}
             citationRects={citationRects}
-            citationLabel={citationLabel}
-            highlightMessage={highlightMessage}
             formattingEvidence={formattingEvidence}
             formattingSpacingSide={formattingSpacingSide}
-            formattingLabel={formattingLabel}
-            formattingMessage={formattingMessage}
-            objectStatus={objectStatus}
             figureOutline={figureOutline}
-            figureMessage={figureMessage}
-            marginStatus={marginStatus}
             marginMarker={marginMarker}
-            marginChipLabel={marginChipLabel}
           />
         </div>
       )}

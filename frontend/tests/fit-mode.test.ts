@@ -33,9 +33,34 @@ test('fit-scale is the smaller of width- and height-fit', () => {
   assert.equal(fitScale(LETTER_W, LETTER_H, 400, 2000), 400 / LETTER_W)
 })
 
-test('fit-scale clamps into the shared zoom bounds', () => {
-  assert.equal(fitScale(LETTER_W, LETTER_H, 100, 100), ZOOM_MIN)
+test('fit-scale uses both constraints and is bounded only by the safe maximum', () => {
+  // A viewport far too small for the manual minimum still returns the exact
+  // whole-page fit (raised to ZOOM_MIN it would crop the page).
+  const tiny = fitScale(LETTER_W, LETTER_H, 100, 100)
+  assert.equal(tiny, 100 / LETTER_H)
+  assert.ok(tiny < ZOOM_MIN, 'fit page must be allowed below the manual minimum')
   assert.equal(fitScale(LETTER_W, LETTER_H, 10000, 10000), ZOOM_MAX)
+})
+
+test('fit-scale never crops: the fitted page always fits the viewport', () => {
+  const viewports = [
+    [566, 271],
+    [670, 435],
+    [100, 100],
+    [400, 2000],
+    [1200, 900],
+  ]
+  for (const [w, h] of viewports) {
+    const s = fitScale(LETTER_W, LETTER_H, w, h)
+    assert.ok(LETTER_W * s <= w + 1e-9, `width ${LETTER_W * s} must fit ${w}`)
+    assert.ok(LETTER_H * s <= h + 1e-9, `height ${LETTER_H * s} must fit ${h}`)
+  }
+})
+
+test('fit-scale preserves the page aspect ratio', () => {
+  const s = fitScale(LETTER_W, LETTER_H, 566, 271)
+  const ratio = (LETTER_W * s) / (LETTER_H * s)
+  assert.equal(ratio, LETTER_W / LETTER_H)
 })
 
 test('fit-scale returns 1 on degenerate input (no crash, no zero scale)', () => {
@@ -63,11 +88,30 @@ test('fit-width scale matches the legacy formula', () => {
   assert.equal(fitWidthScale(LETTER_W, 1836), 3)
 })
 
-test('fit-width clamps and handles zero/negative gracefully', () => {
-  assert.equal(fitWidthScale(LETTER_W, 1), ZOOM_MIN)
+test('fit-width clamps only at the maximum and handles zero/negative gracefully', () => {
+  // A narrow rendering viewport keeps the true width fit: raising it to the
+  // manual minimum would push the page wider than the container.
+  assert.equal(fitWidthScale(LETTER_W, 1), 1 / LETTER_W)
+  assert.ok(fitWidthScale(LETTER_W, 1) < ZOOM_MIN)
   assert.equal(fitWidthScale(LETTER_W, 100000), ZOOM_MAX)
   assert.equal(fitWidthScale(0, 800), 1)
   assert.equal(fitWidthScale(LETTER_W, 0), 1)
+})
+
+test('fit-width never overflows the rendering viewport horizontally', () => {
+  for (const w of [1, 120, 306, 612, 900, 1836, 5000]) {
+    const s = fitWidthScale(LETTER_W, w)
+    assert.ok(LETTER_W * s <= Math.max(w, LETTER_W * ZOOM_MAX) + 1e-9, `width fit for ${w}`)
+    if (w <= LETTER_W * ZOOM_MAX) {
+      assert.ok(LETTER_W * s <= w + 1e-9, `page width ${LETTER_W * s} must not exceed ${w}`)
+    }
+  }
+})
+
+test('fit-width preserves the page aspect ratio', () => {
+  const s = fitWidthScale(LETTER_W, 306)
+  assert.equal(s, 0.5)
+  assert.equal((LETTER_W * s) / (LETTER_H * s), LETTER_W / LETTER_H)
 })
 
 // ---------------------------------------------------------------------------
