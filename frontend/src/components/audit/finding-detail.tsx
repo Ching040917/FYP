@@ -19,6 +19,7 @@
  */
 
 import { MapPin, ShieldCheck } from 'lucide-react'
+import type { ReactNode } from 'react'
 import { Badge } from '../ui/badge'
 import { CATEGORY_LABELS } from '../../lib/audit/categories'
 import { categoryForRuleCode, humanizeRuleCode } from '../../lib/audit/adapter'
@@ -50,6 +51,70 @@ export function FindingDetail({ violation }: { violation: Violation | null }) {
   const category = categoryForRuleCode(v.rule_code)
   const para = paragraphNumber(v)
   const pres = presentationFor(v)
+  const hasCitationEvidence = pres.evidence != null
+  const hasMissingRequirement = pres.missingRequirement != null
+  const hasHeadingSequence =
+    pres.expectedHeadingSequence != null && pres.actualHeadingSequence != null
+
+  // Secondary disclosure content: long supporting evidence that stays
+  // reachable but collapsed, keeping the actionable sections on top.
+  const secondarySections: ReactNode[] = []
+  if (hasCitationEvidence) {
+    secondarySections.push(
+      <div key="citation" className="min-w-0">
+        <h3 className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+          Citation evidence
+        </h3>
+        <blockquote className="mt-1.5 whitespace-pre-wrap break-words rounded border-l-2 border-ai-assisted/40 bg-ai-assisted/5 px-3 py-2 font-serif text-sm leading-[21px] text-foreground">
+          “{pres.evidence}”
+        </blockquote>
+      </div>,
+    )
+  }
+  if (hasMissingRequirement) {
+    secondarySections.push(
+      <dl key="missing" className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <div className="min-w-0">
+          <dt className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+            Missing requirement
+          </dt>
+          <dd className="mt-1.5 rounded border border-border bg-input/20 px-3 py-2 text-sm leading-[21px] text-foreground">
+            {pres.missingRequirement}
+          </dd>
+        </div>
+        <div className="min-w-0">
+          <dt className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+            Affected element
+          </dt>
+          <dd className="mt-1.5 rounded border border-border bg-input/20 px-3 py-2 font-mono text-[13px] leading-[19px] text-foreground">
+            {pres.affectedElement}
+          </dd>
+        </div>
+      </dl>,
+    )
+  }
+  if (hasHeadingSequence) {
+    secondarySections.push(
+      <dl key="heading" className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <div className="min-w-0">
+          <dt className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+            Expected heading sequence
+          </dt>
+          <dd className="mt-1.5 whitespace-pre-wrap break-words rounded border border-border bg-input/20 px-3 py-2 font-mono text-[13px] leading-[19px] text-foreground">
+            {pres.expectedHeadingSequence}
+          </dd>
+        </div>
+        <div className="min-w-0">
+          <dt className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+            Actual heading sequence
+          </dt>
+          <dd className="mt-1.5 whitespace-pre-wrap break-words rounded border border-border bg-input/20 px-3 py-2 font-mono text-[13px] leading-[19px] text-foreground">
+            {pres.actualHeadingSequence}
+          </dd>
+        </div>
+      </dl>,
+    )
+  }
 
   return (
     <section
@@ -94,16 +159,10 @@ export function FindingDetail({ violation }: { violation: Violation | null }) {
         )}
         <div className="flex items-baseline gap-3">
           <dt className="w-28 shrink-0 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-            Rule reference
-          </dt>
-          <dd className="font-mono text-[13px] leading-[19px] text-foreground">{v.rule_code}</dd>
-        </div>
-        <div className="flex items-baseline gap-3">
-          <dt className="w-28 shrink-0 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
             Confirmed issue
           </dt>
-          <dd className="text-sm leading-[21px] text-foreground">{pres.issue}</dd>
-        </div>
+            <dd className="text-sm leading-[21px] text-foreground">{pres.issue}</dd>
+          </div>
       </dl>
 
       {/* Formatting findings: meaningful Expected + Actual kept side by side. */}
@@ -113,63 +172,7 @@ export function FindingDetail({ violation }: { violation: Violation | null }) {
         </div>
       ) : null}
 
-      {/* Citation mismatch: evidence labelled as evidence, never as Actual. */}
-      {pres.evidence != null && (
-        <div className="mt-4">
-          <h3 className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-            Citation evidence
-          </h3>
-          <blockquote className="mt-1.5 whitespace-pre-wrap break-words rounded border-l-2 border-ai-assisted/40 bg-ai-assisted/5 px-3 py-2 font-serif text-sm leading-[21px] text-foreground">
-            “{pres.evidence}”
-          </blockquote>
-        </div>
-      )}
-
-      {/* Missing caption / alt-text: Missing requirement + affected element. */}
-      {pres.missingRequirement != null && (
-        <dl className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <div className="min-w-0">
-            <dt className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-              Missing requirement
-            </dt>
-            <dd className="mt-1.5 rounded border border-border bg-input/20 px-3 py-2 text-sm leading-[21px] text-foreground">
-              {pres.missingRequirement}
-            </dd>
-          </div>
-          <div className="min-w-0">
-            <dt className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-              Affected element
-            </dt>
-            <dd className="mt-1.5 rounded border border-border bg-input/20 px-3 py-2 font-mono text-[13px] leading-[19px] text-foreground">
-              {pres.affectedElement}
-            </dd>
-          </div>
-        </dl>
-      )}
-
-      {/* Heading hierarchy: expected vs actual heading sequence. */}
-      {pres.expectedHeadingSequence != null && pres.actualHeadingSequence != null && (
-        <dl className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <div className="min-w-0">
-            <dt className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-              Expected heading sequence
-            </dt>
-            <dd className="mt-1.5 whitespace-pre-wrap break-words rounded border border-border bg-input/20 px-3 py-2 font-mono text-[13px] leading-[19px] text-foreground">
-              {pres.expectedHeadingSequence}
-            </dd>
-          </div>
-          <div className="min-w-0">
-            <dt className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-              Actual heading sequence
-            </dt>
-            <dd className="mt-1.5 whitespace-pre-wrap break-words rounded border border-border bg-input/20 px-3 py-2 font-mono text-[13px] leading-[19px] text-foreground">
-              {pres.actualHeadingSequence}
-            </dd>
-          </div>
-        </dl>
-      )}
-
-      {/* Required action — never a duplicate of the Expected value. */}
+      {/* Required action — the actionable sentence, kept near the top. */}
       {pres.requiredAction != null && (
         <div className="mt-4">
           <h3 className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
@@ -179,6 +182,25 @@ export function FindingDetail({ violation }: { violation: Violation | null }) {
             {pres.requiredAction}
           </p>
         </div>
+      )}
+
+      {secondarySections.length > 0 && (
+        <details className="mt-4 rounded-md border border-border bg-card">
+          <summary className="cursor-pointer select-none px-3 py-2 text-[13px] font-medium text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary">
+            Extended details
+          </summary>
+          <div className="space-y-4 border-t border-border p-3">
+            <dl className="space-y-2.5">
+              <div className="flex items-baseline gap-3">
+                <dt className="w-28 shrink-0 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+                  Rule reference
+                </dt>
+                <dd className="font-mono text-[13px] leading-[19px] text-foreground">{v.rule_code}</dd>
+              </div>
+            </dl>
+            {secondarySections}
+          </div>
+        </details>
       )}
     </section>
   )

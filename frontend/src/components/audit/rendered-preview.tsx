@@ -21,6 +21,7 @@ import {
   FileQuestion,
   Info,
   Loader2,
+  Maximize,
   Maximize2,
   ZoomIn,
   ZoomOut,
@@ -28,6 +29,7 @@ import {
 import type { PDFDocumentLoadingTask, PDFDocumentProxy, PDFPageProxy, RenderTask } from 'pdfjs-dist'
 import { getPdfjs } from '../../lib/pdf/pdf-text-extract.ts'
 import type { RenderedPdfState } from '../../hooks/use-rendered-pdf.ts'
+import { ZOOM_STEP_IN, ZOOM_STEP_OUT, fitScale, fitWidthScale, clampScale, zoomModeLabel, type FitMode } from '../../lib/pdf/fit-mode.ts'
 import { cn } from '../../lib/utils'
 import { PageCommandConsumer } from '../../lib/pdf/pending-navigation.ts'
 import { evidenceBarOffsetPx, evidenceBarHeight, EVIDENCE_BAR_METRICS, spacingBandTopPct, SPACING_BAND_PCT } from '../../lib/pdf/formatting-highlight.ts'
@@ -79,10 +81,12 @@ interface RenderedPreviewProps {
   marginChipLabel?: string | null
 }
 
-const ZOOM_MIN = 0.5
-const ZOOM_MAX = 3
-const ZOOM_STEP_IN = 1.25
-const ZOOM_STEP_OUT = 0.8
+
+/** Fit-page: reserve 12 px at the container bottom so a just-fitting page
+ *  never triggers a sliver of vertical scrollbar (thin scrollbar ~6 px). */
+const FIT_PAGE_BOTTOM_RESERVE_PX = 12
+/** Container padding (p-4 = 16 px per side) subtracted from the viewport. */
+const FIT_CONTAINER_PADDING_PX = 32
 const FALLBACK_MESSAGES: Record<Exclude<RenderedPdfState['status'], 'loading' | 'available' | 'idle'>, string> = {
   historical: 'Rendered preview is unavailable for this older audit.',
   unavailable: 'The page-rendered preview could not be created. The extracted-text preview remains available.',
@@ -113,9 +117,15 @@ export function RenderedPreview({
   const [docLoading, setDocLoading] = React.useState(false)
   const [pageNum, setPageNum] = React.useState(1)
   const [numPages, setNumPages] = React.useState(0)
-  // null = fit-to-width (recomputed from the container on demand)
+  // null = auto-fit (page or width depending on the active fit mode)
   const [scale, setScale] = React.useState<number | null>(null)
+  // The scale actually rendered by the last settled frame — the baseline
+  // for the next manual zoom step when leaving a fit mode.
   const [appliedScale, setAppliedScale] = React.useState<number | null>(null)
+  // 'fit-page' is the default for a newly opened audit (shows as much of the
+  // page as fits the viewport); the user's choice persists for the session
+  // and manual zoom is entered only through the explicit zoom controls.
+  const [fitMode, setFitMode] = React.useState<FitMode>('fit-page')
   const [renderFailed, setRenderFailed] = React.useState(false)
   const [fitTick, setFitTick] = React.useState(0)
   const [navAnnounce, setNavAnnounce] = React.useState<string | null>(null)
@@ -140,6 +150,9 @@ export function RenderedPreview({
       setPdfDoc(null)
       setNumPages(0)
       setPageNum(1)
+      setScale(null)
+      setAppliedScale(null)
+      setFitMode('fit-page')
       return
     }
     // PDF replaced: forget any consumed navigation command.
@@ -150,6 +163,7 @@ export function RenderedPreview({
     setPageNum(1)
     setScale(null)
     setAppliedScale(null)
+    setFitMode('fit-page')
     setRenderFailed(false)
 
     const load = async () => {
@@ -205,16 +219,17 @@ export function RenderedPreview({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pdf?.status === 'available' ? pdf?.bytes : undefined])
 
-  // ---- Fit-width on container resize (only while in fit mode) ----
+  // ---- Auto-fit on container resize: panel open/close, focus mode, and
+  //      window resizes all change the container. Watch in BOTH fit modes;
+  //      a manual scale is explicitly pinned, so it is never recomputed. ----
   React.useEffect(() => {
+    if (scale !== null) return
     const el = containerRef.current
     if (!el) return
-    const ro = new ResizeObserver(() => {
-      if (scale === null) setFitTick((t) => t + 1)
-    })
+    const ro = new ResizeObserver(() => setFitTick((t) => t + 1))
     ro.observe(el)
     return () => ro.disconnect()
-  }, [scale])
+  }, [scale, fitMode])
 
   // ---- Render the current page ----
   React.useEffect(() => {
@@ -238,12 +253,20 @@ export function RenderedPreview({
       const base = page.getViewport({ scale: 1 })
       let s = scale
       if (s === null) {
-        const width = container.clientWidth - 32 // padding
-        if (width > 0) {
-          if (width !== fitWidthRef.current) fitWidthRef.current = width
-          s = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, width / base.width))
+        const width = container.clientWidth - FIT_CONTAINER_PADDING_PX
+        const height =
+          container.clientHeight -
+          FIT_CONTAINER_PADDING_PX +
+          (fitMode === 'fit-page' ? FIT_PAGE_BOTTOM_RESERVE_PX : 0)
+        if (fitMode === 'fit-page') {
+          s = fitScale(base.width, base.height, width, height)
         } else {
-          s = 1
+          if (width > 0) {
+            if (width !== fitWidthRef.current) fitWidthRef.current = width
+            s = fitWidthScale(base.width, width)
+          } else {
+            s = 1
+          }
         }
       }
       const viewport = page.getViewport({ scale: s })
@@ -274,16 +297,32 @@ export function RenderedPreview({
     return () => {
       cancelled = true
     }
-  }, [pdfDoc, pageNum, scale, fitTick])
+  }, [pdfDoc, pageNum, scale, fitMode, fitTick])
 
-  const zoomIn = () => setScale((cur) => Math.min(ZOOM_MAX, (cur ?? 1) * ZOOM_STEP_IN))
-  const zoomOut = () => setScale((cur) => Math.max(ZOOM_MIN, (cur ?? 1) * ZOOM_STEP_OUT))
-  const fitWidth = () => {
-    fitWidthRef.current = 0
+  const zoomIn = () => {
+    setFitMode('manual')
+    setScale((cur) => clampScale((cur ?? appliedScale ?? 1) * ZOOM_STEP_IN))
+  }
+  const zoomOut = () => {
+    setFitMode('manual')
+    setScale((cur) => clampScale((cur ?? appliedScale ?? 1) * ZOOM_STEP_OUT))
+  }
+  const switchFitMode = (mode: FitMode) => {
+    if (mode === fitMode) return
+    setFitMode(mode)
     setScale(null)
+    fitWidthRef.current = 0
     setFitTick((t) => t + 1)
+    // In fit-page the whole page must be visible: jump to the top of the
+    // page (reduced-motion users get an instant jump, no smooth glide).
+    const el = containerRef.current
+    if (el) {
+      const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+      el.scrollTo({ top: 0, behavior: reduce ? 'auto' : 'smooth' })
+    }
   }
   const nextPage = () => setPageNum((p) => Math.min(numPages, p + 1))
+
   const prevPage = () => setPageNum((p) => Math.max(1, p - 1))
 
   // Finding-to-page navigation: apply the command ONCE (seq-identified),
@@ -327,7 +366,7 @@ export function RenderedPreview({
   }
 
   // ---- Available: toolbar + canvas ----
-  const zoomLabel = appliedScale === null ? 'Fit width' : `${Math.round(appliedScale * 100)}%`
+  const zoomLabel = zoomModeLabel(fitMode, scale)
   return (
     <div className={cn('flex flex-col gap-2', fitRegion && 'h-full min-h-0')}>
       {/* Toolbar */}
@@ -350,9 +389,40 @@ export function RenderedPreview({
           <ToolButton label="Zoom in" onClick={zoomIn}>
             <ZoomIn className="h-4 w-4" aria-hidden="true" />
           </ToolButton>
-          <ToolButton label="Fit to width" onClick={fitWidth}>
+          <button
+            type="button"
+            aria-pressed={fitMode === 'fit-page'}
+            aria-label="Fit page"
+            onClick={() => switchFitMode('fit-page')}
+            className={cn(
+              'inline-flex h-8 shrink-0 items-center gap-1 rounded-md border px-2 text-[13px] font-medium transition-colors',
+              'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1 focus-visible:ring-offset-card',
+              'disabled:pointer-events-none disabled:opacity-40',
+              fitMode === 'fit-page'
+                ? 'border-primary bg-primary/10 text-primary'
+                : 'border-border bg-background text-foreground hover:bg-accent hover:text-accent-foreground',
+            )}
+          >
+            <Maximize className="h-4 w-4" aria-hidden="true" />
+            Fit page
+          </button>
+          <button
+            type="button"
+            aria-pressed={fitMode === 'fit-width'}
+            aria-label="Fit width"
+            onClick={() => switchFitMode('fit-width')}
+            className={cn(
+              'inline-flex h-8 shrink-0 items-center gap-1 rounded-md border px-2 text-[13px] font-medium transition-colors',
+              'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1 focus-visible:ring-offset-card',
+              'disabled:pointer-events-none disabled:opacity-40',
+              fitMode === 'fit-width'
+                ? 'border-primary bg-primary/10 text-primary'
+                : 'border-border bg-background text-foreground hover:bg-accent hover:text-accent-foreground',
+            )}
+          >
             <Maximize2 className="h-4 w-4" aria-hidden="true" />
-          </ToolButton>
+            Fit width
+          </button>
           <p className="ml-1 w-16 text-right text-[13px] tabular-nums text-muted-foreground">{zoomLabel}</p>
         </div>
       </div>

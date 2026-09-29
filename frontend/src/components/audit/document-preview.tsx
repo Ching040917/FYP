@@ -17,6 +17,7 @@
  * when the user has not requested reduced motion.
  */
 import * as React from 'react'
+import type { ReactNode } from 'react'
 import { AlertOctagon, AlertTriangle, Check, FileText, Loader2, ScrollText } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import type { DocumentBlock, Violation } from '../../types/api'
@@ -77,6 +78,10 @@ export interface DocumentPreviewProps {
   } | null
   /** Compact margin marker chip label. */
   marginChipLabel?: string | null
+  /** Compact workspace controls (Findings / Details / Focus) owned by the
+   *  desktop layout; rendered in the preview toolbar so they stay visible
+   *  no matter which side panels are closed. */
+  workspaceControls?: ReactNode
 }
 
 export function DocumentPreview({
@@ -106,6 +111,7 @@ export function DocumentPreview({
   marginStatus = null,
   marginMarker = null,
   marginChipLabel = null,
+  workspaceControls = null,
 }: DocumentPreviewProps) {
   const containerRef = React.useRef<HTMLDivElement>(null)
   const blockRefs = React.useRef<Map<number, HTMLElement>>(new Map())
@@ -174,51 +180,59 @@ export function DocumentPreview({
     })
   }, [selectedViolationId, violations, orderedBlocks, active])
 
+  // The compact header (title + workspace controls + preview mode switch)
+  // is rendered on every path so the desktop panel/focus toggles stay
+  // reachable even when the rendered preview is unavailable.
+  const header = (
+    <header className="flex shrink-0 flex-wrap items-center justify-between gap-x-3 gap-y-1">
+      <h2 className="text-component-title text-foreground flex items-center gap-2">
+        <ScrollText className="h-4 w-4 text-primary" aria-hidden="true" />
+        Document preview
+      </h2>
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        {workspaceControls}
+        {locatableCount > 0 && (
+          <span className="text-[11px] text-muted-foreground">
+            {locatableCount} finding{locatableCount > 1 ? 's' : ''} located in document
+          </span>
+        )}
+        {hasRendered && renderedAvailable && (
+          <div
+            role="group"
+            aria-label="Preview mode"
+            className="inline-flex rounded-md border border-border bg-input/20 p-0.5"
+          >
+            <ModeButton active={view === 'rendered'} onClick={() => changeView('rendered')}>
+              Rendered pages
+            </ModeButton>
+            <ModeButton active={view === 'text'} onClick={() => changeView('text')}>
+              Extracted text
+            </ModeButton>
+          </div>
+        )}
+      </div>
+    </header>
+  )
+
   if (isLoading) {
-    return <PreviewSkeleton />
+    return <div className="flex flex-col gap-3">{header}<PreviewSkeleton /></div>
   }
 
   if (loadError) {
-    return <PreviewLoadError />
+    return <div className="flex flex-col gap-3">{header}<PreviewLoadError /></div>
   }
 
   if (blocks === null) {
-    return <PreviewUnavailable />
+    return <div className="flex flex-col gap-3">{header}<PreviewUnavailable /></div>
   }
 
   if (blocks.length === 0) {
-    return <PreviewEmpty />
+    return <div className="flex flex-col gap-3">{header}<PreviewEmpty /></div>
   }
 
   return (
     <div className={cn('flex flex-col gap-3', fitRegion && 'h-full min-h-0')}>
-      <header className="flex shrink-0 items-center justify-between">
-        <h2 className="text-component-title text-foreground flex items-center gap-2">
-          <ScrollText className="h-4 w-4 text-primary" aria-hidden="true" />
-          Document preview
-        </h2>
-        <div className="flex items-center gap-2">
-          {locatableCount > 0 && (
-            <span className="text-[11px] text-muted-foreground">
-              {locatableCount} finding{locatableCount > 1 ? 's' : ''} located in document
-            </span>
-          )}
-          {hasRendered && renderedAvailable && (
-            <div
-              role="group"
-              aria-label="Preview mode"
-              className="inline-flex rounded-md border border-border bg-input/20 p-0.5"
-            >
-              <ModeButton active={view === 'rendered'} onClick={() => changeView('rendered')}>
-                Rendered pages
-              </ModeButton>
-              <ModeButton active={view === 'text'} onClick={() => changeView('text')}>
-                Extracted text
-              </ModeButton>
-            </div>
-          )}
-        </div>
-      </header>
+      {header}
 
       {/* Concise navigation explanation (object findings / text fallback). */}
       {notice && (

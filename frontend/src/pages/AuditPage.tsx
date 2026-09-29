@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback, useMemo, useRef, type ReactNode, type
 import { useParams, useNavigate } from 'react-router-dom'
 import { api, downloadBlob } from '../services/api'
 import { useToast } from '../hooks/useToast'
-import { CheckCircle2, ChevronDown, Download, Filter, Info, Loader2, MapPin, PauseCircle, Quote, ShieldAlert, X, XCircle } from 'lucide-react'
+import { CheckCircle2, ChevronDown, Download, Filter, Info, Loader2, MapPin, Maximize, PauseCircle, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Quote, ShieldAlert, Shrink, X, XCircle } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Badge } from '../components/ui/badge'
 import { ConfirmDialog } from '../components/ui/confirm-dialog'
@@ -57,6 +57,15 @@ import {
   profileDisclosure,
 } from '../lib/audit/enabled-checks-wording'
 import { isScoreAvailable } from '../lib/score-display'
+import {
+  initialPanelSession,
+  panelAriaExpanded,
+  panelToggleLabel,
+  reducePanelSession,
+  workspaceGridTemplateColumns,
+  type PanelId,
+  type PanelSession,
+} from '../lib/audit/workspace-panels.ts'
 
 // Concise user-facing notices for non-navigable findings (Task 3).
 const OBJECT_NOTICE =
@@ -112,6 +121,53 @@ export function AuditPage() {
   const [blocksLoading, setBlocksLoading] = useState(false)
   const [blocksError, setBlocksError] = useState(false)
   const blocksFetchedRef = useRef(false)
+
+  // ── Workspace panel session (desktop ≥1280 only) ─────────────────────────
+  // Session-only visibility + document focus mode: never persisted, never
+  // touches the audit record, and never the Guided Fixes selection.
+  const [panelSession, setPanelSession] = useState<PanelSession>(() => initialPanelSession(window.innerWidth))
+  // Guided Fixes dialog open state — entering focus mode is blocked while
+  // the modal is open (modals always keep priority over workspace modes).
+  const [guidedOpen, setGuidedOpen] = useState(false)
+  const findingsToggleRef = useRef<HTMLButtonElement>(null)
+  const detailsToggleRef = useRef<HTMLButtonElement>(null)
+  const focusTriggerRef = useRef<HTMLButtonElement>(null)
+  const findingsColumnRef = useRef<HTMLDivElement>(null)
+ 
+
+  const focusMode = panelSession.focusMode
+  const findingsOpen = panelSession.visible.findings
+  const detailsOpen = panelSession.visible.details
+
+  /** If focus is inside a closing column, hand it to that panel's toggle. */
+  const closeFocusInto = (panel: PanelId, willClose: boolean) => {
+    if (!willClose) return
+    const col = panel === 'findings' ? findingsColumnRef.current : detailScrollRef.current
+    const target = panel === 'findings' ? findingsToggleRef.current : detailsToggleRef.current
+    if (col && target && col.contains(document.activeElement)) target.focus()
+  }
+
+  const togglePanel = (panel: PanelId) => {
+    const willClose = panelSession.visible[panel]
+    setPanelSession((s) => reducePanelSession(s, { type: 'toggle-panel', panel }, window.innerWidth))
+    closeFocusInto(panel, willClose)
+  }
+
+  const enterFocus = () => {
+    if (guidedOpen) return
+    setPanelSession((s) => reducePanelSession(s, { type: 'enter-focus' }, window.innerWidth))
+  }
+
+  const exitFocus = useCallback(() => {
+    setPanelSession((s) => reducePanelSession(s, { type: 'exit-focus' }, window.innerWidth))
+    requestAnimationFrame(() => focusTriggerRef.current?.focus())
+  }, [])
+
+  /** Desktop finding selection auto-opens Details (≥1280 only). */
+  const autoOpenDetails = () => {
+    setPanelSession((s) => reducePanelSession(s, { type: 'auto-open-details' }, window.innerWidth))
+  }
+
 
   // Finding-to-page navigation (mapping PoC): ONE owner of the rendered PDF
   // bytes shared by the viewer AND the mapper (no duplicate fetch, no byte
@@ -341,7 +397,11 @@ export function AuditPage() {
       dropPageGeometry(auditId)
       dropSectionRangeCache(auditId)
     }
+    // Safe panel defaults per supported desktop width — panel/focus
+    // state is never carried across to a different audit.
+    setPanelSession((s) => reducePanelSession(s, { type: 'audit-change', width: window.innerWidth }, window.innerWidth))
   }, [auditId, clearCitationHighlight, clearFormattingHighlight, clearObjectStatus, clearFigureOutline, clearMarginStatus])
+
 
   // PDF replaced: any highlight from the previous document is stale, and so
   // are the session caches derived from the previous bytes (paragraph
@@ -493,6 +553,21 @@ export function AuditPage() {
   const categoryTriggerRef = useRef<HTMLButtonElement>(null)
   // …and the dialog surface itself owns initial-focus targeting.
   const categoryDialogRef = useRef<HTMLDivElement>(null)
+
+  // Escape exits document focus mode unless a modal (Guided Fixes, drawer)
+  // or the category popover has priority. Both side panels restore to their
+  // pre-focus states; focus returns to the trigger control.
+  useEffect(() => {
+    if (!focusMode) return
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      if (document.querySelector('[role="dialog"][aria-modal="true"]')) return
+      if (categoryOpen) return
+      exitFocus()
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [focusMode, categoryOpen, exitFocus])
 
   // PDF export — one clear action; guarded against duplicate clicks.
   const [exporting, setExporting] = useState(false)
@@ -653,6 +728,7 @@ export function AuditPage() {
   const handleDesktopSelect = (e: LayoutError) => {
     setSelectedId(e.id)
     applyNavigation(e)
+    autoOpenDetails()
   }
 
   // Exact/approximate mapping → Rendered Pages + page navigation;
@@ -850,6 +926,7 @@ export function AuditPage() {
     if (!audit || audit.status !== 'completed') return
     if (selectedId === null && audit.violations.length > 0) {
       setSelectedId(audit.violations[0].id)
+      autoOpenDetails()
     }
   }, [audit, selectedId])
 
@@ -920,23 +997,24 @@ export function AuditPage() {
           />
         ) : (
           <>
-            {/* ────────────── Report toolbar, restructured ──────────────
-             * Level 1: title (full-name tooltip) + score.
-             * Level 2: status · counts · profile disclosure.
-             * Actions: categories · Guided Fixes · Export PDF.
-             * Score label is level-1 only; suffix moves to an aria-label so
-             * the meaning is preserved without repeating on the visual face.
-             */}
-            <div className="shrink-0 border-b border-border pb-3 lg:pb-4">
-              {/* Level 1: title + score */}
-              <div className="flex flex-wrap items-start gap-x-6 gap-y-2">
+            {/* ────────────── Report header — two compact rows ──────────────
+             * Row 1: document title · completion status · score.
+             * Row 2: finding counts · profile disclosure · actions
+             * (Categories · Guided Fixes · Export PDF).
+             * Keeping the header short is what gives the workspace its
+             * vertical room — no whole-page scrolling is used to
+             * compensate for a tall header. */}
+            <div className="shrink-0 border-b border-border pb-2 lg:pb-3">
+              {/* Row 1: title + status + score */}
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
                 <h1
-                  className="min-w-0 flex-1 basis-[320px] truncate font-serif text-lg font-semibold leading-6 text-foreground md:text-xl"
+                  className="min-w-0 flex-1 basis-[280px] truncate font-serif text-lg font-semibold leading-6 text-foreground md:text-xl"
                   title={audit.filename}
                   aria-label={`Audit report for ${audit.filename}`}
                 >
                   {audit.filename}
                 </h1>
+                <StatusBadge status={audit.status} />
                 <div className="shrink-0 text-right">
                   <div
                     className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground"
@@ -961,9 +1039,8 @@ export function AuditPage() {
                 </div>
               </div>
 
-              {/* Level 2: status + counts + profile disclosure */}
-              <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px] text-muted-foreground">
-                <StatusBadge status={audit.status} />
+              {/* Row 2: counts + profile disclosure + actions */}
+              <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-2 text-[13px] text-muted-foreground">
                 {audit.status === 'completed' && (
                   <span>
                     {audit.major_count ?? 0} major · {audit.minor_count ?? 0} minor findings
@@ -974,78 +1051,77 @@ export function AuditPage() {
                     {profileDisclosure(audit.profile_snapshot)}
                   </span>
                 )}
-              </div>
-
-              {/* Actions row */}
-              <div className="mt-3 flex flex-wrap items-center gap-2 lg:justify-end">
-                {/* Category overview trigger — compact, never expanded by default.
-                    Exposes popover semantics: haspopup="dialog" + aria-expanded +
-                    aria-controls relationship to the dialog panel below. */}
-                {breakdown.length > 0 && (
-                  <div className="relative" ref={categoryPanelRef}>
-                    <Button
-                      ref={categoryTriggerRef}
-                      variant="outline"
-                      size="sm"
-                      aria-haspopup="dialog"
-                      aria-expanded={categoryOpen}
-                      aria-controls="category-panel"
-                      onClick={() => setCategoryOpen((o) => !o)}
-                    >
-                      <Filter className="h-3.5 w-3.5" aria-hidden="true" />
-                      Categories · {breakdown.length}
-                      {catCounts.fail > 0 && <span className="text-destructive">{catCounts.fail} fail</span>}
-                      {catCounts.warn > 0 && <span className="text-warning">{catCounts.warn} warn</span>}
-                      {catCounts.pass > 0 && <span className="text-success">{catCounts.pass} pass</span>}
-                    </Button>
-                    {categoryOpen && (
-                      <div
-                        ref={categoryDialogRef}
-                        id="category-panel"
-                        role="dialog"
-                        aria-modal="false"
-                        aria-label="Filter findings by category"
-                        className="absolute right-0 top-full z-40 mt-2 max-h-[70vh] w-[min(600px,90vw)] overflow-y-auto rounded-md border border-border bg-card p-4 shadow-tonal-high"
+                <div className="ml-auto flex flex-wrap items-center gap-2">
+                  {/* Category overview trigger — compact, never expanded by default.
+                      Exposes popover semantics: haspopup="dialog" + aria-expanded +
+                      aria-controls relationship to the dialog panel below. */}
+                  {breakdown.length > 0 && (
+                    <div className="relative" ref={categoryPanelRef}>
+                      <Button
+                        ref={categoryTriggerRef}
+                        variant="outline"
+                        size="sm"
+                        aria-haspopup="dialog"
+                        aria-expanded={categoryOpen}
+                        aria-controls="category-panel"
+                        onClick={() => setCategoryOpen((o) => !o)}
                       >
-                        <VerdictChecklist
-                          breakdown={breakdown}
-                          selectedCategory={categoryFilter}
-                          onSelectCategory={handleCategorySelect}
-                        />
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {audit.status === 'completed' && (
-                  <GuidedFixesPanel
-                    auditId={audit.id}
-                    violations={audit.violations}
-                    locationLabels={locationLabels}
-                  />
-                )}
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={handleExport}
-                  disabled={exporting || isProcessing}
-                  title={
-                    isProcessing
-                      ? 'The PDF is available once the audit finishes processing.'
-                      : exporting
-                        ? 'Preparing your PDF…'
-                        : 'Download this audit report as a PDF'
-                  }
-                  aria-busy={exporting}
-                >
-                  {exporting ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-                  ) : (
-                    <Download className="h-3.5 w-3.5" aria-hidden="true" />
+                        <Filter className="h-3.5 w-3.5" aria-hidden="true" />
+                        Categories · {breakdown.length}
+                        {catCounts.fail > 0 && <span className="text-destructive">{catCounts.fail} fail</span>}
+                        {catCounts.warn > 0 && <span className="text-warning">{catCounts.warn} warn</span>}
+                        {catCounts.pass > 0 && <span className="text-success">{catCounts.pass} pass</span>}
+                      </Button>
+                      {categoryOpen && (
+                        <div
+                          ref={categoryDialogRef}
+                          id="category-panel"
+                          role="dialog"
+                          aria-modal="false"
+                          aria-label="Filter findings by category"
+                          className="absolute right-0 top-full z-40 mt-2 max-h-[70vh] w-[min(600px,90vw)] overflow-y-auto rounded-md border border-border bg-card p-4 shadow-tonal-high"
+                        >
+                          <VerdictChecklist
+                            breakdown={breakdown}
+                            selectedCategory={categoryFilter}
+                            onSelectCategory={handleCategorySelect}
+                          />
+                        </div>
+                      )}
+                    </div>
                   )}
-                  {exporting ? 'Preparing PDF…' : 'Export PDF'}
-                </Button>
+
+                  {audit.status === 'completed' && (
+                    <GuidedFixesPanel
+                      auditId={audit.id}
+                      violations={audit.violations}
+                      locationLabels={locationLabels}
+                      onOpenChange={setGuidedOpen}
+                    />
+                  )}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={handleExport}
+                    disabled={exporting || isProcessing}
+                    title={
+                      isProcessing
+                        ? 'The PDF is available once the audit finishes processing.'
+                        : exporting
+                          ? 'Preparing your PDF…'
+                          : 'Download this audit report as a PDF'
+                    }
+                    aria-busy={exporting}
+                  >
+                    {exporting ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                    ) : (
+                      <Download className="h-3.5 w-3.5" aria-hidden="true" />
+                    )}
+                    {exporting ? 'Preparing PDF…' : 'Export PDF'}
+                  </Button>
+                </div>
               </div>
             </div>
 
@@ -1053,7 +1129,7 @@ export function AuditPage() {
             {audit.status === 'failed' && <FailedBanner />}
 
             {/* ────────────── Review workspace ────────────── */}
-            <div className="mt-6 lg:mt-4 lg:min-h-0 lg:flex-1">
+            <div className="mt-6 lg:mt-4 lg:min-h-0 lg:flex-1 xl:flex xl:flex-col">
               {/* Mobile/tablet: tabbed workspace (single active panel for SR). */}
               <div className="lg:hidden">
                 <div
@@ -1235,61 +1311,139 @@ export function AuditPage() {
                 </div>
               </div>
 
-              {/* Desktop ≥1280: three-column full-height review workspace. */}
-              <div className="hidden h-full min-h-0 grid-cols-[24fr_46fr_30fr] items-stretch gap-6 xl:grid">
-                <div className="flex min-h-0 min-w-0 flex-col overflow-hidden">
-                  {audit.status === 'completed' && violations.length === 0 ? (
-                    <NoFindingsState />
-                  ) : (
-                    <ErrorList
-                      result={{ physical_layout_errors: mappedErrors }}
-                      selectedId={selectedId}
-                      onSelect={handleDesktopSelect}
-                      categoryFilter={categoryFilter}
-                      onCategoryFilterChange={setCategoryFilter}
-                      locationLabels={locationLabels}
-                      locatingId={locatingId}
-                      className="lg:h-full lg:min-h-0 lg:flex-1 lg:overflow-hidden"
-                    />
-                  )}
-                </div>
-                <div className="min-h-0 min-w-0 overflow-hidden">
-                  <DocumentPreview
-                    blocks={blocks}
-                    violations={audit.violations}
-                    selectedViolationId={selectedId}
-                    isLoading={blocksLoading}
-                    loadError={blocksError}
-                    onSelectViolation={setSelectedId}
-                    fitRegion
-                    renderedPdf={renderedPdf}
-                    notice={navNotice}
-                                        previewMode={previewMode}
-                    onPreviewModeChange={setPreviewMode}
-                    pendingPage={pageCommand}
-                    citationRects={citationRects}
-                    citationLabel={citationLabel}
-                    highlightMessage={highlightMessage}
-                    formattingEvidence={formattingEvidence}
-                    formattingSpacingSide={formattingSpacingSide}
-                    formattingLabel={formattingLabel}
-                    formattingMessage={formattingMessage}
-                    objectStatus={objectStatus}
-                    figureOutline={figureOutline}
-                    figureMessage={figureMessage}
-                    marginStatus={marginStatus}
-                    marginMarker={marginMarker}
-                    marginChipLabel={marginChipLabel}
-                  />
-                </div>
+              {/* Desktop ≥1280: collapsible three-column review workspace.
+                  Panel/focus controls live in the preview's compact header
+                  so they stay reachable with either or both panels closed;
+                  a closed panel's grid track collapses to 0px. */}
+              <div className="hidden min-h-0 xl:flex xl:flex-1 xl:flex-col">
+
+                {/* Three-column grid: closed panel tracks collapse to 0px. */}
                 <div
-                  ref={detailScrollRef}
-                  tabIndex={0}
-                  role="region"
-                  aria-label="Finding details"
-                  className="min-h-0 min-w-0 space-y-6 overflow-y-auto pr-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                  className="min-h-0 flex-1 items-stretch gap-6"
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: workspaceGridTemplateColumns(panelSession.visible),
+                  }}
                 >
-                  {renderDetailStack(audit)}
+                  <div
+                    id={findingsOpen ? 'ws-panel-findings' : undefined}
+                    ref={findingsColumnRef}
+                    className={cn('flex min-h-0 min-w-0 flex-col overflow-hidden', !findingsOpen && 'hidden')}
+                  >
+                    {audit.status === 'completed' && violations.length === 0 ? (
+                      <NoFindingsState />
+                    ) : (
+                      <ErrorList
+                        result={{ physical_layout_errors: mappedErrors }}
+                        selectedId={selectedId}
+                        onSelect={handleDesktopSelect}
+                        categoryFilter={categoryFilter}
+                        onCategoryFilterChange={setCategoryFilter}
+                        locationLabels={locationLabels}
+                        locatingId={locatingId}
+                        className="lg:h-full lg:min-h-0 lg:flex-1 lg:overflow-hidden"
+                      />
+                    )}
+                  </div>
+                  <div id="ws-panel-preview" className="min-h-0 min-w-0 overflow-hidden">
+                    <DocumentPreview
+                      blocks={blocks}
+                      violations={audit.violations}
+                      selectedViolationId={selectedId}
+                      isLoading={blocksLoading}
+                      loadError={blocksError}
+                      onSelectViolation={setSelectedId}
+                      fitRegion
+                      renderedPdf={renderedPdf}
+                      notice={navNotice}
+                      previewMode={previewMode}
+                      onPreviewModeChange={setPreviewMode}
+                      pendingPage={pageCommand}
+                      citationRects={citationRects}
+                      citationLabel={citationLabel}
+                      highlightMessage={highlightMessage}
+                      formattingEvidence={formattingEvidence}
+                      formattingSpacingSide={formattingSpacingSide}
+                      formattingLabel={formattingLabel}
+                      formattingMessage={formattingMessage}
+                      objectStatus={objectStatus}
+                      figureOutline={figureOutline}
+                      figureMessage={figureMessage}
+                      marginStatus={marginStatus}
+                      marginMarker={marginMarker}
+                      marginChipLabel={marginChipLabel}
+                      workspaceControls={
+                        <>
+                          {focusMode ? (
+                            <span role="status" className="text-xs text-muted-foreground">
+                              Document focus — panels hidden
+                            </span>
+                          ) : (
+                            <>
+                              <Button
+                                ref={findingsToggleRef}
+                                variant="outline"
+                                size="sm"
+                                aria-expanded={panelAriaExpanded('findings', panelSession.visible, focusMode)}
+                                aria-controls={findingsOpen ? 'ws-panel-findings' : undefined}
+                                onClick={() => togglePanel('findings')}
+                              >
+                                {findingsOpen ? (
+                                  <PanelLeftClose className="h-3.5 w-3.5" aria-hidden="true" />
+                                ) : (
+                                  <PanelLeftOpen className="h-3.5 w-3.5" aria-hidden="true" />
+                                )}
+                                {panelToggleLabel('findings', panelSession.visible, focusMode)}
+                              </Button>
+                              <Button
+                                ref={detailsToggleRef}
+                                variant="outline"
+                                size="sm"
+                                aria-expanded={panelAriaExpanded('details', panelSession.visible, focusMode)}
+                                aria-controls={detailsOpen ? 'ws-panel-details' : undefined}
+                                onClick={() => togglePanel('details')}
+                              >
+                                {detailsOpen ? (
+                                  <PanelRightClose className="h-3.5 w-3.5" aria-hidden="true" />
+                                ) : (
+                                  <PanelRightOpen className="h-3.5 w-3.5" aria-hidden="true" />
+                                )}
+                                {panelToggleLabel('details', panelSession.visible, focusMode)}
+                              </Button>
+                            </>
+                          )}
+                          <Button
+                            ref={focusTriggerRef}
+                            variant={focusMode ? 'default' : 'outline'}
+                            size="sm"
+                            disabled={!focusMode && guidedOpen}
+                            onClick={focusMode ? exitFocus : enterFocus}
+                            aria-label={focusMode ? 'Exit document focus' : 'Focus on document'}
+                          >
+                            {focusMode ? (
+                              <Shrink className="h-3.5 w-3.5" aria-hidden="true" />
+                            ) : (
+                              <Maximize className="h-3.5 w-3.5" aria-hidden="true" />
+                            )}
+                            {focusMode ? 'Exit document focus' : 'Focus on document'}
+                          </Button>
+                        </>
+                      }
+                    />
+                  </div>
+                  <div
+                    id={detailsOpen ? 'ws-panel-details' : undefined}
+                    ref={detailScrollRef}
+                    tabIndex={0}
+                    role="region"
+                    aria-label="Finding details"
+                    className={cn(
+                      'min-h-0 min-w-0 space-y-6 overflow-y-auto pr-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background',
+                      !detailsOpen && 'hidden',
+                    )}
+                  >
+                    {renderDetailStack(audit)}
+                  </div>
                 </div>
               </div>
             </div>
@@ -1644,44 +1798,46 @@ function CitationSection({
             Human verification required
           </span>
         </div>
-        {matchedIssue.text_snippet && (
-          <blockquote className="mt-2 rounded border-l-2 border-ai-assisted/40 bg-ai-assisted/5 px-3 py-2 font-serif text-[13px] leading-[19px] text-foreground">
-            “{matchedIssue.text_snippet}”
-          </blockquote>
-        )}
-        {(() => {
-          const { correction, shared } = splitGuidanceSuggestion(matchedIssue.suggestion)
-          return (
-            <>
-              {correction && (
-                <p className="mt-2 whitespace-pre-wrap break-words rounded border border-border bg-input/20 px-3 py-2 text-[13px] leading-[21px] text-foreground">
-                  {correction}
-                </p>
-              )}
-              {shared && (
-                <details className="mt-2 rounded-md border border-border bg-card">
-                  <summary className="cursor-pointer select-none px-3 py-2 text-[13px] font-medium text-foreground">
-                    APA templates and verification checklist
-                  </summary>
-                  <div className="whitespace-pre-wrap break-words border-t border-border px-3 py-2 text-[13px] leading-[21px] text-muted-foreground">
-                    {shared}
-                  </div>
-                </details>
-              )}
-            </>
-          )
-        })()}
-        <p className="mt-2 flex items-start gap-2 text-[13px] leading-[19px] text-muted-foreground">
-          <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-          Completed via {aiProviderLabel(provider)}. Guidance is AI-assisted and requires human
-          verification of the source details.
-        </p>
-        {status === null && (
-          <p className="mt-2 flex items-start gap-2 text-[13px] leading-[19px] text-muted-foreground">
-            <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-            AI review status was not recorded for this audit.
-          </p>
-        )}
+        <details className="mt-2 rounded-md border border-border bg-card">
+          <summary className="cursor-pointer select-none px-3 py-2 text-[13px] font-medium text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary">
+            Show AI-assisted guidance
+          </summary>
+          <div className="space-y-2 border-t border-border px-3 py-2">
+            {matchedIssue.text_snippet && (
+              <blockquote className="rounded border-l-2 border-ai-assisted/40 bg-ai-assisted/5 px-3 py-2 font-serif text-[13px] leading-[19px] text-foreground">
+                “{matchedIssue.text_snippet}”
+              </blockquote>
+            )}
+            {(() => {
+              const { correction, shared } = splitGuidanceSuggestion(matchedIssue.suggestion)
+              return (
+                <>
+                  {correction && (
+                    <p className="whitespace-pre-wrap break-words rounded border border-border bg-input/20 px-3 py-2 text-[13px] leading-[21px] text-foreground">
+                      {correction}
+                    </p>
+                  )}
+                  {shared && (
+                    <p className="whitespace-pre-wrap break-words px-1 text-[13px] leading-[21px] text-muted-foreground">
+                      {shared}
+                    </p>
+                  )}
+                </>
+              )
+            })()}
+            <p className="flex items-start gap-2 text-[13px] leading-[19px] text-muted-foreground">
+              <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+              Completed via {aiProviderLabel(provider)}. Guidance is AI-assisted and requires human
+              verification of the source details.
+            </p>
+            {status === null && (
+              <p className="flex items-start gap-2 text-[13px] leading-[19px] text-muted-foreground">
+                <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                AI review status was not recorded for this audit.
+              </p>
+            )}
+          </div>
+        </details>
       </>
     )
   } else {
@@ -1732,8 +1888,10 @@ function DocStats({ stats }: { stats?: AuditDocumentStats | null }) {
   if (rows.length === 0) return null
 
   return (
-    <section aria-label="Document statistics" className="border-t border-border pt-5">
-      <h3 className="text-component-title text-foreground">Document statistics</h3>
+    <details aria-label="Document statistics" className="border-t border-border pt-5">
+      <summary className="cursor-pointer select-none text-component-title text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary">
+        Document statistics
+      </summary>
       <dl className="mt-3 grid grid-cols-2 gap-x-6 gap-y-2 sm:grid-cols-3">
         {rows.map(([key, label]) => (
           <div key={key} className="flex items-baseline justify-between gap-3 border-b border-border/60 pb-1.5">
@@ -1742,6 +1900,6 @@ function DocStats({ stats }: { stats?: AuditDocumentStats | null }) {
           </div>
         ))}
       </dl>
-    </section>
+    </details>
   )
 }

@@ -133,11 +133,14 @@ export function GuidedFixesPanel({
   auditId,
   violations,
   locationLabels,
+  onOpenChange,
 }: {
   auditId: string
   violations: Violation[]
   /** Friendly location labels per finding id (Page N · Paragraph M). */
   locationLabels?: ReadonlyMap<string, string> | null
+  /** Reports the dialog open state (stage !== 'idle') to the parent. */
+  onOpenChange?: (open: boolean) => void
 }) {
   const navigate = useNavigate()
   const triggerRef = useRef<HTMLButtonElement>(null)
@@ -152,6 +155,12 @@ export function GuidedFixesPanel({
   const [resultBlob, setResultBlob] = useState<Blob | null>(null)
   const [resultFilename, setResultFilename] = useState(correctedFilename(null))
   const [announcement, setAnnouncement] = useState<string | null>(null)
+  // The dialog is mounted for every non-idle stage; report that to the
+  // workspace so focus-mode entry can be blocked while it is open.
+  const guidedOpen = stage !== 'idle'
+  useEffect(() => {
+    onOpenChange?.(guidedOpen)
+  }, [guidedOpen, onOpenChange])
   const [backToStage, setBackToStage] = useState<GuidedFixStage>('selecting')
 
   // Clear selection + upload + transient state when the audit changes.
