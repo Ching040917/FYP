@@ -149,7 +149,7 @@ export function ErrorList({
     // full chain the list region takes content height and gets clipped by
     // the pane instead of scrolling (regression: "list cannot scroll").
     <Card className={cn('border-border bg-card flex h-full min-h-0 flex-col overflow-hidden', className)}>
-      <CardHeader className="shrink-0 pb-3">
+      <CardHeader className="shrink-0 pb-2">
         <div className="flex items-center justify-between gap-2">
           <div>
             <CardTitle className="text-base font-semibold flex items-center gap-2">
@@ -161,7 +161,7 @@ export function ErrorList({
             </CardDescription>
           </div>
         </div>
-        <div className="flex items-center gap-2 pt-2">
+        <div className="flex items-center gap-2 pt-1.5">
           <Filter className="h-3 w-3 text-muted-foreground" />
           <Select
             value={severityFilter}
@@ -192,7 +192,7 @@ export function ErrorList({
           </Select>
         </div>
         {statusLine && (
-          <p className="pt-2 text-xs text-muted-foreground" aria-live="polite">
+          <p className="pt-1 text-xs text-muted-foreground" aria-live="polite">
             {statusLine}
           </p>
         )}
@@ -229,7 +229,7 @@ export function ErrorList({
               No findings match the current filter.
             </div>
           ) : (
-            <ul className="divide-y divide-border px-2 pb-6 pt-4">
+            <ul className="divide-y divide-border px-2 pb-4 pt-2">
               {filtered.map((e, index) => {
                 const selected = selectedId === e.id
                 return (

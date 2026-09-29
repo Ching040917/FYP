@@ -982,7 +982,7 @@ export function AuditPage() {
 
       <main
         id="audit-report"
-        className="mx-auto w-full max-w-[1440px] px-4 py-6 md:px-6 md:py-8 lg:flex lg:min-h-0 lg:flex-1 lg:flex-col lg:overflow-hidden lg:py-4"
+        className="mx-auto w-full max-w-[1440px] px-4 py-6 md:px-6 md:py-8 lg:flex lg:min-h-0 lg:flex-1 lg:flex-col lg:overflow-hidden lg:pt-2 lg:pb-3"
       >
         {loading ? (
           <LoadingState />
@@ -1004,9 +1004,9 @@ export function AuditPage() {
              * Keeping the header short is what gives the workspace its
              * vertical room — no whole-page scrolling is used to
              * compensate for a tall header. */}
-            <div className="shrink-0 border-b border-border pb-2 lg:pb-3">
-              {/* Row 1: title + status + score */}
-              <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+            <div className="shrink-0 border-b border-border pb-2 lg:pb-2">
+              {/* Row 1: title + status + score — one compact line. */}
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
                 <h1
                   className="min-w-0 flex-1 basis-[280px] truncate font-serif text-lg font-semibold leading-6 text-foreground md:text-xl"
                   title={audit.filename}
@@ -1015,32 +1015,30 @@ export function AuditPage() {
                   {audit.filename}
                 </h1>
                 <StatusBadge status={audit.status} />
-                <div className="shrink-0 text-right">
-                  <div
-                    className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground"
-                    aria-label="Score covers only the enabled checks"
-                  >
+                <div
+                  className="flex shrink-0 items-baseline gap-1.5"
+                  aria-label="Score covers only the enabled checks"
+                >
+                  <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
                     Score
-                  </div>
-                  <div className="flex items-baseline justify-end gap-1.5">
-                    {isScoreAvailable(audit.weighted_score) ? (
-                      <>
-                        <span className="font-mono text-lg font-semibold text-foreground">
-                          {audit.weighted_score}
-                        </span>
-                        <span className="text-[13px] text-muted-foreground">/100</span>
-                      </>
-                    ) : (
-                      <span className="font-mono text-lg font-semibold text-foreground">
-                        Unavailable
+                  </span>
+                  {isScoreAvailable(audit.weighted_score) ? (
+                    <>
+                      <span className="font-mono text-lg font-semibold leading-6 text-foreground">
+                        {audit.weighted_score}
                       </span>
-                    )}
-                  </div>
+                      <span className="text-[13px] leading-6 text-muted-foreground">/100</span>
+                    </>
+                  ) : (
+                    <span className="font-mono text-lg font-semibold leading-6 text-foreground">
+                      Unavailable
+                    </span>
+                  )}
                 </div>
               </div>
 
               {/* Row 2: counts + profile disclosure + actions */}
-              <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-2 text-[13px] text-muted-foreground">
+              <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-2 text-[13px] text-muted-foreground">
                 {audit.status === 'completed' && (
                   <span>
                     {audit.major_count ?? 0} major · {audit.minor_count ?? 0} minor findings
@@ -1128,8 +1126,17 @@ export function AuditPage() {
             {isProcessing && <ProcessingBanner pollAttempts={pollAttempts} />}
             {audit.status === 'failed' && <FailedBanner />}
 
-            {/* ────────────── Review workspace ────────────── */}
-            <div className="mt-6 lg:mt-4 lg:min-h-0 lg:flex-1 xl:flex xl:flex-col">
+            {/* ────────────── Review workspace ──────────────
+                Remaining-height region: the report header above is `shrink-0`
+                and this wrapper takes `flex-1` of the shell's `h-dvh` column,
+                so all three panels start and end on the same pixel rows and
+                the workspace grows with the browser viewport. `min-h-0` keeps
+                the chain shrinkable so each panel scrolls internally instead
+                of pushing the page taller. */}
+            <div
+              id="audit-workspace"
+              className="mt-3 lg:mt-2 lg:min-h-0 lg:flex-1 xl:flex xl:flex-col"
+            >
               {/* Mobile/tablet: tabbed workspace (single active panel for SR). */}
               <div className="lg:hidden">
                 <div
@@ -1260,8 +1267,14 @@ export function AuditPage() {
               </div>
 
               {/* Tablet 1024–1279: Findings + Document; Detail opens as drawer. */}
-              <div className="hidden h-full min-h-0 grid-cols-[32fr_68fr] items-stretch gap-6 lg:grid xl:hidden">
-                <div className="flex min-h-0 min-w-0 flex-col overflow-hidden">
+              <div
+                id="ws-tablet-workspace"
+                className="hidden h-full min-h-0 grid-cols-[32fr_68fr] items-stretch gap-6 lg:grid xl:hidden"
+              >
+                <div
+                  id="ws-tablet-findings"
+                  className="flex min-h-0 min-w-0 flex-col overflow-hidden"
+                >
                   {audit.status === 'completed' && violations.length === 0 ? (
                     <NoFindingsState />
                   ) : (
@@ -1277,7 +1290,7 @@ export function AuditPage() {
                     />
                   )}
                 </div>
-                <div className="min-h-0 min-w-0 overflow-hidden">
+                <div id="ws-tablet-document" className="min-h-0 min-w-0 overflow-hidden">
                   <DocumentPreview
                     blocks={blocks}
                     violations={audit.violations}
@@ -1319,6 +1332,7 @@ export function AuditPage() {
 
                 {/* Three-column grid: closed panel tracks collapse to 0px. */}
                 <div
+                  id="audit-workspace-grid"
                   className="min-h-0 flex-1 items-stretch gap-6"
                   style={{
                     display: 'grid',
@@ -1383,7 +1397,9 @@ export function AuditPage() {
                               <Button
                                 ref={findingsToggleRef}
                                 variant="outline"
-                                size="sm"
+                                size="icon"
+                                title={panelToggleLabel('findings', panelSession.visible, focusMode)}
+                                aria-label={panelToggleLabel('findings', panelSession.visible, focusMode)}
                                 aria-expanded={panelAriaExpanded('findings', panelSession.visible, focusMode)}
                                 aria-controls={findingsOpen ? 'ws-panel-findings' : undefined}
                                 onClick={() => togglePanel('findings')}
@@ -1393,12 +1409,13 @@ export function AuditPage() {
                                 ) : (
                                   <PanelLeftOpen className="h-3.5 w-3.5" aria-hidden="true" />
                                 )}
-                                {panelToggleLabel('findings', panelSession.visible, focusMode)}
                               </Button>
                               <Button
                                 ref={detailsToggleRef}
                                 variant="outline"
-                                size="sm"
+                                size="icon"
+                                title={panelToggleLabel('details', panelSession.visible, focusMode)}
+                                aria-label={panelToggleLabel('details', panelSession.visible, focusMode)}
                                 aria-expanded={panelAriaExpanded('details', panelSession.visible, focusMode)}
                                 aria-controls={detailsOpen ? 'ws-panel-details' : undefined}
                                 onClick={() => togglePanel('details')}
@@ -1408,7 +1425,6 @@ export function AuditPage() {
                                 ) : (
                                   <PanelRightOpen className="h-3.5 w-3.5" aria-hidden="true" />
                                 )}
-                                {panelToggleLabel('details', panelSession.visible, focusMode)}
                               </Button>
                             </>
                           )}
@@ -1438,7 +1454,7 @@ export function AuditPage() {
                     role="region"
                     aria-label="Finding details"
                     className={cn(
-                      'min-h-0 min-w-0 space-y-6 overflow-y-auto pr-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background',
+                      'min-h-0 min-w-0 space-y-4 overflow-y-auto pr-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background',
                       !detailsOpen && 'hidden',
                     )}
                   >

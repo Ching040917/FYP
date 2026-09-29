@@ -82,8 +82,10 @@ interface RenderedPreviewProps {
 }
 
 
-/** Fit-page: reserve 12 px at the container bottom so a just-fitting page
- *  never triggers a sliver of vertical scrollbar (thin scrollbar ~6 px). */
+/** Fit-page safety margin: the complete page is scaled to fit the container's
+ *  CONTENT box minus this margin, so a just-fitting page never triggers a
+ *  sliver of vertical scrollbar (thin scrollbar ~6 px) and the whole physical
+ *  page stays visible. Fit-width ignores it (vertical scroll is expected). */
 const FIT_PAGE_BOTTOM_RESERVE_PX = 12
 /** Container padding (p-4 = 16 px per side) subtracted from the viewport. */
 const FIT_CONTAINER_PADDING_PX = 32
@@ -221,7 +223,11 @@ export function RenderedPreview({
 
   // ---- Auto-fit on container resize: panel open/close, focus mode, and
   //      window resizes all change the container. Watch in BOTH fit modes;
-  //      a manual scale is explicitly pinned, so it is never recomputed. ----
+  //      a manual scale is explicitly pinned, so it is never recomputed.
+  //      `available`/`pdfDoc` are dependencies because the observed container
+  //      only exists once the rendered preview is available — without them the
+  //      observer would never attach (it used to return early on mount, so a
+  //      fit never followed a panel collapse or entering focus mode). ----
   React.useEffect(() => {
     if (scale !== null) return
     const el = containerRef.current
@@ -229,7 +235,7 @@ export function RenderedPreview({
     const ro = new ResizeObserver(() => setFitTick((t) => t + 1))
     ro.observe(el)
     return () => ro.disconnect()
-  }, [scale, fitMode])
+  }, [scale, fitMode, available, pdfDoc])
 
   // ---- Render the current page ----
   React.useEffect(() => {
@@ -256,7 +262,7 @@ export function RenderedPreview({
         const width = container.clientWidth - FIT_CONTAINER_PADDING_PX
         const height =
           container.clientHeight -
-          FIT_CONTAINER_PADDING_PX +
+          FIT_CONTAINER_PADDING_PX -
           (fitMode === 'fit-page' ? FIT_PAGE_BOTTOM_RESERVE_PX : 0)
         if (fitMode === 'fit-page') {
           s = fitScale(base.width, base.height, width, height)

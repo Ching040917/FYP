@@ -180,27 +180,31 @@ export function DocumentPreview({
     })
   }, [selectedViolationId, violations, orderedBlocks, active])
 
-  // The compact header (title + workspace controls + preview mode switch)
-  // is rendered on every path so the desktop panel/focus toggles stay
-  // reachable even when the rendered preview is unavailable.
+  // The compact header is rendered on every path so the desktop panel/focus
+  // toggles stay reachable even when the rendered preview is unavailable.
+  // Height budget: the title and the located-finding count stay on the first
+  // line, the workspace controls + preview-mode switch share the second line
+  // with `ml-auto` so they wrap as ONE group (a group that fits the narrowest
+  // supported preview column, 544px at 1280 with both side panels open).
+  // In focus mode and in the 1024 two-column layout everything fits one line.
   const header = (
-    <header className="flex shrink-0 flex-wrap items-center justify-between gap-x-3 gap-y-1">
-      <h2 className="text-component-title text-foreground flex items-center gap-2">
+    <header className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1">
+      <h2 className="flex shrink-0 items-center gap-1.5 text-[13px] font-medium leading-[19px] text-foreground">
         <ScrollText className="h-4 w-4 text-primary" aria-hidden="true" />
         Document preview
       </h2>
-      <div className="flex flex-wrap items-center justify-end gap-2">
+      {locatableCount > 0 && (
+        <span className="shrink-0 text-[11px] text-muted-foreground">
+          {locatableCount} finding{locatableCount > 1 ? 's' : ''} located in document
+        </span>
+      )}
+      <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
         {workspaceControls}
-        {locatableCount > 0 && (
-          <span className="text-[11px] text-muted-foreground">
-            {locatableCount} finding{locatableCount > 1 ? 's' : ''} located in document
-          </span>
-        )}
         {hasRendered && renderedAvailable && (
           <div
             role="group"
             aria-label="Preview mode"
-            className="inline-flex rounded-md border border-border bg-input/20 p-0.5"
+            className="inline-flex shrink-0 rounded-md border border-border bg-input/20 p-0.5"
           >
             <ModeButton active={view === 'rendered'} onClick={() => changeView('rendered')}>
               Rendered pages
@@ -231,7 +235,7 @@ export function DocumentPreview({
   }
 
   return (
-    <div className={cn('flex flex-col gap-3', fitRegion && 'h-full min-h-0')}>
+    <div className={cn('flex flex-col gap-2', fitRegion && 'h-full min-h-0')}>
       {header}
 
       {/* Concise navigation explanation (object findings / text fallback). */}
@@ -382,7 +386,7 @@ export function DocumentPreview({
         })}
       </div>
 
-      <div className="shrink-0 space-y-3">
+      <div className="shrink-0 space-y-0.5">
         <p className="text-[11px] text-muted-foreground">
           This preview shows extracted document content for finding location. Layout may differ
           from Microsoft Word.
