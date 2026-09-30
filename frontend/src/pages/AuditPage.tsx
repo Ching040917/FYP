@@ -133,7 +133,6 @@ export function AuditPage() {
   const detailsToggleRef = useRef<HTMLButtonElement>(null)
   const focusTriggerRef = useRef<HTMLButtonElement>(null)
   const findingsColumnRef = useRef<HTMLDivElement>(null)
- 
 
   const focusMode = panelSession.focusMode
   const findingsOpen = panelSession.visible.findings
