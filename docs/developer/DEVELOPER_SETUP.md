@@ -31,7 +31,7 @@ python -m alembic upgrade head
 python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
-Keep this terminal open. On startup ACA applies stale-audit recovery and serves `http://127.0.0.1:8000`. The current migration head is `90fc17718e11`.
+Keep this terminal open. On startup ACA applies stale-audit recovery and serves `http://127.0.0.1:8000`. The current migration head is `b3e8d19e2b3f`.
 
 ### Environment file (backend/.env)
 

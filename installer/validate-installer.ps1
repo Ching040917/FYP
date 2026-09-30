@@ -98,7 +98,7 @@ if ($port -gt 0) {
     Check "Dashboard loads" ($dash.StatusCode -eq 200) "status $($dash.StatusCode)"
 }
 Check "audit.db created" (Test-Path $dbPath) $dbPath
-Check "DB at alembic head 90fc17718e11" ((Get-DbHead) -eq "90fc17718e11") "head=$(Get-DbHead)"
+Check "DB at alembic head b3e8d19e2b3f" ((Get-DbHead) -eq "b3e8d19e2b3f") "head=$(Get-DbHead)"
 
 Write-Host "`n=== Second launch reuse ==="
 $before = @(Get-Process run-frozen -ErrorAction SilentlyContinue).Count

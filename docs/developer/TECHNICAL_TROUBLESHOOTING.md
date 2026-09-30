@@ -14,7 +14,7 @@ These occur on an end user's machine. The safe actions below are what you may gu
 
 **Symptom (source mode):** backend fails to start with migration errors after switching branches.
 
-**Cause:** `backend/audit.db` is stamped at an older revision than the code's migration head (`90fc17718e11`).
+**Cause:** `backend/audit.db` is stamped at an older revision than the code's migration head (`b3e8d19e2b3f`).
 
 **Packaged-user action:** none — the launcher handles upgrades automatically. Never ask a user to run Alembic.
 

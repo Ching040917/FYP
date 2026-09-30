@@ -77,7 +77,7 @@ PASS/FAIL — these are recorded during the manual test, never assumed.
 - Steps:
   1. Launch ACA from the Start Menu.
   2. Wait for the browser to open.
-- Expected result: Browser opens automatically to `http://127.0.0.1:<port>/dashboard` after the backend health check; port is between 8010 and 8015; ACA binds only to 127.0.0.1; runtime directories are created under `%LOCALAPPDATA%\AcademicComplianceAuditor`; the database reaches Alembic head `90fc17718e11`; no terminal command required.
+- Expected result: Browser opens automatically to `http://127.0.0.1:<port>/dashboard` after the backend health check; port is between 8010 and 8015; ACA binds only to 127.0.0.1; runtime directories are created under `%LOCALAPPDATA%\AcademicComplianceAuditor`; the database reaches Alembic head `b3e8d19e2b3f`; no terminal command required.
 - Actual result:
 - PASS/FAIL:
 - Evidence filename:
