@@ -84,6 +84,41 @@ export const api = {
   },
 
   /**
+   * Local AI Citation Guidance — current local-model download snapshot
+   * (GET /api/setup/local-model/download/status). Read-only: never starts a
+   * pull. Returns the raw payload; callers validate through
+   * `adaptDownloadStatus`, so malformed data can never render as completed.
+   */
+  async getLocalModelDownloadStatus(): Promise<unknown> {
+    const response = await fetchWithTimeout(
+      `${API_BASE}/setup/local-model/download/status`,
+      {},
+      POLL_TIMEOUT_MS,
+    )
+    if (!response.ok) throw new Error(`HTTP ${response.status}`)
+    return response.json()
+  },
+
+  /**
+   * Local AI Citation Guidance — start downloading the optional local model
+   * (POST /api/setup/local-model/download).
+   *
+   * Sends NO parameters and NO body: the browser cannot influence the model
+   * name, the Ollama origin, or insecure mode. A 409 means a download is
+   * already active, which callers treat as "keep polling" rather than an
+   * error. The manual `ollama pull` command remains available as a fallback.
+   */
+  async startLocalModelDownload(): Promise<void> {
+    const response = await fetchWithTimeout(
+      `${API_BASE}/setup/local-model/download`,
+      { method: 'POST' },
+      POLL_TIMEOUT_MS,
+    )
+    if (response.status === 409) return
+    if (!response.ok) throw new Error(`HTTP ${response.status}`)
+  },
+
+  /**
    * Read-only canonical payload of ONE built-in formatting profile (Build 3).
    * Used to authoritatively copy a built-in profile into a custom one.
    */

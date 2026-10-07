@@ -47,9 +47,9 @@ After an audit, ACA shows what it found and why:
 Two optional components extend ACA, but neither is required:
 
 - **LibreOffice** enables rendered-page previews and original-document page locations. Without it, extracted-text evidence remains available.
-- **Ollama** enables optional local AI citation guidance. Without it, deterministic checks are unaffected.
+- **Ollama** enables optional **Local AI Citation Guidance** — suggestions for APA 7 in-text citation formatting only. It is never a full academic review, never rewrites or corrects your DOCX, and every suggestion needs your own review.
 
-Core deterministic audits remain available without either component. When an optional component is missing, setup actions appear in the Dashboard's **System Readiness** card — ACA never downloads or installs third-party software itself.
+Core deterministic audits — document checks, formatting findings, rendered-page previews, Guided Fixes, PDF report export, and Audit History — remain available without either component. When an optional component is missing, setup actions appear in the Dashboard's **System Readiness** card. ACA never installs third-party software; the only download it can start is the optional citation-guidance model, after you explicitly confirm it.
 
 ## Documentation
 

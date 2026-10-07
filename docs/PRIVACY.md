@@ -32,9 +32,15 @@ Inside: `audit.db` (audit history database), `backups\` (verified backups, three
 
 Internet access happens only when you explicitly choose an optional action:
 
-- Downloading an optional component's installer from the official website (you click the link; ACA never downloads anything by itself).
-- Downloading the local AI model with the command ACA copies for you (you run it; ACA never runs it for you).
+- Downloading an optional component's installer from the official website (you click the link; ACA never downloads the installer).
+- Downloading the optional **Citation Guidance Model**. After you confirm it in the app, ACA's Backend asks the Ollama service running on your own computer (`127.0.0.1`) to fetch the model. **ACA itself never contacts the model registry** — the download traffic belongs to Ollama, on your machine. You can also copy the `ollama pull` command and run it yourself instead.
 - Local AI and Cloud AI, as described below.
+
+Starting a model download sends only the model name and download flags to your local Ollama service. No document, finding, citation, prompt, or identifier is sent, and the request never goes anywhere except your own computer.
+
+## What happens when the citation-guidance model is downloaded?
+
+The download is performed by your local Ollama service, not by ACA. ACA's Backend sends a single request to `127.0.0.1` naming the configured model, and progress state (status text and byte counts) is held in memory only: it is never written to the database, to Audit History, to a log, or to disk. Nothing about your documents is involved, and closing ACA discards the progress display.
 
 ## What happens when Local AI is used?
 

@@ -78,13 +78,18 @@ Optional components extend ACA but are never required — core audits work witho
 - When LibreOffice is missing, the System readiness card shows **Download LibreOffice**, which opens the official LibreOffice website (`https://www.libreoffice.org/download/`) in your browser. LibreOffice is third-party software with its own terms and privacy policies.
 - Install it yourself, then click **Check again** — no restart needed.
 
-**Ollama and its model** (local AI citation guidance):
+**Ollama and its model** (optional **Local AI Citation Guidance**):
+
+Local AI Citation Guidance is an optional feature. It provides suggestions for **APA 7 in-text citation formatting only**. It is not a full academic review, does not rewrite or correct your DOCX, does not verify citation sources or complete reference lists, and does not check grammar or plagiarism. Suggestions may be incomplete or inaccurate — review every suggestion before using it. It is not required for deterministic document auditing, formatting findings, rendered-page preview, Guided Fixes, PDF report export, or Audit History.
 
 - When Ollama is missing, the card shows **Download Ollama**, which opens the official Ollama website (`https://ollama.com/download/windows`). Install and start it yourself.
-- When Ollama is running but its AI model is missing, the card shows the exact model needed with a **Copy installation command** button. Paste the command into a terminal and run it yourself — the model download needs internet access, may take time, and needs noticeable disk space.
-- Local AI performance depends on your computer's processor and memory. On a low-memory computer you can simply continue without local AI — deterministic checks are unaffected.
+- When Ollama is running but its Citation Guidance Model is missing, the card shows the exact model needed with a **Download optional model** button. That opens a confirmation dialog — the download starts only if you choose **Start download**. ACA then asks your own Ollama service to fetch the model and shows progress, storage guidance, and the model name in the card. A model that is already installed is confirmed and marked ready without downloading anything again.
+- Prefer to do it yourself? **Copy installation command** copies the exact `ollama pull` command for you to run in your own terminal. It stays available at all times.
+- The download needs an internet connection, several gigabytes of storage, and may take time. **ACA cannot reliably stop an Ollama model download once it has started**, so there is no Cancel button: closing the progress view may leave Ollama downloading in the background. ACA never stops Ollama to interrupt a download.
+- Local AI performance depends on your computer's memory and processor. On a low-memory computer you can simply continue without local AI — deterministic checks are unaffected.
+- When the download finishes, ACA confirms the model through Ollama itself and the card updates to **Ready**. **Check again** re-checks at any time.
 
-**ACA never downloads, installs, or runs third-party software by itself** — every download or installation is performed by you.
+**ACA never installs third-party software and never runs a local command for you.** The only download it can start is the optional Citation Guidance Model, from your own Ollama service, and only after you confirm it.
 
 **Cloud AI** is a separate, explicit opt-in for a single audit. It stays off unless you turn it on for that audit and provide your own API key. When enabled, only the citation snippets relevant to confirmed findings are sent for review.
 

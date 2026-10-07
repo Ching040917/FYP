@@ -127,18 +127,26 @@ The optional local AI service is not installed or not running, so local AI citat
 2. Install Ollama yourself and start it.
 3. Click **Check again**. If you continue without Ollama, everything else keeps working.
 
+Ollama must be installed and running before ACA can download the optional Citation Guidance Model — the download is performed by your own Ollama service.
+
 ## Local AI model is missing
 
 ### What it means
 
-Ollama is installed and running, but the AI model ACA uses has not been downloaded yet.
+Ollama is installed and running, but the Citation Guidance Model ACA uses for optional Local AI Citation Guidance has not been downloaded yet. This affects APA 7 in-text citation formatting suggestions only — deterministic checks are unaffected.
 
 ### What to do
 
-1. In the **System readiness** card, find the model entry and choose **Copy installation command**.
-2. Paste the copied command into a terminal (Command Prompt or PowerShell) and run it yourself. The model download needs internet access, may take time, and needs noticeable disk space.
-3. When the download finishes, click **Check again**.
-4. On a low-memory computer you can also simply continue without local AI — deterministic checks are unaffected.
+1. In the **System readiness** card, find the model entry and choose **Download optional model**.
+2. Confirm with **Start download**. ACA asks your own Ollama service to fetch the model and shows progress in the card. The download needs an internet connection, may take time, and needs noticeable disk space.
+3. Prefer to do it yourself? Choose **Copy installation command** and paste the copied command into a terminal (Command Prompt or PowerShell). Both routes work.
+4. When the download finishes, ACA confirms the model through Ollama and the entry becomes **Ready**. You can also click **Check again**.
+5. If the download fails, the card explains what to check and offers **Try again**.
+6. On a low-memory computer you can also simply continue without local AI — deterministic checks are unaffected.
+
+### About stopping a download
+
+There is no Cancel button. **ACA cannot reliably stop an Ollama model download once it has started** — Ollama has no cancel endpoint, and it keeps downloading even if ACA closes the connection. You may close the progress view, but Ollama may continue downloading in the background. ACA never stops the Ollama service to interrupt a download.
 
 ## PDF export is unavailable
 

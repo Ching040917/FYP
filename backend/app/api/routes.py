@@ -35,6 +35,7 @@ from app.services.document_parser import (
     extract_sections,
 )
 from app.services.docx_pdf_converter import convert_docx_to_pdf, DocxConversionError
+from app.services import local_model_download
 from app.services import preview_storage
 from app.services.pdf_report import generate_audit_pdf, build_export_filename
 from app.services.page_mapping import compute_paragraph_page_mapping
@@ -492,6 +493,41 @@ async def get_readiness(refresh: bool = Query(False, description="Bypass the 30s
     from app.services.setup_readiness import get_readiness as build_readiness
 
     return await build_readiness(force_refresh=refresh)
+
+
+@router.post("/api/setup/local-model/download",
+             response_model=local_model_download.LocalModelDownloadStatus)
+async def start_local_model_download():
+    """Start downloading the optional citation-guidance model (Local AI).
+
+    Deliberately declares NO parameters: no request value can influence the
+    model name, the Ollama origin, the port, insecure mode, the registry, or
+    a storage path. Only `settings.OLLAMA_MODEL` is ever pulled, from the
+    validated loopback origin. The endpoint never contacts the model registry
+    itself — it asks the user's own Ollama service to pull.
+
+    Returns 409 when a download is already active, so a second concurrent
+    pull is refused rather than queued. Read-only with respect to audits:
+    nothing is written to the database or to Audit History.
+    """
+    snapshot = await local_model_download.start_download()
+    if snapshot is None:
+        raise HTTPException(
+            status_code=409,
+            detail="A model download is already in progress.",
+        )
+    return snapshot
+
+
+@router.get("/api/setup/local-model/download/status",
+            response_model=local_model_download.LocalModelDownloadStatus)
+async def get_local_model_download_status():
+    """Current local-model download progress snapshot (Local AI).
+
+    Strict eight-field contract. Never initiates a pull, never performs a
+    network call, and never exposes raw exception data.
+    """
+    return local_model_download.get_status()
 
 
 @router.post("/api/formatting-profiles/validate")

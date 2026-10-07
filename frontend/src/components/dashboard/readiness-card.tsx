@@ -20,7 +20,16 @@ import {
 } from 'lucide-react'
 import { Button } from '../ui/button'
 import { CardContent, CardHeader, CardTitle } from '../ui/card'
+import { ConfirmDialog } from '../ui/confirm-dialog'
+import { LocalModelDownloadPanel } from './local-model-download-panel'
 import { api } from '../../services/api'
+import type { LocalModelDownloadStatus } from '../../types/api'
+import {
+  DOWNLOAD_POLL_INTERVAL_MS,
+  LOCAL_MODEL_COPY,
+  adaptDownloadStatus,
+  isDownloadActive,
+} from '../../lib/local-model-download'
 import {
   adaptReadiness,
   overallHeadline,
@@ -61,6 +70,16 @@ export function ReadinessCard({
   const [expanded, setExpanded] = React.useState(false)
   const [refreshing, setRefreshing] = React.useState(false)
   const [refreshError, setRefreshError] = React.useState(false)
+  // Local AI Citation Guidance — download state lives at card level so an
+  // ordinary readiness refresh (which replaces `model`) cannot unmount an
+  // in-flight download view.
+  const [download, setDownload] = React.useState<LocalModelDownloadStatus | null>(null)
+  const [downloadBusy, setDownloadBusy] = React.useState(false)
+  const [downloadStartFailed, setDownloadStartFailed] = React.useState(false)
+  const [downloadHidden, setDownloadHidden] = React.useState(false)
+  const [confirmOpen, setConfirmOpen] = React.useState(false)
+  const downloadPollRef = React.useRef(false)
+  const pollTimerRef = React.useRef<number | null>(null)
   const fetchingRef = React.useRef(false)
   const mountedRef = React.useRef(false)
   const onCloudAvailableRef = React.useRef(onCloudAvailableProp)
@@ -117,12 +136,75 @@ export function ReadinessCard({
     }
   }, [model, publishCloudAvailable])
 
-  // Initial mount: one request, uses Backend cache.
+  /**
+   * Read the Backend's download snapshot. Malformed payloads are dropped, so
+   * a bad response can never render as a completed download.
+   */
+  const refreshDownloadStatus = React.useCallback(async () => {
+    if (downloadPollRef.current) return null
+    downloadPollRef.current = true
+    try {
+      const parsed = adaptDownloadStatus(await api.getLocalModelDownloadStatus())
+      setDownload(parsed)
+      return parsed
+    } catch {
+      return null
+    } finally {
+      downloadPollRef.current = false
+    }
+  }, [])
+
+  /** Poll once per second while a download is active; stop on any terminal state. */
+  React.useEffect(() => {
+    if (pollTimerRef.current !== null) {
+      window.clearTimeout(pollTimerRef.current)
+      pollTimerRef.current = null
+    }
+    if (!isDownloadActive(download)) return
+
+    pollTimerRef.current = window.setTimeout(async () => {
+      pollTimerRef.current = null
+      const next = await refreshDownloadStatus()
+      // Readiness is re-derived from the Backend, which independently
+      // confirms the model through Ollama's installed-model list first.
+      if (next?.state === 'completed') void fetchReadiness(true)
+    }, DOWNLOAD_POLL_INTERVAL_MS)
+
+    return () => {
+      if (pollTimerRef.current !== null) {
+        window.clearTimeout(pollTimerRef.current)
+        pollTimerRef.current = null
+      }
+    }
+  }, [download, refreshDownloadStatus, fetchReadiness])
+
+  /** Start the download. Runs only after the user confirms in the dialog. */
+  const startDownload = React.useCallback(async () => {
+    if (downloadBusy || isDownloadActive(download)) return
+    setDownloadBusy(true)
+    setConfirmOpen(false)
+    setDownloadHidden(false)
+    setDownloadStartFailed(false)
+    try {
+      await api.startLocalModelDownload()
+      await refreshDownloadStatus()
+    } catch {
+      // Never surface the raw failure; the manual command stays available.
+      setDownloadStartFailed(true)
+    } finally {
+      setDownloadBusy(false)
+    }
+  }, [downloadBusy, download, refreshDownloadStatus])
+
+  // Initial mount: one request each, using the Backend cache for readiness.
   React.useEffect(() => {
     if (mountedRef.current) return
     mountedRef.current = true
     publishCloudAvailable(null, true)
     void fetchReadiness(false)
+    // Re-attach to a download that was already running (e.g. the user
+    // navigated away and came back).
+    void refreshDownloadStatus()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -154,6 +236,18 @@ export function ReadinessCard({
 
   const showViewDetails = state === 'loaded' && model !== null
   const detailsId = 'readiness-details'
+
+  // Single object keeps ReadinessRow / SetupPathway props readable.
+  const downloadUi: DownloadUi = {
+    status: download,
+    busy: downloadBusy,
+    startFailed: downloadStartFailed,
+    hidden: downloadHidden,
+    onRequest: () => setConfirmOpen(true),
+    onRetry: () => void startDownload(),
+    onHide: () => setDownloadHidden(true),
+    onShow: () => setDownloadHidden(false),
+  }
 
   return (
     <section
@@ -262,6 +356,7 @@ export function ReadinessCard({
                     rows={m.rows}
                     onCheckAgain={() => void fetchReadiness(true)}
                     refreshing={refreshing}
+                    downloadUi={downloadUi}
                   />
                 ))}
                 {detailsSlot && <div className="pt-1">{detailsSlot}</div>}
@@ -272,8 +367,38 @@ export function ReadinessCard({
           })()
         )}
       </CardContent>
+      {confirmOpen ? (
+        <ConfirmDialog
+          title={LOCAL_MODEL_COPY.confirmTitle}
+          description={LOCAL_MODEL_COPY.confirmIntro}
+          details={
+            <>
+              <p>{LOCAL_MODEL_COPY.confirmCost}</p>
+              <p>{LOCAL_MODEL_COPY.confirmHardware}</p>
+              <p>{LOCAL_MODEL_COPY.confirmReassurance}</p>
+            </>
+          }
+          confirmLabel={LOCAL_MODEL_COPY.confirmStart}
+          cancelLabel={LOCAL_MODEL_COPY.confirmCancel}
+          busy={downloadBusy}
+          onConfirm={() => void startDownload()}
+          onCancel={() => setConfirmOpen(false)}
+        />
+      ) : null}
     </section>
   )
+}
+
+/** Download state + actions threaded from the card into the pathway UI. */
+interface DownloadUi {
+  status: LocalModelDownloadStatus | null
+  busy: boolean
+  startFailed: boolean
+  hidden: boolean
+  onRequest: () => void
+  onRetry: () => void
+  onHide: () => void
+  onShow: () => void
 }
 
 function ReadinessRow({
@@ -281,11 +406,13 @@ function ReadinessRow({
   rows,
   onCheckAgain,
   refreshing,
+  downloadUi,
 }: {
   row: ReadinessComponentRow
   rows: ReadinessComponentRow[]
   onCheckAgain: () => void
   refreshing: boolean
+  downloadUi: DownloadUi
 }) {
   const Icon = iconFor(row)
   const setup = setupPathwayFor(row, rows)
@@ -311,6 +438,7 @@ function ReadinessRow({
           setup={setup}
           onCheckAgain={onCheckAgain}
           refreshing={refreshing}
+          downloadUi={downloadUi}
         />
       )}
     </div>
@@ -321,7 +449,7 @@ function ReadinessRow({
 function setupPathwayFor(
   row: ReadinessComponentRow,
   rows: ReadinessComponentRow[],
-): { kind: 'libreoffice' | 'ollama' | 'model'; url?: string; linkLabel?: string; body: string; command?: string } | null {
+): { kind: 'libreoffice' | 'ollama' | 'model'; url?: string; linkLabel?: string; body: string; command?: string; modelName?: string | null } | null {
   if (!SETUP_COMPONENTS.has(row.id) || row.state !== 'unavailable') return null
   if (isLibreOfficeMissing(row)) {
     return {
@@ -345,6 +473,7 @@ function setupPathwayFor(
       kind: 'model',
       body: SETUP_COPY.model.body,
       command: name ? modelInstallCommand(name) : undefined,
+      modelName: name,
     }
   }
   return null
@@ -352,21 +481,34 @@ function setupPathwayFor(
 
 /**
  * Optional-component setup pathway: plain-language explanation, official
- * download link (LibreOffice/Ollama) or copyable model command, and a
- * Check again action that reuses the card's readiness refresh. Display only
- * — ACA never downloads, installs, or executes anything.
+ * download link (LibreOffice/Ollama), a copyable model command, an optional
+ * confirmed in-app model download, and a Check again action that reuses the
+ * card's readiness refresh.
+ *
+ * ACA never installs anything and never executes a local command: the only
+ * download it can start is the trusted configured model, by asking the user's
+ * own Ollama service, and only after explicit confirmation.
  */
 function SetupPathway({
   setup,
   onCheckAgain,
   refreshing,
+  downloadUi,
 }: {
-  setup: { kind: 'libreoffice' | 'ollama' | 'model'; url?: string; linkLabel?: string; body: string; command?: string }
+  setup: { kind: 'libreoffice' | 'ollama' | 'model'; url?: string; linkLabel?: string; body: string; command?: string; modelName?: string | null }
   onCheckAgain: () => void
   refreshing: boolean
+  downloadUi: DownloadUi
 }) {
   const [copyState, setCopyState] = React.useState<'idle' | 'copied' | 'failed'>('idle')
   const command = setup.kind === 'model' && setup.command ? setup.command : null
+  // The download status payload is authoritative; the readiness detail is the
+  // fallback so the name is never guessed locally.
+  const modelName = downloadUi.status?.model_name ?? setup.modelName ?? null
+  const downloadStarted =
+    downloadUi.status !== null && downloadUi.status.state !== 'idle'
+  const showDownloadAction =
+    setup.kind === 'model' && !downloadStarted && !downloadUi.busy
 
   async function copyCommand() {
     if (!command) return
@@ -392,13 +534,34 @@ function SetupPathway({
             ? SETUP_COPY.ollama.title
             : SETUP_COPY.model.title}
       </p>
+      {setup.kind === 'model' && (
+        <>
+          <p className="text-xs leading-[16px] text-muted-foreground break-words">
+            {LOCAL_MODEL_COPY.scope}
+          </p>
+          <p className="text-xs leading-[16px] text-muted-foreground break-words">
+            {LOCAL_MODEL_COPY.accuracy}
+          </p>
+          {modelName ? (
+            <p className="text-xs leading-[16px] text-muted-foreground break-words">
+              {LOCAL_MODEL_COPY.modelLabel}:{' '}
+              <span className="font-mono text-foreground">{modelName}</span>
+            </p>
+          ) : null}
+          <p className="text-xs leading-[16px] text-muted-foreground break-words">
+            {LOCAL_MODEL_COPY.sizeLabel}: {LOCAL_MODEL_COPY.sizeValue}
+          </p>
+        </>
+      )}
       <p className="text-xs leading-[16px] text-muted-foreground break-words">{setup.body}</p>
       {setup.url && setup.linkLabel && (
         <p className="text-xs text-muted-foreground break-words">{SETUP_COPY.thirdPartyNote}</p>
       )}
       {command !== null && (
         <div>
-          <p className="mb-1 text-xs font-medium text-foreground">Local AI model</p>
+          <p className="mb-1 text-xs font-medium text-foreground">
+            {LOCAL_MODEL_COPY.modelLabel}
+          </p>
           <code
             data-testid="model-command"
             className="block select-all rounded border border-border bg-input/40 px-2 py-1.5 font-mono text-xs text-foreground break-all"
@@ -408,6 +571,17 @@ function SetupPathway({
         </div>
       )}
       <div className="flex flex-wrap items-center gap-2">
+        {showDownloadAction && (
+          <Button
+            type="button"
+            size="sm"
+            className="min-h-[44px]"
+            onClick={downloadUi.onRequest}
+            disabled={downloadUi.busy}
+          >
+            {LOCAL_MODEL_COPY.downloadAction}
+          </Button>
+        )}
         {setup.url && setup.linkLabel && (
           <a
             href={setup.url}
@@ -442,6 +616,31 @@ function SetupPathway({
           Check again
         </Button>
       </div>
+      {setup.kind === 'model' && downloadStarted ? (
+        downloadUi.hidden ? (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="border-border text-foreground min-h-[44px]"
+            onClick={downloadUi.onShow}
+          >
+            {LOCAL_MODEL_COPY.showProgress}
+          </Button>
+        ) : downloadUi.status ? (
+          <LocalModelDownloadPanel
+            status={downloadUi.status}
+            busy={downloadUi.busy}
+            onRetry={downloadUi.onRetry}
+            onHide={downloadUi.onHide}
+          />
+        ) : null
+      ) : null}
+      {setup.kind === 'model' && downloadUi.startFailed ? (
+        <p role="status" className="text-xs leading-[16px] text-muted-foreground">
+          {LOCAL_MODEL_COPY.startFailed}
+        </p>
+      ) : null}
       {copyState !== 'idle' && (
         <p role="status" aria-live="polite" className="text-xs text-muted-foreground">
           {copyState === 'copied'

@@ -17,6 +17,12 @@ export interface ConfirmDialogProps {
   /** Variant for the confirm action. */
   confirmVariant?: 'default' | 'destructive' | 'outline'
   busy?: boolean
+  /**
+   * Optional extra content rendered under the description. Included in the
+   * dialog's `aria-describedby`, so richer confirmations stay screen-reader
+   * complete. Existing callers pass only `description` and are unaffected.
+   */
+  details?: React.ReactNode
 }
 
 const FOCUSABLE_SELECTOR =
@@ -31,6 +37,7 @@ export function ConfirmDialog({
   onCancel,
   confirmVariant = 'default',
   busy = false,
+  details,
 }: ConfirmDialogProps) {
   const dialogRef = React.useRef<HTMLDivElement>(null)
   const cancelRef = React.useRef<HTMLButtonElement>(null)
@@ -81,7 +88,11 @@ export function ConfirmDialog({
       role="alertdialog"
       aria-modal="true"
       aria-labelledby="confirm-dialog-title"
-      aria-describedby="confirm-dialog-description"
+      aria-describedby={
+        details
+          ? 'confirm-dialog-description confirm-dialog-details'
+          : 'confirm-dialog-description'
+      }
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
       onClick={busy ? undefined : onCancel}
     >
@@ -106,6 +117,14 @@ export function ConfirmDialog({
         <p id="confirm-dialog-description" className="mt-2 text-sm leading-[21px] text-muted-foreground">
           {description}
         </p>
+        {details ? (
+          <div
+            id="confirm-dialog-details"
+            className="mt-3 space-y-2 text-sm leading-[21px] text-muted-foreground"
+          >
+            {details}
+          </div>
+        ) : null}
         <div className="mt-5 flex flex-wrap justify-end gap-2">
           <Button type="button" variant="outline" onClick={onCancel} disabled={busy} ref={cancelRef}>
             {cancelLabel}

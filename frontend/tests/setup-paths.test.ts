@@ -136,11 +136,33 @@ const cardSrc = readFileSync(
   'utf8',
 )
 
-test('no automatic installer, download, or command execution in the card', () => {
+const downloadPanelSrc = readFileSync(
+  join(process.cwd(), 'src', 'components', 'dashboard', 'local-model-download-panel.tsx'),
+  'utf8',
+)
+
+test('no local installer or command execution in the card', () => {
   assert.ok(!/exec\s*\(|spawn|child_process|Shell\.Execute|Start-Process/.test(cardSrc))
   assert.ok(!/\.msi|\.exe['"]|\.dmg/.test(cardSrc))
   assert.ok(!/window\.open\s*\(/.test(cardSrc))
   assert.ok(!/\bfetch\s*\(\s*OFFICIAL_URLS/.test(cardSrc))
+})
+
+test('the download panel executes nothing and hardcodes no URL', () => {
+  assert.ok(!/exec\s*\(|spawn|child_process|Shell\.Execute|Start-Process/.test(downloadPanelSrc))
+  assert.ok(!/\.msi|\.exe['"]|\.dmg/.test(downloadPanelSrc))
+  assert.ok(!/window\.open\s*\(/.test(downloadPanelSrc))
+  assert.ok(!/https?:\/\//.test(downloadPanelSrc))
+  // The Ollama CLI is never invoked from the UI.
+  assert.ok(!/ollama\s+pull/.test(downloadPanelSrc))
+})
+
+test('the in-app download goes through the API client, never a raw URL', () => {
+  assert.ok(cardSrc.includes('api.startLocalModelDownload'))
+  assert.ok(cardSrc.includes('api.getLocalModelDownloadStatus'))
+  // The card holds no literal origin: the Backend owns the Ollama endpoint.
+  assert.ok(!/https?:\/\//.test(cardSrc))
+  assert.ok(!/11434/.test(cardSrc))
 })
 
 test('official URLs are not taken from API/readiness data', () => {

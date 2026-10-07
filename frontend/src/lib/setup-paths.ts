@@ -24,15 +24,15 @@ export const SETUP_COPY = {
     linkLabel: 'Download LibreOffice',
   },
   ollama: {
-    title: 'Local AI review',
+    title: 'Local AI Citation Guidance',
     body:
-      'Local AI review is optional. Install Ollama to enable local citation suggestions. Deterministic audit checks remain available without it.',
+      'Local AI Citation Guidance is optional. Install Ollama to enable APA 7 in-text citation formatting suggestions. Deterministic audit checks remain available without it.',
     linkLabel: 'Download Ollama',
   },
   model: {
-    title: 'Local AI model',
+    title: 'Local AI Citation Guidance',
     body:
-      'The local AI model is optional. Install the model to enable local citation suggestions. The download requires internet access, may take time, and may require substantial disk storage. ACA does not start the download automatically.',
+      'The Citation Guidance Model is optional. The download requires internet access, may take time, and may require substantial disk storage. ACA does not start the download automatically.',
     copyLabel: 'Copy installation command',
     copiedLabel: 'Command copied',
     copyFailedLabel: 'Copying failed. Select the command and copy it manually.',

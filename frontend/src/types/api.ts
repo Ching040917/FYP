@@ -182,3 +182,45 @@ export interface DocumentBlock {
   /** Authoritative structural role (Phase 1 PoC). Null on historical audits. */
   role: string | null
 }
+
+/** Local AI Citation Guidance — local-model download states. */
+export type LocalModelDownloadState =
+  | 'idle'
+  | 'starting'
+  | 'waiting_for_ollama'
+  | 'downloading'
+  | 'verifying'
+  | 'completed'
+  | 'failed'
+  | 'disconnected'
+
+/** Safe, closed set of download failure categories (no provider text). */
+export type LocalModelDownloadErrorCategory =
+  | 'ollama_unavailable'
+  | 'ollama_error'
+  | 'ollama_disconnected'
+  | 'stalled'
+  | 'verification_failed'
+  | 'malformed_response'
+  | 'unsupported_host'
+  | 'unknown'
+
+/**
+ * Local-model download snapshot — mirrors the Backend contract for
+ * POST /api/setup/local-model/download and
+ * GET /api/setup/local-model/download/status. Exactly these eight fields.
+ *
+ * The Backend validates and shapes this; the frontend re-validates through
+ * `adaptDownloadStatus` before rendering, so malformed data can never be
+ * presented as a completed download.
+ */
+export interface LocalModelDownloadStatus {
+  state: LocalModelDownloadState
+  message: string
+  model_name: string
+  bytes_completed: number | null
+  bytes_total: number | null
+  percentage: number | null
+  retryable: boolean
+  error_category: LocalModelDownloadErrorCategory | null
+}

@@ -55,10 +55,12 @@ If no checksum was supplied, you may skip this step.
 
 ## 6. Optional Features
 
-Two optional components add features but are never required. Deterministic audits work fully without them, and ACA **never downloads or installs third-party software automatically** — you stay in control.
+Two optional components add features but are never required. Deterministic audits work fully without them, and ACA never installs third-party software: you stay in control.
 
 - **LibreOffice** — enables rendered-page previews and original-document page locations. When it is missing, the Dashboard's **System Readiness** card offers **Download LibreOffice**, which opens the official LibreOffice website. Install it yourself, then click **Check again**.
-- **Ollama** — enables optional local AI citation guidance. When it is missing, the card offers **Download Ollama**. When Ollama is installed but its model is missing, the card shows a **Copy installation command** button that copies the exact `ollama pull` command for you to run in your own terminal.
+- **Ollama** — enables optional **Local AI Citation Guidance** (APA 7 in-text citation formatting suggestions only), and is not required for deterministic document auditing, formatting findings, rendered-page preview, Guided Fixes, PDF report export, or Audit History. When Ollama is missing, the card offers **Download Ollama**. When Ollama is installed but its model is missing, the card offers **Download optional model**, which asks your own Ollama service to fetch that model — only after you confirm in a dialog. The download needs an internet connection, several gigabytes of storage, and may take time. **Copy installation command** remains available if you prefer to run `ollama pull` yourself.
+
+ACA cannot reliably stop an Ollama model download once it has started, so there is no Cancel button; closing the progress view may leave Ollama downloading in the background.
 
 After installing anything, use **Check again** in the System Readiness card — no restart needed. See the [User Guide](USER_GUIDE.md) for details.
 

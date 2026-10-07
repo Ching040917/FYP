@@ -39,8 +39,8 @@ const KNOWN_LABELS: Record<string, string> = {
   docx_audit: 'Document checking',
   libreoffice: 'Rendered-page support',
   rendered_preview: 'Page preview',
-  ollama: 'Local AI review',
-  local_model: 'Local AI model',
+  ollama: 'Local AI Citation Guidance',
+  local_model: 'Citation Guidance Model',
   cloud_ai: 'Optional cloud AI',
 }
 
