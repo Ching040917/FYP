@@ -43,6 +43,11 @@ import {
   summarizeProfile,
   upsertAndBump,
   validateRequirements,
+  CITATION_MATCHING_DEPENDENT_FIELDS,
+  CITATION_MATCHING_FIELDS,
+  DEFAULT_CITATION_MATCHING,
+  citationMatchingFromUiModel,
+  citationMatchingToUiModel,
   type OpStatus,
 } from '../src/lib/custom-profile-store/editor.ts'
 import { ACTIVE_KEY, RECOVERY_KEY, emptyEnvelope, serializeEnvelope } from '../src/lib/custom-profile-store/store.ts'
@@ -572,4 +577,106 @@ test('delete success is an auto-dismissing success status (visible after editor 
   // 'deleted' must be classified as success for the 4s timer to apply.
   assert.equal(isSuccessOpStatus('deleted'), true)
   assert.equal(OP_STATUS_SUCCESS_MS, 4000)
+})
+
+// ---------------------------------------------------------------------------
+// Citation ↔ Reference List matching controls (citation reference build)
+// ---------------------------------------------------------------------------
+
+test('blank custom profile carries the documented citation defaults', () => {
+  const payload = blankProfilePayload('custom-x', 'X')
+  assert.deepEqual(payload.citation_matching, {
+    check_citations_have_references: true,
+    check_references_are_cited: false,
+    check_author_year_consistency: true,
+    check_year_suffixes: true,
+    check_duplicate_references: true,
+    flag_ambiguous_matches: true,
+    allow_personal_communication: true,
+  })
+})
+
+test('copying a built-in preserves its citation toggles verbatim', () => {
+  const source = blankProfilePayload('custom-src', 'Src')
+  ;(source.citation_matching as Record<string, boolean>).check_references_are_cited = true
+  const copy = copyProfilePayload(source, 'custom-copy', 'Copy')
+  assert.deepEqual(copy.citation_matching, source.citation_matching)
+  // Never the same object: mutating the copy cannot touch the source.
+  ;(copy.citation_matching as Record<string, boolean>).check_year_suffixes = false
+  assert.equal((source.citation_matching as Record<string, boolean>).check_year_suffixes, true)
+})
+
+test('copying a payload without the group adds the defaults', () => {
+  const legacy: Record<string, unknown> = { profile_id: 'custom-old', profile_name: 'Old' }
+  const copy = copyProfilePayload(legacy, 'custom-new', 'New')
+  assert.deepEqual(copy.citation_matching, DEFAULT_CITATION_MATCHING)
+})
+
+test('save payload always sends the group (never an absent group)', () => {
+  const profile = makeProfile()
+  delete (profile.payload as Record<string, unknown>).citation_matching
+  const payload = buildSavePayload(profile)
+  assert.deepEqual(payload.citation_matching, DEFAULT_CITATION_MATCHING)
+})
+
+test('save payload sends the edited toggles, not the defaults', () => {
+  const profile = makeProfile()
+  ;(profile.payload.citation_matching as Record<string, boolean>).check_references_are_cited = true
+  ;(profile.payload.citation_matching as Record<string, boolean>).check_duplicate_references = false
+  const payload = buildSavePayload(profile)
+  assert.equal((payload.citation_matching as Record<string, boolean>).check_references_are_cited, true)
+  assert.equal((payload.citation_matching as Record<string, boolean>).check_duplicate_references, false)
+})
+
+test('UI model round-trip is boolean-only and default-filled', () => {
+  const ui = citationMatchingToUiModel({ check_year_suffixes: false, mystery: 'x' })
+  assert.equal(ui.check_year_suffixes, false)
+  assert.equal(ui.check_citations_have_references, true)
+  const payload = citationMatchingFromUiModel(ui)
+  assert.deepEqual(Object.keys(payload).sort(), [...CITATION_MATCHING_FIELDS].sort())
+  for (const value of Object.values(payload)) assert.equal(typeof value, 'boolean')
+  // Unknown keys never survive the round-trip into the payload.
+  assert.equal('mystery' in payload, false)
+})
+
+test('client validation rejects non-boolean toggles with the backend field path', () => {
+  const errors = validateRequirements({
+    citation_matching: { check_year_suffixes: 'yes' },
+  })
+  assert.deepEqual(errors, [
+    { field: 'citation_matching.check_year_suffixes', message: 'Choose true or false for this check.' },
+  ])
+})
+
+test('client validation rejects unknown citation fields', () => {
+  const errors = validateRequirements({ citation_matching: { mystery_toggle: true } })
+  assert.deepEqual(errors, [
+    { field: 'citation_matching.mystery_toggle', message: 'This field is not recognized.' },
+  ])
+})
+
+test('client validation rejects a malformed citation group', () => {
+  const errors = validateRequirements({ citation_matching: ['on'] })
+  assert.deepEqual(errors, [
+    { field: 'citation_matching', message: 'This section is not well formed.' },
+  ])
+})
+
+test('the draft payload exposes no regex or JSON input for citations', () => {
+  const payload = blankProfilePayload('custom-x', 'X')
+  const group = payload.citation_matching as Record<string, unknown>
+  for (const [key, value] of Object.entries(group)) {
+    assert.equal(typeof value, 'boolean', `${key} must be a boolean switch`)
+  }
+  assert.deepEqual(Object.keys(group).sort(), [...CITATION_MATCHING_FIELDS].sort())
+})
+
+test('dependent toggles are declared as children of the parent check', () => {
+  assert.deepEqual([...CITATION_MATCHING_DEPENDENT_FIELDS], [
+    'check_author_year_consistency',
+    'check_year_suffixes',
+  ])
+  for (const field of CITATION_MATCHING_DEPENDENT_FIELDS) {
+    assert.ok((CITATION_MATCHING_FIELDS as readonly string[]).includes(field))
+  }
 })

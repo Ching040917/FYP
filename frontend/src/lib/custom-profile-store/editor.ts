@@ -99,6 +99,71 @@ export function resolveUniqueName(
 // ---------------------------------------------------------------------------
 
 /**
+ * Citation ↔ Reference List matching toggles (deterministic rules only).
+ * Names mirror the authoritative backend schema (`CitationMatchingSettings`).
+ */
+export const CITATION_MATCHING_FIELDS = [
+  'check_citations_have_references',
+  'check_references_are_cited',
+  'check_author_year_consistency',
+  'check_year_suffixes',
+  'check_duplicate_references',
+  'flag_ambiguous_matches',
+  'allow_personal_communication',
+] as const
+
+export type CitationMatchingField = (typeof CITATION_MATCHING_FIELDS)[number]
+
+export type CitationMatchingUiModel = Record<CitationMatchingField, boolean>
+
+/** Defaults mirror the backend dataclass exactly. */
+export const DEFAULT_CITATION_MATCHING: CitationMatchingUiModel = {
+  check_citations_have_references: true,
+  check_references_are_cited: false,
+  check_author_year_consistency: true,
+  check_year_suffixes: true,
+  check_duplicate_references: true,
+  flag_ambiguous_matches: true,
+  allow_personal_communication: true,
+}
+
+/**
+ * Toggles that only run while `check_citations_have_references` is on. The
+ * backend resolver normalizes them off behind a disabled parent; the editor
+ * disables the controls so the UI never claims an inactive check.
+ */
+export const CITATION_MATCHING_DEPENDENT_FIELDS: readonly CitationMatchingField[] = [
+  'check_author_year_consistency',
+  'check_year_suffixes',
+]
+
+/** Read the payload group into the UI model (missing/unknown → default). */
+export function citationMatchingToUiModel(group: unknown): CitationMatchingUiModel {
+  const record =
+    group && typeof group === 'object' && !Array.isArray(group)
+      ? (group as Record<string, unknown>)
+      : {}
+  const model = { ...DEFAULT_CITATION_MATCHING }
+  for (const field of CITATION_MATCHING_FIELDS) {
+    if (typeof record[field] === 'boolean') {
+      model[field] = record[field] as boolean
+    }
+  }
+  return model
+}
+
+/** Write the UI model back as the payload group (booleans only). */
+export function citationMatchingFromUiModel(
+  ui: CitationMatchingUiModel,
+): Record<string, boolean> {
+  const out: Record<string, boolean> = {}
+  for (const field of CITATION_MATCHING_FIELDS) {
+    out[field] = ui[field] === true
+  }
+  return out
+}
+
+/**
  * A safe blank custom profile: every deterministic requirement is null
  * (disabled), custom source, APA 7, and the safe administrative table-caption
  * policy. Never enables administrative/layout/rubric/unknown table captions.
@@ -157,6 +222,9 @@ export function blankProfilePayload(
       exempt_roles: [],
       table_eligibility: SAFE_TABLE_ELIGIBILITY,
     },
+    // Citation ↔ Reference List matching controls. Booleans only — the
+    // editor exposes switches, never regex/JSON input.
+    citation_matching: { ...DEFAULT_CITATION_MATCHING },
   }
 }
 
@@ -174,6 +242,11 @@ export function copyProfilePayload(
   p.profile_id = profileId
   p.profile_name = name
   p.profile_source = 'custom'
+  // A source payload that predates the citation controls gets the documented
+  // defaults — never an absent group that would silently drop the toggles.
+  if (!p.citation_matching || typeof p.citation_matching !== 'object') {
+    p.citation_matching = { ...DEFAULT_CITATION_MATCHING }
+  }
   return p
 }
 
@@ -190,6 +263,11 @@ export function buildSavePayload(
   payload.description = draft.description
   payload.profile_source = 'custom'
   payload.citation_style = CITATION_STYLE
+  // Always send the citation controls; a draft without them would fall back
+  // to the backend defaults instead of the user's intent.
+  payload.citation_matching = citationMatchingFromUiModel(
+    citationMatchingToUiModel(payload.citation_matching),
+  )
   return payload
 }
 
@@ -836,6 +914,29 @@ export function validateRequirements(
         field,
         message: `Enter caption spacing between ${SPACING_PT_MIN} and ${SPACING_PT_MAX} pt.`,
       })
+    }
+  }
+
+  // Citation ↔ Reference List matching toggles — booleans only.
+  const citationGroup = payload.citation_matching
+  if (citationGroup != null) {
+    if (typeof citationGroup !== 'object' || Array.isArray(citationGroup)) {
+      errors.push({ field: 'citation_matching', message: 'This section is not well formed.' })
+    } else {
+      const group = citationGroup as Record<string, unknown>
+      for (const field of CITATION_MATCHING_FIELDS) {
+        if (field in group && typeof group[field] !== 'boolean') {
+          errors.push({
+            field: `citation_matching.${field}`,
+            message: 'Choose true or false for this check.',
+          })
+        }
+      }
+      for (const key of Object.keys(group)) {
+        if (!(CITATION_MATCHING_FIELDS as readonly string[]).includes(key)) {
+          errors.push({ field: `citation_matching.${key}`, message: 'This field is not recognized.' })
+        }
+      }
     }
   }
 

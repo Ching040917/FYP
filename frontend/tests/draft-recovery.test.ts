@@ -191,7 +191,7 @@ test('payload is profile-shaped only — no document/filename/audit/findings/key
   const payloadKeys = Object.keys(obj.payload as Record<string, unknown>)
   assert.deepEqual(
     new Set(payloadKeys),
-    new Set(['profile_id', 'profile_name', 'profile_version', 'profile_source', 'description', 'citation_style', 'body', 'heading', 'margins', 'references', 'captions', 'lists', 'role_policy']),
+    new Set(['profile_id', 'profile_name', 'profile_version', 'profile_source', 'description', 'citation_style', 'body', 'heading', 'margins', 'references', 'captions', 'lists', 'role_policy', 'citation_matching']),
   )
 })
 

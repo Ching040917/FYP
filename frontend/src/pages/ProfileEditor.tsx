@@ -95,6 +95,12 @@ import {
   listsToUiModel,
   summarizeProfile,
   upsertAndBump,
+  citationMatchingFromUiModel,
+  citationMatchingToUiModel,
+  DEFAULT_CITATION_MATCHING,
+  CITATION_MATCHING_DEPENDENT_FIELDS,
+  type CitationMatchingField,
+  type CitationMatchingUiModel,
   type BodyUiModel,
   type HeadingUiModel,
   type MarginsUiModel,
@@ -113,6 +119,63 @@ import { cn } from '../lib/utils'
 // Known citation-style terms that may appear in profile names. We only warn;
 // we do not block or auto-correct the name.
 const CITATION_STYLE_NAME_HINTS = ['chicago', 'ama', 'mla', 'harvard']
+
+/** DOM ids for the citation-controls checkboxes (error-focus targets). */
+const CITATION_INPUT_IDS: Record<CitationMatchingField, string> = {
+  check_citations_have_references: 'citation-check-citations-have-references',
+  check_references_are_cited: 'citation-check-references-are-cited',
+  check_author_year_consistency: 'citation-check-author-year-consistency',
+  check_year_suffixes: 'citation-check-year-suffixes',
+  check_duplicate_references: 'citation-check-duplicate-references',
+  flag_ambiguous_matches: 'citation-flag-ambiguous-matches',
+  allow_personal_communication: 'citation-allow-personal-communication',
+}
+
+/** The citation-controls rows, in display order (7 switches, no free text). */
+const CITATION_CONTROL_ROWS: {
+  field: CitationMatchingField
+  label: string
+  hint: string
+  dependent?: boolean
+}[] = [
+  {
+    field: 'check_citations_have_references',
+    label: 'Check in-text citations against the Reference List',
+    hint: 'Flags in-text citations whose source is missing from the Reference List.',
+  },
+  {
+    field: 'check_references_are_cited',
+    label: 'Check Reference List entries are cited in the text',
+    hint: 'Flags Reference List entries with no matching in-text citation.',
+  },
+  {
+    field: 'check_author_year_consistency',
+    label: 'Check author and year consistency',
+    hint: 'Flags a citation whose year differs from its Reference List entry.',
+    dependent: true,
+  },
+  {
+    field: 'check_year_suffixes',
+    label: 'Check same-author, same-year suffixes (2024a/2024b)',
+    hint: 'Flags a citation missing the year suffix used by its entry.',
+    dependent: true,
+  },
+  {
+    field: 'check_duplicate_references',
+    label: 'Check for duplicate Reference List entries',
+    hint: 'Flags the same source listed more than once.',
+  },
+  {
+    field: 'flag_ambiguous_matches',
+    label: 'Flag ambiguous matches for manual review',
+    hint: 'Sorts citations that could match several entries into Manual review (never scored).',
+  },
+  {
+    field: 'allow_personal_communication',
+    label: 'Allow personal-communication citations',
+    hint: 'Personal communications are exempt from the Reference List check.',
+  },
+]
 
 /** Built-in profile ids — never deletable through any path. */
 const BUILTIN_IDS = [SUC_BUILTIN_ID, APA_BUILTIN_ID] as const
@@ -259,6 +322,7 @@ export function ProfileEditor() {
   const [referencesUi, setReferencesUi] = React.useState<ReferencesUiModel | null>(null)
   const [captionsUi, setCaptionsUi] = React.useState<CaptionUiModel | null>(null)
   const [listsUi, setListsUi] = React.useState<ListUiModel | null>(null)
+  const [citationUi, setCitationUi] = React.useState<CitationMatchingUiModel | null>(null)
 
   // Inline field errors for requirement controls (mapped from backend/client).
   const [reqFieldErrors, setReqFieldErrors] = React.useState<Record<string, string>>({})
@@ -356,6 +420,7 @@ export function ProfileEditor() {
       setReferencesUi(recoveredPayload.references ? referencesToUiModel(recoveredPayload.references as Record<string, unknown>) : null)
       setCaptionsUi(recoveredPayload.captions ? captionsToUiModel(recoveredPayload.captions as Record<string, unknown>) : null)
       setListsUi(recoveredPayload.lists ? listsToUiModel(recoveredPayload.lists as Record<string, unknown>) : null)
+      setCitationUi(citationMatchingToUiModel(recoveredPayload.citation_matching))
     },
     [],
   )
@@ -491,6 +556,7 @@ export function ProfileEditor() {
         if (profile.payload.references) setReferencesUi(referencesToUiModel(profile.payload.references as Record<string, unknown>))
         if (profile.payload.captions) setCaptionsUi(captionsToUiModel(profile.payload.captions as Record<string, unknown>))
         if (profile.payload.lists) setListsUi(listsToUiModel(profile.payload.lists as Record<string, unknown>))
+        setCitationUi(citationMatchingToUiModel(profile.payload.citation_matching))
       } finally {
         setCreationBusy(null)
       }
@@ -519,6 +585,7 @@ export function ProfileEditor() {
       setReferencesUi(profile.payload.references ? referencesToUiModel(profile.payload.references as Record<string, unknown>) : null)
       setCaptionsUi(profile.payload.captions ? captionsToUiModel(profile.payload.captions as Record<string, unknown>) : null)
       setListsUi(profile.payload.lists ? listsToUiModel(profile.payload.lists as Record<string, unknown>) : null)
+      setCitationUi(citationMatchingToUiModel(profile.payload.citation_matching))
     },
     [envelope],
   )
@@ -638,6 +705,33 @@ export function ProfileEditor() {
     [draft],
   )
 
+  const updateCitation = React.useCallback(
+    (field: CitationMatchingField, value: boolean) => {
+      setCitationUi((prev) => {
+        if (!prev) return prev
+        const next: CitationMatchingUiModel = { ...prev, [field]: value }
+        // Turning the parent check off disables the dependent checks in the
+        // UI and writes them off, matching the backend resolver.
+        if (field === 'check_citations_have_references' && !value) {
+          for (const dependent of CITATION_MATCHING_DEPENDENT_FIELDS) {
+            next[dependent] = false
+          }
+        }
+        if (draft) {
+          setDraft((d) =>
+            d
+              ? { ...d, payload: setPayloadGroup(d.payload, 'citation_matching', citationMatchingFromUiModel(next)) }
+              : d,
+          )
+        }
+        setDirty(true)
+        setOpStatusSafe({ kind: 'idle' })
+        return next
+      })
+    },
+    [draft],
+  )
+
   // ---------------------------------------------------------------------
   // Save (backend-gated)
   // ---------------------------------------------------------------------
@@ -663,6 +757,13 @@ export function ProfileEditor() {
     'captions.space_before': 'captions-space-before',
     'captions.space_after': 'captions-space-after',
     'lists.space_after': 'lists-space-after',
+    'citation_matching.check_citations_have_references': 'citation-check-citations-have-references',
+    'citation_matching.check_references_are_cited': 'citation-check-references-are-cited',
+    'citation_matching.check_author_year_consistency': 'citation-check-author-year-consistency',
+    'citation_matching.check_year_suffixes': 'citation-check-year-suffixes',
+    'citation_matching.check_duplicate_references': 'citation-check-duplicate-references',
+    'citation_matching.flag_ambiguous_matches': 'citation-flag-ambiguous-matches',
+    'citation_matching.allow_personal_communication': 'citation-allow-personal-communication',
   }
 
   const focusFirstError = React.useCallback((errors: { field: string; message: string }[]) => {
@@ -691,8 +792,15 @@ export function ProfileEditor() {
     }
     if (captionsUi) payload = setPayloadGroup(payload, 'captions', captionsFromUiModel(captionsUi))
     if (listsUi) payload = setPayloadGroup(payload, 'lists', listsFromUiModel(listsUi))
+    if (citationUi) {
+      payload = setPayloadGroup(
+        payload,
+        'citation_matching',
+        citationMatchingFromUiModel(citationUi),
+      )
+    }
     return payload
-  }, [draft, bodyUi, headingUi, marginsUi, referencesUi, captionsUi, listsUi])
+  }, [draft, bodyUi, headingUi, marginsUi, referencesUi, captionsUi, listsUi, citationUi])
 
   const saveProfile = React.useCallback(async () => {
     if (!draft || !envelope) return
@@ -911,6 +1019,7 @@ export function ProfileEditor() {
     setReferencesUi(null)
     setCaptionsUi(null)
     setListsUi(null)
+    setCitationUi(null)
     setFieldErrors({})
     setReqFieldErrors({})
   }, [])
@@ -937,6 +1046,7 @@ export function ProfileEditor() {
 
   const hasCustomProfiles = (envelope?.profiles.length ?? 0) > 0
   const selectedBuiltin = builtins.find((b) => b.profileId === editingId)
+  const citationModel = citationUi ?? DEFAULT_CITATION_MATCHING
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -2072,6 +2182,72 @@ export function ProfileEditor() {
                             )
                           })}
                         </div>
+                      </div>
+                    </details>
+
+                    {/* ------------------------------------------------------------------ */}
+                    {/* Citations and References controls                                    */}
+                    {/* ------------------------------------------------------------------ */}
+                    <details className="group mt-4 rounded-md border border-border" open={allExpanded || undefined}>
+                      <summary className="cursor-pointer list-none rounded-md px-3 py-2.5 text-sm font-semibold text-foreground select-none transition-colors hover:bg-input/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2">
+                        <div className="flex items-center justify-between">
+                          <span>Citations and References</span>
+                          <svg className="h-4 w-4 text-muted-foreground transition-transform group-open:rotate-90" aria-hidden="true" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                          </svg>
+                        </div>
+                      </summary>
+                      <div className="space-y-3 px-3 pb-3 pt-1">
+                        <p className="text-xs leading-[16px] text-muted-foreground">
+                          These checks compare in-text citations with the Reference List using
+                          deterministic rules. They compare author surnames and years only —
+                          they never rewrite the document and never confirm that a source is real.
+                        </p>
+
+                        <div className="space-y-2">
+                          {CITATION_CONTROL_ROWS.map(({ field, label, hint, dependent }) => {
+                            const checked = citationModel[field]
+                            const parentOff = !citationModel.check_citations_have_references
+                            const disabled = Boolean(dependent) && parentOff
+                            const describedBy = `${CITATION_INPUT_IDS[field]}-hint`
+                            return (
+                              <label
+                                key={field}
+                                className={cn(
+                                  'flex items-start gap-2 rounded-md border border-border px-3 py-2',
+                                  disabled && 'opacity-60',
+                                )}
+                              >
+                                <input
+                                  id={CITATION_INPUT_IDS[field]}
+                                  type="checkbox"
+                                  className="mt-0.5 h-4 w-4 accent-primary"
+                                  checked={checked}
+                                  disabled={disabled}
+                                  aria-describedby={describedBy}
+                                  onChange={(e) => updateCitation(field, e.target.checked)}
+                                />
+                                <span>
+                                  <span className="block text-sm text-foreground">{label}</span>
+                                  <span
+                                    id={describedBy}
+                                    className="mt-0.5 block text-xs leading-[16px] text-muted-foreground"
+                                  >
+                                    {disabled
+                                      ? `${hint} Requires “Check in-text citations against the Reference List”.`
+                                      : hint}
+                                  </span>
+                                </span>
+                              </label>
+                            )
+                          })}
+                        </div>
+
+                        {reqFieldErrors['citation_matching.check_citations_have_references'] && (
+                          <p role="alert" className="text-xs text-destructive">
+                            {reqFieldErrors['citation_matching.check_citations_have_references']}
+                          </p>
+                        )}
                       </div>
                     </details>
 
