@@ -10,8 +10,9 @@
  * maps wire types to the dashboard's display types.
  */
 
-import type { AuditCategory, AuditResult, CitationTip, LayoutError, DocumentStats, ScoreCategory, AiReviewStatus, AiProvider } from '../../types/audit'
+import type { AuditCategory, AuditResult, CitationTip, LayoutError, DocumentStats, ScoreCategory, AiReviewStatus, AiProvider, ViolationSeverity } from '../../types/audit'
 import type { AuditSubmitResponse, CitationIssue, Violation } from '../../types/api'
+import { friendlyRuleTitle } from '../friendly-finding.ts'
 
 /** All canonical audit categories, used to validate backend-sent values. */
 const AUDIT_CATEGORY_VALUES: readonly AuditCategory[] = [
@@ -40,6 +41,8 @@ export function normalizeScoreCategory(raw: string): ScoreCategory {
 export function categoryForRuleCode(ruleCode: string): AuditCategory {
   const code = ruleCode.toUpperCase()
   if (code.includes('CITATION') || code.includes('APA')) return 'citation_apa'
+  // Reference List matching rules share the citation/reference category.
+  if (code.includes('REFERENCE')) return 'citation_apa'
   if (code.includes('MARGIN') || code.includes('PAGE_')) return 'page_margins'
   if (code.includes('HEADING') || code.includes('HIERARCHY')) return 'heading_hierarchy'
   if (code.includes('CAPTION') || code.includes('MEDIA') || code.includes('IMAGE')) return 'media_captions'
@@ -87,6 +90,19 @@ export function humanizeRuleCode(ruleCode: string): string {
     .join(' ')
 }
 
+/** Normalize a backend severity token.
+ *
+ * MAJOR → 'major'; REVIEW → 'review' (manual review, unscored); any other
+ * or missing token → 'minor' (the historical default, so an unrecognized
+ * severity is never silently upgraded to major).
+ */
+export function normalizeViolationSeverity(raw: string | null | undefined): ViolationSeverity {
+  const token = (raw ?? '').toUpperCase()
+  if (token === 'MAJOR') return 'major'
+  if (token === 'REVIEW') return 'review'
+  return 'minor'
+}
+
 function adaptViolation(v: Violation): LayoutError {
   const loc = (v.location ?? {}) as Record<string, unknown>
   const paragraphIndex = typeof loc.paragraph_index === 'number' ? loc.paragraph_index : -1
@@ -100,9 +116,9 @@ function adaptViolation(v: Violation): LayoutError {
   return {
     id: v.id,
     category: categoryForRuleCode(v.rule_code),
-    severity: v.severity === 'MAJOR' ? 'major' : 'minor',
+    severity: normalizeViolationSeverity(v.severity),
     position,
-    title: humanizeRuleCode(v.rule_code),
+    title: friendlyRuleTitle(v.rule_code) ?? humanizeRuleCode(v.rule_code),
     detail: v.message,
     suggestion,
     snippet,

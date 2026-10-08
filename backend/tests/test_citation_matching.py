@@ -18,6 +18,7 @@ from app.services.citation_matching import (
     RULE_CITATION_YEAR_SUFFIX_MISMATCH,
     RULE_REFERENCE_DUPLICATE,
     RULE_REFERENCE_NOT_CITED,
+    SEVERITY_REVIEW,
     build_reference_index,
     make_key,
     match,
@@ -519,3 +520,41 @@ def test_rules_from_config_reads_attributes_and_normalizes_parent():
     assert rules.check_duplicate_references is False
     assert rules.flag_ambiguous_matches is False
     assert rules.allow_personal_communication is False
+
+
+# ---------------------------------------------------------------------------
+# Scoring/category wiring — every citation/reference code is one category
+# ---------------------------------------------------------------------------
+
+def test_all_citation_and_reference_codes_map_to_citation_category():
+    from app.services.scoring import rule_code_to_category
+
+    for code in (
+        RULE_CITATION_MISMATCH,
+        RULE_CITATION_REFERENCE_MISMATCH,
+        RULE_CITATION_YEAR_SUFFIX_MISMATCH,
+        RULE_CITATION_REFERENCE_AMBIGUOUS,
+        RULE_REFERENCE_NOT_CITED,
+        RULE_REFERENCE_DUPLICATE,
+    ):
+        assert rule_code_to_category(code) == "citation_apa", code
+
+
+def test_review_severity_adds_no_deduction_or_count():
+    from app.services.scoring import calculate_weighted_score_detailed
+    from app.services.layout_violation import LayoutViolation
+
+    review = LayoutViolation(
+        rule_code=RULE_CITATION_REFERENCE_AMBIGUOUS,
+        severity=SEVERITY_REVIEW,
+        location={"paragraph_index": 0},
+        message="m",
+        expected_value="One unambiguous matching entry",
+        actual_value="(Smith, 2024)",
+    )
+    result = calculate_weighted_score_detailed([review])
+    assert result.total == 100
+    assert result.major_count == 0
+    assert result.minor_count == 0
+    apa = next(b for b in result.breakdown if b.category == "citation_apa")
+    assert (apa.major, apa.minor, apa.deduction) == (0, 0, 0)

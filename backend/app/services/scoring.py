@@ -73,6 +73,10 @@ def rule_code_to_category(rule_code: str) -> str:
     code = (rule_code or "").upper()
     if "CITATION" in code or "APA" in code:
         return "citation_apa"
+    if "REFERENCE" in code:
+        # Reference List matching rules (uncited entry, duplicate entry)
+        # belong to the same citation/reference category.
+        return "citation_apa"
     if "MARGIN" in code or code.startswith("PAGE_"):
         return "page_margins"
     if "HEADING" in code or "HIERARCHY" in code:
