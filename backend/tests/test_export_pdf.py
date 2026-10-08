@@ -893,7 +893,9 @@ def test_review_finding_gets_its_own_register_group_and_no_score_impact(client, 
     text = _pdf_text(resp.content)
     assert "For review" in text
     assert "Citation Match Needs Review" in text
-    assert "Confirm which listed source this citation refers to; initials are not compared." in text
+    # REVIEW severity is labelled "For review", never Major/Minor.
+    assert "For review" in text
+    assert "Major Citation Match Needs Review" not in text
     # One finding, zero major, zero minor, and the score stays 100.
     assert "1 deterministic finding(s): 0 major" in text
     assert "0 minor" in text
@@ -914,8 +916,12 @@ def test_existing_citation_mismatch_wording_is_unchanged(client, test_engine):
     ])
     text = _pdf_text(_export(client, audit_id).content)
     assert "Citation Mismatch" in text
-    assert "Add the matching APA 7 reference entry or correct the in-text citation." in text
     assert "Garcia" in text
+    # Deterministic, author-specific correction (unchanged behaviour).
+    assert (
+        "Add a matching References entry for Garcia (2018), or correct or remove "
+        "the in-text citation if it refers to the wrong source." in text
+    )
 
 
 def test_missing_section_root_finding_exports_without_crashing(client, test_engine):
@@ -931,4 +937,7 @@ def test_missing_section_root_finding_exports_without_crashing(client, test_engi
     assert resp.status_code == 200
     text = _pdf_text(resp.content)
     assert "3 in-text citation(s) could not be checked" in text
-    assert "Add the matching APA 7 reference entry or correct the in-text citation." in text
+    assert (
+        "Add a matching References entry for this citation, or correct or remove "
+        "the in-text citation if it refers to the wrong source." in text
+    )

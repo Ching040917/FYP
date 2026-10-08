@@ -904,3 +904,48 @@ async def test_no_document_text_in_logs_with_finding_key(ai_session, monkeypatch
     assert "log-fk" in log_text
     assert "LOCAL_OLLAMA" in log_text
 
+
+
+# ---------------------------------------------------------------------------
+# AI boundary: only per-citation CITATION_MISMATCH findings are AI-eligible
+# ---------------------------------------------------------------------------
+
+def test_ai_receives_only_per_citation_citation_mismatches(client, docx_factory, monkeypatch):
+    """Deterministic-only findings (REVIEW ambiguity, uncited/duplicate
+    entries) must never reach the AI, and Reference List entry text must
+    never be sent to the provider."""
+    from app.api import routes as api_routes
+    from tests.citation_fixtures import build_review_document_bytes
+
+    captured: list[list[dict]] = []
+
+    async def _capture(*args, **kwargs):
+        captured.append(list(kwargs.get("citation_findings") or []))
+        return AiCitationResult(status="COMPLETED_NO_SUGGESTIONS", provider=None, suggestions=[])
+
+    monkeypatch.setattr(api_routes, "async_ai_citation_task", _capture)
+
+    # 1. A document whose only finding is a REVIEW ambiguity: nothing to send.
+    post = client.post(
+        "/api/audit",
+        files={"file": ("review.docx", build_review_document_bytes(), "application/octet-stream")},
+    )
+    assert post.status_code == 200
+    assert captured[-1] == []
+
+    # 2. A document with a genuine orphan citation: exactly that finding, with
+    #    a real paragraph identity, and no Reference List text.
+    entry_text = "Exampleentry, X. (2020). Unrelated source. Example Press."
+    file_bytes = docx_factory(
+        paragraphs=["Orphan (Garcia, 2018) text."],
+        references=[entry_text],
+    )
+    post2 = client.post("/api/audit", files={"file": ("orphan.docx", file_bytes, "application/octet-stream")})
+    assert post2.status_code == 200
+    sent = captured[-1]
+    assert len(sent) == 1
+    assert sent[0]["rule_code"] == "CITATION_MISMATCH"
+    assert isinstance(sent[0]["paragraph_index"], int)
+    blob = " ".join(str(sent[0].get(k) or "") for k in ("snippet", "message", "expected_value", "actual_value"))
+    assert "Exampleentry" not in blob
+    assert "Example Press" not in blob
