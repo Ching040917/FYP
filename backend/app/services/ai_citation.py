@@ -26,8 +26,6 @@ AI_STATUS_NO_SUGGESTIONS = "COMPLETED_NO_SUGGESTIONS"
 AI_STATUS_UNAVAILABLE = "UNAVAILABLE"
 
 AI_PROVIDER_LOCAL = "LOCAL_OLLAMA"
-AI_PROVIDER_CLOUD = "CLOUD_GEMINI"
-AI_PROVIDER_CLOUD_FALLBACK_LOCAL = "CLOUD_FALLBACK_LOCAL"
 
 
 @dataclass
@@ -200,8 +198,8 @@ def _extract_author_year(message: Optional[str]) -> tuple[Optional[str], Optiona
 def _build_personalised_correction(author: Optional[str], year: Optional[str]) -> str:
     """Deterministically assemble the personalised correction sentence.
 
-    Application-owned wording, identical for every provider (Ollama,
-    Gemini, local fallback). Never names a source type, never invents
+    Application-owned wording, identical regardless of which provider
+    completed the review. Never names a source type, never invents
     bibliographic details, and always includes the remove/correct
     alternative. The AI reason is validated but never persisted into this
     sentence — absolute phrasing ("No matching reference exists") cannot
@@ -310,23 +308,6 @@ async def call_ollama_local(prompt: str) -> str:
         raise RuntimeError(f"Ollama HTTP call failed: {e}")
 
 
-async def call_gemini_cloud(prompt: str) -> str:
-    """Call Google Gemini 1.5 Flash API (Layer 2)."""
-    try:
-        import google.generativeai as genai
-        if not settings.GEMINI_API_KEY:
-            raise RuntimeError("GEMINI_API_KEY not configured")
-        genai.configure(api_key=settings.GEMINI_API_KEY)
-        model = genai.GenerativeModel('gemini-1.5-flash')
-        response = await model.generate_content_async(
-            prompt,
-            generation_config={"temperature": 0.1, "max_output_tokens": 2048},
-        )
-        return response.text or ""
-    except Exception as e:
-        raise RuntimeError(f"Gemini call failed: {e}")
-
-
 # ---------------------------------------------------------------------------
 # Server-side response parser and confidence validator
 # ---------------------------------------------------------------------------
@@ -397,7 +378,6 @@ async def async_ai_citation_task(
     text: str = "",
     audit_id: str = "",
     db: Session = None,
-    cloud: bool = False,
     paragraph_map: Optional[Dict[int, str]] = None,
     citation_findings: Optional[List[Dict[str, Any]]] = None,
 ) -> AiCitationResult:
@@ -406,7 +386,7 @@ async def async_ai_citation_task(
     When citation_findings is empty or None, skips the provider call
     and returns COMPLETED_NO_SUGGESTIONS immediately.
 
-    When citation_findings is non-empty, the provider is called once to
+    When citation_findings is non-empty, the local provider is called once to
     generate correction guidance. The provider must not discover new
     findings — it only explains how to fix the ones already confirmed.
 
@@ -436,22 +416,11 @@ async def async_ai_citation_task(
     provider: Optional[str] = None
     start = time.monotonic()
 
-    if cloud:
-        try:
-            raw_response = await call_gemini_cloud(prompt)
-            provider = AI_PROVIDER_CLOUD
-        except Exception:
-            try:
-                raw_response = await call_ollama_local(prompt)
-                provider = AI_PROVIDER_CLOUD_FALLBACK_LOCAL
-            except Exception:
-                provider = None
-    else:
-        try:
-            raw_response = await call_ollama_local(prompt)
-            provider = AI_PROVIDER_LOCAL
-        except Exception:
-            provider = None
+    try:
+        raw_response = await call_ollama_local(prompt)
+        provider = AI_PROVIDER_LOCAL
+    except Exception:
+        provider = None
 
     duration_ms = int((time.monotonic() - start) * 1000)
 
@@ -510,8 +479,8 @@ async def async_ai_citation_task(
         if reason is not None:
             # Deterministic personalised correction — the model reason is
             # validated but never persisted verbatim. Application-owned
-            # wording guarantees neutral, complete guidance on every
-            # provider path (Ollama / Gemini / local fallback).
+            # wording guarantees neutral, complete guidance on the local
+            # provider path.
             author, year = _extract_author_year(finding.get("message", ""))
             correction = _build_personalised_correction(author, year)
             source_type = _validate_source_type(item.get("source_type"))

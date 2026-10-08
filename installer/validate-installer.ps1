@@ -76,8 +76,8 @@ Check "_internal installed" (Test-Path $internal) $internal
 Check "frontend-dist index.html installed" (Test-Path (Join-Path $internal "frontend-dist\index.html")) "frontend present"
 Check "alembic bundled" (Test-Path (Join-Path $internal "alembic\versions")) "alembic/versions present"
 $allFiles = @(Get-ChildItem $installDir -Recurse -File)
-$forbidden = $allFiles | Where-Object { $_.Name -match "numpy|pandas|scipy|matplotlib|pyarrow|ollama" } | Select-Object -First 5
-Check "No forbidden packages" (-not $forbidden) "no numpy/pandas/scipy/matplotlib/pyarrow/ollama"
+$forbidden = $allFiles | Where-Object { $_.Name -match "numpy|pandas|scipy|matplotlib|pyarrow|ollama|googleapiclient|google_generativeai" } | Select-Object -First 5
+Check "No forbidden packages" (-not $forbidden) "no numpy/pandas/scipy/matplotlib/pyarrow/ollama/googleapiclient/google_generativeai"
 $devSrc = $allFiles | Where-Object { $_.FullName -match "\\(backend\\app|frontend\\src)\\" } | Select-Object -First 1
 Check "No developer source trees" (-not $devSrc) "no backend/app or frontend/src"
 $reg = Get-ItemProperty $regPath -ErrorAction SilentlyContinue

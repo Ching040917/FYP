@@ -3,9 +3,10 @@
  *
  * Presentation-only: fetches GET /api/readiness once on mount and on
  * explicit Refresh (`?refresh=1`). Validates through adaptReadiness; malformed
- * payloads never become "ready". Does not gate Upload/Run Audit — behavioral
- * gating is Build B2. Never renders raw IDs, hosts, paths, keys, provider
- * responses, or exception text.
+ * payloads never become "ready". Never gates Upload/Run Audit — the validated
+ * overall is published upward only to label the first-run guidance panel.
+ * Never renders raw IDs, hosts, paths, keys, provider responses, or exception
+ * text.
  */
 import * as React from 'react'
 import {
@@ -35,9 +36,9 @@ import {
   overallHeadline,
   overallSupporting,
   issueCountSentence,
-  isCloudAvailableFromModel,
   type ReadinessComponentRow,
   type ReadinessModel,
+  type ReadinessOverall,
 } from '../../lib/readiness'
 import {
   SETUP_COPY,
@@ -55,11 +56,15 @@ import { cn } from '../../lib/utils'
 type CardState = 'checking' | 'loaded' | 'error'
 
 export function ReadinessCard({
-  onCloudAvailable: onCloudAvailableProp,
+  onReadinessChange: onReadinessChangeProp,
   expandSignal = 0,
   detailsSlot,
 }: {
-  onCloudAvailable?: (available: boolean | null) => void
+  /**
+   * Receives the validated overall readiness after each load/error, exactly
+   * once per fetch completion. `null` means checking, or the fetch failed.
+   */
+  onReadinessChange?: (overall: ReadinessOverall | null) => void
   /** Increment to programmatically expand + focus this card (e.g. from guidance). */
   expandSignal?: number
   /** Optional extra content rendered at the bottom of expanded details. */
@@ -82,20 +87,20 @@ export function ReadinessCard({
   const pollTimerRef = React.useRef<number | null>(null)
   const fetchingRef = React.useRef(false)
   const mountedRef = React.useRef(false)
-  const onCloudAvailableRef = React.useRef(onCloudAvailableProp)
+  const onReadinessChangeRef = React.useRef(onReadinessChangeProp)
   React.useEffect(() => {
-    onCloudAvailableRef.current = onCloudAvailableProp
-  }, [onCloudAvailableProp])
+    onReadinessChangeRef.current = onReadinessChangeProp
+  }, [onReadinessChangeProp])
 
-  // Bubble the derived Cloud availability after each load/error, exactly once
-  // per fetch completion (not during fetch). `null` means checking/fetch
-  // failure — caller treats it as not-available.
-  const publishCloudAvailable = React.useCallback(
+  // Bubble the validated overall readiness after each load/error, exactly once
+  // per fetch completion (not during fetch). `null` means checking or the
+  // fetch failed — the caller treats it as not confirmed.
+  const publishReadiness = React.useCallback(
     (m: ReadinessModel | null, isChecking: boolean) => {
-      const cb = onCloudAvailableRef.current
+      const cb = onReadinessChangeRef.current
       if (!cb) return
       if (isChecking && m === null) cb(null)
-      else cb(isCloudAvailableFromModel(m))
+      else cb(m === null ? null : m.overall)
     },
     [],
   )
@@ -113,7 +118,7 @@ export function ReadinessCard({
         if (!model) {
           setState('error')
           setModel(null)
-          publishCloudAvailable(null, false)
+          publishReadiness(null, false)
         } else {
           setRefreshError(true)
         }
@@ -122,11 +127,11 @@ export function ReadinessCard({
       setModel(parsed)
       setState('loaded')
       setRefreshError(false)
-      publishCloudAvailable(parsed, false)
+      publishReadiness(parsed, false)
     } catch {
       if (!model) {
         setState('error')
-        publishCloudAvailable(null, false)
+        publishReadiness(null, false)
       } else {
         setRefreshError(true)
       }
@@ -134,7 +139,7 @@ export function ReadinessCard({
       fetchingRef.current = false
       setRefreshing(false)
     }
-  }, [model, publishCloudAvailable])
+  }, [model, publishReadiness])
 
   /**
    * Read the Backend's download snapshot. Malformed payloads are dropped, so
@@ -200,7 +205,7 @@ export function ReadinessCard({
   React.useEffect(() => {
     if (mountedRef.current) return
     mountedRef.current = true
-    publishCloudAvailable(null, true)
+    publishReadiness(null, true)
     void fetchReadiness(false)
     // Re-attach to a download that was already running (e.g. the user
     // navigated away and came back).

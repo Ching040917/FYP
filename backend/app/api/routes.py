@@ -82,7 +82,6 @@ def _preview_error_category(exc: Exception) -> str:
 @router.post("/api/audit", response_model=AuditSubmitResponse)
 async def audit_document(
     file: UploadFile = File(...),
-    cloud: bool = Query(False, description="Enable cloud AI citation audit (Gemini)"),
     profile_id: Optional[str] = Query(None, description="Built-in formatting profile id"),
     custom_profile: Optional[str] = Form(None, description="Validated custom formatting profile payload (JSON string)"),
     db: Session = Depends(get_db),
@@ -95,9 +94,6 @@ async def audit_document(
     file_bytes = await file.read()
     if len(file_bytes) > settings.MAX_FILE_SIZE:
         raise HTTPException(status_code=400, detail="File size exceeds the 10MB security boundary.")
-
-    # Determine deploy mode: request flag overrides env default for this audit
-    deploy_mode = "CLOUD" if cloud else settings.DEPLOY_MODE
 
     # ---- Resolve the immutable formatting profile snapshot BEFORE any
     # deterministic processing begins (Build 3). Missing input → recommended
@@ -128,7 +124,6 @@ async def audit_document(
         file_size=len(file_bytes),
         document_sha256=hashlib.sha256(file_bytes).hexdigest(),
         weighted_score=0,
-        deploy_mode=deploy_mode,
         status="processing",
     )
     db.add(audit)
@@ -299,7 +294,6 @@ async def audit_document(
         ai_result = await async_ai_citation_task(
             audit_id=audit.id,
             db=db,
-            cloud=cloud,
             citation_findings=citation_findings,
         )
 
@@ -628,7 +622,7 @@ async def export_audit_pdf(audit_id: str, db: Session = Depends(get_db)):
     """Download the audit report as a PDF (Phase 1, backend only).
 
     Deterministic and offline: reads persisted findings/stats only — never
-    calls Ollama or Gemini, never touches the original document bytes.
+    calls the AI provider, never touches the original document bytes.
     """
     audit = db.query(AuditRecord).filter(AuditRecord.id == audit_id).first()
     if not audit:

@@ -1,7 +1,7 @@
 """Tests for AI-assisted citation review execution status (Build 7D).
 
 Covers:
-- provider path tracking (LOCAL / CLOUD / CLOUD_FALLBACK_LOCAL);
+- provider path tracking (LOCAL);
 - completed-with-suggestions vs completed-no-suggestions vs unavailable;
 - persistence of AI metadata from POST to GET;
 - historical NULL metadata (status not recorded);
@@ -24,8 +24,6 @@ from app.services.ai_citation import (
     AI_STATUS_NO_SUGGESTIONS,
     AI_STATUS_UNAVAILABLE,
     AI_PROVIDER_LOCAL,
-    AI_PROVIDER_CLOUD,
-    AI_PROVIDER_CLOUD_FALLBACK_LOCAL,
 )
 
 OK_ISSUE_JSON = ('[{"finding_key": "fk-0", "reason": "Add the reference entry for the cited source.", '
@@ -71,8 +69,7 @@ def ai_client(client, monkeypatch):
 
 def test_local_with_suggestions(ai_session, monkeypatch):
     monkeypatch.setattr(ai_citation, "call_ollama_local", _fake_ok)
-    monkeypatch.setattr(ai_citation, "call_gemini_cloud", _fake_fail)
-    result = asyncio.run(async_ai_citation_task(audit_id="a1", db=ai_session, cloud=False, citation_findings=[{"finding_key": "fk-0", "paragraph_index": 0, "rule_code": "CITATION_MISMATCH", "severity": "MAJOR", "snippet": "Smith (2022)", "message": "No References entry.", "expected_value": "Reference entry for Smith", "actual_value": "Smith (2022)"}]))
+    result = asyncio.run(async_ai_citation_task(audit_id="a1", db=ai_session, citation_findings=[{"finding_key": "fk-0", "paragraph_index": 0, "rule_code": "CITATION_MISMATCH", "severity": "MAJOR", "snippet": "Smith (2022)", "message": "No References entry.", "expected_value": "Reference entry for Smith", "actual_value": "Smith (2022)"}]))
     assert result.status == AI_STATUS_WITH_SUGGESTIONS
     assert result.provider == AI_PROVIDER_LOCAL
     assert len(result.suggestions) == 1
@@ -82,7 +79,7 @@ def test_local_with_suggestions(ai_session, monkeypatch):
 
 def test_local_completed_no_suggestions(ai_session, monkeypatch):
     monkeypatch.setattr(ai_citation, "call_ollama_local", _fake_empty)
-    result = asyncio.run(async_ai_citation_task(audit_id="a2", db=ai_session, cloud=False, citation_findings=[{"finding_key": "fk-0", "paragraph_index": 0, "rule_code": "CITATION_MISMATCH", "severity": "MAJOR", "snippet": "Smith (2022)", "message": "No References entry.", "expected_value": "Reference entry for Smith", "actual_value": "Smith (2022)"}]))
+    result = asyncio.run(async_ai_citation_task(audit_id="a2", db=ai_session, citation_findings=[{"finding_key": "fk-0", "paragraph_index": 0, "rule_code": "CITATION_MISMATCH", "severity": "MAJOR", "snippet": "Smith (2022)", "message": "No References entry.", "expected_value": "Reference entry for Smith", "actual_value": "Smith (2022)"}]))
     assert result.status == AI_STATUS_NO_SUGGESTIONS
     assert result.provider == AI_PROVIDER_LOCAL
     assert result.suggestions == []
@@ -91,35 +88,7 @@ def test_local_completed_no_suggestions(ai_session, monkeypatch):
 
 def test_local_unavailable(ai_session, monkeypatch):
     monkeypatch.setattr(ai_citation, "call_ollama_local", _fake_fail)
-    result = asyncio.run(async_ai_citation_task(audit_id="a3", db=ai_session, cloud=False, citation_findings=[{"finding_key": "fk-0", "paragraph_index": 0, "rule_code": "CITATION_MISMATCH", "severity": "MAJOR", "snippet": "Smith (2022)", "message": "No References entry.", "expected_value": "Reference entry for Smith", "actual_value": "Smith (2022)"}]))
-    assert result.status == AI_STATUS_UNAVAILABLE
-    assert result.provider is None
-    assert result.suggestions == []
-    assert ai_session.query(ai_citation.CitationIssue).count() == 0
-
-
-def test_cloud_gemini_success(ai_session, monkeypatch):
-    monkeypatch.setattr(ai_citation, "call_gemini_cloud", _fake_ok)
-    monkeypatch.setattr(ai_citation, "call_ollama_local", _fake_fail)
-    result = asyncio.run(async_ai_citation_task(audit_id="a4", db=ai_session, cloud=True, citation_findings=[{"finding_key": "fk-0", "paragraph_index": 0, "rule_code": "CITATION_MISMATCH", "severity": "MAJOR", "snippet": "Smith (2022)", "message": "No References entry.", "expected_value": "Reference entry for Smith", "actual_value": "Smith (2022)"}]))
-    assert result.status == AI_STATUS_WITH_SUGGESTIONS
-    assert result.provider == AI_PROVIDER_CLOUD
-    assert len(result.suggestions) == 1
-
-
-def test_cloud_fallback_to_local(ai_session, monkeypatch):
-    monkeypatch.setattr(ai_citation, "call_gemini_cloud", _fake_fail)
-    monkeypatch.setattr(ai_citation, "call_ollama_local", _fake_empty)
-    result = asyncio.run(async_ai_citation_task(audit_id="a5", db=ai_session, cloud=True, citation_findings=[{"finding_key": "fk-0", "paragraph_index": 0, "rule_code": "CITATION_MISMATCH", "severity": "MAJOR", "snippet": "Smith (2022)", "message": "No References entry.", "expected_value": "Reference entry for Smith", "actual_value": "Smith (2022)"}]))
-    assert result.status == AI_STATUS_NO_SUGGESTIONS
-    assert result.provider == AI_PROVIDER_CLOUD_FALLBACK_LOCAL
-    assert result.suggestions == []
-
-
-def test_cloud_and_local_both_unavailable(ai_session, monkeypatch):
-    monkeypatch.setattr(ai_citation, "call_gemini_cloud", _fake_fail)
-    monkeypatch.setattr(ai_citation, "call_ollama_local", _fake_fail)
-    result = asyncio.run(async_ai_citation_task(audit_id="a6", db=ai_session, cloud=True, citation_findings=[{"finding_key": "fk-0", "paragraph_index": 0, "rule_code": "CITATION_MISMATCH", "severity": "MAJOR", "snippet": "Smith (2022)", "message": "No References entry.", "expected_value": "Reference entry for Smith", "actual_value": "Smith (2022)"}]))
+    result = asyncio.run(async_ai_citation_task(audit_id="a3", db=ai_session, citation_findings=[{"finding_key": "fk-0", "paragraph_index": 0, "rule_code": "CITATION_MISMATCH", "severity": "MAJOR", "snippet": "Smith (2022)", "message": "No References entry.", "expected_value": "Reference entry for Smith", "actual_value": "Smith (2022)"}]))
     assert result.status == AI_STATUS_UNAVAILABLE
     assert result.provider is None
     assert result.suggestions == []
@@ -144,20 +113,6 @@ def test_post_get_persists_ai_metadata(ai_client, docx_factory):
     assert get.status_code == 200
     assert get.json()["ai_review_status"] == AI_STATUS_WITH_SUGGESTIONS
     assert get.json()["ai_provider"] == AI_PROVIDER_LOCAL
-
-
-def test_post_cloud_metadata(ai_client, docx_factory):
-    client, _set = ai_client
-    _set(AiCitationResult(status=AI_STATUS_NO_SUGGESTIONS, provider=AI_PROVIDER_CLOUD_FALLBACK_LOCAL, suggestions=[]))
-    post = client.post("/api/audit?cloud=1", files={"file": ("c.docx", docx_factory(paragraphs=["Body text"]), "application/octet-stream")})
-    assert post.status_code == 200
-    body = post.json()
-    assert body["ai_review_status"] == AI_STATUS_NO_SUGGESTIONS
-    assert body["ai_provider"] == AI_PROVIDER_CLOUD_FALLBACK_LOCAL
-
-    get = client.get(f"/api/audit/{body['audit_id']}")
-    assert get.status_code == 200
-    assert get.json()["deploy_mode"] == "CLOUD"
 
 
 def test_unavailable_keeps_deterministic_results(ai_client, docx_factory):

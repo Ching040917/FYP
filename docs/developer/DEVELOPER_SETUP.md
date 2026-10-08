@@ -37,11 +37,9 @@ Keep this terminal open. On startup ACA applies stale-audit recovery and serves 
 
 | Variable | Default | Notes |
 |---|---|---|
-| `DEPLOY_MODE` | `LOCAL` | `LOCAL` or `CLOUD` |
 | `DATABASE_URL` | `sqlite:///./audit.db` | Source database at `backend\audit.db` (git-ignored) |
 | `OLLAMA_HOST` | `http://localhost:11434` | Local AI service |
 | `OLLAMA_MODEL` | `qwen3.5:4b` | Set in `.env` |
-| `GEMINI_API_KEY` | *(empty)* | Required only for Cloud AI; never commit |
 
 ## Frontend setup
 
@@ -84,7 +82,6 @@ They are fully separate. Running source mode never touches packaged data, and vi
 
 - **LibreOffice:** install it normally; ACA detects it at its default locations. `SOFFICE_EXECUTABLE` can override the path if needed.
 - **Ollama:** install and start Ollama, then `ollama pull qwen3.5:4b`. Point `OLLAMA_HOST` at a different port for isolated testing.
-- **Cloud AI:** set `GEMINI_API_KEY` in `.env` for explicit per-audit opt-in testing. Never commit the key.
 
 ## Stopping services
 

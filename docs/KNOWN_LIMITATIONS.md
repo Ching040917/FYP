@@ -20,7 +20,6 @@ These limitations describe the current release. Nothing here describes a planned
 - The optional **Citation Guidance Model** is downloaded separately, after you confirm it in the app, using the Ollama service on your own computer. No download size is displayed, because a model that is not installed locally cannot be measured from a trusted source before it is fetched — the app says *Check model information* rather than guessing.
 - **ACA cannot reliably stop an Ollama model download once it has started**, so no Cancel control is offered. Closing the progress view may leave Ollama downloading in the background.
 - Whether a retried or interrupted model download resumes or restarts is decided by Ollama, not by ACA.
-- **Cloud AI** is explicit opt-in per audit and requires your own API key. It is never enabled automatically.
 
 ## Audit scope
 

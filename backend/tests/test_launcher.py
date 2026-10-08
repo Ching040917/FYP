@@ -101,7 +101,9 @@ def test_rotating_logs(tmp_path):
 
 def test_no_sensitive_logging_in_code():
     text = pathlib.Path("app/launcher_support.py").read_text()
-    assert "GEMINI_API_KEY" not in text or "setdefault" in text  # only default, no value
+    # Cloud AI is removed: no provider credential may be referenced at all.
+    assert "GEMINI_API_KEY" not in text
+    assert "GEMINI" not in text
     # ensure no document content logging
     assert "document" not in text.lower() or True
 

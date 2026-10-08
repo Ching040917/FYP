@@ -44,7 +44,6 @@ All versions below are the exact declared pins from `backend/requirements.txt` a
 | python-docx | 1.1.0 | direct | yes | DOCX parsing | MIT | `python_docx-1.1.0.dist-info/LICENSE` |
 | python-multipart | 0.0.6 | direct | yes | multipart uploads | Apache-2.0 | `python_multipart-0.0.6.dist-info/licenses/LICENSE.txt` |
 | httpx | 0.27.2 | direct | yes | async HTTP client (Ollama/readiness) | BSD-3-Clause | `httpx-0.27.2.dist-info/licenses/LICENSE.md` |
-| Google Generative AI SDK | 0.7.2 | direct | yes | Cloud AI provider client | Apache-2.0 | `google_generativeai-0.7.2.dist-info/LICENSE` |
 | python-dotenv | 1.0.1 | direct | yes | `.env` loading | BSD-3-Clause | `python_dotenv-1.0.1.dist-info/LICENSE` |
 | ReportLab | 4.0.7 | direct | yes | PDF report generation | BSD | `reportlab-4.0.7.dist-info/LICENSE` |
 | pypdf | 6.16.1 | direct | yes | PDF parsing (page counts) | BSD-3-Clause | `pypdf-6.16.1.dist-info/licenses/LICENSE` |
@@ -60,49 +59,31 @@ The following transitive runtime dependencies are collected in the clean frozen 
 | annotated-types | 0.8.0 | MIT | PYZ |
 | anyio | 4.14.2 | MIT | PYZ |
 | certifi | 2026.07.22 | MPL-2.0 | PYZ + `_internal/certifi` |
-| cffi | 2.1.1 | MIT | PYZ |
-| charset-normalizer | 3.5.1 | MIT | PYZ + `_internal/charset_normalizer` |
+| cffi | 2.1.1 | MIT | `_internal/_cffi_backend.pyd` |
 | click | 8.4.2 | BSD-3-Clause | `_internal/click-8.4.2.dist-info` |
 | colorama | 0.4.6 | BSD-3-Clause | PYZ |
 | cryptography | 50.0.0 | Apache-2.0 / BSD | `_internal/cryptography-50.0.0.dist-info` |
-| google-ai-generativelanguage | 0.6.6 | Apache-2.0 | PYZ |
-| google-api-core | 2.30.3 | Apache-2.0 | `_internal/google_api_core-2.30.3.dist-info` |
-| google-api-python-client | 2.199.0 | Apache-2.0 | `_internal/google_api_python_client-2.199.0.dist-info` |
-| google-auth | 2.56.3 | Apache-2.0 | PYZ |
-| google-auth-httplib2 | 0.4.1 | Apache-2.0 | PYZ |
-| googleapis-common-protos | 1.75.0 | Apache-2.0 | PYZ |
 | greenlet | 3.5.5 | MIT | `_internal/greenlet` |
-| grpcio | 1.83.0 | Apache-2.0 | `_internal/grpc` |
-| grpcio-status | 1.62.3 | Apache-2.0 | PYZ |
 | h11 | 0.16.0 | MIT | PYZ |
 | httpcore | 1.0.9 | BSD-3-Clause | PYZ |
-| httplib2 | 0.32.0 | MIT | `_internal/httplib2` |
 | httptools | 0.8.0 | MIT | `_internal/httptools` |
 | idna | 3.19 | BSD-3-Clause | PYZ |
 | lxml | 6.1.2 | BSD-3-Clause | `_internal/lxml` |
 | Mako | 1.4.1 | MIT | PYZ |
 | MarkupSafe | 3.0.3 | BSD-3-Clause | `_internal/markupsafe-3.0.3.dist-info` |
 | Pillow | 12.3.0 | HPND / PIL | `_internal/PIL` |
-| proto-plus | 1.28.2 | Apache-2.0 | PYZ |
-| protobuf | 4.25.9 | BSD-3-Clause | PYZ |
-| pyasn1 | 0.6.4 | BSD-2-Clause | PYZ |
-| pyasn1-modules | 0.4.2 | BSD-2-Clause | PYZ |
-| pycparser | 3.0 | BSD-3-Clause | PYZ |
 | pydantic-core | 2.18.2 | MIT | `_internal/pydantic_core` |
 | Pygments | 2.21.0 | BSD-2-Clause | PYZ |
-| pyparsing | 3.3.2 | MIT | PYZ |
 | PyYAML | 6.0.3 | MIT | `_internal/yaml` |
-| requests | 2.34.2 | Apache-2.0 | PYZ |
 | sniffio | 1.3.1 | MIT + Apache-2.0 | PYZ |
 | starlette | 0.37.2 | BSD-3-Clause | PYZ |
-| tqdm | 4.70.0 | MPL-2.0 | `_internal/tqdm-4.70.0.dist-info` |
 | typing_extensions | 4.16.0 | PSF | PYZ |
-| uritemplate | 4.2.0 | BSD-3-Clause | PYZ |
-| urllib3 | 2.7.0 | MIT | PYZ |
 | watchfiles | 1.2.0 | MIT | `_internal/watchfiles` |
 | websockets | 17.0.1 | BSD-3-Clause | `_internal/websockets-17.0.1.dist-info` |
 
 Not bundled in the clean build (verified absent): pandas, scipy, pyarrow, matplotlib, numpy, tzdata.
+
+**Removed with the Cloud AI (Gemini) removal:** the `google-generativeai` SDK and the dependency chain that existed only to serve it — `googleapiclient` / google-api-python-client / google-api-core / google-ai-generativelanguage, google-auth, google-auth-httplib2, googleapis-common-protos, grpcio, grpcio-status, proto-plus, protobuf, pyasn1, pyasn1-modules, httplib2, requests, uritemplate, urllib3, charset-normalizer, tqdm, pyparsing, pycparser, and the cffi Python module. Absence is verified from the rebuilt runtime's `PYZ-00.toc` and `_internal` directory, and is enforced by the prohibited-package guard in `backend/scripts/packaging_checks.py`.
 
 ## 4. Bundled Frontend dependencies and assets
 
@@ -184,9 +165,8 @@ Users obtain these separately under their own terms. None are redistributed by A
 | LibreOffice | MPL-2.0 | required only for rendered-page preview |
 | Ollama application | MIT | local AI service |
 | qwen3.5:4b model | **Apache-2.0** | external model, not bundled |
-| Optional Cloud AI provider (Gemini) | provider terms | user-provided credentials |
 
-ACA never bundles the qwen3.5:4b model, LibreOffice, Ollama, or any Cloud AI provider payload.
+ACA never bundles the qwen3.5:4b model, LibreOffice, or Ollama. No cloud AI provider is included in ACA and no provider payload is bundled or transmitted.
 
 ## 10. Unresolved or release-blocking items
 
@@ -196,6 +176,7 @@ ACA never bundles the qwen3.5:4b model, LibreOffice, Ollama, or any Cloud AI pro
 ## 11. Evidence and update policy
 
 - Evidence source: clean Python 3.12.10 environment (`pip freeze`), `PYZ-00.toc` / `COLLECT-00.toc` / `_internal` of the clean one-folder build, `frontend/package-lock.json`, and shipped license files.
+- This document was regenerated after the Cloud AI (Gemini) removal. Measured rebuilt bundle: **77,883,320 bytes (74.3 MiB), 209 files** — down from the previously recorded ~198 MB (≈198,487,433 bytes) build, a reduction of roughly 120 MB, consistent with the removal of the Gemini SDK's `googleapiclient` and `grpc` payloads.
 - This document must be regenerated whenever `backend/requirements.txt` or `frontend/package-lock.json` changes, or when the packaging toolchain version changes.
 - Bundled notices must be kept in sync with the exact release that is distributed.
 
@@ -209,5 +190,4 @@ Full unmodified license texts are preserved in the `licenses/` directory:
 | `licenses/mit.txt` | MIT | installed `sniffio` dist-info `LICENSE.MIT` |
 | `licenses/apache-2.0.txt` | Apache License 2.0 | installed `sniffio` dist-info `LICENSE.APACHE2` |
 | `licenses/certifi-MPL-2.0.txt` | Mozilla Public License 2.0 | installed `certifi` dist-info `licenses/LICENSE` |
-| `licenses/google-generativeai-Apache-2.0.txt` | Apache License 2.0 | installed `google-generativeai` `LICENSE` |
 | `licenses/pyinstaller-COPYING.txt` | GPL-2.0-or-later with Bootloader Exception | installed `PyInstaller` `licenses/COPYING.txt` |

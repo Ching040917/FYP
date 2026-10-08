@@ -71,8 +71,8 @@ export function Landing() {
           <p className="mt-4 max-w-2xl text-sm leading-[21px] text-muted-foreground md:text-base md:leading-[24px]">
             The system checks supported formatting, document structure, captions, and basic
             citation patterns in a .docx thesis draft — without rewriting your original Word
-            document. Deterministic formatting checks run locally by default; an optional
-            AI-assisted citation review is opt-in.
+            document. Deterministic formatting checks run locally; an optional local
+            AI-assisted citation review suggests APA 7 in-text citation formatting.
           </p>
           <div className="mt-6 flex flex-wrap items-center gap-3">
             <Link
@@ -130,7 +130,7 @@ export function Landing() {
               icon={Quote}
               title="Basic citation patterns"
               items={[
-                'AI-assisted in-text citation pattern review (optional, cloud opt-in)',
+                'AI-assisted APA 7 in-text citation formatting suggestions (optional, local)',
               ]}
             />
             <CheckGroup
@@ -170,7 +170,7 @@ export function Landing() {
               <span className="font-medium">Run deterministic formatting checks.</span>{' '}
               <span className="text-muted-foreground">
                 Layout and structure rules run locally; the optional AI-assisted citation
-                review runs only when cloud mode is enabled for that audit.
+                review uses the local AI service when it is available.
               </span>
             </li>
             <li>
@@ -190,12 +190,12 @@ export function Landing() {
             <PrivacyRow
               icon={ShieldCheck}
               label="Local-first processing"
-              detail="Deterministic formatting checks run locally by default and do not require network access."
+              detail="Deterministic formatting checks run locally and do not require network access."
             />
             <PrivacyRow
               icon={Upload}
-              label="Optional cloud assistance"
-              detail="The AI-assisted citation review is opt-in per audit, behind an explicit toggle."
+              label="Optional local AI assistance"
+              detail="The AI-assisted citation review runs against your own local AI service only — no API key, cloud account, or document upload to a third party."
             />
             <PrivacyRow
               icon={FileText}

@@ -111,10 +111,20 @@ test.describe('upload + completed audit workflow @workflow', () => {
       await page.locator('input[type="file"]').setInputFiles(SAMPLE_THESIS)
     }
 
+    // No cloud AI control exists on the dashboard, and submission carries no
+    // cloud query parameter.
+    await expect(page.locator('#cloud-toggle')).toHaveCount(0)
+    await expect(page.getByText(/cloud AI/i)).toHaveCount(0)
+
     // Submit: keyboard reaches the control; loading state communicated.
     const submit = page.getByRole('button', { name: /Run compliance audit|Auditing/i }).first()
     await submit.scrollIntoViewIfNeeded()
+    const auditRequest = page.waitForRequest(
+      (r) => r.url().includes('/api/audit') && r.method() === 'POST',
+    )
     await submit.click()
+    const auditReq = await auditRequest
+    expect(new URL(auditReq.url()).searchParams.has('cloud')).toBe(false)
     // Loading/disabled state is communicated on the submit control.
     await expect(submit).toBeDisabled()
 

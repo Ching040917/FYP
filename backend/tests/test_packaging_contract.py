@@ -158,14 +158,19 @@ def test_clean_bundle_passes_contamination(tmp_path):
 
 
 def test_prohibited_package_dir_detected(tmp_path):
-    for name in ("numpy", "pandas", "scipy", "matplotlib", "pyarrow", "ollama"):
+    for name in PROHIBITED:
         bundle = _tmp_bundle(tmp_path, dirs=(name,))
         errs = packaging_checks.contamination_errors(bundle)
         assert any(name in e for e in errs), f"{name} not detected"
 
 
 def test_distinfo_and_libs_dirs_detected(tmp_path):
-    for name in ("numpy-2.1.3.dist-info", "numpy.libs", "pandas-2.2.3.dist-info"):
+    for name in (
+        "numpy-2.1.3.dist-info",
+        "numpy.libs",
+        "pandas-2.2.3.dist-info",
+        "google_generativeai-0.7.2.dist-info",
+    ):
         bundle = _tmp_bundle(tmp_path, dirs=(name,))
         errs = packaging_checks.contamination_errors(bundle)
         assert any(name.split("-")[0].split(".")[0] in e for e in errs), f"{name} not detected"
@@ -226,6 +231,55 @@ def test_dotted_module_start_detected(tmp_path):
     bundle = _tmp_bundle(tmp_path)
     errs = packaging_checks.contamination_errors(bundle, toc_paths=[toc])
     assert any("numpy" in e and "TOC" in e for e in errs)
+
+
+def test_gemini_sdk_nested_package_dir_detected(tmp_path):
+    # The SDK ships as google/generativeai — a nested path the top-level
+    # directory rule cannot see.
+    bundle = _tmp_bundle(tmp_path)
+    (bundle / "_internal" / "google" / "generativeai").mkdir(parents=True)
+    errs = packaging_checks.contamination_errors(bundle)
+    assert any("generativeai" in e for e in errs)
+
+
+def test_google_namespace_alone_not_flagged(tmp_path):
+    # A bare google/ namespace (e.g. protobuf) is not the Gemini SDK.
+    bundle = _tmp_bundle(tmp_path, dirs=("google",))
+    assert packaging_checks.contamination_errors(bundle) == []
+
+
+def test_gemini_sdk_toc_entries_detected(tmp_path):
+    toc = tmp_path / "PYZ-00.toc"
+    toc.write_text(textwrap.dedent("""\
+    ('google.generativeai.client', 'x', 'PYMODULE')
+    ('googleapiclient.discovery', 'x', 'PYMODULE')
+    """), encoding="utf-8")
+    errs = packaging_checks.contamination_errors(_tmp_bundle(tmp_path), toc_paths=[toc])
+    assert any("google.generativeai" in e for e in errs)
+    assert any("googleapiclient" in e for e in errs)
+
+
+def test_gemini_sdk_site_packages_path_detected(tmp_path):
+    toc = tmp_path / "COLLECT-00.toc"
+    toc.write_text(
+        "('x', 'C:\\\\env\\\\site-packages\\\\google\\\\generativeai\\\\__init__.py', 'PYMODULE')",
+        encoding="utf-8",
+    )
+    errs = packaging_checks.contamination_errors(_tmp_bundle(tmp_path), toc_paths=[toc])
+    assert any("generativeai" in e for e in errs)
+
+
+def test_prohibited_tokens_enforced_at_every_site():
+    # Updating only the display tuple would silently weaken the guard: every
+    # independently hard-coded regex and the PowerShell mirror must carry the
+    # new tokens too.
+    for token in ("googleapiclient", "google_generativeai"):
+        assert token in PROHIBITED
+        assert token in packaging_checks._PROHIBITED_DIR_RE.pattern
+        assert token in BUILD_SCRIPT_TEXT
+    assert r"google\.generativeai" in packaging_checks._MODULE_NAME_RE.pattern
+    assert r"site-packages[\\/]+" in packaging_checks._SITE_PACKAGES_PATH_RE.pattern
+    assert r"google[\\/]+generativeai" in packaging_checks._SITE_PACKAGES_PATH_RE.pattern
 
 
 # ---------------------------------------------------------------------------

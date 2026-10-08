@@ -11,14 +11,29 @@ import re
 import sys
 from pathlib import Path
 
-PROHIBITED_PACKAGES = ("numpy", "pandas", "scipy", "matplotlib", "pyarrow", "ollama")
+PROHIBITED_PACKAGES = (
+    "numpy",
+    "pandas",
+    "scipy",
+    "matplotlib",
+    "pyarrow",
+    "ollama",
+    "googleapiclient",
+    "google_generativeai",
+)
 DEFAULT_MAX_BYTES = 250 * 1024 * 1024  # 250 MB
+
+# Nested package paths the top-level directory rule above cannot see, as
+# _internal-relative path segments. The Gemini SDK ships as
+# google/generativeai and drags googleapiclient/grpc with it.
+_PROHIBITED_NESTED_DIRS = (("google", "generativeai"),)
 
 # Match a directory exactly, a dist-info dir like "numpy-1.26.0.dist-info",
 # or a namespace/libs dir like "numpy.libs" — never a longer name that merely
 # contains the token (e.g. "numpycompat").
 _PROHIBITED_DIR_RE = re.compile(
-    r"^(?P<name>numpy|pandas|scipy|matplotlib|pyarrow|ollama)"
+    r"^(?P<name>numpy|pandas|scipy|matplotlib|pyarrow|ollama|"
+    r"googleapiclient|google_generativeai)"
     r"(?:[.-].*)?$",
     re.IGNORECASE,
 )
@@ -28,12 +43,16 @@ _PROHIBITED_DIR_RE = re.compile(
 # FIRST path segment under site-packages ("site-packages\\numpy\\..."). The
 # setuptools shim "setuptools._distutils.compat.numpy" and its path
 # "...\\compat\\numpy.py" are NOT the numpy package and must not match.
+# "google.generativeai" is listed as a full dotted name because its first
+# segment ("google") is shared with unrelated Google packages.
 _MODULE_NAME_RE = re.compile(
-    r"(?:^|['\"\s\[])(?P<token>numpy|pandas|scipy|matplotlib|pyarrow|ollama)"
+    r"(?:^|['\"\s\[])(?P<token>google\.generativeai|numpy|pandas|scipy|"
+    r"matplotlib|pyarrow|ollama|googleapiclient)"
     r"(?=[.'\"\],])",
 )
 _SITE_PACKAGES_PATH_RE = re.compile(
-    r"site-packages[\\/](?P<token>numpy|pandas|scipy|matplotlib|pyarrow|ollama)"
+    r"site-packages[\\/]+(?P<token>google[\\/]+generativeai|numpy|pandas|scipy|"
+    r"matplotlib|pyarrow|ollama|googleapiclient|google_generativeai)"
     r"(?=[\\/.\s'\"])",
 )
 
@@ -57,6 +76,9 @@ def find_prohibited_dirs(bundle_root: Path):
             continue
         if _PROHIBITED_DIR_RE.match(entry.name):
             found.append(f"{entry.name} [directory]")
+    for parts in _PROHIBITED_NESTED_DIRS:
+        if internal.joinpath(*parts).is_dir():
+            found.append(f"{'/'.join(parts)} [directory]")
     return found
 
 

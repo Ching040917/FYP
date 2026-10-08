@@ -34,7 +34,7 @@ Internet access happens only when you explicitly choose an optional action:
 
 - Downloading an optional component's installer from the official website (you click the link; ACA never downloads the installer).
 - Downloading the optional **Citation Guidance Model**. After you confirm it in the app, ACA's Backend asks the Ollama service running on your own computer (`127.0.0.1`) to fetch the model. **ACA itself never contacts the model registry** — the download traffic belongs to Ollama, on your machine. You can also copy the `ollama pull` command and run it yourself instead.
-- Local AI and Cloud AI, as described below.
+- Local AI Citation Guidance, as described below.
 
 Starting a model download sends only the model name and download flags to your local Ollama service. No document, finding, citation, prompt, or identifier is sent, and the request never goes anywhere except your own computer.
 
@@ -46,9 +46,7 @@ The download is performed by your local Ollama service, not by ACA. ACA's Backen
 
 Local AI citation guidance uses the Ollama service installed on your own machine. When an audit has confirmed citation findings, ACA sends only the relevant citation snippets and finding context to your local Ollama service — never the full document as a file. Results stay on your machine.
 
-## What happens when Cloud AI is enabled?
-
-Cloud AI is **off by default** and requires two explicit actions from you: turning it on for that specific audit and providing your own API key (none is bundled with ACA). When you enable it for an audit, the citation-review context for confirmed findings may be sent to the cloud provider you configured. Deterministic checks continue independently either way. No API keys or provider request/response payloads are written to ACA's logs.
+No cloud AI provider is included in ACA. There is no external AI API key to configure, no provider selection, and no cloud opt-in; no document text, citation context, prompt, or finding is ever transmitted to a third-party AI service. Local AI requests go only to your own Ollama service at `127.0.0.1`.
 
 ## What happens when I delete an audit?
 

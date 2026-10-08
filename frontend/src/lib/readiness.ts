@@ -41,8 +41,14 @@ const KNOWN_LABELS: Record<string, string> = {
   rendered_preview: 'Page preview',
   ollama: 'Local AI Citation Guidance',
   local_model: 'Citation Guidance Model',
-  cloud_ai: 'Optional cloud AI',
 }
+
+/**
+ * Component ids the Backend may still report but the UI never renders.
+ * Explicit filter: without it a legacy payload would surface as the generic
+ * 'Additional component' fallback row.
+ */
+export const HIDDEN_COMPONENT_IDS: Record<string, true> = { cloud_ai: true }
 
 const STATE_LABELS: Record<string, string> = {
   ready: 'Ready',
@@ -60,7 +66,6 @@ const COMPONENT_ORDER = [
   'rendered_preview',
   'ollama',
   'local_model',
-  'cloud_ai',
 ]
 
 const VALID_OVERALL = new Set(['ready', 'degraded', 'blocked'])
@@ -88,6 +93,7 @@ export function adaptReadiness(raw: unknown): ReadinessModel | null {
     if (!isRecord(c)) continue
     const id = c.id
     if (typeof id !== 'string' || id.length === 0) continue
+    if (HIDDEN_COMPONENT_IDS[id] === true) continue
     const required = c.required === true
     const message = c.message
     if (typeof message !== 'string') continue
@@ -163,23 +169,4 @@ export function issueCountSentence(
     return n === 1 ? '1 component needs attention' : `${n} components need attention`
   }
   return ''
-}
-
-/**
- * Cloud AI availability for gating the UploadCard toggle.
- * Only `ready` enables the switch; all other states (including `optional`
- * and `unknown` — the latter used when readiness has not been fetched yet)
- * keep it disabled and safe. The optional `unknown` path makes
- * deterministic checks remain available regardless.
- */
-export function isCloudAvailable(rows: ReadinessComponentRow[]): boolean {
-  const c = rows.find((r) => r.id === 'cloud_ai')
-  return c !== undefined && c.state === 'ready'
-}
-
-export function isCloudAvailableFromModel(
-  model: ReadinessModel | null,
-): boolean | null {
-  if (!model) return null
-  return isCloudAvailable(model.rows)
 }

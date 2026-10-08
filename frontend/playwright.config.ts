@@ -6,9 +6,8 @@
  *   - Backend started with an ephemeral SQLite database under
  *     frontend/e2e/.tmp/<run-id>/ (git-ignored) — never the developer's
  *     ./audit.db production-style database.
- *   - Cloud AI disabled (DEPLOY_MODE=LOCAL) and Ollama pointed at an
- *     unreachable port so the optional AI step degrades instantly; core
- *     audit completion must not depend on it.
+ *   - Ollama pointed at an unreachable port so the optional local AI step
+ *     degrades instantly; core audit completion must not depend on it.
  *   - Rendered preview storage redirected into the same ephemeral run dir.
  *   - reuseExistingServer: false guarantees the suite always talks to a
  *     backend running with the isolated DATABASE_URL.
@@ -42,7 +41,6 @@ const backendURL = 'http://127.0.0.1:8000'
 const backendEnv: Record<string, string> = {
   ...(process.env as Record<string, string>),
   DATABASE_URL: dbSqliteUrl,
-  DEPLOY_MODE: 'LOCAL',
   // Unreachable port -> connection refused immediately -> AI guidance is
   // recorded UNAVAILABLE and the audit still completes deterministically.
   OLLAMA_HOST: 'http://127.0.0.1:9',

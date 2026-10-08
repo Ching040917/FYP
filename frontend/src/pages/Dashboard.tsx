@@ -44,6 +44,7 @@ import {
   saveGuidanceDismissed,
 } from '../lib/guidance'
 import type { AuditResult } from '../types/audit'
+import type { ReadinessOverall } from '../lib/readiness'
 
 /**
  * DashboardContent — the reusable dashboard body.
@@ -58,7 +59,7 @@ export function DashboardContent() {
     createSessionStorageAdapter(),
   )
   const didHydrateCompletionRef = React.useRef(false)
-  const [cloudAvailable, setCloudAvailable] = React.useState<boolean | null>(null)
+  const [readinessOverall, setReadinessOverall] = React.useState<ReadinessOverall | null>(null)
   const [expandSignal, setExpandSignal] = React.useState(0)
 
   // First-run guidance: hydrated once from versioned localStorage. Null until
@@ -110,7 +111,7 @@ export function DashboardContent() {
   // previous completion (newer audit wins). Failures do not create one and
   // do not restore a stale predecessor.
   const handleResult = React.useCallback(
-    (r: AuditResult, _cloudEnabled: boolean) => {
+    (r: AuditResult) => {
       setResult(r)
       const snap = toCompletionSnapshot({
         audit_id: r.audit_id,
@@ -141,8 +142,8 @@ export function DashboardContent() {
     <DashboardShell
       result={result}
       completion={completion}
-      cloudAvailable={cloudAvailable}
-      onCloudAvailable={setCloudAvailable}
+      readinessOverall={readinessOverall}
+      onReadinessChange={setReadinessOverall}
       guidanceDismissed={guidanceDismissed}
       expandSignal={expandSignal}
       onExpandSignal={() => setExpandSignal((s) => s + 1)}
@@ -164,8 +165,8 @@ export function DashboardContent() {
 function DashboardShell({
   result,
   completion,
-  cloudAvailable,
-  onCloudAvailable,
+  readinessOverall,
+  onReadinessChange,
   guidanceDismissed,
   expandSignal,
   onExpandSignal,
@@ -178,8 +179,8 @@ function DashboardShell({
 }: {
   result: AuditResult | null
   completion: AuditCompletionSnapshot | null
-  cloudAvailable: boolean | null
-  onCloudAvailable: (available: boolean | null) => void
+  readinessOverall: ReadinessOverall | null
+  onReadinessChange: (overall: ReadinessOverall | null) => void
   /** null = still hydrating; true = dismissed; false = show guidance. */
   guidanceDismissed: boolean | null
   expandSignal: number
@@ -188,7 +189,7 @@ function DashboardShell({
   onDismissGuidance: () => void
   onViewAudit: (auditId: string) => void
   onDismissCompletion: () => void
-  onResult: (r: AuditResult, cloudEnabled: boolean) => void
+  onResult: (r: AuditResult) => void
   onReset: () => void
 }) {
   const focusDropzone = React.useCallback(() => {
@@ -217,7 +218,7 @@ function DashboardShell({
           />
         ) : null}
         <ReadinessCard
-          onCloudAvailable={onCloudAvailable}
+          onReadinessChange={onReadinessChange}
           expandSignal={expandSignal}
           detailsSlot={
             guidanceDismissed === true ? (
@@ -236,7 +237,6 @@ function DashboardShell({
         <UploadCard
           onResult={onResult}
           onReset={onReset}
-          cloudAvailable={cloudAvailable}
         />
       </div>
 
@@ -246,9 +246,7 @@ function DashboardShell({
           <ComplianceSummary result={result} />
         ) : guidanceDismissed !== true ? (
           <GuidancePanel
-            readiness={
-              cloudAvailable === null ? 'unavailable' : cloudAvailable ? 'ready' : 'degraded'
-            }
+            readiness={readinessOverall ?? 'unavailable'}
             onStartAuditing={() => {
               onDismissGuidance()
               requestAnimationFrame(focusDropzone)
@@ -292,8 +290,8 @@ export function Dashboard() {
             compliance summary. The full evidence report opens in the Audit Workspace.
           </p>
           <p className="mt-1 text-[13px] leading-[19px] text-muted-foreground">
-            Documents are processed locally by default. The optional AI-assisted citation
-            review is opt-in.
+            Documents are processed locally. The optional AI-assisted citation review uses
+            your local AI service when it is available.
           </p>
         </section>
 

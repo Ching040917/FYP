@@ -135,7 +135,7 @@ async def test_subjective_guidance_dropped_from_results(ai_session, monkeypatch)
     monkeypatch.setattr(ai_citation, "call_ollama_local", _fake)
 
     out = await async_ai_citation_task(
-        audit_id="tpl-5", db=ai_session, cloud=False, citation_findings=findings)
+        audit_id="tpl-5", db=ai_session, citation_findings=findings)
     ai_session.commit()
     assert out.suggestions == []
     assert out.status == "COMPLETED_NO_SUGGESTIONS"
@@ -221,7 +221,7 @@ async def test_garcia_and_lee_same_paragraph_get_distinct_deterministic_guidance
     monkeypatch.setattr(ai_citation, "call_ollama_local", _fake)
 
     out = await async_ai_citation_task(
-        audit_id="tpl-6", db=ai_session, cloud=False, citation_findings=findings)
+        audit_id="tpl-6", db=ai_session, citation_findings=findings)
     ai_session.commit()
 
     assert out.status == AI_STATUS_WITH_SUGGESTIONS
@@ -346,7 +346,7 @@ async def test_item_without_reason_is_rejected(ai_session, monkeypatch):
     monkeypatch.setattr(ai_citation, "call_ollama_local", _fake)
 
     out = await async_ai_citation_task(
-        audit_id="tpl-1", db=ai_session, cloud=False, citation_findings=findings)
+        audit_id="tpl-1", db=ai_session, citation_findings=findings)
     assert out.suggestions == []
     assert out.status == "COMPLETED_NO_SUGGESTIONS"
 
@@ -363,7 +363,7 @@ async def test_missing_metadata_yields_placeholders(ai_session, monkeypatch):
     monkeypatch.setattr(ai_citation, "call_ollama_local", _fake)
 
     out = await async_ai_citation_task(
-        audit_id="tpl-2", db=ai_session, cloud=False, citation_findings=findings)
+        audit_id="tpl-2", db=ai_session, citation_findings=findings)
     ai_session.commit()
 
     assert out.status == AI_STATUS_WITH_SUGGESTIONS
@@ -387,7 +387,7 @@ async def test_same_paragraph_findings_keep_distinct_guidance(ai_session, monkey
     monkeypatch.setattr(ai_citation, "call_ollama_local", _fake)
 
     out = await async_ai_citation_task(
-        audit_id="tpl-3", db=ai_session, cloud=False, citation_findings=findings)
+        audit_id="tpl-3", db=ai_session, citation_findings=findings)
     ai_session.commit()
 
     assert out.status == AI_STATUS_WITH_SUGGESTIONS
@@ -411,7 +411,7 @@ async def test_confidence_not_forced_to_one(ai_session, monkeypatch):
     monkeypatch.setattr(ai_citation, "call_ollama_local", _fake)
 
     out = await async_ai_citation_task(
-        audit_id="tpl-4", db=ai_session, cloud=False, citation_findings=findings)
+        audit_id="tpl-4", db=ai_session, citation_findings=findings)
     ai_session.commit()
 
     assert out.status == AI_STATUS_WITH_SUGGESTIONS

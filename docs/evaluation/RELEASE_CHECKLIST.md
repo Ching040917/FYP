@@ -69,7 +69,7 @@ Complete every section before publishing a packaged Windows release. Each checkb
 - [ ] Readiness card reflects installed optional components.
 - [ ] First-run guidance appears on first visit and can be dismissed/reopened.
 - [ ] Optional Local AI state reflects Ollama availability.
-- [ ] Optional Cloud AI state reflects explicit opt-in only.
+- [ ] No cloud AI control, API-key field, or provider label exists anywhere in the UI.
 
 ## Release artifact
 

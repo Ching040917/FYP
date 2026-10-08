@@ -30,7 +30,6 @@ function readyPayload() {
       { id: 'rendered_preview', state: 'ready', required: false, message: 'Preview appears available.' },
       { id: 'ollama', state: 'ready', required: false, message: 'Local AI available.' },
       { id: 'local_model', state: 'ready', required: false, message: 'Model installed.', detail: 'Configured model: qwen3.5:4b' },
-      { id: 'cloud_ai', state: 'optional', required: false, message: 'Cloud AI optional and not configured.' },
     ],
   }
 }
@@ -50,14 +49,14 @@ function degradedPayload() {
 // Adaptation + validation
 // ---------------------------------------------------------------------------
 
-test('valid response adapts with eight rows in deterministic order', () => {
+test('valid response adapts with seven rows in deterministic order', () => {
   const m = adaptReadiness(readyPayload())
   assert.ok(m)
   assert.equal(m.overall, 'ready')
-  assert.equal(m.rows.length, 8)
+  assert.equal(m.rows.length, 7)
   assert.deepEqual(
     m.rows.map((r) => r.id),
-    ['core_backend', 'database', 'docx_audit', 'libreoffice', 'rendered_preview', 'ollama', 'local_model', 'cloud_ai'],
+    ['core_backend', 'database', 'docx_audit', 'libreoffice', 'rendered_preview', 'ollama', 'local_model'],
   )
 })
 
@@ -67,7 +66,7 @@ test('component reordering is normalized to contract order', () => {
   const m = adaptReadiness(p)!
   assert.deepEqual(
     m.rows.map((r) => r.id),
-    ['core_backend', 'database', 'docx_audit', 'libreoffice', 'rendered_preview', 'ollama', 'local_model', 'cloud_ai'],
+    ['core_backend', 'database', 'docx_audit', 'libreoffice', 'rendered_preview', 'ollama', 'local_model'],
   )
 })
 
@@ -75,7 +74,7 @@ test('unknown future component id falls back to Additional component', () => {
   const p = readyPayload()
   p.components.push({ id: 'future_gadget', state: 'ready', required: false, message: 'x' })
   const m = adaptReadiness(p)!
-  assert.equal(m.rows.length, 9)
+  assert.equal(m.rows.length, 8)
   const last = m.rows[m.rows.length - 1]
   assert.equal(last.id, 'future_gadget')
   assert.equal(last.label, 'Additional component')
@@ -121,7 +120,7 @@ test('missing checked_at rejected', () => {
 // Labels + friendly names
 // ---------------------------------------------------------------------------
 
-test('all eight known ids get friendly labels', () => {
+test('all seven known ids get friendly labels', () => {
   const m = adaptReadiness(readyPayload())!
   const labels = Object.fromEntries(m.rows.map((r) => [r.id, r.label]))
   assert.deepEqual(labels, {
@@ -132,7 +131,6 @@ test('all eight known ids get friendly labels', () => {
     rendered_preview: 'Page preview',
     ollama: 'Local AI Citation Guidance',
     local_model: 'Citation Guidance Model',
-    cloud_ai: 'Optional cloud AI',
   })
   // Raw snake-case ids never appear as the visible label.
   assert.ok(!m.rows.some((r) => r.label.includes('_') || r.label === r.id))
@@ -144,14 +142,14 @@ test('state labels map correctly', () => {
     { id: 'core_backend', state: 'ready', required: true, message: 'a' },
     { id: 'database', state: 'misconfigured', required: true, message: 'b' },
     { id: 'ollama', state: 'unavailable', required: false, message: 'c' },
-    { id: 'cloud_ai', state: 'optional', required: false, message: 'd' },
+    { id: 'local_model', state: 'optional', required: false, message: 'd' },
   ]
   const m = adaptReadiness(p)!
   const byId = Object.fromEntries(m.rows.map((r) => [r.id, r.stateLabel]))
   assert.equal(byId['core_backend'], 'Ready')
   assert.equal(byId['database'], 'Action needed')
   assert.equal(byId['ollama'], 'Unavailable')
-  assert.equal(byId['cloud_ai'], 'Optional')
+  assert.equal(byId['local_model'], 'Optional')
 })
 
 // ---------------------------------------------------------------------------
@@ -165,13 +163,18 @@ test('degraded count counts only unavailable optional components', () => {
   assert.equal(m.overall, 'degraded')
 })
 
-test('cloud optional never counts toward unavailable', () => {
+test('legacy cloud_ai row is filtered out — never rendered or counted', () => {
   const m = adaptReadiness(readyPayload())!
   assert.equal(unavailableOptionalCount(m.rows), 0)
   const withCloud = adaptReadiness({
     ...readyPayload(),
-    components: [{ id: 'cloud_ai', state: 'optional', required: false, message: 'x' }],
+    components: [
+      { id: 'ollama', state: 'ready', required: false, message: 'ok' },
+      { id: 'cloud_ai', state: 'unavailable', required: false, message: 'legacy row' },
+    ],
   })!
+  assert.deepEqual(withCloud.rows.map((r) => r.id), ['ollama'])
+  assert.ok(!withCloud.rows.some((r) => r.label === 'Additional component'))
   assert.equal(unavailableOptionalCount(withCloud.rows), 0)
 })
 

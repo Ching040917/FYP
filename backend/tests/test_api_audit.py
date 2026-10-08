@@ -213,27 +213,6 @@ def test_get_audit_stats_null_for_record_without_stats(client, test_engine, docx
     assert all(v is None for v in stats.values())
 
 
-def test_post_audit_cloud_flag_sets_deploy_mode(client, docx_factory):
-    """cloud query param must control the audit's deploy mode."""
-    file_bytes = docx_factory(paragraphs=["Body."], references=[])
-
-    local = client.post(
-        "/api/audit",
-        files={"file": ("local.docx", file_bytes, "application/octet-stream")},
-    )
-    assert local.status_code == 200
-    local_get = client.get(f"/api/audit/{local.json()['audit_id']}")
-    assert local_get.json()["deploy_mode"] == "LOCAL"
-
-    cloud = client.post(
-        "/api/audit?cloud=1",
-        files={"file": ("cloud.docx", file_bytes, "application/octet-stream")},
-    )
-    assert cloud.status_code == 200
-    cloud_get = client.get(f"/api/audit/{cloud.json()['audit_id']}")
-    assert cloud_get.json()["deploy_mode"] == "CLOUD"
-
-
 def test_post_audit_unicode_filename_accepted(client, docx_factory):
     file_bytes = docx_factory(paragraphs=["Body."], references=[])
     resp = client.post(

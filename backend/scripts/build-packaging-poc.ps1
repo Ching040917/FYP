@@ -20,7 +20,7 @@ $RequiredPythonMajorMinor = "3.12"
 $RequiredPyInstallerVersion = "6.22.2"
 
 # Prohibited packages must never be bundled, regardless of the build machine.
-$ProhibitedPackages = @("numpy", "pandas", "scipy", "matplotlib", "pyarrow", "ollama")
+$ProhibitedPackages = @("numpy", "pandas", "scipy", "matplotlib", "pyarrow", "ollama", "googleapiclient", "google_generativeai")
 
 # Size regression ceiling. Clean Python 3.12 bundles are ~189 MB; the guard
 # allows headroom but still rejects the contaminated ~388 MB build.

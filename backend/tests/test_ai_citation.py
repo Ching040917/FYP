@@ -2,8 +2,6 @@
 
 Covers:
 - LOCAL guidance for confirmed findings
-- CLOUD guidance for confirmed findings
-- CLOUD fallback to LOCAL
 - no findings skips provider call
 - valid [] means COMPLETED_NO_SUGGESTIONS
 - malformed response means UNAVAILABLE
@@ -33,8 +31,6 @@ from app.services.ai_citation import (
     AI_STATUS_NO_SUGGESTIONS,
     AI_STATUS_UNAVAILABLE,
     AI_PROVIDER_LOCAL,
-    AI_PROVIDER_CLOUD,
-    AI_PROVIDER_CLOUD_FALLBACK_LOCAL,
 )
 
 # ---------------------------------------------------------------------------
@@ -164,7 +160,6 @@ async def test_local_guidance_for_findings(ai_session, monkeypatch):
     out = await async_ai_citation_task(
         audit_id="g1",
         db=ai_session,
-        cloud=False,
         citation_findings=findings,
     )
     ai_session.commit()
@@ -176,65 +171,6 @@ async def test_local_guidance_for_findings(ai_session, monkeypatch):
     assert out.suggestions[0]["confidence"] == 1.0
     assert out.suggestions[1]["paragraph_index"] == 7
     assert out.suggestions[1]["confidence"] == 0.9
-
-
-# ---------------------------------------------------------------------------
-# async_ai_citation_task — CLOUD guidance for confirmed findings
-# ---------------------------------------------------------------------------
-
-async def test_cloud_guidance_for_findings(ai_session, monkeypatch):
-    """CLOUD mode: Gemini primary → suggestions persisted."""
-    findings = [_finding(5)]
-
-    async def _fake(prompt):
-        return json.dumps([
-            {"finding_key": findings[0]["finding_key"], "reason": "Add the reference.", "source_type": "unknown", "confidence": 0.95},
-        ])
-
-    monkeypatch.setattr(ai_citation, "call_gemini_cloud", _fake)
-    monkeypatch.setattr(ai_citation, "call_ollama_local", lambda p: (_ for _ in ()).throw(RuntimeError("no")))
-
-    out = await async_ai_citation_task(
-        audit_id="g2",
-        db=ai_session,
-        cloud=True,
-        citation_findings=findings,
-    )
-    ai_session.commit()
-
-    assert out.status == AI_STATUS_WITH_SUGGESTIONS
-    assert out.provider == AI_PROVIDER_CLOUD
-    assert len(out.suggestions) == 1
-    assert out.suggestions[0]["paragraph_index"] == 5
-
-
-# ---------------------------------------------------------------------------
-# async_ai_citation_task — CLOUD fallback to LOCAL
-# ---------------------------------------------------------------------------
-
-async def test_cloud_fallback_to_local_guidance(ai_session, monkeypatch):
-    """Cloud fails → fallback to Ollama → suggestions persisted."""
-    findings = [_finding(2)]
-
-    async def _fake_ollama(prompt):
-        return json.dumps([
-            {"finding_key": findings[0]["finding_key"], "reason": "Add ref.", "source_type": "unknown", "confidence": 0.8},
-        ])
-
-    monkeypatch.setattr(ai_citation, "call_gemini_cloud", lambda p: (_ for _ in ()).throw(RuntimeError("cloud down")))
-    monkeypatch.setattr(ai_citation, "call_ollama_local", _fake_ollama)
-
-    out = await async_ai_citation_task(
-        audit_id="g3",
-        db=ai_session,
-        cloud=True,
-        citation_findings=findings,
-    )
-    ai_session.commit()
-
-    assert out.status == AI_STATUS_WITH_SUGGESTIONS
-    assert out.provider == AI_PROVIDER_CLOUD_FALLBACK_LOCAL
-    assert len(out.suggestions) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -254,7 +190,6 @@ async def test_no_findings_skips_provider(ai_session, monkeypatch):
     out = await async_ai_citation_task(
         audit_id="g4",
         db=ai_session,
-        cloud=False,
         citation_findings=[],
     )
 
@@ -277,7 +212,6 @@ async def test_none_findings_skips_provider(ai_session, monkeypatch):
     out = await async_ai_citation_task(
         audit_id="g4b",
         db=ai_session,
-        cloud=False,
         citation_findings=None,
     )
 
@@ -302,7 +236,6 @@ async def test_empty_array_response_means_no_suggestions(ai_session, monkeypatch
     out = await async_ai_citation_task(
         audit_id="g5",
         db=ai_session,
-        cloud=False,
         citation_findings=findings,
     )
     ai_session.commit()
@@ -329,7 +262,6 @@ async def test_malformed_response_means_unavailable(ai_session, monkeypatch):
     out = await async_ai_citation_task(
         audit_id="g6",
         db=ai_session,
-        cloud=False,
         citation_findings=findings,
     )
     ai_session.commit()
@@ -356,34 +288,12 @@ async def test_timeout_means_unavailable(ai_session, monkeypatch):
     out = await async_ai_citation_task(
         audit_id="g7",
         db=ai_session,
-        cloud=False,
         citation_findings=findings,
     )
 
     assert out.status == AI_STATUS_UNAVAILABLE
     assert out.provider is None
     assert out.suggestions == []
-
-
-async def test_cloud_then_local_both_timeout(ai_session, monkeypatch):
-    """Both cloud and local timeout → UNAVAILABLE."""
-    findings = [_finding(1)]
-
-    async def _raise(_prompt):
-        raise RuntimeError("timeout")
-
-    monkeypatch.setattr(ai_citation, "call_gemini_cloud", _raise)
-    monkeypatch.setattr(ai_citation, "call_ollama_local", _raise)
-
-    out = await async_ai_citation_task(
-        audit_id="g7b",
-        db=ai_session,
-        cloud=True,
-        citation_findings=findings,
-    )
-
-    assert out.status == AI_STATUS_UNAVAILABLE
-    assert out.provider is None
 
 
 # ---------------------------------------------------------------------------
@@ -408,7 +318,6 @@ async def test_suggestion_maps_to_correct_finding(ai_session, monkeypatch):
     out = await async_ai_citation_task(
         audit_id="g8",
         db=ai_session,
-        cloud=False,
         citation_findings=findings,
     )
     ai_session.commit()
@@ -443,7 +352,6 @@ async def test_reordered_provider_output_maps_correctly(ai_session, monkeypatch)
     out = await async_ai_citation_task(
         audit_id="g9",
         db=ai_session,
-        cloud=False,
         citation_findings=findings,
     )
     ai_session.commit()
@@ -477,7 +385,6 @@ async def test_mismatched_paragraph_index_rejected(ai_session, monkeypatch):
     out = await async_ai_citation_task(
         audit_id="g10",
         db=ai_session,
-        cloud=False,
         citation_findings=findings,
     )
     ai_session.commit()
@@ -508,7 +415,6 @@ async def test_duplicate_paragraph_index_in_response_uses_first_match(ai_session
     out = await async_ai_citation_task(
         audit_id="g11",
         db=ai_session,
-        cloud=False,
         citation_findings=findings,
     )
     ai_session.commit()
@@ -533,7 +439,6 @@ async def test_provider_returns_fewer_items_than_findings(ai_session, monkeypatc
     out = await async_ai_citation_task(
         audit_id="g12",
         db=ai_session,
-        cloud=False,
         citation_findings=findings,
     )
     ai_session.commit()
@@ -633,7 +538,6 @@ async def test_logs_no_document_text_no_prompt_no_raw_response(ai_session, monke
         out = await async_ai_citation_task(
             audit_id="log-test",
             db=ai_session,
-            cloud=False,
             citation_findings=findings,
         )
 
@@ -746,7 +650,6 @@ async def test_async_ai_citation_task_no_findings_returns_no_suggestions(ai_sess
     out = await async_ai_citation_task(
         audit_id="bc1",
         db=ai_session,
-        cloud=False,
         citation_findings=[],
     )
     assert out.status == AI_STATUS_NO_SUGGESTIONS
@@ -787,7 +690,6 @@ async def test_same_paragraph_findings_get_distinct_guidance(ai_session, monkeyp
     out = await async_ai_citation_task(
         audit_id="sp1",
         db=ai_session,
-        cloud=False,
         citation_findings=findings,
     )
     ai_session.commit()
@@ -822,7 +724,6 @@ async def test_reordered_output_maps_by_finding_key(ai_session, monkeypatch):
     out = await async_ai_citation_task(
         audit_id="sp2",
         db=ai_session,
-        cloud=False,
         citation_findings=findings,
     )
     ai_session.commit()
@@ -858,7 +759,6 @@ async def test_duplicate_finding_key_accepted_at_most_once(ai_session, monkeypat
     out = await async_ai_citation_task(
         audit_id="sp3",
         db=ai_session,
-        cloud=False,
         citation_findings=findings,
     )
     ai_session.commit()
@@ -884,7 +784,6 @@ async def test_unknown_finding_key_ignored(ai_session, monkeypatch):
     out = await async_ai_citation_task(
         audit_id="sp4",
         db=ai_session,
-        cloud=False,
         citation_findings=findings,
     )
     ai_session.commit()
@@ -907,7 +806,6 @@ async def test_missing_finding_key_rejected(ai_session, monkeypatch):
     out = await async_ai_citation_task(
         audit_id="sp5",
         db=ai_session,
-        cloud=False,
         citation_findings=findings,
     )
     ai_session.commit()
@@ -937,7 +835,6 @@ async def test_partial_valid_response_preserves_correct_mappings(ai_session, mon
     out = await async_ai_citation_task(
         audit_id="sp6",
         db=ai_session,
-        cloud=False,
         citation_findings=findings,
     )
     ai_session.commit()
@@ -993,7 +890,6 @@ async def test_no_document_text_in_logs_with_finding_key(ai_session, monkeypatch
         out = await async_ai_citation_task(
             audit_id="log-fk",
             db=ai_session,
-            cloud=False,
             citation_findings=findings,
         )
 

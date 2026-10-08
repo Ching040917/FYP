@@ -75,8 +75,8 @@ def test_get_audit_with_zero_violations_returns_empty_list(client, docx_factory)
 
 
 def test_ai_task_timeout_does_not_block_response(client, docx_factory, monkeypatch):
-    """Simulate an LLM timeout (Ollama/Gemini call raises). The background
-    task already wraps the LLM call in try/except, so the request must
+    """Simulate a local AI timeout (the Ollama call raises). The AI task
+    wraps the provider call in try/except, so the request must
     succeed and the audit record must still be persisted."""
     from app.services import ai_citation
 

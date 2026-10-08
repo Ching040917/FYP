@@ -91,8 +91,6 @@ Local AI Citation Guidance is an optional feature. It provides suggestions for *
 
 **ACA never installs third-party software and never runs a local command for you.** The only download it can start is the optional Citation Guidance Model, from your own Ollama service, and only after you confirm it.
 
-**Cloud AI** is a separate, explicit opt-in for a single audit. It stays off unless you turn it on for that audit and provide your own API key. When enabled, only the citation snippets relevant to confirmed findings are sent for review.
-
 ## 12. Get Help
 
 - Something not working? See [Troubleshooting](TROUBLESHOOTING.md).

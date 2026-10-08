@@ -5,7 +5,7 @@
  * upload or audit submission. Persistence lives in lib/guidance.ts
  * (versioned localStorage record; memory fallback keeps the session usable).
  */
-import { AlertTriangle, CheckCircle2, Cloud, X } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, X } from 'lucide-react'
 import { Button } from '../ui/button'
 import type { ReactNode } from 'react'
 
@@ -31,10 +31,6 @@ const POINTS = [
   {
     icon: CheckCircle2,
     text: 'Local AI-assisted citation review is optional and uses the configured local service when available.',
-  },
-  {
-    icon: Cloud,
-    text: 'Cloud AI review requires explicit opt-in.',
   },
 ]
 

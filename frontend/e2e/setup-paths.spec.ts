@@ -227,6 +227,11 @@ test.describe('local AI citation guidance download', () => {
     // Core deterministic checks remain advertised as independent of Local AI.
     await expect(page.getByText(/deterministic document auditing/i).first()).toBeVisible()
 
+    // The stubbed payload still carries a legacy cloud_ai component: it must
+    // not render a row, label, or control anywhere.
+    await expect(page.getByText(/cloud AI/i)).toHaveCount(0)
+    await expect(page.locator('#cloud-toggle')).toHaveCount(0)
+
     const download = page.getByRole('button', { name: 'Download optional model' })
     await expect(download).toBeVisible()
     // Keyboard reachable.

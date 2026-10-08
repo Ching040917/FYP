@@ -132,13 +132,12 @@ test('guidance panel renders in right column after result, before no-audit', () 
   void resultIdx; void gIdx; void iIdx
 })
 
-test('panel contains heading and four required points', () => {
+test('panel contains heading and three required points', () => {
   for (const s of [
     'Welcome to ACA',
     'Deterministic document checks run locally.',
     'Rendered-page preview is optional. Extracted-text evidence remains available.',
     'Local AI-assisted citation review is optional and uses the configured local service when available.',
-    'Cloud AI review requires explicit opt-in.',
   ]) {
     assert.ok(panel.includes(s), `missing: ${s}`)
   }
@@ -211,8 +210,10 @@ test('upload-card profile summary compacts long content behind a toggle', () => 
   }
 })
 
-test('cloud wording is concise — no repeated deterministic sentence', () => {
+test('upload card exposes no cloud AI control or copy', () => {
   const uploadSrc = src('src/components/audit/upload-card.tsx')
-  assert.ok(uploadSrc.includes('Local AI is used by default when available.'))
-  assert.ok(!uploadSrc.includes('Cloud AI review is unavailable. Deterministic checks remain available.'))
+  assert.ok(!uploadSrc.includes('cloud-toggle'))
+  assert.ok(!uploadSrc.includes('Use cloud AI-assisted review'))
+  assert.ok(!uploadSrc.includes('Cloud AI review is unavailable.'))
+  assert.ok(!/cloud/i.test(uploadSrc))
 })

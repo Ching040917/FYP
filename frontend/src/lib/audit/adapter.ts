@@ -57,11 +57,7 @@ const AI_STATUS_VALUES: readonly AiReviewStatus[] = [
   'UNAVAILABLE',
 ]
 
-const AI_PROVIDER_VALUES: readonly AiProvider[] = [
-  'LOCAL_OLLAMA',
-  'CLOUD_GEMINI',
-  'CLOUD_FALLBACK_LOCAL',
-]
+const AI_PROVIDER_VALUES: readonly AiProvider[] = ['LOCAL_OLLAMA']
 
 /** Normalize a backend AI review status. Unknown values → 'UNKNOWN' (never success). */
 export function normalizeAiReviewStatus(raw: string | null | undefined): AiReviewStatus | null {
@@ -78,8 +74,6 @@ export function normalizeAiProvider(raw: string | null | undefined): AiProvider 
 /** Human-readable provider description for AI-review status lines. */
 export function aiProviderLabel(provider: AiProvider | null | undefined): string {
   if (provider === 'LOCAL_OLLAMA') return 'local Ollama'
-  if (provider === 'CLOUD_GEMINI') return 'cloud AI (Gemini)'
-  if (provider === 'CLOUD_FALLBACK_LOCAL') return 'cloud AI with local fallback'
   return 'AI'
 }
 

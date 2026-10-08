@@ -57,7 +57,6 @@ COMPONENT_IDS = (
     "rendered_preview",
     "ollama",
     "local_model",
-    "cloud_ai",
 )
 
 REASON_APPLICATION_MIGRATION = "migration_head"
@@ -147,7 +146,6 @@ class ReadinessProbes:
     find_soffice: Callable[[], Optional[str]] = field(default=find_soffice)
     storage_root_exists: Callable[[], bool] = lambda: preview_storage.storage_root().exists()
     local_ai_enabled: bool = field(default_factory=lambda: settings.LOCAL_AI_ENABLED)
-    cloud_ai_configured: bool = field(default_factory=lambda: bool(settings.GEMINI_API_KEY))
     model_name: str = field(default_factory=lambda: settings.OLLAMA_MODEL)
 
 
@@ -308,20 +306,6 @@ async def compute_readiness(probes: ReadinessProbes) -> dict:
         components.append(_component(
             "local_model", "optional", False,
             "Local AI review is turned off in settings.",
-        ))
-
-    # -- cloud AI -------------------------------------------------------------
-    cloud_configured = probes.cloud_ai_configured
-    if cloud_configured:
-        # No paid generation request in readiness — configured state only.
-        components.append(_component(
-            "cloud_ai", "ready", False,
-            "Cloud AI review is configured.",
-        ))
-    else:
-        components.append(_component(
-            "cloud_ai", "optional", False,
-            "Cloud AI review is optional and is not configured.",
         ))
 
     overall = _overall(components)

@@ -151,7 +151,8 @@ def calculate_weighted_score_detailed(
     Args:
         violations: LayoutViolation list from the rules engine.
         citation_tip_count: Number of AI citation findings (treated as
-            MINOR citation_apa violations). Pass 0 when cloud mode is off.
+            MINOR citation_apa violations). Pass 0 when no citation
+            findings were confirmed.
 
     Returns:
         ScoreResult with .total (0-100 int), .major_count, .minor_count,

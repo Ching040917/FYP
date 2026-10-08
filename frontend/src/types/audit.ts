@@ -56,11 +56,7 @@ export type AiReviewStatus =
   | 'UNKNOWN'
 
 /** Provider path that actually executed the AI-assisted review. */
-export type AiProvider =
-  | 'LOCAL_OLLAMA'
-  | 'CLOUD_GEMINI'
-  | 'CLOUD_FALLBACK_LOCAL'
-  | 'UNKNOWN'
+export type AiProvider = 'LOCAL_OLLAMA' | 'UNKNOWN'
 
 export interface ScoreBreakdown {
   category: ScoreCategory

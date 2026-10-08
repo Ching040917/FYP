@@ -3,7 +3,6 @@ import re
 from pathlib import Path
 from typing import List, Optional, Pattern
 from pydantic_settings import BaseSettings
-from typing import Literal
 
 
 class PresetConfig:
@@ -110,9 +109,7 @@ class PresetConfig:
 
 
 class Settings(BaseSettings):
-    DEPLOY_MODE: Literal["LOCAL", "CLOUD"] = "LOCAL"
     MAX_FILE_SIZE: int = 10 * 1024 * 1024  # 10 MB
-    GEMINI_API_KEY: str = ""
     OLLAMA_HOST: str = "http://localhost:11434"
     OLLAMA_MODEL: str = "qwen3.5:4b"
     DATABASE_URL: str = "sqlite:///./audit.db"

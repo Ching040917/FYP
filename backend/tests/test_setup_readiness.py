@@ -1,10 +1,10 @@
 """Setup readiness (Build A) tests.
 
 Covers: strict schema, all-ready, causal Ollama/model dependency, optional
-neutrality (local AI off, cloud unconfigured), LibreOffice missing/error,
-preview provisional wording, database drift → blocked, cache + refresh +
-single-flight, read-only guarantees (no fs writes, no DB writes, no process
-spawns), and payload privacy (no paths/hosts/ports/env/keys/provider data).
+neutrality (local AI off), LibreOffice missing/error, preview provisional
+wording, database drift → blocked, cache + refresh + single-flight, read-only
+guarantees (no fs writes, no DB writes, no process spawns), and payload
+privacy (no paths/hosts/ports/env/keys/provider data).
 """
 import asyncio
 import json
@@ -32,7 +32,6 @@ ALL_READY = dict(
     fetch_ollama_models=lambda: _async(["qwen3.5:4b"]),
     find_soffice=lambda: r"C:\fake\soffice.com",
     local_ai_enabled=True,
-    cloud_ai_configured=False,
     model_name="qwen3.5:4b",
 )
 
@@ -53,7 +52,6 @@ def probes(**overrides):
         find_soffice=kw["find_soffice"],
         storage_root_exists=lambda: True,
         local_ai_enabled=kw["local_ai_enabled"],
-        cloud_ai_configured=kw["cloud_ai_configured"],
         model_name=kw["model_name"],
     )
 
@@ -90,12 +88,12 @@ async def test_all_components_ready_and_strict_ids():
     ids = [c["id"] for c in payload["components"]]
     assert ids == [
         "core_backend", "database", "docx_audit", "libreoffice",
-        "rendered_preview", "ollama", "local_model", "cloud_ai",
+        "rendered_preview", "ollama", "local_model",
     ]
     # Strict schema round-trip through the response model.
     resp = sr.ReadinessResponse(**payload)
     assert resp.overall == "ready"
-    assert len(resp.components) == 8
+    assert len(resp.components) == 7
     assert datetime.fromisoformat(resp.checked_at) is not None
     # checked_at is naive UTC (no tzinfo).
     assert "+" not in resp.checked_at and "Z" not in resp.checked_at
@@ -153,31 +151,6 @@ async def test_local_ai_disabled_neutral_optional_no_network_call(monkeypatch):
     assert b["local_model"]["state"] == "optional"
     assert called["n"] == 0  # no network probe when disabled
     assert payload["overall"] == "ready"
-
-
-# ---------------------------------------------------------------------------
-# Cloud AI neutrality
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_cloud_unconfigured_neutral_optional():
-    payload = await compute_readiness(probes(cloud_ai_configured=False))
-    c = by_id(payload)["cloud_ai"]
-    assert c["state"] == "optional"
-    assert c["required"] is False
-    assert c["message"] == "Cloud AI review is optional and is not configured."
-
-
-@pytest.mark.asyncio
-async def test_cloud_configured_reports_ready_without_generation_call(monkeypatch):
-    import urllib.request
-    monkeypatch.setattr(urllib.request, "urlopen",
-                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("paid call")))
-    payload = await compute_readiness(probes(cloud_ai_configured=True))
-    c = by_id(payload)["cloud_ai"]
-    assert c["state"] == "ready"
-    assert c["required"] is False
 
 
 # ---------------------------------------------------------------------------
@@ -478,6 +451,7 @@ def test_endpoint_all_ready_shape(api_client):
     body = resp.json()
     assert body["overall"] == "ready"
     ids = {c["id"] for c in body["components"]}
-    assert len(ids) == 8
+    assert len(ids) == 7
+    assert "cloud_ai" not in ids
     raw = json.dumps(body).lower()
     assert "localhost" not in raw and "11434" not in raw

@@ -57,7 +57,6 @@ def configure_launcher_environment(root: Path):
     db_path = root / "audit.db"
     os.environ["DATABASE_URL"] = _sqlite_url(db_path)
     os.environ["PREVIEW_STORAGE_DIR"] = str(root / "rendered-previews")
-    os.environ.setdefault("GEMINI_API_KEY", "")
 
 
 def get_log_dir(root: Path) -> Path:

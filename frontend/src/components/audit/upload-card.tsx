@@ -1,5 +1,5 @@
 /**
- * Upload card — Build 6: dropzone, file chip, cloud toggle, merged profile
+ * Upload card — Build 6: dropzone, file chip, merged profile
  * selector (built-in + backend-confirmed custom), store-backed selection, and
  * submit-time frozen-request submission.
  *
@@ -16,8 +16,6 @@ import {
   X,
   ShieldCheck,
   Loader2,
-  Cloud,
-  CloudOff,
   Info,
   RefreshCw,
 } from 'lucide-react'
@@ -40,7 +38,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '../ui/select'
-import { Switch } from '../ui/switch'
 import { Label } from '../ui/label'
 import { Badge } from '../ui/badge'
 import { cn } from '../../lib/utils'
@@ -72,11 +69,9 @@ const MAX_SIZE_BYTES = MAX_SIZE_MB * 1024 * 1024
 const SAMPLE_PATH = '/samples/sample-thesis.docx'
 
 export interface UploadCardProps {
-  onResult: (result: AuditResult, cloudEnabled: boolean) => void
+  onResult: (result: AuditResult) => void
   onReset?: () => void
   trySampleSignal?: number
-  /** Derived from Dashboard's Readiness result: true only when cloud_ai is ready. */
-  cloudAvailable?: boolean | null
   /**
    * Post-audit navigation: the Dashboard passes a value tied to lastAuditId so
    * a completed Audit shows a persistent "View audit" action in its completion
@@ -89,10 +84,9 @@ export interface UploadCardProps {
   onDismissCompletion?: () => void
 }
 
-export function UploadCard({ onResult, onReset, trySampleSignal = 0, cloudAvailable }: UploadCardProps) {
+export function UploadCard({ onResult, onReset, trySampleSignal = 0 }: UploadCardProps) {
   const { showToast } = useToast()
   const [file, setFile] = React.useState<File | null>(null)
-  const [cloudEnabled, setCloudEnabled] = React.useState(false)
   const [isDragging, setIsDragging] = React.useState(false)
   const [isUploading, setIsUploading] = React.useState(false)
   const [profiles, setProfiles] = React.useState<FormattingProfile[]>([])
@@ -106,24 +100,6 @@ export function UploadCard({ onResult, onReset, trySampleSignal = 0, cloudAvaila
   const [envelopeRevision, setEnvelopeRevision] = React.useState<number>(0)
   const [customProfilesWarning, setCustomProfilesWarning] = React.useState<string | null>(null)
   const firstVisitRef = React.useRef(true)
-  const cloudAvailableRef = React.useRef<boolean | null>(cloudAvailable ?? null)
-  React.useEffect(() => {
-    cloudAvailableRef.current = cloudAvailable ?? null
-  }, [cloudAvailable])
-
-  const isCloudAvailable = cloudAvailable === true
-
-  // Cloud switch may be enabled only when cloud_ai.state === "ready".
-  // If Cloud becomes unavailable (optional/unavailable/misconfigured/
-  // unknown/checking/error) while ON, force it Off before any future
-  // submission — preserve DOCX and Profile, keep Run Audit enabled, never
-  // auto-enable Cloud.
-  React.useEffect(() => {
-    if (!isCloudAvailable && cloudEnabled) {
-      setCloudEnabled(false)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isCloudAvailable])
 
   const setSelection = React.useCallback((v: string | null) => {
     setSelectedValue(v)
@@ -396,10 +372,9 @@ export function UploadCard({ onResult, onReset, trySampleSignal = 0, cloudAvaila
       setIsUploading(true)
       try {
         const baseOpts: {
-          cloud?: boolean
           profileId?: string
           customProfile?: Record<string, unknown>
-        } = { cloud: cloudAvailableRef.current === true ? cloudEnabled : false }
+        } = {}
         if (frozen.kind === 'builtin') baseOpts.profileId = frozen.profileId
         else if (frozen.kind === 'custom') baseOpts.customProfile = frozen.payload
         const raw = await api.auditDocument(target, baseOpts)
@@ -408,7 +383,7 @@ export function UploadCard({ onResult, onReset, trySampleSignal = 0, cloudAvaila
           `Audit complete. Score: ${result.weighted_compliance_score}/100 for enabled checks · ${result.major_count} major · ${result.minor_count} minor`,
           'success',
         )
-        onResult(result, cloudEnabled)
+        onResult(result)
       } catch (err) {
         const message =
           err instanceof Error ? err.message : 'Unknown error during upload.'
@@ -417,7 +392,7 @@ export function UploadCard({ onResult, onReset, trySampleSignal = 0, cloudAvaila
         setIsUploading(false)
       }
     },
-    [cloudEnabled, loadEnvelopeState, onResult, profiles, showToast, tryPersistSelection],
+    [loadEnvelopeState, onResult, profiles, showToast, tryPersistSelection],
   )
 
   const onUpload = () => {
@@ -531,7 +506,7 @@ export function UploadCard({ onResult, onReset, trySampleSignal = 0, cloudAvaila
             <CardTitle className="text-base font-semibold">Start an audit</CardTitle>
             <CardDescription>
               Upload a .docx thesis or report for supported formatting checks. Deterministic
-              validation runs locally by default.
+              validation runs locally.
             </CardDescription>
           </div>
           <Badge
@@ -778,40 +753,6 @@ export function UploadCard({ onResult, onReset, trySampleSignal = 0, cloudAvaila
               })()}
             </div>
           )}
-        </div>
-
-        <div className="flex items-start justify-between gap-3 rounded-md border border-border bg-input/20 px-3 py-2.5">
-          <div className="flex items-start gap-2.5">
-            {cloudEnabled ? (
-              <Cloud className="mt-0.5 h-4 w-4 text-primary" aria-hidden="true" />
-            ) : (
-              <CloudOff className="mt-0.5 h-4 w-4 text-muted-foreground" aria-hidden="true" />
-            )}
-            <div>
-              <Label htmlFor="cloud-toggle" className="text-sm font-medium cursor-pointer">
-                Use cloud AI-assisted review
-              </Label>
-              <p className="mt-0.5 flex items-start gap-1 text-xs leading-[16px] text-muted-foreground">
-                <Info className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
-                Local AI is used by default when available.
-              </p>
-              {!isCloudAvailable && (
-                <p
-                  role="status"
-                  aria-live="polite"
-                  className="mt-1 text-xs leading-[16px] text-muted-foreground"
-                >
-                  Cloud AI review is unavailable.
-                </p>
-              )}
-            </div>
-          </div>
-          <Switch
-            id="cloud-toggle"
-            checked={cloudEnabled && isCloudAvailable}
-            onCheckedChange={setCloudEnabled}
-            disabled={isUploading || !isCloudAvailable}
-          />
         </div>
 
         <Button
