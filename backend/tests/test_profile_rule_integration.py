@@ -530,3 +530,107 @@ def test_historical_snapshot_immutable_and_no_rescore(client, test_engine):
     assert get["weighted_score"] == 70
     codes = {v["rule_code"] for v in get["violations"]}
     assert "MARGIN_LEFT" in codes
+
+
+# ---------------------------------------------------------------------------
+# Citation ↔ Reference List matching toggles (citation reference build)
+# ---------------------------------------------------------------------------
+
+def _custom_citation_profile(**overrides):
+    """Custom profile with the SUC requirements and explicit citation toggles."""
+    profile = new_custom_profile("Citation Controls", base=get_builtin_profile(SUC_PROFILE_ID))
+    for name, value in overrides.items():
+        setattr(profile.citation_matching, name, value)
+    return profile
+
+
+def _post_with_profile(client, docx_factory, profile, **docx_kw):
+    import json
+
+    custom = profile.to_dict()
+    custom["profile_id"] = "custom-citation-controls"
+    custom["profile_source"] = "custom"
+    kwargs = dict(
+        paragraphs=["Smith (2020) reported the finding."],
+        references=["Smith, J. (2020). On things. Press.", "Jones, A. (2019). Other. Press."],
+    )
+    kwargs.update(docx_kw)
+    resp = client.post(
+        "/api/audit",
+        data={"custom_profile": json.dumps(custom)},
+        files={"file": ("cite.docx", docx_factory(**kwargs), "application/octet-stream")},
+    )
+    assert resp.status_code == 200
+    return resp.json()
+
+
+def test_uncited_reference_rule_round_trips_profile_to_engine(client, docx_factory):
+    """Enabling the uncited-entry check in a custom profile reaches the engine
+    through the persisted snapshot and emits REFERENCE_NOT_CITED."""
+    body = _post_with_profile(
+        client, docx_factory,
+        _custom_citation_profile(check_references_are_cited=True),
+    )
+    codes = [(v["rule_code"], v["severity"]) for v in body["physical_layout_errors"]]
+    assert ("REFERENCE_NOT_CITED", "MINOR") in codes
+    # The stored snapshot carries the toggle.
+    assert body["profile_snapshot"]["citation_matching"]["check_references_are_cited"] is True
+
+
+def test_default_profile_does_not_report_uncited_entries(client, docx_factory):
+    body = _post_with_profile(client, docx_factory, _custom_citation_profile())
+    codes = [v["rule_code"] for v in body["physical_layout_errors"]]
+    assert "REFERENCE_NOT_CITED" not in codes
+    assert codes == []  # clean document under the citation rules by default
+
+
+def test_all_toggles_off_removes_citation_findings_through_the_api(client, docx_factory):
+    """Every citation control off ⇒ the deterministic citation findings vanish
+    for the same document that produced them with the defaults."""
+    docx_kw = dict(
+        paragraphs=["Smith (2020) reported the finding."],
+        references=["Jones, A. (2019). Other things. Press."],
+    )
+    with_defaults = _post_with_profile(client, docx_factory, _custom_citation_profile(), **docx_kw)
+    assert [v["rule_code"] for v in with_defaults["physical_layout_errors"]] == ["CITATION_MISMATCH"]
+
+    all_off = _custom_citation_profile(
+        check_citations_have_references=False,
+        check_references_are_cited=False,
+        check_author_year_consistency=False,
+        check_year_suffixes=False,
+        check_duplicate_references=False,
+        flag_ambiguous_matches=False,
+        allow_personal_communication=False,
+    )
+    off_body = _post_with_profile(client, docx_factory, all_off, **docx_kw)
+    assert [
+        v for v in off_body["physical_layout_errors"]
+        if "CITATION" in v["rule_code"] or "REFERENCE" in v["rule_code"]
+    ] == []
+    # Snapshot normalization: dependent toggles are stored off behind the parent.
+    snapshot = off_body["profile_snapshot"]["citation_matching"]
+    assert snapshot == {
+        "check_citations_have_references": False,
+        "check_references_are_cited": False,
+        "check_author_year_consistency": False,
+        "check_year_suffixes": False,
+        "check_duplicate_references": False,
+        "flag_ambiguous_matches": False,
+        "allow_personal_communication": False,
+    }
+
+
+def test_ambiguous_match_reports_review_without_changing_the_score(client, docx_factory):
+    body = _post_with_profile(
+        client, docx_factory,
+        _custom_citation_profile(),
+        paragraphs=["Confirmed earlier (Smith, 2024)."],
+        references=["Smith, A. (2020). First work. Press.", "Smith, B. (2019). Second work. Press."],
+    )
+    findings = [(v["rule_code"], v["severity"]) for v in body["physical_layout_errors"]]
+    assert findings == [("CITATION_REFERENCE_AMBIGUOUS", "REVIEW")]
+    assert body["weighted_compliance_score"] == 100
+    assert body["major_count"] == 0 and body["minor_count"] == 0
+    apa = next(b for b in body["score_breakdown"] if b["category"] == "citation_apa")
+    assert apa["deduction"] == 0
