@@ -62,14 +62,36 @@ def test_citation_mismatch_included_in_engine_output(docx_factory):
         "Intro paragraph.",
         "Orphan (Garcia, 2018) text.",
     ]
-    # no references header at all -> orphan flagged
-    file_bytes = docx_factory(paragraphs=body, references=None)
+    # the bibliography exists but does not list Garcia -> orphan flagged
+    file_bytes = docx_factory(
+        paragraphs=body, references=["Other, X. (2020). Unrelated entry. Press."]
+    )
     viols = run_static_rules_engine(file_bytes)
     codes = [v.rule_code for v in viols]
     assert "CITATION_MISMATCH" in codes
     cm = next(v for v in viols if v.rule_code == "CITATION_MISMATCH")
     assert cm.severity == "MAJOR"
     assert "Garcia" in cm.message
+
+
+def test_missing_references_section_is_one_root_finding(docx_factory):
+    """A document with citations and no References section reports ONE
+    document-wide finding — never one MAJOR finding per citation."""
+    body = [
+        "Intro paragraph.",
+        "Orphan (Garcia, 2018) text.",
+        "Another (Lee, 2019) text.",
+    ]
+    file_bytes = docx_factory(paragraphs=body, references=None)
+    citation_findings = [
+        v for v in run_static_rules_engine(file_bytes)
+        if v.rule_code == "CITATION_MISMATCH"
+    ]
+    assert len(citation_findings) == 1
+    root = citation_findings[0]
+    assert root.severity == "MAJOR"
+    assert root.location == {"paragraph_index": None, "citation_count": 2}
+    assert "2 in-text citation(s)" in root.message
 
 
 def test_present_citation_not_flagged(docx_factory):

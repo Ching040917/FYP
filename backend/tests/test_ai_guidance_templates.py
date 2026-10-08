@@ -446,7 +446,10 @@ def test_post_assembles_structured_guidance(client, docx_factory, monkeypatch):
 
     monkeypatch.setattr(api_routes, "async_ai_citation_task", _real)
 
-    file_bytes = docx_factory(paragraphs=["Orphan (Garcia, 2018) text."], references=None)
+    file_bytes = docx_factory(
+        paragraphs=["Orphan (Garcia, 2018) text."],
+        references=["Other, X. (2020). Unrelated entry. Press."],
+    )
     post = client.post(
         "/api/audit",
         files={"file": ("t.docx", file_bytes, "application/octet-stream")},

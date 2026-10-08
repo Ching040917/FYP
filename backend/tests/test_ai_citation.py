@@ -859,9 +859,14 @@ async def test_score_unchanged_with_same_paragraph_findings(client, docx_factory
 
     monkeypatch.setattr(api_routes, "async_ai_citation_task", _fake_guidance)
 
-    # Doc with 2 CITATION_MISMATCH in same paragraph + margin violation
+    # Doc with 2 CITATION_MISMATCH in same paragraph + margin violation.
+    # The bibliography exists but lists neither cited author.
     body = ["Para with (Smith, 2020) and (Jones, 2019)."]
-    file_bytes = docx_factory(paragraphs=body, references=None, margins={"left": 1.0, "right": 1.0, "top": 1.0, "bottom": 1.0})
+    file_bytes = docx_factory(
+        paragraphs=body,
+        references=["Other, X. (2020). Unrelated entry. Press."],
+        margins={"left": 1.0, "right": 1.0, "top": 1.0, "bottom": 1.0},
+    )
     resp = client.post("/api/audit", files={"file": ("t.docx", file_bytes, "application/octet-stream")})
     assert resp.status_code == 200
     data = resp.json()

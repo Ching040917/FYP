@@ -1,17 +1,40 @@
-"""
-Pure-Python fallback for APA in-text citation detection.
+"""Deterministic APA in-text citation ↔ Reference List sensor.
 
-No LLM dependency. Regex-scans paragraphs for APA citation patterns,
-extracts a References/Bibliography block at the end of the document,
-and flags in-text citations whose author surname does not appear in
-the References block.
+No LLM dependency. Scans body paragraphs for APA author–year citations,
+parses the References/Bibliography block into normalized entries, and
+compares both directions:
+
+  citations → entries : CITATION_MISMATCH (MAJOR),
+                        CITATION_REFERENCE_MISMATCH (MAJOR),
+                        CITATION_YEAR_SUFFIX_MISMATCH (MINOR),
+                        CITATION_REFERENCE_AMBIGUOUS (REVIEW);
+  entries → citations : REFERENCE_NOT_CITED (MINOR),
+                        REFERENCE_DUPLICATE (MINOR).
+
+Missing References section → exactly one MAJOR CITATION_MISMATCH root
+finding (no per-citation duplicates).
+
+Everything here is deterministic and regex/structural: no fuzzy matching, no
+similarity thresholds, no AI detection, no source invention. Profile toggles
+(`config`, an EffectiveProfileConfig) enable/disable rules; severity is fixed
+per rule and never configurable.
 
 Output: LayoutViolation list compatible with the static rules engine.
 """
 import re
-from typing import List, Dict, Any, Set, Optional
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 from docx import Document
+
+from app.services.citation_matching import (
+    CitationMatchingRules,
+    CitationRef,
+    RULE_CITATION_MISMATCH,
+    build_reference_index,
+    make_key,
+    match,
+)
 from app.services.layout_violation import LayoutViolation
 
 
@@ -19,6 +42,8 @@ from app.services.layout_violation import LayoutViolation
 # - One or more capitalized surnames joined by '&' or the word 'and'.
 # - Group 1 captures the full chain; primary surname = first token before '&'/'and'.
 # - Optional comma + page/locator after year, e.g.  "Smith (2020, p. 12)"
+# Kept verbatim: the narrative-chain parser below is a superset (it also
+# accepts "et al." and "n.d."), and this pattern is the documented baseline.
 NARRATIVE_PATTERN = re.compile(
     r"\b([A-Z][a-zA-ZÀ-ſ'\-]+(?:\s*(?:&|and)\s+[A-Z][a-zA-ZÀ-ſ'\-]+)*)\s*"
     r"\((\d{4}[a-z]?)(?:,\s*[^)]*)?\)"
@@ -51,6 +76,69 @@ _NUMERIC_SECTION_PREFIX = re.compile(r"^\d+(?:\.\d+)*\.?\s+")
 APPENDIX_HEADER_PATTERN = re.compile(r"^appendix\b", re.IGNORECASE)
 
 
+# ---------------------------------------------------------------------------
+# Container / item patterns (superset of the two baseline patterns above)
+# ---------------------------------------------------------------------------
+
+# Parenthetical container. Bounded at 300 characters: longer parentheticals
+# are prose (or data dumps), never citation lists. Nested parentheses are not
+# consumed — an inner citation is found by its own container match.
+_PAREN_CONTAINER = re.compile(r"\(([^()]{1,300})\)")
+
+# One item inside a parenthetical container, anchored: surname chain + comma +
+# year (4 digits with optional suffix, or "n.d.") + optional locator tail.
+# The tail may not cross an item separator (';').
+_PAREN_ITEM = re.compile(
+    r"\s*([A-Z][A-Za-zÀ-ſ'\-]+)"
+    r"(?:\s*(?:[Ee]t\s+[Aa][Ll]\.|(?:&|and)\s+[A-Z][A-Za-zÀ-ſ'\-]+))*"
+    r"\s*,\s*(\d{4}[a-z]?|n\.d\.)"
+    r"(?:\s*,\s*[^;]*)?\s*"
+)
+
+# Narrative item: author chain immediately followed by a parenthesized year.
+# The chain accepts "A", "A & B", "A and B", "A et al." and combinations.
+_NARRATIVE_ITEM = re.compile(
+    r"\b([A-Z][A-Za-zÀ-ſ'\-]+"
+    r"(?:\s*(?:&|and)\s+[A-Z][A-Za-zÀ-ſ'\-]+|\s+[Ee]t\s+[Aa][Ll]\.)*)"
+    r"\s*\((\d{4}[a-z]?|n\.d\.)(?:\s*,\s*[^)]*)?\)"
+)
+
+# Any capitalized token — used ONLY to collect exemption names from
+# personal-communication / "as cited in" material.
+_SURNAME_TOKEN = re.compile(r"[A-Z][A-Za-zÀ-ſ'\-]+")
+_EXEMPT_IGNORE_TOKENS = frozenset({"personal", "communication"})
+
+# Parentheticals that carry a URL/DOI are data references, never citations.
+_URL_GUARD = re.compile(r"https?://|www\.|\bdoi\b|10\.\d{4}/", re.IGNORECASE)
+
+# Chain starts that are document furniture, not authors: "Table 2 (2020)".
+_STOPWORD_CHAIN_STARTS = frozenset({
+    "table", "figure", "appendix", "section", "chapter", "equation", "note",
+    "page", "step", "phase", "version", "source", "box", "exhibit", "column",
+    "row", "item", "part", "annex", "schedule", "act", "regulation",
+    "standard",
+})
+
+# Roles whose paragraphs are bibliography/furniture data, not body citations.
+_CITATION_EXCLUDED_ROLES = frozenset({
+    "REFERENCE_ENTRY", "REFERENCES_HEADING", "APPENDIX_HEADING",
+    "APPENDIX_BODY", "EMPTY", "FIELD_ONLY",
+})
+
+# Any 4-digit year inside a personal-communication parenthetical.
+_ANY_YEAR = re.compile(r"\b(\d{4})\b")
+
+# The author chain that a personal-communication parenthetical names:
+# "(J. Smith, personal communication, ...)" / "(Smith & Jones, personal …)".
+_PC_AUTHOR_CHAIN = re.compile(
+    r"([A-Z][A-Za-zÀ-ſ'\-]+(?:\s*(?:&|and)\s+[A-Z][A-Za-zÀ-ſ'\-]+)*)"
+    r"\s*,\s*personal\s+communication",
+    re.IGNORECASE,
+)
+
+_CHAIN_SPLIT = re.compile(r"\s+(?:&|and)\s+|\s+[Ee]t\s+[Aa][Ll]\.")
+
+
 def _is_references_header(text: str) -> bool:
     """True when a paragraph is a References/Bibliography section header.
 
@@ -65,31 +153,12 @@ def _is_references_header(text: str) -> bool:
     return bool(REFERENCES_HEADER_PATTERN.match(candidate))
 
 
-def _make_violation(
-    author: str,
-    year: str,
-    paragraph_index: int,
-    text_snippet: str,
-) -> LayoutViolation:
-    """Build a CITATION_MISMATCH LayoutViolation for an orphan citation."""
-    return LayoutViolation(
-        rule_code="CITATION_MISMATCH",
-        severity="MAJOR",
-        location={"paragraph_index": paragraph_index},
-        message=(
-            f"Citation '{author} ({year})' was found in text, "
-            f"but no matching entry was found in the References bibliography."
-        ),
-        expected_value=f"Reference entry for {author}",
-        actual_value=text_snippet[:120],
-    )
-
-
 def _find_references_start(paragraphs: List[Dict[str, Any]]) -> Optional[int]:
     """Return the index of the first paragraph that is a References header.
 
-    Returns None when no header exists — the safe default is to treat the
-    whole document as body text (every citation is then an orphan).
+    Returns None when no header exists — the sensor then reports a single
+    root finding (the citations exist but there is nothing to compare them
+    against) instead of one finding per citation.
     """
     for para in paragraphs:
         if _is_references_header(para.get("text")):
@@ -97,167 +166,247 @@ def _find_references_start(paragraphs: List[Dict[str, Any]]) -> Optional[int]:
     return None
 
 
-def _scan_paragraphs_for_citations(
-    paragraphs: List[Dict[str, Any]],
-    stop_at: Optional[int] = None,
-) -> List[Dict[str, Any]]:
-    """Walk paragraphs, run both regex patterns, collect (author, year, idx, snippet).
+def reference_entry_paragraphs(paragraphs: List[Dict[str, Any]]) -> List[Tuple[int, str]]:
+    """Return (paragraph_index, text) pairs of the bibliography block.
 
-    Multiple matches in one paragraph are allowed (different works in same paragraph).
-    Scanning stops at the References section (stop_at): reference entries and any
-    appendix/manifest text after the header are bibliography data, not body
-    citations — scanning them fabricates duplicate or false findings.
+    The block starts AFTER the References header paragraph and ends at the
+    first Appendix heading. Paragraph identity is preserved so findings can
+    point at the exact entry paragraph.
     """
-    findings: List[Dict[str, Any]] = []
-    seen_in_para: Set[tuple] = set()  # de-dupe (author, year, para_idx)
-
-    for para in paragraphs:
-        idx = para.get("index")
-        if stop_at is not None and idx >= stop_at:
-            continue
-        text = para.get("text", "") or ""
-        if not text:
-            continue
-
-        for match in NARRATIVE_PATTERN.finditer(text):
-            author = match.group(1)
-            year = match.group(2)
-            # Multi-author narrative cites (Taylor & Green, Smith and Jones)
-            # match the bibliography on the PRIMARY surname only — APA permits
-            # secondary authors not to appear independently in the reference list.
-            primary_author = re.split(r"\s+(?:&|and)\s+", author)[0]
-            key = (primary_author.lower(), year, idx)
-            if key in seen_in_para:
-                continue
-            seen_in_para.add(key)
-            findings.append({
-                "author": author,
-                "primary_author": primary_author,
-                "year": year,
-                "paragraph_index": idx,
-                "snippet": match.group(0),
-            })
-
-        for match in PARENTHETICAL_PATTERN.finditer(text):
-            author = match.group(1)
-            year = match.group(2)
-            # Group 1 of PARENTHETICAL_PATTERN is the first surname only
-            # (subsequent authors live in optional non-capturing groups),
-            # so `author` is already the primary author — no split needed.
-            key = (author.lower(), year, idx)
-            if key in seen_in_para:
-                continue
-            seen_in_para.add(key)
-            findings.append({
-                "author": author,
-                "primary_author": author,
-                "year": year,
-                "paragraph_index": idx,
-                "snippet": match.group(0),
-            })
-
-    return findings
-
-
-def _extract_references_block(
-    paragraphs: List[Dict[str, Any]],
-    start_idx: Optional[int] = None,
-) -> str:
-    """Return concatenated text from the References section onward.
-
-    Detection rule: first paragraph whose trimmed text matches a known
-    references header marks the start. Everything after that paragraph
-    (until end of doc) is treated as the bibliography.
-
-    If no header is found, returns empty string — sensor then treats
-    every citation as orphan, which is the safe default.
-    """
-    if start_idx is None:
-        start_idx = _find_references_start(paragraphs)
-    if start_idx is None:
-        return ""
-
-    parts = []
-    for para in paragraphs:
-        if para.get("index", -1) >= start_idx:
-            text = (para.get("text") or "").strip()
-            if not text:
-                continue
-            # An Appendix heading ends the bibliography: reference entries
-            # live between the References header and the first appendix.
-            if APPENDIX_HEADER_PATTERN.match(text):
-                break
-            parts.append(text)
-    return "\n".join(parts)
-
-
-# First alphabetic run of a reference line — the surname. Hyphens and
-# apostrophes are kept so hyphenated/O'Brien surnames match their in-text
-# forms.
-_SURNAME_RUN = re.compile(r"[A-Za-zÀ-ſ][A-Za-zÀ-ſ'\-]*")
-
-
-def _extract_surname_token(line: str) -> Optional[str]:
-    """First alphabetic token of a reference entry, junk-stripped.
-
-    APA entries start with the surname, optionally prefixed by list
-    numbering or bullets ("1. Smith, J. (2020)..."). The first alphabetic
-    run of the line is the surname: leading numerals, bullets, and
-    punctuation are skipped entirely, so numbered reference lists resolve
-    to "Smith" instead of being dropped from the index (which would turn a
-    valid citation into a false CITATION_MISMATCH).
-    """
-    match = _SURNAME_RUN.search(line)
-    if not match:
-        return None
-    return match.group(0)
-
-
-def _build_references_index(references_text: str) -> Set[str]:
-    """Build a set of normalized surname tokens present in the References block.
-
-    Strategy: take the first token of each non-empty line, skipping any
-    leading numbering/bullets — this works for common APA layouts
-    ("Surname, F. M." and "1. Surname, F. M."). Surnames are lowercased
-    for case-insensitive matching.
-    """
-    index: Set[str] = set()
-    for line in references_text.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        surname = _extract_surname_token(line)
-        if surname:
-            index.add(surname.lower())
-    return index
-
-
-def run_citation_sensor(doc: Document, paragraphs: List[Dict[str, Any]]) -> List[LayoutViolation]:
-    """Entry point: run regex-based citation scan, return LayoutViolations.
-
-    Detects in-text APA citations and cross-references them against the
-    document's References/Bibliography block. Each orphan citation becomes
-    a MAJOR Violation with rule_code 'CITATION_MISMATCH'.
-    """
-    ref_start = _find_references_start(paragraphs)
-    findings = _scan_paragraphs_for_citations(paragraphs, stop_at=ref_start)
-    if not findings:
+    start = _find_references_start(paragraphs)
+    if start is None:
         return []
 
-    references_text = _extract_references_block(paragraphs, start_idx=ref_start)
-    references_index = _build_references_index(references_text)
+    entries: List[Tuple[int, str]] = []
+    for para in paragraphs:
+        idx = para.get("index")
+        if idx is None or idx <= start:
+            continue
+        text = (para.get("text") or "").strip()
+        if not text:
+            continue
+        # An Appendix heading ends the bibliography: reference entries live
+        # between the References header and the first appendix.
+        if APPENDIX_HEADER_PATTERN.match(text):
+            break
+        entries.append((idx, text))
+    return entries
 
-    violations: List[LayoutViolation] = []
-    for finding in findings:
-        # Cross-reference: every in-text citation must trace to a References entry
-        # by its primary author surname (case-insensitive). Multi-author cites
-        # (Taylor & Green) match on the first surname only — APA permits the
-        # secondary author not to appear independently in the reference list.
-        if finding["primary_author"].lower() not in references_index:
-            violations.append(_make_violation(
-                author=finding["author"],
-                year=finding["year"],
-                paragraph_index=finding["paragraph_index"],
-                text_snippet=finding["snippet"],
-            ))
+
+def _exempt_names_in(text: str) -> Set[str]:
+    """Author keys named inside exempt material (personal comm / as cited in)."""
+    return {
+        token for token in _SURNAME_TOKEN.findall(text)
+        if token.casefold() not in _EXEMPT_IGNORE_TOKENS
+    }
+
+
+def _personal_communication_names(text: str) -> List[str]:
+    """Author names a personal-communication parenthetical attributes."""
+    names: List[str] = []
+    for chain in _PC_AUTHOR_CHAIN.findall(text):
+        names.extend(part.strip() for part in _CHAIN_SPLIT.split(chain) if part.strip())
+    return names
+
+
+def _personal_communication_exemptions(text: str) -> Set[str]:
+    """Names exempted by personal-communication material."""
+    names = set(_personal_communication_names(text))
+    return names or _exempt_names_in(text)
+
+
+def _primary_surname(chain: str) -> str:
+    """First surname of a narrative chain ("Taylor & Green" -> "Taylor")."""
+    return _CHAIN_SPLIT.split(chain)[0]
+
+
+@dataclass
+class CitationScan:
+    """Result of scanning one paragraph."""
+    citations: List[CitationRef] = field(default_factory=list)
+    exempt_author_keys: Set[str] = field(default_factory=set)
+
+
+def _parse_parenthetical_items(
+    content: str,
+    whole_match: str,
+    paragraph_index: Optional[int],
+) -> List[CitationRef]:
+    """Parse the ';'-separated items of one parenthetical container.
+
+    A single item that spans the whole container keeps the container's exact
+    source span as evidence ("(Garcia, 2018)"); grouped items keep their own
+    item text (the parentheses belong to the group, not to one citation).
+    """
+    segments = content.split(";")
+    parsed: List[Tuple[str, str, str]] = []
+    for segment in segments:
+        item = segment.strip()
+        if not item:
+            continue
+        m = _PAREN_ITEM.fullmatch(item)
+        if not m:
+            continue
+        parsed.append((item, m.group(1), m.group(2)))
+
+    if not parsed:
+        return []
+
+    single = len(parsed) == 1 and len(segments) == 1
+    return [
+        CitationRef(
+            author_display=surname,
+            key=make_key(surname, year),
+            paragraph_index=paragraph_index,
+            snippet=whole_match if single else item_text,
+        )
+        for item_text, surname, year in parsed
+    ]
+
+
+def _personal_communication_items(
+    content: str,
+    whole_match: str,
+    paragraph_index: Optional[int],
+) -> List[CitationRef]:
+    """Citations from a personal-communication parenthetical when the
+    profile does NOT allow them: each named author is checked as a normal
+    in-text citation against the Reference List."""
+    years = _ANY_YEAR.findall(content)
+    if not years:
+        return []
+    year = years[-1]
+    return [
+        CitationRef(
+            author_display=name,
+            key=make_key(name, year),
+            paragraph_index=paragraph_index,
+            snippet=whole_match,
+        )
+        for name in _personal_communication_names(content)
+    ]
+
+
+def scan_citations(
+    text: str,
+    paragraph_index: Optional[int] = None,
+    rules: Optional[CitationMatchingRules] = None,
+) -> CitationScan:
+    """Scan one paragraph for in-text citations + exemption names.
+
+    Guards: parentheticals longer than 300 characters, parentheticals
+    carrying a URL/DOI, and document-furniture chains ("Table (2020)") never
+    become citations. Personal-communication and "as cited in" material is
+    exempted (and contributes names to the REFERENCE_NOT_CITED exemption set)
+    unless the profile disallows personal communications.
+    """
+    rules = rules or CitationMatchingRules()
+    scan = CitationScan()
+    if not text:
+        return scan
+
+    consumed: List[Tuple[int, int]] = []
+
+    for container in _PAREN_CONTAINER.finditer(text):
+        content = container.group(1)
+        if _URL_GUARD.search(content):
+            continue
+        lowered = content.casefold()
+        whole_match = container.group(0)
+        if "as cited in" in lowered:
+            scan.exempt_author_keys |= _exempt_names_in(content)
+            continue
+        if "personal communication" in lowered:
+            if rules.allow_personal_communication:
+                scan.exempt_author_keys |= _personal_communication_exemptions(content)
+                continue
+            items = _personal_communication_items(content, whole_match, paragraph_index)
+        else:
+            items = _parse_parenthetical_items(content, whole_match, paragraph_index)
+        if items:
+            consumed.append(container.span())
+            scan.citations.extend(items)
+
+    for m in _NARRATIVE_ITEM.finditer(text):
+        start = m.start()
+        if any(s <= start < e for s, e in consumed):
+            continue
+        whole_match = m.group(0)
+        lowered = whole_match.casefold()
+        if "as cited in" in lowered:
+            scan.exempt_author_keys |= _exempt_names_in(whole_match)
+            continue
+        if "personal communication" in lowered:
+            if rules.allow_personal_communication:
+                scan.exempt_author_keys |= _personal_communication_exemptions(whole_match)
+                continue
+        chain, year = m.group(1), m.group(2)
+        primary = _primary_surname(chain)
+        if primary.casefold() in _STOPWORD_CHAIN_STARTS:
+            continue
+        scan.citations.append(CitationRef(
+            author_display=chain,
+            key=make_key(primary, year),
+            paragraph_index=paragraph_index,
+            snippet=whole_match,
+        ))
+
+    return scan
+
+
+def _missing_section_violation(citation_count: int) -> LayoutViolation:
+    """One root finding for a document with citations and no References."""
+    return LayoutViolation(
+        rule_code=RULE_CITATION_MISMATCH,
+        severity="MAJOR",
+        location={"paragraph_index": None, "citation_count": citation_count},
+        message=(
+            f"No References section was found, so {citation_count} in-text "
+            f"citation(s) could not be checked."
+        ),
+        expected_value="References section",
+        actual_value=None,
+    )
+
+
+def run_citation_sensor(
+    doc: Document,
+    paragraphs: List[Dict[str, Any]],
+    config: Any = None,
+    roles: Optional[Sequence[Optional[str]]] = None,
+) -> List[LayoutViolation]:
+    """Entry point: detect in-text citations and compare them with the
+    Reference List in both directions.
+
+    `config` (optional) supplies the profile toggles (CITATION_* attributes
+    on EffectiveProfileConfig); `roles` (optional) excludes bibliography and
+    furniture paragraphs from citation scanning. `doc` is accepted for
+    signature compatibility with the rules engine; detection is purely
+    paragraph-text based.
+    """
+    rules = CitationMatchingRules.from_config(config)
+    ref_start = _find_references_start(paragraphs)
+
+    citations: List[CitationRef] = []
+    exemptions: Set[str] = set()
+    for position, para in enumerate(paragraphs):
+        if roles is not None and position < len(roles) and roles[position] in _CITATION_EXCLUDED_ROLES:
+            continue
+        idx = para.get("index")
+        if ref_start is not None and idx is not None and idx >= ref_start:
+            continue
+        text = para.get("text") or ""
+        if not text:
+            continue
+        scan = scan_citations(text, idx, rules)
+        citations.extend(scan.citations)
+        exemptions |= scan.exempt_author_keys
+
+    if ref_start is None:
+        if not rules.check_citations_have_references or not citations:
+            return []
+        return [_missing_section_violation(len(citations))]
+
+    index = build_reference_index(reference_entry_paragraphs(paragraphs))
+    violations, _ = match(citations, index, rules, exemptions)
     return violations

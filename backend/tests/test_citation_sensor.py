@@ -109,17 +109,23 @@ def test_missing_from_references_flagged_major():
     assert "2020" in viols[0].message
 
 
-def test_no_references_header_flags_every_citation():
+def test_no_references_header_reports_one_root_finding():
+    """No References header means nothing to compare against: ONE root
+    finding (never one MAJOR finding per citation)."""
     doc = Document()
     doc.add_paragraph("Body line.")
     doc.add_paragraph("Smith (2020) wrote about it.")
     doc.add_paragraph("And (Jones, 2019) confirmed it.")
     paras = extract_paragraphs(doc)
     viols = run_citation_sensor(doc, paras)
-    # Two orphan citations, no References header
-    assert len(viols) == 2
-    authors = {v.message.split("'")[1].split(" (")[0] for v in viols}
-    assert authors == {"Smith", "Jones"}
+    assert len(viols) == 1
+    v = viols[0]
+    assert v.rule_code == "CITATION_MISMATCH"
+    assert v.severity == "MAJOR"
+    assert v.location == {"paragraph_index": None, "citation_count": 2}
+    assert v.message == (
+        "No References section was found, so 2 in-text citation(s) could not be checked."
+    )
 
 
 def test_references_header_case_insensitive():
@@ -200,7 +206,8 @@ def test_violation_location_has_paragraph_index():
     doc = Document()
     doc.add_paragraph("Body intro.")
     doc.add_paragraph("Smith (2020) said…")
-    # No References
+    doc.add_paragraph("References")
+    doc.add_paragraph("Jones, A. (2019). Unrelated entry. Press.")
     paras = extract_paragraphs(doc)
     viols = run_citation_sensor(doc, paras)
     assert len(viols) == 1
@@ -234,7 +241,8 @@ def test_year_with_letter_suffix_detected():
 def test_message_format_matches_spec():
     doc = Document()
     doc.add_paragraph("Orphan (Garcia, 2018) text.")
-    # No References
+    doc.add_paragraph("References")
+    doc.add_paragraph("Other, X. (2020). Unrelated entry. Press.")
     paras = extract_paragraphs(doc)
     viols = run_citation_sensor(doc, paras)
     assert len(viols) == 1
@@ -443,9 +451,11 @@ def test_misleading_references_body_text_not_a_header(misleading):
     doc = _doc_with_header(misleading)
     paras = extract_paragraphs(doc)
     viols = run_citation_sensor(doc, paras)
-    # No real header → reference index empty → Smith is an orphan
+    # No real header → the bibliography cannot be located → one root finding
+    # (the entry paragraph after it is body text, not a bibliography entry).
     assert len(viols) == 1
-    assert "Smith" in viols[0].message
+    assert viols[0].rule_code == "CITATION_MISMATCH"
+    assert viols[0].location == {"paragraph_index": None, "citation_count": 1}
 
 
 def test_numbered_heading_smith_resolves_garcia_lee_mismatch():
@@ -547,11 +557,294 @@ def test_parenthetical_multi_author_preserves_span_and_primary_identity():
 def test_garcia_and_lee_same_paragraph_stay_distinct_with_own_spans():
     """Two parenthetical citations in one paragraph keep SEPARATE findings
     with their OWN source-faithful spans."""
-    viols = _build_and_scan(
+    viols = _build_with_unrelated_references(
         ["Garcia (2018) and Lee (2021) disagree with each other."],
+        ["Other, X. (2020). Unrelated entry. Press."],
     )
     assert len(viols) == 2
     spans = sorted(v.actual_value for v in viols)
     assert spans == ["Garcia (2018)", "Lee (2021)"]
     # canonical identity per finding
     assert {v.message.split("'")[1].split(" (")[0] for v in viols} == {"Garcia", "Lee"}
+
+
+# ---------------------------------------------------------------------------
+# Detection upgrade: grouped parentheticals, n.d., narrative "et al."
+# ---------------------------------------------------------------------------
+
+class _CitationConfig:
+    """EffectiveProfileConfig stand-in exposing the CITATION_* toggles."""
+
+    def __init__(self, **overrides):
+        values = dict(
+            CITATION_CHECK_CITATIONS_HAVE_REFERENCES=True,
+            CITATION_CHECK_REFERENCES_ARE_CITED=False,
+            CITATION_CHECK_AUTHOR_YEAR_CONSISTENCY=True,
+            CITATION_CHECK_YEAR_SUFFIXES=True,
+            CITATION_CHECK_DUPLICATE_REFERENCES=True,
+            CITATION_FLAG_AMBIGUOUS_MATCHES=True,
+            CITATION_ALLOW_PERSONAL_COMMUNICATION=True,
+        )
+        values.update(overrides)
+        self.__dict__.update(values)
+
+
+def _scan(paragraphs, references, config=None):
+    """Build a doc from body paragraphs + a References list, run the sensor."""
+    doc = Document()
+    for p in paragraphs:
+        doc.add_paragraph(p)
+    doc.add_paragraph("References")
+    for r in references:
+        doc.add_paragraph(r)
+    paras = extract_paragraphs(doc)
+    return run_citation_sensor(doc, paras, config=config)
+
+
+def test_semicolon_group_detects_each_item():
+    viols = _scan(
+        ["Prior work is mixed (Smith, 2020; Lee, 2021)."],
+        ["Other, X. (2019). Unrelated. Press."],
+    )
+    assert len(viols) == 2
+    assert {v.actual_value for v in viols} == {"Smith, 2020", "Lee, 2021"}
+    assert all(v.rule_code == "CITATION_MISMATCH" for v in viols)
+    assert all(v.location["paragraph_index"] == 0 for v in viols)
+
+
+def test_semicolon_group_resolves_the_entry_that_exists():
+    viols = _scan(
+        ["Prior work is mixed (Smith, 2020; Lee, 2021)."],
+        ["Smith, J. (2020). On things. Press."],
+    )
+    assert len(viols) == 1
+    assert "Lee" in viols[0].message
+    assert "Smith" not in viols[0].message
+
+
+def test_grouped_citation_inside_one_key_consolidates():
+    viols = _scan(
+        ["First (Smith, 2020) then again (Smith, 2020)."],
+        ["Other, X. (2019). Unrelated. Press."],
+    )
+    assert len(viols) == 1
+    assert viols[0].location["occurrences"] == 2
+
+
+def test_no_date_citation_matches_no_date_entry():
+    viols = _scan(
+        ["An undated source (Smith, n.d.) says so."],
+        ["Smith, J. (n.d.). Undated. Press."],
+    )
+    assert viols == []
+
+
+def test_no_date_citation_against_dated_entry_is_major():
+    viols = _scan(
+        ["An undated source (Smith, n.d.) says so."],
+        ["Smith, J. (2020). Dated. Press."],
+    )
+    assert len(viols) == 1
+    assert viols[0].rule_code == "CITATION_REFERENCE_MISMATCH"
+    assert viols[0].severity == "MAJOR"
+    assert viols[0].expected_value == "Consistent year for Smith (2020)"
+
+
+def test_narrative_et_al_is_detected():
+    viols = _scan(
+        ["Smith et al. (2020) reported it."],
+        ["Other, X. (2019). Unrelated. Press."],
+    )
+    assert len(viols) == 1
+    assert "Smith" in viols[0].message
+    assert viols[0].actual_value == "Smith et al. (2020)"
+
+
+def test_narrative_et_al_resolves_on_primary_surname():
+    viols = _scan(
+        ["Smith et al. (2020) reported it."],
+        ["Smith, J. (2020). On things. Press."],
+    )
+    assert viols == []
+
+
+def test_year_suffix_case_detects_suffix_gap():
+    viols = _scan(
+        ["Reported earlier (Smith, 2020)."],
+        ["Smith, J. (2020a). First. Press.", "Smith, J. (2020b). Second. Press."],
+    )
+    # Two entries share the author + year → manual review, never a guess.
+    assert [v.rule_code for v in viols] == ["CITATION_REFERENCE_AMBIGUOUS"]
+    assert viols[0].severity == "REVIEW"
+
+
+def test_year_mismatch_detects_wrong_year():
+    viols = _scan(
+        ["Reported earlier (Smith, 2099)."],
+        ["Smith, J. (2020). On things. Press."],
+    )
+    assert [v.rule_code for v in viols] == ["CITATION_REFERENCE_MISMATCH"]
+    assert viols[0].severity == "MAJOR"
+
+
+def test_duplicate_reference_entry_reported_once():
+    viols = _scan(
+        ["Body line (Smith, 2020)."],
+        [
+            "Smith, J. (2020). On things. Press.",
+            "Smith, J. (2020). On things. Press.",
+        ],
+    )
+    assert [v.rule_code for v in viols] == ["REFERENCE_DUPLICATE"]
+    v = viols[0]
+    assert v.severity == "MINOR"
+    assert v.location["entry_count"] == 2
+    assert v.location["paragraph_index"] == 3
+
+
+def test_uncited_reference_reported_when_enabled():
+    viols = _scan(
+        ["Body line (Smith, 2020)."],
+        ["Smith, J. (2020). On things. Press.", "Jones, A. (2019). Other. Press."],
+        config=_CitationConfig(CITATION_CHECK_REFERENCES_ARE_CITED=True),
+    )
+    assert [v.rule_code for v in viols] == ["REFERENCE_NOT_CITED"]
+    assert "Jones" in viols[0].actual_value
+    assert viols[0].location["paragraph_index"] == 3
+
+
+def test_citation_checks_disabled_emit_nothing():
+    viols = _scan(
+        ["Body line (Smith, 2020) and (Garcia, 2018; Lee, 2021)."],
+        ["Smith, J. (2020). On things. Press."],
+        config=_CitationConfig(CITATION_CHECK_CITATIONS_HAVE_REFERENCES=False),
+    )
+    assert viols == []
+
+
+def test_missing_section_root_finding_suppressed_when_checks_disabled():
+    doc = Document()
+    doc.add_paragraph("Smith (2020) wrote about it.")
+    paras = extract_paragraphs(doc)
+    viols = run_citation_sensor(
+        doc, paras,
+        config=_CitationConfig(CITATION_CHECK_CITATIONS_HAVE_REFERENCES=False),
+    )
+    assert viols == []
+
+
+# ---------------------------------------------------------------------------
+# False-positive guards
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("text", [
+    "Table 2 (2020) lists the results.",
+    "Figure 1 (2019) shows the trend.",
+    "Appendix B (2021) documents the protocol.",
+    "Section 3 (2018) describes the method.",
+    "Note 4 (2022) explains the symbols.",
+    "Standard 5 (2020) applies here.",
+])
+def test_document_furniture_chains_are_not_citations(text):
+    viols = _scan([text], ["Other, X. (2019). Unrelated. Press."])
+    assert viols == []
+
+
+def test_parenthetical_with_url_or_doi_is_not_a_citation():
+    viols = _scan(
+        [
+            "Retrieved from (https://example.org/data/2020) for processing.",
+            "Archived (doi:10.1234/abcd) elsewhere.",
+        ],
+        ["Other, X. (2019). Unrelated. Press."],
+    )
+    assert viols == []
+
+
+def test_very_long_parenthetical_is_not_a_citation():
+    long_tail = "and more detail " * 30
+    viols = _scan(
+        [f"(Smith, 2020, {long_tail})"],
+        ["Other, X. (2019). Unrelated. Press."],
+    )
+    assert viols == []
+
+
+def test_personal_communication_allowed_by_default():
+    viols = _scan(
+        ["Per (J. Smith, personal communication, October 5, 2024) the value holds."],
+        ["Smith, J. (2019). Earlier paper. Press."],
+        config=_CitationConfig(CITATION_CHECK_REFERENCES_ARE_CITED=True),
+    )
+    # No citation finding for the personal communication, and the named
+    # author is exempt from the uncited-entry check.
+    assert viols == []
+
+
+def test_personal_communication_checked_when_not_allowed():
+    viols = _scan(
+        ["Per (J. Smith, personal communication, October 5, 2024) the value holds."],
+        ["Other, X. (2019). Unrelated. Press."],
+        config=_CitationConfig(
+            CITATION_ALLOW_PERSONAL_COMMUNICATION=False,
+            CITATION_CHECK_REFERENCES_ARE_CITED=True,
+        ),
+    )
+    # The personal communication is treated as a normal citation: no entry
+    # for Smith → one MAJOR finding, with the source span as evidence. The
+    # unrelated entry stays uncited as well.
+    assert [v.rule_code for v in viols] == ["CITATION_MISMATCH", "REFERENCE_NOT_CITED"]
+    assert "Smith" in viols[0].message
+    assert viols[0].actual_value == "(J. Smith, personal communication, October 5, 2024)"
+    assert viols[0].location["paragraph_index"] == 0
+
+
+def test_as_cited_in_secondary_citation_emits_nothing_and_exempts_both_names():
+    viols = _scan(
+        ["Reported by (Smith, 2020, as cited in Jones, 2019)."],
+        ["Jones, A. (2019). Secondary source. Press."],
+        config=_CitationConfig(CITATION_CHECK_REFERENCES_ARE_CITED=True),
+    )
+    assert viols == []
+
+
+def test_organisation_author_is_not_matched_by_either_direction():
+    viols = _scan(
+        ["The policy changed (University of Example, 2024)."],
+        ["University of Example. (2024). Policy. Press."],
+        config=_CitationConfig(CITATION_CHECK_REFERENCES_ARE_CITED=True),
+    )
+    # Organisation authors are out of the deterministic support matrix on
+    # both sides: no missing-reference claim, and the entry is not reported
+    # as uncited because the citation was never detected either.
+    assert viols == []
+
+
+def test_same_surname_different_initials_flags_manual_review():
+    viols = _scan(
+        ["Confirmed earlier (Smith, 2024)."],
+        ["Smith, A. (2020). First. Press.", "Smith, B. (2019). Second. Press."],
+    )
+    assert [v.rule_code for v in viols] == ["CITATION_REFERENCE_AMBIGUOUS"]
+    assert viols[0].severity == "REVIEW"
+
+
+def test_caption_citation_counts_as_citation_evidence():
+    doc = Document()
+    doc.add_paragraph("Body line.")
+    cap = doc.add_paragraph()
+    cap.style = doc.styles["Caption"]
+    cap.add_run("Figure 1: Data from Smith (2020).")
+    doc.add_paragraph("References")
+    doc.add_paragraph("Smith, J. (2020). On things. Press.")
+    paras = extract_paragraphs(doc)
+    viols = run_citation_sensor(doc, paras)
+    assert viols == []
+
+
+def test_numeric_style_citations_are_never_matched():
+    viols = _scan(
+        ["As shown in [12] and [13], the effect holds."],
+        ["Smith, J. (2020). On things. Press."],
+    )
+    assert viols == []

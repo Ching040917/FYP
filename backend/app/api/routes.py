@@ -280,6 +280,11 @@ async def audit_document(
         for v in layout_violations:
             if v.rule_code == "CITATION_MISMATCH":
                 paragraph_index = v.location.get("paragraph_index") if v.location else None
+                # Document-wide findings (no References section) carry no
+                # paragraph identity: AI guidance is per-citation and a
+                # per-paragraph row cannot be written for them.
+                if not isinstance(paragraph_index, int):
+                    continue
                 citation_findings.append({
                     "finding_key": str(uuid.uuid4()),
                     "paragraph_index": paragraph_index,

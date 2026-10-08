@@ -28,8 +28,13 @@ from app.services.ai_citation import async_ai_citation_task
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 
 # A document that the deterministic citation sensor flags exactly once:
-# an in-text citation with no matching References entry.
-CITATION_DOC = {"paragraphs": ["Orphan (Garcia, 2018) text."], "with_caption": False}
+# an in-text citation with no matching References entry (the bibliography
+# exists but does not list Garcia).
+CITATION_DOC = {
+    "paragraphs": ["Orphan (Garcia, 2018) text."],
+    "references": ["Other, X. (2020). Unrelated entry. Press."],
+    "with_caption": False,
+}
 
 
 async def _models_installed():

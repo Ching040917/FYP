@@ -1192,6 +1192,6 @@ def run_static_rules_engine(
         paragraph_roles=roles,
         cover_end=cover_end,
     ))
-    all_violations.extend(run_citation_sensor(doc, paragraphs))
+    all_violations.extend(run_citation_sensor(doc, paragraphs, config=preset, roles=roles))
 
     return all_violations
