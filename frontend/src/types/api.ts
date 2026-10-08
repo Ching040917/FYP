@@ -1,7 +1,9 @@
 export interface Violation {
   id: string
   rule_code: string
-  severity: 'MAJOR' | 'MINOR'
+  // REVIEW = manual-review finding: displayed, never scored, never counted
+  // as major/minor.
+  severity: 'MAJOR' | 'MINOR' | 'REVIEW'
   location: Record<string, unknown> | null
   message: string
   expected_value: string | null

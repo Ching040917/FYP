@@ -11,7 +11,7 @@ import { ErrorList } from '../components/audit/error-list'
 import { VerdictChecklist } from '../components/audit/verdict-checklist'
 import { FindingDetail } from '../components/audit/finding-detail'
 import { DocumentPreview } from '../components/audit/document-preview'
-import { categoryForRuleCode, humanizeRuleCode, aiProviderLabel, normalizeAiProvider } from '../lib/audit/adapter'
+import { categoryForRuleCode, humanizeRuleCode, aiProviderLabel, normalizeAiProvider, normalizeViolationSeverity } from '../lib/audit/adapter'
 import { useFindingMapping } from '../hooks/use-finding-mapping'
 import { invalidateMapping } from '../lib/pdf/mapping-cache.ts'
 import { useRenderedPdf, dropRenderedPdfCache } from '../hooks/use-rendered-pdf.ts'
@@ -93,7 +93,7 @@ function toLayoutError(v: Violation): LayoutError {
   return {
     id: v.id,
     category: categoryForRuleCode(v.rule_code),
-    severity: v.severity === 'MAJOR' ? 'major' : 'minor',
+    severity: normalizeViolationSeverity(v.severity),
     position,
     title: humanizeRuleCode(v.rule_code),
     // Student-facing plain language; the raw deterministic message stays
@@ -946,6 +946,9 @@ export function AuditPage() {
   const isProcessing = audit?.status === 'processing'
   const violations = audit?.violations ?? []
   const mappedErrors = violations.map(toLayoutError)
+  // Manual-review findings: shown, never scored and never counted as
+  // major/minor (the backend ignores the REVIEW severity for scoring).
+  const reviewCount = mappedErrors.filter((e) => e.severity === 'review').length
   const selectedViolation = violations.find((v) => v.id === selectedId) ?? null
 
   const breakdown = audit?.score_breakdown ?? []
@@ -1041,6 +1044,7 @@ export function AuditPage() {
                 {audit.status === 'completed' && (
                   <span>
                     {audit.major_count ?? 0} major · {audit.minor_count ?? 0} minor findings
+                    {reviewCount > 0 && ` · ${reviewCount} for review`}
                   </span>
                 )}
                 {audit.status === 'completed' && profileDisclosure(audit.profile_snapshot) && (

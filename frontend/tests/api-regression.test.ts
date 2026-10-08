@@ -129,3 +129,45 @@ test('vite config proxies /health to backend', () => {
   assert.ok(src.includes("'/health'") || src.includes('"/health"'), 'vite.config.ts should proxy /health')
   assert.ok(src.includes('127.0.0.1:8000'), 'proxy target should be 127.0.0.1:8000')
 })
+
+// ---------------------------------------------------------------------------
+// REVIEW severity (manual review) — real adapter behaviour
+// ---------------------------------------------------------------------------
+
+test('adapter keeps REVIEW findings visible but out of the major/minor counts', async () => {
+  const { adaptAuditResponse } = await import('../src/lib/audit/adapter.ts')
+  const raw = {
+    status: 'completed',
+    audit_id: 'audit-review-1',
+    weighted_compliance_score: 95,
+    physical_layout_errors: [
+      {
+        id: 'v-major',
+        rule_code: 'CITATION_MISMATCH',
+        severity: 'MAJOR',
+        location: { paragraph_index: 3, occurrences: 1, paragraph_indexes: [3] },
+        message: 'm',
+        expected_value: 'Reference entry for Smith',
+        actual_value: '(Smith, 2020)',
+      },
+      {
+        id: 'v-review',
+        rule_code: 'CITATION_REFERENCE_AMBIGUOUS',
+        severity: 'REVIEW',
+        location: { paragraph_index: 7, occurrences: 1, paragraph_indexes: [7] },
+        message: 'm',
+        expected_value: 'One unambiguous matching entry',
+        actual_value: '(Smith, 2024)',
+      },
+    ],
+    ai_citation_tooltips: [],
+  } as Parameters<typeof adaptAuditResponse>[0]['raw']
+
+  const result = adaptAuditResponse({ raw })
+  assert.equal(result.physical_layout_errors.length, 2)
+  assert.equal(result.physical_layout_errors[1].severity, 'review')
+  assert.equal(result.physical_layout_errors[1].title, 'Citation could match more than one entry')
+  // Counts fall back to the deterministic findings and exclude review.
+  assert.equal(result.major_count, 1)
+  assert.equal(result.minor_count, 0)
+})

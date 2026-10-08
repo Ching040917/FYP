@@ -336,6 +336,7 @@ export function DocumentPreview({
           const viols = indexedViolations.get(block.index)
           const hasMajor = viols?.some((v) => v.severity === 'MAJOR')
           const hasMinor = viols?.some((v) => v.severity === 'MINOR')
+          const hasReview = viols?.some((v) => v.severity === 'REVIEW')
           const isSelected = viols?.some((v) => v.id === selectedViolationId) ?? false
           const interactive = (viols?.length ?? 0) > 0
 
@@ -351,6 +352,7 @@ export function DocumentPreview({
                   <span className="flex flex-wrap items-center justify-end gap-1.5">
                     {hasMajor && <SeverityChip label="Major" major />}
                     {hasMinor && <SeverityChip label="Minor" major={false} />}
+                    {!hasMajor && !hasMinor && hasReview && <SeverityChip label="Manual review" major={false} />}
                     <span className="text-[11px] text-muted-foreground">
                       {viols.length} finding{viols.length > 1 ? 's' : ''}
                     </span>

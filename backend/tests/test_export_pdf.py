@@ -832,3 +832,103 @@ def test_citation_guidance_preserved_for_garcia_and_lee(client, test_engine):
     # Shared APA material appears once
     assert text.count("Verify every corrected citation against this checklist:") == 1
     assert text.count("Journal article:") == 1
+
+
+# ---------------------------------------------------------------------------
+# Citation ↔ Reference List matching findings (citation reference build)
+# ---------------------------------------------------------------------------
+
+def test_new_citation_reference_codes_render_friendly_wording(client, test_engine):
+    """Each new deterministic code carries a friendly rule name and its fixed
+    Required Action — never a raw rule code or a formatting instruction."""
+    audit_id = _seed_audit(test_engine, violations=[
+        {"rule_code": "CITATION_REFERENCE_MISMATCH", "severity": "MAJOR",
+         "location": {"paragraph_index": 3, "occurrences": 1, "paragraph_indexes": [3]},
+         "message": "Citation 'Smith (2020)' and the Reference List entry for Smith (2019) state different years.",
+         "expected_value": "Consistent year for Smith (2019)", "actual_value": "(Smith, 2020)"},
+        {"rule_code": "CITATION_YEAR_SUFFIX_MISMATCH", "severity": "MINOR",
+         "location": {"paragraph_index": 4, "occurrences": 1, "paragraph_indexes": [4]},
+         "message": "Citation 'Smith (2020)' is missing the year suffix used by the Reference List entry 'Smith (2020a)'.",
+         "expected_value": "Smith (2020a)", "actual_value": "(Smith, 2020)"},
+        {"rule_code": "REFERENCE_NOT_CITED", "severity": "MINOR",
+         "location": {"paragraph_index": 12},
+         "message": "Reference List entry 'Jones (2019)' was not cited in the body text.",
+         "expected_value": "At least one in-text citation",
+         "actual_value": "Jones, A. (2019). Other. Press."},
+        {"rule_code": "REFERENCE_DUPLICATE", "severity": "MINOR",
+         "location": {"paragraph_index": 14, "entry_count": 2, "paragraph_indexes": [12, 14]},
+         "message": "Reference List entry 'Jones (2019)' appears 2 times; a source must have exactly one entry.",
+         "expected_value": "One entry per source",
+         "actual_value": "Jones, A. (2019). Other. Press."},
+    ])
+    text = _pdf_text(_export(client, audit_id).content)
+    assert "Citation Year Mismatch" in text
+    assert "Citation Year Suffix Missing" in text
+    assert "Reference Entry Not Cited" in text
+    assert "Duplicate Reference Entry" in text
+    for action in (
+        "Correct the year in the in-text citation or in the Reference List entry so both state the same year.",
+        "Add the matching year suffix (a, b, ...) to the in-text citation or correct it in the Reference List entry.",
+        "Cite this source in the text, or remove the Reference List entry.",
+        "Keep one entry and remove the duplicate.",
+    ):
+        assert action in text, action
+    # The technical codes must not leak into the priority panels' friendly names.
+    assert "CITATION_REFERENCE_MISMATCH" in text  # register keeps the code as secondary text
+
+
+def test_review_finding_gets_its_own_register_group_and_no_score_impact(client, test_engine):
+    """REVIEW findings appear in the Findings Register under "For review",
+    are labelled "For review" (never Major/Minor), and stay out of the
+    major/minor counts and the score."""
+    audit_id = _seed_audit(test_engine, violations=[
+        {"rule_code": "CITATION_REFERENCE_AMBIGUOUS", "severity": "REVIEW",
+         "location": {"paragraph_index": 7, "occurrences": 1, "paragraph_indexes": [7]},
+         "message": ("Citation 'Smith (2024)' could match 2 Reference List entries for Smith; "
+                     "the citation carries no initials."),
+         "expected_value": "One unambiguous matching entry", "actual_value": "(Smith, 2024)"},
+    ])
+    resp = _export(client, audit_id)
+    assert resp.status_code == 200
+    text = _pdf_text(resp.content)
+    assert "For review" in text
+    assert "Citation Match Needs Review" in text
+    assert "Confirm which listed source this citation refers to; initials are not compared." in text
+    # One finding, zero major, zero minor, and the score stays 100.
+    assert "1 deterministic finding(s): 0 major" in text
+    assert "0 minor" in text
+    assert "1 for manual review (never scored)" in text
+    assert "Compliance Score" in text
+    assert "100" in text
+
+
+def test_existing_citation_mismatch_wording_is_unchanged(client, test_engine):
+    """The historical CITATION_MISMATCH presentation must not regress."""
+    audit_id = _seed_audit(test_engine, violations=[
+        {"rule_code": "CITATION_MISMATCH", "severity": "MAJOR",
+         "location": {"paragraph_index": 3, "occurrences": 1, "paragraph_indexes": [3]},
+         "message": ("Citation 'Garcia (2018)' was found in text, but no matching entry "
+                     "was found in the References bibliography."),
+         "expected_value": "Reference entry for Garcia",
+         "actual_value": "(Garcia, 2018)"},
+    ])
+    text = _pdf_text(_export(client, audit_id).content)
+    assert "Citation Mismatch" in text
+    assert "Add the matching APA 7 reference entry or correct the in-text citation." in text
+    assert "Garcia" in text
+
+
+def test_missing_section_root_finding_exports_without_crashing(client, test_engine):
+    """A document-wide finding (paragraph_index None) must export cleanly and
+    show the root message without a fabricated paragraph location."""
+    audit_id = _seed_audit(test_engine, violations=[
+        {"rule_code": "CITATION_MISMATCH", "severity": "MAJOR",
+         "location": {"paragraph_index": None, "citation_count": 3},
+         "message": "No References section was found, so 3 in-text citation(s) could not be checked.",
+         "expected_value": "References section", "actual_value": None},
+    ])
+    resp = _export(client, audit_id)
+    assert resp.status_code == 200
+    text = _pdf_text(resp.content)
+    assert "3 in-text citation(s) could not be checked" in text
+    assert "Add the matching APA 7 reference entry or correct the in-text citation." in text

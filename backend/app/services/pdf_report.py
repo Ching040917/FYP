@@ -165,6 +165,37 @@ _REQUIRED_ACTIONS = {
     "IMAGE_ALT_TEXT_MISSING": "Add a concise alt-text description to the image for screen readers.",
     "MANUAL_CAPTION": "Use Word's References → Insert Caption feature so the label and numbering remain consistent.",
     "CITATION_MISMATCH": "Add the matching APA 7 reference entry or correct the in-text citation.",
+    "CITATION_REFERENCE_MISMATCH": (
+        "Correct the year in the in-text citation or in the Reference List entry so both "
+        "state the same year."
+    ),
+    "CITATION_YEAR_SUFFIX_MISMATCH": (
+        "Add the matching year suffix (a, b, ...) to the in-text citation or correct it in "
+        "the Reference List entry."
+    ),
+    "CITATION_REFERENCE_AMBIGUOUS": (
+        "Confirm which listed source this citation refers to; initials are not compared."
+    ),
+    "REFERENCE_NOT_CITED": "Cite this source in the text, or remove the Reference List entry.",
+    "REFERENCE_DUPLICATE": "Keep one entry and remove the duplicate.",
+}
+
+# Deterministic citation/reference matching rules: fixed Required Action copy
+# (never a formatting instruction, never AI-generated).
+_CITATION_MATCH_RULES = frozenset({
+    "CITATION_REFERENCE_MISMATCH",
+    "CITATION_YEAR_SUFFIX_MISMATCH",
+    "CITATION_REFERENCE_AMBIGUOUS",
+    "REFERENCE_NOT_CITED",
+    "REFERENCE_DUPLICATE",
+})
+
+# Severity labels shown to the reader. REVIEW is a manual-review flag: it is
+# never scored and never counted as major or minor.
+_SEVERITY_LABEL = {
+    "MAJOR": "Major",
+    "MINOR": "Minor",
+    "REVIEW": "For review",
 }
 
 _PROP_NAME = {
@@ -184,6 +215,11 @@ _PROP_NAME = {
     "IMAGE_ALT_TEXT_MISSING": "alt text",
     "MANUAL_CAPTION": "caption",
     "CITATION_MISMATCH": "citation entry",
+    "CITATION_REFERENCE_MISMATCH": "citation year",
+    "CITATION_YEAR_SUFFIX_MISMATCH": "citation year suffix",
+    "CITATION_REFERENCE_AMBIGUOUS": "citation match",
+    "REFERENCE_NOT_CITED": "in-text citation",
+    "REFERENCE_DUPLICATE": "Reference List entry",
 }
 
 _RULE_NAME = {
@@ -203,11 +239,21 @@ _RULE_NAME = {
     "IMAGE_ALT_TEXT_MISSING": "Image Alt-Text Missing",
     "MANUAL_CAPTION": "Manual Caption",
     "CITATION_MISMATCH": "Citation Mismatch",
+    "CITATION_REFERENCE_MISMATCH": "Citation Year Mismatch",
+    "CITATION_YEAR_SUFFIX_MISMATCH": "Citation Year Suffix Missing",
+    "CITATION_REFERENCE_AMBIGUOUS": "Citation Match Needs Review",
+    "REFERENCE_NOT_CITED": "Reference Entry Not Cited",
+    "REFERENCE_DUPLICATE": "Duplicate Reference Entry",
 }
 
 
 def _rule_name(code: str) -> str:
     return _RULE_NAME.get(code, code)
+
+
+def _severity_label(severity: str) -> str:
+    """Reader-facing severity label (unknown tokens print verbatim)."""
+    return _SEVERITY_LABEL.get(severity, severity)
 
 
 def _citation_action(v) -> str:
@@ -492,6 +538,10 @@ def _friendly_required_action(violation, friendly_loc, affected_info):
     if code == "CITATION_MISMATCH":
         return _citation_action(violation)
 
+    # Citation/Reference matching findings carry fixed, non-formatting copy.
+    if code in _CITATION_MATCH_RULES:
+        return _REQUIRED_ACTIONS[code]
+
     # Use friendly location without Run.
     loc_label = friendly_loc  # e.g. "Paragraph 14", "Heading “...”", "Table 3"
     # If we have affected text excerpt, prefer it; else use location.
@@ -649,7 +699,7 @@ def _priority_table(pid, v, audit=None) -> Table:
         rows.append(("Actual", _student_clean(v.actual_value)))
     # Friendly required action without Run.
     rows.append(("Required Action", _friendly_required_action(v, friendly_loc, affected)))
-    return _panel(f"{pid} — {_rule_name(v.rule_code)}", v.severity, rows)
+    return _panel(f"{pid} — {_rule_name(v.rule_code)}", _severity_label(v.severity), rows)
 
 
 def _location_summary(violations, document_blocks=None) -> str:
@@ -810,7 +860,8 @@ def _appendix_table(entries, audit=None) -> Table:
                 friendly_loc = f"{friendly_loc} ({page_value})"
         rows.append([
             _p(_f_id(f_idx), size=8),
-            _p(v.severity, size=8, font="Helvetica-Bold" if v.severity == "MAJOR" else "Helvetica"),
+            _p(_severity_label(v.severity), size=8,
+               font="Helvetica-Bold" if v.severity == "MAJOR" else "Helvetica"),
             _rule_cell(v),
             _p(friendly_loc, size=8),
             _p(_student_clean(v.actual_value or ""), size=8),
@@ -1027,6 +1078,7 @@ def generate_audit_pdf(audit, violations, citation_issues, profile_snapshot=None
     story.append(Spacer(1, 2 * mm))
     major = [v for v in violations if v.severity == "MAJOR"]
     minor = [v for v in violations if v.severity == "MINOR"]
+    review = [v for v in violations if v.severity == "REVIEW"]
     if not violations:
         story.append(_p(
             "No issues were detected by the enabled deterministic checks. This does not "
@@ -1034,12 +1086,14 @@ def generate_audit_pdf(audit, violations, citation_issues, profile_snapshot=None
             size=9.5, color=GREEN,
         ))
     else:
-        story.append(_p(
+        summary = (
             f"{len(violations)} deterministic finding(s): {len(major)} major (shown individually), "
-            f"{len(minor)} minor (grouped by rule code and expected value). "
-            "Findings are rule-based; AI guidance below is advisory only.",
-            size=8.5, color=MUTED,
-        ))
+            f"{len(minor)} minor (grouped by rule code and expected value)"
+        )
+        if review:
+            summary += f", {len(review)} for manual review (never scored)"
+        summary += ". Findings are rule-based; AI guidance below is advisory only."
+        story.append(_p(summary, size=8.5, color=MUTED))
         story.append(Spacer(1, 2 * mm))
 
         # Major findings — individual panels with P### IDs
@@ -1199,6 +1253,16 @@ def generate_audit_pdf(audit, violations, citation_issues, profile_snapshot=None
             story.append(_p("Minor Findings", size=9.5, font="Helvetica-Bold", color=NAVY))
             story.append(Spacer(1, 1.5 * mm))
             story.append(_appendix_table(minor_entries, audit))
+            story.append(Spacer(1, 5 * mm))
+
+        review_entries = []
+        for v in review:
+            f_idx += 1
+            review_entries.append((f_idx, v))
+        if review_entries:
+            story.append(_p("For review", size=9.5, font="Helvetica-Bold", color=NAVY))
+            story.append(Spacer(1, 1.5 * mm))
+            story.append(_appendix_table(review_entries, audit))
 
     buf = io.BytesIO()
     doc = BaseDocTemplate(

@@ -4,7 +4,9 @@
  * Wire-level types live in ../types/api.ts (separate; not modified here).
  */
 
-export type ViolationSeverity = 'major' | 'minor'
+// 'review' = manual-review finding (never scored, never counted as
+// major/minor — the backend emits it as severity token REVIEW).
+export type ViolationSeverity = 'major' | 'minor' | 'review'
 
 export type AuditCategory =
   | 'font_consistency'

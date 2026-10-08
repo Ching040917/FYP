@@ -823,3 +823,30 @@ class TestMigration:
         cfg.set_main_option("script_location", str(backend_dir / "alembic"))
         sd = ScriptDirectory.from_config(cfg)
         assert sd.get_heads() == ["b3e8d19e2b3f"]
+
+
+# ---------------------------------------------------------------------------
+# Citation ↔ Reference List matching findings are manual-only
+# ---------------------------------------------------------------------------
+
+def test_new_citation_codes_are_never_selectable_guided_fixes(client, docx_factory):
+    """The Guided Fixes whitelist is unchanged: citation/reference matching
+    findings can never be auto-applied, and a selection containing only them
+    produces no corrected file."""
+    file_bytes = docx_factory(
+        paragraphs=["Orphan (Garcia, 2018) text.", "Another (Lee, 2019) line."],
+        references=["Other, X. (2020). Unrelated entry. Press."],
+    )
+    resp = _post_audit_bytes(client, file_bytes)
+    audit_id = resp.json()["audit_id"]
+    ids = _rule_ids(resp, "CITATION_MISMATCH")
+    assert ids, "fixture must produce citation findings"
+
+    r = _fix_post(client, audit_id, file_bytes, ids)
+    assert r.status_code == 422
+    assert r.json()["detail"] == ZERO_DETAIL
+    assert r.content != file_bytes or r.headers.get("content-type", "").startswith("application/json")
+
+    # The whitelist itself is unchanged — no new code entered either set.
+    assert guided_fix.SAFE_RUN_RULES == frozenset({"FONT_CONSISTENCY", "FONT_SIZE"})
+    assert guided_fix.SAFE_PARA_RULES == frozenset({"ALIGNMENT", "LINE_SPACING", "SPACE_BEFORE", "SPACE_AFTER"})

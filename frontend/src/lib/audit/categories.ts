@@ -3,7 +3,7 @@
  * Ported from reference_project/src/lib/audit/categories.ts.
  */
 
-import type { AuditCategory } from '../../types/audit'
+import type { AuditCategory, ViolationSeverity } from '../../types/audit'
 
 export const CATEGORY_LABELS: Record<AuditCategory, string> = {
   page_margins: 'Page Margins',
@@ -25,11 +25,20 @@ export const CATEGORY_DESCRIPTIONS: Record<AuditCategory, string> = {
   citation_apa: 'AI-driven APA 7th-edition in-text citation format audit.',
 }
 
-/** Short tag for severity badge */
-export const severityBadge = (sev: 'major' | 'minor') =>
-  sev === 'major'
-    ? { label: 'Major', className: 'bg-rose-500/15 text-rose-300 border-rose-500/30' }
-    : { label: 'Minor', className: 'bg-amber-500/15 text-amber-300 border-amber-500/30' }
+/** Short tag for severity badge.
+ *
+ * Review findings are neutral (never alarm styling): they are manual-review
+ * flags, excluded from the score and from the major/minor counts.
+ */
+export const severityBadge = (sev: ViolationSeverity) => {
+  if (sev === 'major') {
+    return { label: 'Major', className: 'bg-rose-500/15 text-rose-300 border-rose-500/30' }
+  }
+  if (sev === 'review') {
+    return { label: 'Manual review', className: 'bg-muted text-muted-foreground border-border' }
+  }
+  return { label: 'Minor', className: 'bg-amber-500/15 text-amber-300 border-amber-500/30' }
+}
 
 /** Map category to a colour for the bar-chart legend */
 export const categoryColor: Record<AuditCategory, string> = {

@@ -27,6 +27,7 @@ import {
   Check,
   ChevronRight,
   Filter,
+  Info,
   MapPin,
 } from 'lucide-react'
 import {
@@ -45,7 +46,7 @@ import {
   SelectValue,
 } from '../ui/select'
 import { cn } from '../../lib/utils'
-import { CATEGORY_LABELS } from '../../lib/audit/categories'
+import { CATEGORY_LABELS, severityBadge } from '../../lib/audit/categories'
 import type {
   AuditCategory,
   AuditResult,
@@ -250,11 +251,17 @@ export function ErrorList({
                         aria-hidden="true"
                         className={cn(
                           'mt-1.5 h-7 w-1 shrink-0 rounded-full',
-                          e.severity === 'major' ? 'bg-destructive' : 'bg-warning',
+                          e.severity === 'major'
+                            ? 'bg-destructive'
+                            : e.severity === 'review'
+                              ? 'bg-muted-foreground/40'
+                              : 'bg-warning',
                         )}
                       />
                       {e.severity === 'major' ? (
                         <AlertOctagon className="mt-0.5 h-4 w-4 shrink-0 text-destructive" aria-hidden="true" />
+                      ) : e.severity === 'review' ? (
+                        <Info className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
                       ) : (
                         <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" aria-hidden="true" />
                       )}
@@ -279,12 +286,10 @@ export function ErrorList({
                             variant="outline"
                             className={cn(
                               'h-4 px-1.5 text-[11px] leading-none',
-                              e.severity === 'major'
-                                ? 'border-destructive/40 bg-destructive/10 text-destructive'
-                                : 'border-warning/40 bg-warning/10 text-warning',
+                              severityBadge(e.severity).className,
                             )}
                           >
-                            {e.severity === 'major' ? 'Major' : 'Minor'}
+                            {severityBadge(e.severity).label}
                           </Badge>
                           {locatingId === e.id ? (
                             <span className="text-[11px] leading-none text-muted-foreground">
