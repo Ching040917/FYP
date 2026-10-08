@@ -21,8 +21,9 @@
 import { MapPin, ShieldCheck } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { Badge } from '../ui/badge'
-import { CATEGORY_LABELS } from '../../lib/audit/categories'
-import { categoryForRuleCode, humanizeRuleCode } from '../../lib/audit/adapter'
+import { CATEGORY_LABELS, severityBadge } from '../../lib/audit/categories'
+import { categoryForRuleCode, humanizeRuleCode, normalizeViolationSeverity } from '../../lib/audit/adapter'
+import { friendlyRuleTitle } from '../../lib/friendly-finding'
 import { ExpectedActualTable } from './expected-actual-table'
 import { presentationFor } from '../../lib/audit/finding-presentation'
 import type { Violation } from '../../types/api'
@@ -52,6 +53,7 @@ export function FindingDetail({ violation }: { violation: Violation | null }) {
   const para = paragraphNumber(v)
   const pres = presentationFor(v)
   const hasCitationEvidence = pres.evidence != null
+  const hasEntryPreview = pres.entryPreview != null
   const hasMissingRequirement = pres.missingRequirement != null
   const hasHeadingSequence =
     pres.expectedHeadingSequence != null && pres.actualHeadingSequence != null
@@ -67,6 +69,18 @@ export function FindingDetail({ violation }: { violation: Violation | null }) {
         </h3>
         <blockquote className="mt-1.5 whitespace-pre-wrap break-words rounded border-l-2 border-ai-assisted/40 bg-ai-assisted/5 px-3 py-2 font-serif text-sm leading-[21px] text-foreground">
           “{pres.evidence}”
+        </blockquote>
+      </div>,
+    )
+  }
+  if (hasEntryPreview) {
+    secondarySections.push(
+      <div key="reference-entry" className="min-w-0">
+        <h3 className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+          Reference List entry
+        </h3>
+        <blockquote className="mt-1.5 whitespace-pre-wrap break-words rounded border-l-2 border-border bg-input/20 px-3 py-2 text-sm leading-[21px] text-foreground">
+          {pres.entryPreview}
         </blockquote>
       </div>,
     )
@@ -123,7 +137,9 @@ export function FindingDetail({ violation }: { violation: Violation | null }) {
       tabIndex={-1}
       className="scroll-mt-20 rounded-md focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background"
     >
-      <h2 className="text-section-title text-foreground">{humanizeRuleCode(v.rule_code)}</h2>
+      <h2 className="text-section-title text-foreground">
+        {friendlyRuleTitle(v.rule_code) ?? humanizeRuleCode(v.rule_code)}
+      </h2>
 
       <div className="mt-2 flex flex-wrap items-center gap-2">
         <Badge variant="outline" className="border-border text-foreground">
@@ -131,13 +147,9 @@ export function FindingDetail({ violation }: { violation: Violation | null }) {
         </Badge>
         <Badge
           variant="outline"
-          className={
-            v.severity === 'MAJOR'
-              ? 'border-destructive/40 bg-destructive/10 text-destructive'
-              : 'border-warning/40 bg-warning/10 text-warning'
-          }
+          className={severityBadge(normalizeViolationSeverity(v.severity)).className}
         >
-          {v.severity === 'MAJOR' ? 'Major' : 'Minor'}
+          {severityBadge(normalizeViolationSeverity(v.severity)).label}
         </Badge>
         <span className="inline-flex items-center gap-1.5 text-[13px] leading-[19px] text-muted-foreground">
           <ShieldCheck className="h-3.5 w-3.5 text-success" aria-hidden="true" />

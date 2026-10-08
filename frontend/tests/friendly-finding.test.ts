@@ -11,10 +11,15 @@ import assert from 'node:assert/strict'
 import {
   friendlyFindingMessage,
   friendlyRequiredAction,
+  friendlyRuleTitle,
   friendlyValue,
   cleanMessage,
   objectLabel,
 } from '../src/lib/friendly-finding.ts'
+import {
+  normalizeViolationSeverity,
+} from '../src/lib/audit/adapter.ts'
+import { severityBadge } from '../src/lib/audit/categories.ts'
 
 test('FONT_SIZE uses plain language without !=', () => {
   const out = friendlyFindingMessage('FONT_SIZE', 'Normal font size 15.0pt != required 12pt', '12pt', '15.0pt')
@@ -159,4 +164,169 @@ test('cleanMessage never mutates the source raw message', () => {
   const out = cleanMessage(raw)
   assert.equal(raw, 'Normal font size 15.0pt != required 12pt') // source untouched
   assert.equal(out, 'Normal font size 15.0pt is not required 12pt')
+})
+
+// ---------------------------------------------------------------------------
+// Citation ↔ Reference List matching findings (citation reference build)
+// ---------------------------------------------------------------------------
+
+test('friendly titles exist for the citation/reference codes only', () => {
+  assert.equal(friendlyRuleTitle('CITATION_MISMATCH'), 'Citation without a Reference List entry')
+  assert.equal(
+    friendlyRuleTitle('CITATION_REFERENCE_MISMATCH'),
+    'Citation year does not match the Reference List entry',
+  )
+  assert.equal(friendlyRuleTitle('CITATION_YEAR_SUFFIX_MISMATCH'), 'Citation is missing the year suffix')
+  assert.equal(friendlyRuleTitle('CITATION_REFERENCE_AMBIGUOUS'), 'Citation could match more than one entry')
+  assert.equal(friendlyRuleTitle('REFERENCE_NOT_CITED'), 'Reference List entry not cited in the text')
+  assert.equal(friendlyRuleTitle('REFERENCE_DUPLICATE'), 'Duplicate Reference List entry')
+  // Unknown codes have no bespoke title (caller falls back to humanization).
+  assert.equal(friendlyRuleTitle('FONT_SIZE'), null)
+  assert.equal(friendlyRuleTitle(null), null)
+})
+
+test('citation year mismatch explains both years from the source-faithful span', () => {
+  const out = friendlyFindingMessage(
+    'CITATION_REFERENCE_MISMATCH',
+    "Citation 'Smith (2020)' and the Reference List entry for Smith (2019) state different years.",
+    'Consistent year for Smith (2019)',
+    '(Smith, 2020)',
+  )
+  assert.equal(
+    out,
+    'The in-text citation (Smith, 2020) does not state the same year as its Reference List entry (Consistent year for Smith (2019)).',
+  )
+})
+
+test('citation suffix mismatch names the entry year with suffix', () => {
+  const out = friendlyFindingMessage(
+    'CITATION_YEAR_SUFFIX_MISMATCH',
+    "Citation 'Smith (2020)' is missing the year suffix used by the Reference List entry 'Smith (2020a)'.",
+    'Smith (2020a)',
+    '(Smith, 2020)',
+  )
+  assert.equal(
+    out,
+    'The in-text citation (Smith, 2020) is missing the year suffix used by its Reference List entry (Smith (2020a)).',
+  )
+})
+
+test('ambiguous citation explains the manual check without initials', () => {
+  const out = friendlyFindingMessage(
+    'CITATION_REFERENCE_AMBIGUOUS',
+    "Citation 'Smith (2024)' could match 2 Reference List entries for Smith.",
+    'One unambiguous matching entry',
+    '(Smith, 2024)',
+  )
+  assert.match(out, /could match more than one entry/)
+  assert.match(out, /manual check/)
+})
+
+test('missing-reference finding reports the occurrence count from the location', () => {
+  const out = friendlyFindingMessage(
+    'CITATION_MISMATCH',
+    "Citation 'Smith (2020)' was found in text, but no matching entry was found in the References bibliography.",
+    'Reference entry for Smith',
+    'Smith (2020)',
+    { paragraph_index: 3, occurrences: 3, paragraph_indexes: [3, 8] },
+  )
+  assert.equal(
+    out,
+    'The in-text citation Smith (2020) does not have a matching entry in the References section. Found 3 times in the document.',
+  )
+  // A single occurrence adds no count sentence.
+  const single = friendlyFindingMessage(
+    'CITATION_MISMATCH',
+    "Citation 'Smith (2020)' was found in text, but no matching entry was found in the References bibliography.",
+    'Reference entry for Smith',
+    'Smith (2020)',
+    { paragraph_index: 3, occurrences: 1 },
+  )
+  assert.ok(!single.includes('Found'))
+})
+
+test('uncited reference quotes the entry preview', () => {
+  const out = friendlyFindingMessage(
+    'REFERENCE_NOT_CITED',
+    "Reference List entry 'Jones (2019)' was not cited in the body text.",
+    'At least one in-text citation',
+    'Jones, A. (2019). Other things. Press.',
+  )
+  assert.equal(out, '“Jones, A. (2019). Other things. Press.” was not cited anywhere in the text.')
+})
+
+test('duplicate reference reports the entry count from the location', () => {
+  const out = friendlyFindingMessage(
+    'REFERENCE_DUPLICATE',
+    "Reference List entry 'Smith (2020)' appears 2 times; a source must have exactly one entry.",
+    'One entry per source',
+    'Smith, J. (2020). On things. Press.',
+    { paragraph_index: 12, entry_count: 2, paragraph_indexes: [9, 12] },
+  )
+  assert.equal(
+    out,
+    '“Smith, J. (2020). On things. Press.” is listed more than once. Found 2 entries.',
+  )
+})
+
+test('citation/reference required actions are fixed, non-formatting copy', () => {
+  assert.equal(
+    friendlyRequiredAction('CITATION_REFERENCE_MISMATCH', 'Consistent year for Smith (2019)', '(Smith, 2020)'),
+    'Correct the year in the in-text citation or in the Reference List entry so both state the same year.',
+  )
+  assert.equal(
+    friendlyRequiredAction('CITATION_YEAR_SUFFIX_MISMATCH', 'Smith (2020a)', '(Smith, 2020)'),
+    'Add the matching year suffix (a, b, …) to the in-text citation, or correct the suffix in the Reference List entry.',
+  )
+  assert.equal(
+    friendlyRequiredAction('CITATION_REFERENCE_AMBIGUOUS', 'One unambiguous matching entry', '(Smith, 2024)'),
+    'Confirm which listed source this citation refers to.',
+  )
+  assert.equal(
+    friendlyRequiredAction('REFERENCE_NOT_CITED', 'At least one in-text citation', 'Jones, A. (2019). X.'),
+    'Cite this source in the text, or remove the entry.',
+  )
+  assert.equal(
+    friendlyRequiredAction('REFERENCE_DUPLICATE', 'One entry per source', 'Smith, J. (2020). X.'),
+    'Keep one entry and remove the duplicate.',
+  )
+})
+
+// ---------------------------------------------------------------------------
+// Severity mapping — MAJOR / MINOR / REVIEW (manual review)
+// ---------------------------------------------------------------------------
+
+test('severity normalization is three-way with a minor fallback', () => {
+  assert.equal(normalizeViolationSeverity('MAJOR'), 'major')
+  assert.equal(normalizeViolationSeverity('MINOR'), 'minor')
+  assert.equal(normalizeViolationSeverity('REVIEW'), 'review')
+  // Unknown / missing tokens are never upgraded to major.
+  assert.equal(normalizeViolationSeverity('CRITICAL'), 'minor')
+  assert.equal(normalizeViolationSeverity(null), 'minor')
+  assert.equal(normalizeViolationSeverity(undefined), 'minor')
+})
+
+test('review severity badge is neutral and labelled Manual review', () => {
+  const review = severityBadge('review')
+  assert.equal(review.label, 'Manual review')
+  assert.ok(!/rose|amber|destructive|warning/.test(review.className), review.className)
+  // Major/minor keep their alarm styling.
+  assert.equal(severityBadge('major').label, 'Major')
+  assert.match(severityBadge('major').className, /rose/)
+  assert.equal(severityBadge('minor').label, 'Minor')
+  assert.match(severityBadge('minor').className, /amber/)
+})
+
+test('citation/reference rule codes share the APA citations category', async () => {
+  const { categoryForRuleCode } = await import('../src/lib/audit/adapter.ts')
+  for (const code of [
+    'CITATION_MISMATCH',
+    'CITATION_REFERENCE_MISMATCH',
+    'CITATION_YEAR_SUFFIX_MISMATCH',
+    'CITATION_REFERENCE_AMBIGUOUS',
+    'REFERENCE_NOT_CITED',
+    'REFERENCE_DUPLICATE',
+  ]) {
+    assert.equal(categoryForRuleCode(code), 'citation_apa', code)
+  }
 })

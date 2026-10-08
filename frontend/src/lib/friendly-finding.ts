@@ -23,6 +23,38 @@ export function objectLabel(
   return null
 }
 
+/**
+ * Student-facing finding titles. Only the citation/reference codes carry a
+ * bespoke title; everything else falls back to the mechanical rule-code
+ * humanization in lib/audit/adapter (never a developer token).
+ */
+const FRIENDLY_RULE_TITLES: Record<string, string> = {
+  CITATION_MISMATCH: 'Citation without a Reference List entry',
+  CITATION_REFERENCE_MISMATCH: 'Citation year does not match the Reference List entry',
+  CITATION_YEAR_SUFFIX_MISMATCH: 'Citation is missing the year suffix',
+  CITATION_REFERENCE_AMBIGUOUS: 'Citation could match more than one entry',
+  REFERENCE_NOT_CITED: 'Reference List entry not cited in the text',
+  REFERENCE_DUPLICATE: 'Duplicate Reference List entry',
+}
+
+/** Friendly title for a rule code, or null when there is no bespoke title. */
+export function friendlyRuleTitle(ruleCode: string | null | undefined): string | null {
+  const code = (ruleCode ?? '').toUpperCase()
+  return FRIENDLY_RULE_TITLES[code] ?? null
+}
+
+/** Occurrence count carried by a consolidated finding's location. */
+function occurrenceCount(location: Record<string, unknown> | null | undefined): number {
+  const n = (location ?? {}).occurrences
+  return typeof n === 'number' && n > 1 ? n : 0
+}
+
+/** Duplicate-entry count carried by a duplicate finding's location. */
+function duplicateCount(location: Record<string, unknown> | null | undefined): number {
+  const n = (location ?? {}).entry_count
+  return typeof n === 'number' && n > 1 ? n : 0
+}
+
 export function friendlyFindingMessage(
   ruleCode: string | null | undefined,
   message: string | null | undefined,
@@ -76,7 +108,42 @@ export function friendlyFindingMessage(
     // `(Garcia, 2018)`) — never the message's canonical narrative form.
     const evidence = extractCitationEvidence(message, actual)
     const display = evidence ? evidence.text : (actual ?? cleanMessage(message))
-    return `The in-text citation ${display} does not have a matching entry in the References section.`
+    const times = occurrenceCount(location)
+    return (
+      `The in-text citation ${display} does not have a matching entry in the References section.` +
+      (times ? ` Found ${times} times in the document.` : '')
+    )
+  }
+  if (code === 'CITATION_REFERENCE_MISMATCH') {
+    const evidence = extractCitationEvidence(message, actual)
+    const display = evidence ? evidence.text : (actual ?? cleanMessage(message))
+    const year = exp ?? 'the entry year'
+    return `The in-text citation ${display} does not state the same year as its Reference List entry (${year}).`
+  }
+  if (code === 'CITATION_YEAR_SUFFIX_MISMATCH') {
+    const evidence = extractCitationEvidence(message, actual)
+    const display = evidence ? evidence.text : (actual ?? cleanMessage(message))
+    const year = exp ?? 'the entry year'
+    return `The in-text citation ${display} is missing the year suffix used by its Reference List entry (${year}).`
+  }
+  if (code === 'CITATION_REFERENCE_AMBIGUOUS') {
+    const evidence = extractCitationEvidence(message, actual)
+    const display = evidence ? evidence.text : (actual ?? cleanMessage(message))
+    return (
+      `The in-text citation ${display} could match more than one entry with the same author ` +
+      `name. Initials are not compared, so this needs a manual check.`
+    )
+  }
+  if (code === 'REFERENCE_NOT_CITED') {
+    const entry = act ? `“${act}”` : 'This Reference List entry'
+    return `${entry} was not cited anywhere in the text.`
+  }
+  if (code === 'REFERENCE_DUPLICATE') {
+    const count = duplicateCount(location)
+    const entry = act ? `“${act}”` : 'A Reference List entry'
+    return (
+      `${entry} is listed more than once.` + (count ? ` Found ${count} entries.` : '')
+    )
   }
   return cleanMessage(message)
 }
@@ -147,6 +214,22 @@ export function friendlyRequiredAction(
   }
   if (code === 'HEADING_HIERARCHY') {
     return null // Finding Detail renders its own heading-sequence action
+  }
+  // Citation/Reference List matching — fixed copy, never a formatting step.
+  if (code === 'CITATION_REFERENCE_MISMATCH') {
+    return 'Correct the year in the in-text citation or in the Reference List entry so both state the same year.'
+  }
+  if (code === 'CITATION_YEAR_SUFFIX_MISMATCH') {
+    return 'Add the matching year suffix (a, b, …) to the in-text citation, or correct the suffix in the Reference List entry.'
+  }
+  if (code === 'CITATION_REFERENCE_AMBIGUOUS') {
+    return 'Confirm which listed source this citation refers to.'
+  }
+  if (code === 'REFERENCE_NOT_CITED') {
+    return 'Cite this source in the text, or remove the entry.'
+  }
+  if (code === 'REFERENCE_DUPLICATE') {
+    return 'Keep one entry and remove the duplicate.'
   }
   if (exp && act) {
     return `Update this element to meet the required specification (${exp}).`

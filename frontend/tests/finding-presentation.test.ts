@@ -136,3 +136,129 @@ test('formatting presentations normalize units in Expected/Actual', () => {
   assert.equal(margin.expected, '1.5 in')
   assert.equal(margin.actual, '1.25 in')
 })
+
+// ---------------------------------------------------------------------------
+// Citation ↔ Reference List matching findings (citation reference build)
+// ---------------------------------------------------------------------------
+
+test('CITATION_MISMATCH keeps evidence, never an Actual value', () => {
+  const pres = presentationFor(
+    v(
+      'CITATION_MISMATCH',
+      "Citation 'Smith (2020)' was found in text, but no matching entry was found in the References bibliography.",
+      'Reference entry for Smith',
+      '(Smith, 2020)',
+      { paragraph_index: 3, occurrences: 1, paragraph_indexes: [3] },
+    ),
+  )
+  assert.equal(pres.evidence, '(Smith, 2020)')
+  assert.ok(pres.expected == null)
+  assert.ok(pres.actual == null)
+})
+
+test('citation year mismatch shows the entry year as Expected and the span as Actual', () => {
+  const pres = presentationFor(
+    v(
+      'CITATION_REFERENCE_MISMATCH',
+      "Citation 'Smith (2020)' and the Reference List entry for Smith (2019) state different years.",
+      'Consistent year for Smith (2019)',
+      '(Smith, 2020)',
+      { paragraph_index: 3, occurrences: 1, paragraph_indexes: [3] },
+    ),
+  )
+  assert.equal(pres.expected, 'Consistent year for Smith (2019)')
+  assert.equal(pres.actual, '(Smith, 2020)')
+  assert.equal(pres.evidence, undefined)
+  assert.match(pres.issue, /same year/)
+  assert.equal(
+    pres.requiredAction,
+    'Correct the year in the in-text citation or in the Reference List entry so both state the same year.',
+  )
+})
+
+test('year-suffix mismatch shows the suffixed year', () => {
+  const pres = presentationFor(
+    v(
+      'CITATION_YEAR_SUFFIX_MISMATCH',
+      "Citation 'Smith (2020)' is missing the year suffix used by the Reference List entry 'Smith (2020a)'.",
+      'Smith (2020a)',
+      '(Smith, 2020)',
+      { paragraph_index: 4, occurrences: 1, paragraph_indexes: [4] },
+    ),
+  )
+  assert.equal(pres.expected, 'Smith (2020a)')
+  assert.equal(pres.actual, '(Smith, 2020)')
+  assert.equal(
+    pres.requiredAction,
+    'Add the matching year suffix (a, b, …) to the in-text citation, or correct the suffix in the Reference List entry.',
+  )
+})
+
+test('ambiguous match presents the span as evidence and asks for confirmation', () => {
+  const pres = presentationFor({
+    id: 'amb',
+    rule_code: 'CITATION_REFERENCE_AMBIGUOUS',
+    severity: 'REVIEW',
+    location: { paragraph_index: 7, occurrences: 1, paragraph_indexes: [7] },
+    message:
+      "Citation 'Smith (2024)' could match 2 Reference List entries for Smith; the citation carries no initials.",
+    expected_value: 'One unambiguous matching entry',
+    actual_value: '(Smith, 2024)',
+  })
+  assert.equal(pres.evidence, '(Smith, 2024)')
+  assert.ok(pres.expected == null)
+  assert.ok(pres.actual == null)
+  assert.match(pres.issue, /could match more than one entry/)
+  assert.equal(pres.requiredAction, 'Confirm which listed source this citation refers to.')
+})
+
+test('uncited reference shows the entry preview, not an Actual value', () => {
+  const pres = presentationFor(
+    v(
+      'REFERENCE_NOT_CITED',
+      "Reference List entry 'Jones (2019)' was not cited in the body text.",
+      'At least one in-text citation',
+      'Jones, A. (2019). Other things. Press.',
+      { paragraph_index: 12 },
+    ),
+  )
+  assert.equal(pres.entryPreview, 'Jones, A. (2019). Other things. Press.')
+  assert.ok(pres.expected == null)
+  assert.ok(pres.actual == null)
+  assert.equal(pres.evidence, undefined)
+  assert.equal(pres.requiredAction, 'Cite this source in the text, or remove the entry.')
+})
+
+test('duplicate reference reports the entry count and keeps the preview', () => {
+  const pres = presentationFor(
+    v(
+      'REFERENCE_DUPLICATE',
+      "Reference List entry 'Smith (2020)' appears 2 times; a source must have exactly one entry.",
+      'One entry per source',
+      'Smith, J. (2020). On things. Press.',
+      { paragraph_index: 12, entry_count: 2, paragraph_indexes: [9, 12] },
+    ),
+  )
+  assert.equal(pres.entryPreview, 'Smith, J. (2020). On things. Press.')
+  assert.match(pres.issue, /Found 2 entries\./)
+  assert.equal(pres.requiredAction, 'Keep one entry and remove the duplicate.')
+})
+
+test('citation/reference presentations never leak raw message tokens', () => {
+  const cases: Violation[] = [
+    v('CITATION_REFERENCE_MISMATCH', "!= -> raw", 'Consistent year for Smith (2019)', '(Smith, 2020)', { paragraph_index: 1 }),
+    v('CITATION_YEAR_SUFFIX_MISMATCH', "!= -> raw", 'Smith (2020a)', '(Smith, 2020)', { paragraph_index: 1 }),
+    v('CITATION_REFERENCE_AMBIGUOUS', "!= -> raw", 'One unambiguous matching entry', '(Smith, 2024)', { paragraph_index: 1 }),
+    v('REFERENCE_NOT_CITED', "!= -> raw", 'At least one in-text citation', 'Jones, A. (2019). X.', { paragraph_index: 1 }),
+    v('REFERENCE_DUPLICATE', "!= -> raw", 'One entry per source', 'Smith, J. (2020). X.', { paragraph_index: 1, entry_count: 2 }),
+  ]
+  for (const violation of cases) {
+    const pres = presentationFor(violation)
+    const fields = [pres.issue, pres.requiredAction, pres.expected, pres.actual, pres.evidence, pres.entryPreview]
+    for (const field of fields) {
+      if (field == null) continue
+      assert.ok(!field.includes('!='), field)
+      assert.ok(!field.includes('->'), field)
+    }
+  }
+})
