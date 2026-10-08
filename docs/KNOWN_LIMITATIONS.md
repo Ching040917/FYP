@@ -26,6 +26,11 @@ These limitations describe the current release. Nothing here describes a planned
 - **APA 7 is the supported citation style.** Other citation systems are not checked.
 - ACA checks only the rules it supports (margins, fonts, sizes, spacing, headings, captions, APA 7 citations). It does not check grammar or plagiarism.
 - **ACA does not guarantee institutional acceptance or complete academic compliance** — findings are guidance for your own review.
+- Citation checking compares author surnames and years only. It does not compare initials, so two sources by different people with the same surname and year are reported as a **Manual review** item instead of being guessed.
+- Organisation authors, name particles ("van der Berg"), three-or-more author comma chains, title-based citations, numeric styles such as `[12]`, and citations inside tables, text boxes, comments, footnotes, or tracked insertions are **outside the supported comparison** and produce no finding.
+- Reference List entries that do not begin with a surname followed by a comma or full stop (the usual APA entry shape) cannot be compared, so they never produce an uncited-entry or duplicate-entry finding.
+- The comparison stops at the References heading and at the first Appendix heading: citations inside appendices are not checked.
+- Citation matching never edits your document, never verifies that a source is real, and never rewrites the Reference List.
 
 ## Display of historical information
 

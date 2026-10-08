@@ -44,7 +44,7 @@ The download is performed by your local Ollama service, not by ACA. ACA's Backen
 
 ## What happens when Local AI is used?
 
-Local AI citation guidance uses the Ollama service installed on your own machine. When an audit has confirmed citation findings, ACA sends only the relevant citation snippets and finding context to your local Ollama service — never the full document as a file. Results stay on your machine.
+Local AI citation guidance uses the Ollama service installed on your own machine. When an audit has confirmed citation findings, ACA sends only the relevant citation snippets and finding context to your local Ollama service — never the full document as a file. Reference List entries and bibliography text are never sent to the model, and the citation comparison itself runs without it. Results stay on your machine.
 
 No cloud AI provider is included in ACA. There is no external AI API key to configure, no provider selection, and no cloud opt-in; no document text, citation context, prompt, or finding is ever transmitted to a third-party AI service. Local AI requests go only to your own Ollama service at `127.0.0.1`.
 

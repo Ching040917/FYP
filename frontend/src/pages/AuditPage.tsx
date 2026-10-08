@@ -34,7 +34,7 @@ import {
   geometryLoaderFromBytes,
   dropPageGeometry,
 } from '../lib/pdf/figure-outlines.ts'
-import { friendlyFindingMessage } from '../lib/friendly-finding'
+import { friendlyFindingMessage, friendlyRuleTitle } from '../lib/friendly-finding'
 import { interruptionMessage } from '../lib/audit/interrupted-audit'
 import { formatAuditDateTime, auditDateTimeAttr } from '../lib/format-date'
 import { PendingNav, hasParagraphIdentity, type NavCommand } from '../lib/pdf/pending-navigation.ts'
@@ -95,7 +95,7 @@ function toLayoutError(v: Violation): LayoutError {
     category: categoryForRuleCode(v.rule_code),
     severity: normalizeViolationSeverity(v.severity),
     position,
-    title: humanizeRuleCode(v.rule_code),
+    title: friendlyRuleTitle(v.rule_code) ?? humanizeRuleCode(v.rule_code),
     // Student-facing plain language; the raw deterministic message stays
     // untouched in the violation record.
     detail: friendlyFindingMessage(v.rule_code, v.message, v.expected_value, v.actual_value, v.location),
@@ -1485,7 +1485,7 @@ export function AuditPage() {
                 >
                   <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border px-4 py-3">
                     <h2 className="min-w-0 truncate text-component-title text-foreground">
-                      {humanizeRuleCode(selectedViolation.rule_code)}
+                      {friendlyRuleTitle(selectedViolation.rule_code) ?? humanizeRuleCode(selectedViolation.rule_code)}
                     </h2>
                     <Button
                       variant="ghost"
