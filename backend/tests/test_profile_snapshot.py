@@ -8,6 +8,7 @@ stable + sensitive fingerprint, unsupported schema version, malformed input,
 no PresetConfig fallback, no document content in snapshots, adapter purity.
 """
 import json
+from pathlib import Path
 
 import pytest
 
@@ -416,3 +417,114 @@ def test_adapter_does_not_leak_global_preset():
     view = snapshot_to_preset_view(blank)
     for value in view.values():
         assert value is None or value == "bold"
+
+
+# ---------------------------------------------------------------------------
+# Snapshot schema v2 — citation matching group + v1 compatibility
+# ---------------------------------------------------------------------------
+
+_V1_FIXTURE = Path(__file__).parent / "fixtures" / "snapshot_v1.json"
+
+
+def _v1_payload():
+    """A snapshot written by the v1-producing release (main@e755109), with
+    its recorded fingerprint. Regenerating it would defeat the purpose."""
+    return json.loads(_V1_FIXTURE.read_text(encoding="utf-8"))
+
+
+def test_v1_stored_snapshot_loads_with_fingerprint_intact():
+    data = _v1_payload()
+    assert data["schema_version"] == 1
+    snap = snapshot_from_dict(data)
+    assert snap.schema_version == 1
+    assert snap.verify_fingerprint()
+    # v1 payloads carry no citation group → documented defaults apply.
+    assert snap.citation_check_citations_have_references is True
+    assert snap.citation_check_references_are_cited is False
+    assert snap.citation_check_author_year_consistency is True
+    assert snap.citation_check_year_suffixes is True
+    assert snap.citation_check_duplicate_references is True
+    assert snap.citation_flag_ambiguous_matches is True
+    assert snap.citation_allow_personal_communication is True
+
+
+def test_v1_snapshot_canonical_bytes_stay_v1():
+    """A v1 snapshot must serialize WITHOUT the v2 group, or every stored
+    fingerprint would stop matching (historical audits lose disclosure)."""
+    snap = snapshot_from_dict(_v1_payload())
+    d = snap.to_dict()
+    assert "citation_matching" not in d
+    assert d["schema_version"] == 1
+    assert snap.compute_fingerprint() == snap.fingerprint
+    assert set(d) == set(snap.to_dict())
+
+
+def test_v1_payload_carrying_v2_group_rejected():
+    d = _v1_payload()
+    d["citation_matching"] = {"check_year_suffixes": False}
+    with pytest.raises(ProfileValidationError) as exc:
+        snapshot_from_dict(d)
+    assert any(path == "citation_matching" for path, _ in exc.value.errors)
+
+
+def test_v2_snapshot_round_trips_with_citation_group():
+    snap = resolve_snapshot(get_builtin_profile(APA_PROFILE_ID))
+    d = snap.to_dict()
+    assert SNAPSHOT_SCHEMA_VERSION == 2
+    assert d["schema_version"] == 2
+    assert list(d)[-2:] == ["citation_matching", "fingerprint"]
+    assert d["citation_matching"]["check_references_are_cited"] is False
+    restored = snapshot_from_dict(json.loads(json.dumps(d)))
+    assert restored == snap
+
+
+def test_v2_citation_toggle_type_rejected():
+    d = resolve_snapshot(get_builtin_profile(APA_PROFILE_ID)).to_dict()
+    d["citation_matching"]["check_year_suffixes"] = "yes"
+    with pytest.raises(ProfileValidationError) as exc:
+        snapshot_from_dict(d)
+    assert ("citation_matching.check_year_suffixes", "must be true or false") in exc.value.errors
+
+
+def test_future_schema_version_rejected():
+    d = resolve_snapshot(get_builtin_profile(APA_PROFILE_ID)).to_dict()
+    d["schema_version"] = 3
+    with pytest.raises(ProfileValidationError) as exc:
+        snapshot_from_dict(d)
+    assert any(path == "schema_version" for path, _ in exc.value.errors)
+
+
+def test_dependent_citation_toggles_normalized_when_parent_off():
+    p = new_custom_profile("Deps", base=get_builtin_profile(APA_PROFILE_ID))
+    p.citation_matching.check_citations_have_references = False
+    p.citation_matching.check_author_year_consistency = True
+    p.citation_matching.check_year_suffixes = True
+    snap = resolve_snapshot(p)
+    assert snap.citation_check_citations_have_references is False
+    assert snap.citation_check_author_year_consistency is False
+    assert snap.citation_check_year_suffixes is False
+    # Independent toggles survive untouched.
+    assert snap.citation_check_duplicate_references is True
+    assert snap.citation_flag_ambiguous_matches is True
+    assert snap.citation_check_references_are_cited is False
+
+
+def test_citation_group_changes_fingerprint():
+    p = new_custom_profile("Fingerprint", base=get_builtin_profile(APA_PROFILE_ID))
+    before = resolve_snapshot(p).fingerprint
+    p.citation_matching.check_duplicate_references = False
+    after = resolve_snapshot(p).fingerprint
+    assert before != after
+
+
+def test_adapter_exposes_citation_toggles_from_snapshot_only():
+    from app.services.profile_preset_adapter import EffectiveProfileConfig
+    snap = resolve_snapshot(get_builtin_profile(APA_PROFILE_ID))
+    cfg = EffectiveProfileConfig(snap)
+    assert cfg.CITATION_CHECK_CITATIONS_HAVE_REFERENCES is True
+    assert cfg.CITATION_CHECK_REFERENCES_ARE_CITED is False
+    assert cfg.CITATION_CHECK_AUTHOR_YEAR_CONSISTENCY is True
+    assert cfg.CITATION_CHECK_YEAR_SUFFIXES is True
+    assert cfg.CITATION_CHECK_DUPLICATE_REFERENCES is True
+    assert cfg.CITATION_FLAG_AMBIGUOUS_MATCHES is True
+    assert cfg.CITATION_ALLOW_PERSONAL_COMMUNICATION is True

@@ -26,20 +26,51 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.services.profile_schema import (
+    CitationMatchingSettings,
     DocumentFormattingProfile,
     ProfileValidationError,
 )
 
 # Bump when the snapshot shape changes incompatibly.
-SNAPSHOT_SCHEMA_VERSION = 1
+# v2 appends the citation_matching group (deterministic citation ↔ Reference
+# List matching toggles). v1 snapshots stay loadable: their canonical key
+# order is frozen below so their stored SHA-256 keeps verifying byte-for-byte.
+SNAPSHOT_SCHEMA_VERSION = 2
 
-# Canonical key order for deterministic serialization (byte-stable).
-_CANONICAL_ORDER = (
+# Frozen v1 canonical key order — NEVER edit. v1 snapshots are fingerprinted
+# over exactly these keys; changing the tuple invalidates stored fingerprints
+# and silently breaks historical audits' profile disclosure.
+_CANONICAL_ORDER_V1 = (
     "schema_version", "profile_id", "profile_name", "profile_version",
     "profile_source", "description", "citation_style", "institution_specific",
     "body", "heading", "margins", "references", "captions", "lists",
     "role_exemptions", "table_eligibility", "fingerprint",
 )
+
+# Canonical key order for deterministic serialization (byte-stable).
+# v2 appends citation_matching immediately before the fingerprint.
+_CANONICAL_ORDER = (
+    "schema_version", "profile_id", "profile_name", "profile_version",
+    "profile_source", "description", "citation_style", "institution_specific",
+    "body", "heading", "margins", "references", "captions", "lists",
+    "role_exemptions", "table_eligibility", "citation_matching", "fingerprint",
+)
+
+# Snapshot schema versions this build can load (older first).
+SUPPORTED_SNAPSHOT_SCHEMA_VERSIONS = (1, SNAPSHOT_SCHEMA_VERSION)
+
+
+def _canonical_order_for(version: Any) -> Tuple[str, ...]:
+    """Canonical key order for a stored snapshot schema version.
+
+    Unknown/future versions resolve to the v1 order defensively — callers
+    reject unsupported versions before serializing.
+    """
+    try:
+        version_int = int(version)
+    except (TypeError, ValueError):
+        return _CANONICAL_ORDER_V1
+    return _CANONICAL_ORDER_V1 if version_int <= 1 else _CANONICAL_ORDER
 
 
 @dataclass(frozen=True)
@@ -99,6 +130,16 @@ class EffectiveProfileSnapshot:
     role_exemptions: Tuple[str, ...] = ()
     table_eligibility: str = "administrative"
 
+    # Citation ↔ Reference List matching toggles (v2+). Flat, so rules read
+    # them directly; serialized as the nested `citation_matching` group.
+    citation_check_citations_have_references: bool = True
+    citation_check_references_are_cited: bool = False
+    citation_check_author_year_consistency: bool = True
+    citation_check_year_suffixes: bool = True
+    citation_check_duplicate_references: bool = True
+    citation_flag_ambiguous_matches: bool = True
+    citation_allow_personal_communication: bool = True
+
     fingerprint: str = ""
 
     # ------------------------------------------------------------------
@@ -107,7 +148,12 @@ class EffectiveProfileSnapshot:
 
     def to_dict(self) -> Dict[str, Any]:
         """Canonical dict — stable key order, sorted tuples, no transient
-        state (timestamps never enter the snapshot)."""
+        state (timestamps never enter the snapshot).
+
+        Version-gated: a v1 snapshot serializes WITHOUT the citation_matching
+        group, so its canonical bytes (and stored fingerprint) stay identical
+        to the bytes written by the release that produced it.
+        """
         d: Dict[str, Any] = {
             "schema_version": self.schema_version,
             "profile_id": self.profile_id,
@@ -157,9 +203,18 @@ class EffectiveProfileSnapshot:
             },
             "role_exemptions": list(self.role_exemptions),
             "table_eligibility": self.table_eligibility,
+            "citation_matching": {
+                "check_citations_have_references": self.citation_check_citations_have_references,
+                "check_references_are_cited": self.citation_check_references_are_cited,
+                "check_author_year_consistency": self.citation_check_author_year_consistency,
+                "check_year_suffixes": self.citation_check_year_suffixes,
+                "check_duplicate_references": self.citation_check_duplicate_references,
+                "flag_ambiguous_matches": self.citation_flag_ambiguous_matches,
+                "allow_personal_communication": self.citation_allow_personal_communication,
+            },
             "fingerprint": self.fingerprint,
         }
-        return {k: d[k] for k in _CANONICAL_ORDER if k in d}
+        return {k: d[k] for k in _canonical_order_for(self.schema_version) if k in d}
 
     def canonical_bytes(self) -> bytes:
         """Byte-stable canonical serialization (JSON with stable key order).
@@ -225,6 +280,13 @@ class EffectiveProfileSnapshot:
             list_space_after_pt=self.list_space_after_pt,
             role_exemptions=self.role_exemptions,
             table_eligibility=self.table_eligibility,
+            citation_check_citations_have_references=self.citation_check_citations_have_references,
+            citation_check_references_are_cited=self.citation_check_references_are_cited,
+            citation_check_author_year_consistency=self.citation_check_author_year_consistency,
+            citation_check_year_suffixes=self.citation_check_year_suffixes,
+            citation_check_duplicate_references=self.citation_check_duplicate_references,
+            citation_flag_ambiguous_matches=self.citation_flag_ambiguous_matches,
+            citation_allow_personal_communication=self.citation_allow_personal_communication,
             fingerprint=fp,
         )
 
@@ -336,6 +398,13 @@ def resolve_snapshot(
         and profile.profile_id.startswith("suc-")
     )
 
+    # Citation matching dependency: year/suffix comparisons only run when the
+    # citation-without-reference check is on. The resolver normalizes the
+    # dependent toggles instead of erroring, so a stale editor payload can
+    # never enable a dependent rule behind a disabled parent.
+    cm = profile.citation_matching
+    parent_on = bool(cm.check_citations_have_references)
+
     snapshot = EffectiveProfileSnapshot(
         schema_version=SNAPSHOT_SCHEMA_VERSION,
         profile_id=profile.profile_id,
@@ -380,6 +449,16 @@ def resolve_snapshot(
 
         role_exemptions=tuple(sorted(profile.role_policy.exempt_roles)),
         table_eligibility=profile.role_policy.table_eligibility,
+
+        citation_check_citations_have_references=parent_on,
+        citation_check_references_are_cited=bool(cm.check_references_are_cited),
+        citation_check_author_year_consistency=bool(
+            cm.check_author_year_consistency and parent_on
+        ),
+        citation_check_year_suffixes=bool(cm.check_year_suffixes and parent_on),
+        citation_check_duplicate_references=bool(cm.check_duplicate_references),
+        citation_flag_ambiguous_matches=bool(cm.flag_ambiguous_matches),
+        citation_allow_personal_communication=bool(cm.allow_personal_communication),
     )
     return snapshot.with_fingerprint()
 
@@ -395,14 +474,17 @@ def snapshot_from_dict(data: Dict[str, Any]) -> EffectiveProfileSnapshot:
         raise ProfileValidationError([("", "snapshot payload must be a JSON object")])
 
     version = data.get("schema_version")
-    if version != SNAPSHOT_SCHEMA_VERSION:
+    if version not in SUPPORTED_SNAPSHOT_SCHEMA_VERSIONS:
         raise ProfileValidationError([
             ("schema_version", f"unsupported schema version {version!r}; "
-                               f"expected {SNAPSHOT_SCHEMA_VERSION}")
+                               f"expected one of {list(SUPPORTED_SNAPSHOT_SCHEMA_VERSIONS)}")
         ])
+    version_int = int(version)
 
-    # Reject unknown top-level fields (deterministic, safe).
-    allowed = set(_CANONICAL_ORDER)
+    # Reject unknown top-level fields (deterministic, safe). The allowed set
+    # follows the payload's own version: a v1 payload carrying v2 keys is
+    # malformed, and a v1 payload without citation_matching is complete.
+    allowed = set(_canonical_order_for(version_int))
     unknown = set(data) - allowed
     if unknown:
         raise ProfileValidationError([
@@ -443,6 +525,21 @@ def snapshot_from_dict(data: Dict[str, Any]) -> EffectiveProfileSnapshot:
             return ()
         return tuple(tuple(c) for c in v)
 
+    citation_group = data.get("citation_matching")
+    if citation_group is None:
+        citation_group = {}
+    if not isinstance(citation_group, dict):
+        raise ProfileValidationError([("citation_matching", "must be a JSON object")])
+    cm_defaults = CitationMatchingSettings()
+    cm_values: Dict[str, bool] = {}
+    for name in CitationMatchingSettings.__dataclass_fields__:
+        raw = citation_group.get(name, getattr(cm_defaults, name))
+        if not isinstance(raw, bool):
+            raise ProfileValidationError([
+                (f"citation_matching.{name}", "must be true or false")
+            ])
+        cm_values[f"citation_{name}"] = raw
+
     snapshot = EffectiveProfileSnapshot(
         schema_version=int(version),
         profile_id=str(data.get("profile_id") or ""),
@@ -481,6 +578,7 @@ def snapshot_from_dict(data: Dict[str, Any]) -> EffectiveProfileSnapshot:
         role_exemptions=tuple(sorted(data.get("role_exemptions") or [])),
         table_eligibility=str(data.get("table_eligibility") or "administrative"),
         fingerprint=str(data.get("fingerprint") or ""),
+        **cm_values,
     )
 
     if not snapshot.verify_fingerprint():

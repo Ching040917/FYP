@@ -315,3 +315,85 @@ def test_all_builtin_profiles_valid_and_distinct():
 def test_builtin_registry_immutable_identity():
     with pytest.raises(KeyError):
         get_builtin_profile("does-not-exist")
+
+
+# ---------------------------------------------------------------------------
+# Citation ↔ Reference List matching controls
+# ---------------------------------------------------------------------------
+
+_CITATION_DEFAULTS = {
+    "check_citations_have_references": True,
+    "check_references_are_cited": False,
+    "check_author_year_consistency": True,
+    "check_year_suffixes": True,
+    "check_duplicate_references": True,
+    "flag_ambiguous_matches": True,
+    "allow_personal_communication": True,
+}
+
+
+def test_citation_matching_defaults_on_blank_custom_profile():
+    p = new_custom_profile("Blank Controls")
+    cm = p.citation_matching
+    for name, expected in _CITATION_DEFAULTS.items():
+        assert getattr(cm, name) is expected, name
+    assert p.to_dict()["citation_matching"] == _CITATION_DEFAULTS
+
+
+def test_both_builtins_expose_the_documented_citation_toggles():
+    for pid in (SUC_PROFILE_ID, APA_PROFILE_ID):
+        cm = get_builtin_profile(pid).citation_matching
+        for name, expected in _CITATION_DEFAULTS.items():
+            assert getattr(cm, name) is expected, (pid, name)
+
+
+def test_citation_matching_rejects_non_boolean_with_field_path():
+    p = new_custom_profile("Bad Toggle")
+    p.citation_matching.check_year_suffixes = "yes"
+    assert ("citation_matching.check_year_suffixes", "must be true or false") in p.validate()
+    with pytest.raises(ProfileValidationError) as exc:
+        p.validate_or_raise()
+    assert any(path.startswith("citation_matching.") for path, _ in exc.value.errors)
+
+
+def test_citation_matching_round_trips_through_canonical_dict():
+    p = new_custom_profile("Toggles", base=get_builtin_profile(APA_PROFILE_ID))
+    p.citation_matching.check_references_are_cited = True
+    p.citation_matching.check_year_suffixes = False
+    d = p.to_dict()
+    keys = list(d)
+    # Canonical order: the group sits after role_policy, before the timestamps.
+    assert keys.index("role_policy") < keys.index("citation_matching") < keys.index("created_at")
+    assert d["citation_matching"]["check_references_are_cited"] is True
+    assert d["citation_matching"]["check_year_suffixes"] is False
+    restored = profile_from_dict(json.loads(json.dumps(d)))
+    assert restored.citation_matching == p.citation_matching
+
+
+def test_unknown_citation_matching_field_rejected():
+    d = get_builtin_profile(APA_PROFILE_ID).to_dict()
+    d["citation_matching"]["mystery_toggle"] = True
+    with pytest.raises(ProfileValidationError) as exc:
+        profile_from_dict(d)
+    assert any(path == "citation_matching.mystery_toggle" for path, _ in exc.value.errors)
+
+
+def test_missing_citation_matching_group_falls_back_to_defaults():
+    """Historical payloads (pre-group) stay loadable; missing key = default."""
+    d = get_builtin_profile(APA_PROFILE_ID).to_dict()
+    d.pop("citation_matching")
+    restored = profile_from_dict(d)
+    assert restored.citation_matching == type(restored.citation_matching)()
+    assert restored.to_dict()["citation_matching"] == _CITATION_DEFAULTS
+
+
+def test_new_custom_profile_copy_carries_citation_toggles():
+    """new_custom_profile enumerates every group by hand — a forgotten copy
+    would silently drop the user's toggles."""
+    base = get_builtin_profile(APA_PROFILE_ID)
+    base.citation_matching.check_references_are_cited = True
+    base.citation_matching.allow_personal_communication = False
+    copy = new_custom_profile("Copied Controls", base=base)
+    assert copy.citation_matching.check_references_are_cited is True
+    assert copy.citation_matching.allow_personal_communication is False
+    assert copy.citation_matching is not base.citation_matching

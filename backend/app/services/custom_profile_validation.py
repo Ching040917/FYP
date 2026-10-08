@@ -89,6 +89,20 @@ _FIELD_MAP = {
     "role_policy.table_eligibility": "role_policy.table_eligibility",
 }
 
+# Citation matching toggles — flat booleans, one editor field each.
+_FIELD_MAP.update({
+    f"citation_matching.{name}": f"citation_matching.{name}"
+    for name in (
+        "check_citations_have_references",
+        "check_references_are_cited",
+        "check_author_year_consistency",
+        "check_year_suffixes",
+        "check_duplicate_references",
+        "flag_ambiguous_matches",
+        "allow_personal_communication",
+    )
+})
+
 
 def validate_custom_profile(payload: Any) -> Dict[str, Any]:
     """Validate + normalize one custom profile payload.
@@ -232,6 +246,11 @@ def _message_for(path: str, message: str) -> str:
 
     if path.startswith("margins."):
         return f"Enter a margin between {EDITOR_MARGIN_MIN_IN:g} and {EDITOR_MARGIN_MAX_IN:g} in."
+
+    if path.startswith("citation_matching."):
+        if "unknown field" in lower:
+            return "This field is not recognized."
+        return "Choose true or false for this check."
 
     if path == "citation_style":
         return "APA 7 is the only supported citation style."

@@ -114,6 +114,27 @@ class EffectiveProfileConfig:
         self.ROLE_EXEMPTIONS = snapshot.role_exemptions
         self.TABLE_ELIGIBILITY = snapshot.table_eligibility
 
+        # Citation ↔ Reference List matching toggles (deterministic only).
+        # Dependency already normalized in the snapshot: the year/suffix
+        # toggles are False whenever the parent check is off.
+        self.CITATION_CHECK_CITATIONS_HAVE_REFERENCES = (
+            snapshot.citation_check_citations_have_references
+        )
+        self.CITATION_CHECK_REFERENCES_ARE_CITED = (
+            snapshot.citation_check_references_are_cited
+        )
+        self.CITATION_CHECK_AUTHOR_YEAR_CONSISTENCY = (
+            snapshot.citation_check_author_year_consistency
+        )
+        self.CITATION_CHECK_YEAR_SUFFIXES = snapshot.citation_check_year_suffixes
+        self.CITATION_CHECK_DUPLICATE_REFERENCES = (
+            snapshot.citation_check_duplicate_references
+        )
+        self.CITATION_FLAG_AMBIGUOUS_MATCHES = snapshot.citation_flag_ambiguous_matches
+        self.CITATION_ALLOW_PERSONAL_COMMUNICATION = (
+            snapshot.citation_allow_personal_communication
+        )
+
     # ------------------------------------------------------------------
 
     def _heading_size(self, level: int) -> Optional[float]:

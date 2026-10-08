@@ -20,6 +20,7 @@ from app.services.profile_schema import (
     APA_ALLOWED_FONT_COMBOS,
     BodySettings,
     CaptionSettings,
+    CitationMatchingSettings,
     DocumentFormattingProfile,
     HeadingSettings,
     ListSettings,
@@ -100,6 +101,15 @@ def _suc_academic_report() -> DocumentFormattingProfile:
             exempt_roles=_BOILERPLATE_EXEMPT_ROLES,
             table_eligibility="administrative",
         ),
+        citation_matching=CitationMatchingSettings(
+            check_citations_have_references=True,
+            check_references_are_cited=False,
+            check_author_year_consistency=True,
+            check_year_suffixes=True,
+            check_duplicate_references=True,
+            flag_ambiguous_matches=True,
+            allow_personal_communication=True,
+        ),
     )
 
 
@@ -171,6 +181,15 @@ def _apa7_student_paper() -> DocumentFormattingProfile:
         role_policy=RolePolicy(
             exempt_roles=_BOILERPLATE_EXEMPT_ROLES,
             table_eligibility="scholarly",
+        ),
+        citation_matching=CitationMatchingSettings(
+            check_citations_have_references=True,
+            check_references_are_cited=False,
+            check_author_year_consistency=True,
+            check_year_suffixes=True,
+            check_duplicate_references=True,
+            flag_ambiguous_matches=True,
+            allow_personal_communication=True,
         ),
     )
 

@@ -304,3 +304,33 @@ def test_tests_do_not_touch_backend_audit_db(tmp_path):
     # This test only verifies the test itself never writes there; the real
     # guard is conftest's DATABASE_URL=sqlite:///:memory: + mock_init_db.
     assert not audit_db.exists() or True  # audit.db may exist from dev use
+
+
+def test_custom_citation_toggles_persist_in_snapshot(client):
+    """The group must ride the existing custom_profile payload → snapshot
+    path with no new endpoint and no new response field."""
+    custom = new_custom_profile("Toggled", base=get_builtin_profile(SUC_PROFILE_ID)).to_dict()
+    custom["profile_id"] = "custom-toggled-off"
+    custom["profile_source"] = "custom"
+    custom["citation_matching"] = {
+        "check_citations_have_references": False,
+        "check_references_are_cited": True,
+        "check_author_year_consistency": True,   # normalized off by the parent
+        "check_year_suffixes": True,             # normalized off by the parent
+        "check_duplicate_references": False,
+        "flag_ambiguous_matches": False,
+        "allow_personal_communication": False,
+    }
+    resp = _post(client, custom=custom)
+    assert resp.status_code == 200
+    snap = resp.json()["profile_snapshot"]
+    assert snap["citation_matching"] == {
+        "check_citations_have_references": False,
+        "check_references_are_cited": True,
+        "check_author_year_consistency": False,
+        "check_year_suffixes": False,
+        "check_duplicate_references": False,
+        "flag_ambiguous_matches": False,
+        "allow_personal_communication": False,
+    }
+    assert resp.json()["audit_id"]

@@ -306,3 +306,74 @@ def test_input_object_mutation_cannot_alter_response(client):
     assert resp1["profile"]["margins"]["margin_right_in"] is None
     assert resp1["profile"]["body"]["font_size_pt"] == 12.0
 
+
+
+# ---------------------------------------------------------------------------
+# Citation ↔ Reference List matching toggles
+# ---------------------------------------------------------------------------
+
+_CITATION_DEFAULTS = {
+    "check_citations_have_references": True,
+    "check_references_are_cited": False,
+    "check_author_year_consistency": True,
+    "check_year_suffixes": True,
+    "check_duplicate_references": True,
+    "flag_ambiguous_matches": True,
+    "allow_personal_communication": True,
+}
+
+
+def test_payload_without_citation_group_valid_and_normalized_to_defaults(client):
+    """Saved custom profiles predating the group keep validating."""
+    resp = client.post(URL, json=_blank_payload())
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["valid"] is True
+    assert body["profile"]["citation_matching"] == _CITATION_DEFAULTS
+
+
+def test_citation_toggles_round_trip_through_validation(client):
+    submitted = {
+        "check_citations_have_references": True,
+        "check_references_are_cited": True,
+        "check_author_year_consistency": False,
+        "check_year_suffixes": False,
+        "check_duplicate_references": False,
+        "flag_ambiguous_matches": False,
+        "allow_personal_communication": False,
+    }
+    resp = client.post(URL, json=_blank_payload(citation_matching=submitted))
+    body = resp.json()
+    assert body["valid"] is True
+    assert body["profile"]["citation_matching"] == submitted
+
+
+def test_non_boolean_citation_toggle_rejected_with_friendly_message(client):
+    resp = client.post(URL, json=_blank_payload(
+        citation_matching={"check_year_suffixes": "yes"},
+    ))
+    body = resp.json()
+    assert body["valid"] is False
+    assert {
+        "field": "citation_matching.check_year_suffixes",
+        "message": "Choose true or false for this check.",
+    } in body["errors"]
+
+
+def test_unknown_citation_toggle_rejected_safely(client):
+    resp = client.post(URL, json=_blank_payload(
+        citation_matching={"mystery_toggle": True},
+    ))
+    body = resp.json()
+    assert body["valid"] is False
+    assert {
+        "field": "citation_matching.mystery_toggle",
+        "message": "This field is not recognized.",
+    } in body["errors"]
+
+
+def test_citation_group_must_be_an_object(client):
+    resp = client.post(URL, json=_blank_payload(citation_matching=["on"]))
+    body = resp.json()
+    assert body["valid"] is False
+    assert any(e["field"] == "citation_matching" for e in body["errors"])

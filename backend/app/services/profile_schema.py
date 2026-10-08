@@ -146,6 +146,28 @@ class RolePolicy:
 
 
 @dataclass
+class CitationMatchingSettings:
+    """Citation ↔ Reference List matching controls (deterministic rules only).
+
+    Each field toggles exactly one deterministic comparison between in-text
+    citations and Reference List entries. Severity is fixed per rule and is
+    NEVER configurable here — profiles toggle rules, not severity.
+    No regex, JSON, or free-text input exists for these settings.
+
+    Defaults preserve the previous release's behaviour plus the new
+    deterministic checks that emit findings only when the evidence is
+    unambiguous (ambiguous matches are reported as REVIEW, never scored).
+    """
+    check_citations_have_references: bool = True
+    check_references_are_cited: bool = False
+    check_author_year_consistency: bool = True
+    check_year_suffixes: bool = True
+    check_duplicate_references: bool = True
+    flag_ambiguous_matches: bool = True
+    allow_personal_communication: bool = True
+
+
+@dataclass
 class DocumentFormattingProfile:
     """Versioned, validated document formatting profile.
 
@@ -166,6 +188,7 @@ class DocumentFormattingProfile:
     captions: CaptionSettings = field(default_factory=CaptionSettings)
     lists: ListSettings = field(default_factory=ListSettings)
     role_policy: RolePolicy = field(default_factory=RolePolicy)
+    citation_matching: CitationMatchingSettings = field(default_factory=CitationMatchingSettings)
 
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
@@ -299,6 +322,15 @@ class DocumentFormattingProfile:
                 f"invalid '{self.role_policy.table_eligibility}'",
             ))
 
+        # Citation ↔ Reference matching toggles — booleans only. A non-bool
+        # (string, null, number) is rejected instead of being truthy-coerced.
+        for field_name in CitationMatchingSettings.__dataclass_fields__:
+            if not isinstance(getattr(self.citation_matching, field_name), bool):
+                errors.append((
+                    f"citation_matching.{field_name}",
+                    "must be true or false",
+                ))
+
         return errors
 
     def validate_or_raise(self) -> "DocumentFormattingProfile":
@@ -333,7 +365,7 @@ def _ordered_dict(d: Dict[str, Any]) -> Dict[str, Any]:
         "profile_id", "profile_name", "profile_version", "profile_source",
         "description", "citation_style",
         "body", "heading", "margins", "references", "captions", "lists",
-        "role_policy", "created_at", "updated_at",
+        "role_policy", "citation_matching", "created_at", "updated_at",
     )
     out: Dict[str, Any] = {}
     for key in order:
@@ -375,7 +407,7 @@ def profile_from_dict(data: Dict[str, Any]) -> DocumentFormattingProfile:
         "profile_id", "profile_name", "profile_version", "profile_source",
         "description", "citation_style",
         "body", "heading", "margins", "references", "captions", "lists",
-        "role_policy", "created_at", "updated_at",
+        "role_policy", "citation_matching", "created_at", "updated_at",
     }
     unknown = set(data) - allowed
     if unknown:
@@ -402,6 +434,7 @@ def profile_from_dict(data: Dict[str, Any]) -> DocumentFormattingProfile:
     caps_raw = _group("captions", CaptionSettings)
     lists_raw = _group("lists", ListSettings)
     rp_raw = _group("role_policy", RolePolicy)
+    cm_raw = _group("citation_matching", CitationMatchingSettings)
 
     # allowed_font_combos arrives as a list of pairs — restore tuple form.
     if body_raw.get("allowed_font_combos") is not None:
@@ -430,6 +463,7 @@ def profile_from_dict(data: Dict[str, Any]) -> DocumentFormattingProfile:
             captions=CaptionSettings(**caps_raw),
             lists=ListSettings(**lists_raw),
             role_policy=RolePolicy(**rp_raw),
+            citation_matching=CitationMatchingSettings(**cm_raw),
             created_at=data.get("created_at"),
             updated_at=data.get("updated_at"),
         )
@@ -473,6 +507,9 @@ def new_custom_profile(
             role_policy=RolePolicy(
                 exempt_roles=set(base.role_policy.exempt_roles),
                 table_eligibility=base.role_policy.table_eligibility,
+            ),
+            citation_matching=CitationMatchingSettings(
+                **asdict(base.citation_matching)
             ),
             created_at=now,
             updated_at=now,

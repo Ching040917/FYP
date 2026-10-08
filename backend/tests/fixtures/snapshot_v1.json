@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "profile_id": "custom-gray",
+  "profile_name": "Gray",
+  "profile_version": 3,
+  "profile_source": "custom",
+  "description": "v1 stored snapshot",
+  "citation_style": "APA 7",
+  "institution_specific": false,
+  "body": {
+    "font_family": "Times New Roman",
+    "font_size_pt": 12.0,
+    "allowed_font_combos": [],
+    "line_spacing": 1.5,
+    "alignment": null,
+    "space_before_pt": null,
+    "space_after_pt": 6.0,
+    "first_line_indent_in": null
+  },
+  "heading": {
+    "font_family": null,
+    "font_size_pt": null,
+    "allowed_font_combos": [],
+    "alignment": null,
+    "space_before_pt": null,
+    "space_after_pt": null,
+    "level_1": {},
+    "level_2": {},
+    "level_3": {}
+  },
+  "margins": {
+    "left_in": 1.0,
+    "right_in": null,
+    "top_in": null,
+    "bottom_in": null
+  },
+  "references": {
+    "line_spacing": 2.0,
+    "hanging_indent_in": null
+  },
+  "captions": {
+    "space_before_pt": 0.0,
+    "space_after_pt": null
+  },
+  "lists": {
+    "space_after_pt": null
+  },
+  "role_exemptions": [
+    "COVER",
+    "EMPTY"
+  ],
+  "table_eligibility": "administrative",
+  "fingerprint": "caae96bee390de870a5cd3a8b5e4c48109948aabc99b344cad75b805e90e0390"
+}

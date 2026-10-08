@@ -140,3 +140,16 @@ def test_builtin_payload_endpoint_404_for_unknown(client):
     resp = client.get("/api/formatting-profiles/nope/payload")
     assert resp.status_code == 404
     assert "Traceback" not in resp.json()["detail"]
+
+
+def test_builtin_payload_carries_citation_matching_group(client):
+    """The editor copies a built-in payload — the toggles must be present."""
+    for pid in (SUC_PROFILE_ID, APA_PROFILE_ID):
+        resp = client.get(f"/api/formatting-profiles/{pid}/payload")
+        assert resp.status_code == 200
+        group = resp.json()["profile"]["citation_matching"]
+        assert group["check_citations_have_references"] is True
+        assert group["check_references_are_cited"] is False
+        assert group["check_year_suffixes"] is True
+        # Presentation-safe: no schema/version internals leak.
+        assert "schema_version" not in str(resp.json()).lower()
