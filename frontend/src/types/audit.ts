@@ -6,7 +6,10 @@
 
 // 'review' = manual-review finding (never scored, never counted as
 // major/minor — the backend emits it as severity token REVIEW).
-export type ViolationSeverity = 'major' | 'minor' | 'review'
+// 'unknown' = compatibility value for an unrecognized or malformed backend
+// severity token: rendered neutrally as "Unclassified" and excluded from
+// every count and from score interpretation. Never a scored severity.
+export type ViolationSeverity = 'major' | 'minor' | 'review' | 'unknown'
 
 export type AuditCategory =
   | 'font_consistency'

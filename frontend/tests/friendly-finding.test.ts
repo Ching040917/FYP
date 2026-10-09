@@ -296,14 +296,10 @@ test('citation/reference required actions are fixed, non-formatting copy', () =>
 // Severity mapping — MAJOR / MINOR / REVIEW (manual review)
 // ---------------------------------------------------------------------------
 
-test('severity normalization is three-way with a minor fallback', () => {
+test('severity normalization is explicit for every valid token', () => {
   assert.equal(normalizeViolationSeverity('MAJOR'), 'major')
   assert.equal(normalizeViolationSeverity('MINOR'), 'minor')
   assert.equal(normalizeViolationSeverity('REVIEW'), 'review')
-  // Unknown / missing tokens are never upgraded to major.
-  assert.equal(normalizeViolationSeverity('CRITICAL'), 'minor')
-  assert.equal(normalizeViolationSeverity(null), 'minor')
-  assert.equal(normalizeViolationSeverity(undefined), 'minor')
 })
 
 test('review severity badge is neutral and labelled Manual review', () => {
@@ -388,4 +384,96 @@ test('a location without the flag is never treated as document-wide', () => {
     { paragraph_index: null },
   )
   assert.match(issue, /^The in-text citation/)
+})
+
+// ---------------------------------------------------------------------------
+// Severity mapping contract — MAJOR / MINOR / REVIEW / unknown
+// ---------------------------------------------------------------------------
+
+test('valid backend severity tokens map to their exact display severity', () => {
+  assert.equal(normalizeViolationSeverity('MAJOR'), 'major')
+  assert.equal(normalizeViolationSeverity('MINOR'), 'minor')
+  assert.equal(normalizeViolationSeverity('REVIEW'), 'review')
+})
+
+test('unknown or malformed severity never becomes a scored severity', () => {
+  for (const token of ['CRITICAL', 'N/A', '', 'info', undefined, null, 42 as never]) {
+    const mapped = normalizeViolationSeverity(token as string | null | undefined)
+    assert.notEqual(mapped, 'minor', `token ${String(token)} must not map to minor`)
+    assert.notEqual(mapped, 'review', `token ${String(token)} must not map to review`)
+    assert.equal(mapped, 'unknown', `token ${String(token)}`)
+  }
+})
+
+test('unclassified severity has neutral presentation with no alarm styling', () => {
+  const badge = severityBadge('unknown')
+  assert.equal(badge.label, 'Unclassified')
+  assert.ok(!/rose|amber|destructive|warning|red/.test(badge.className), badge.className)
+  // Scoped presentation stays neutral, review presentation is unchanged.
+  assert.equal(severityBadge('review').label, 'Manual review')
+  assert.equal(severityBadge('major').label, 'Major')
+  assert.equal(severityBadge('minor').label, 'Minor')
+})
+
+test('unknown severity is excluded from every count', async () => {
+  const { adaptAuditResponse } = await import('../src/lib/audit/adapter.ts')
+  const raw = {
+    status: 'completed',
+    audit_id: 'audit-unknown-1',
+    weighted_compliance_score: 95,
+    physical_layout_errors: [
+      {
+        id: 'v-major',
+        rule_code: 'CITATION_MISMATCH',
+        severity: 'MAJOR',
+        location: { paragraph_index: 1 },
+        message: 'm',
+        expected_value: 'e',
+        actual_value: '(Smith, 2020)',
+      },
+      {
+        id: 'v-review',
+        rule_code: 'CITATION_REFERENCE_AMBIGUOUS',
+        severity: 'REVIEW',
+        location: { paragraph_index: 2 },
+        message: 'm',
+        expected_value: 'e',
+        actual_value: '(Smith, 2024)',
+      },
+      {
+        id: 'v-unknown',
+        rule_code: 'FONT_SIZE',
+        severity: 'WEIRD',
+        location: { paragraph_index: 3 },
+        message: 'm',
+        expected_value: 'e',
+        actual_value: 'a',
+      },
+    ],
+    ai_citation_tooltips: [],
+  } as Parameters<typeof adaptAuditResponse>[0]['raw']
+
+  const result = adaptAuditResponse({ raw })
+  const byId = new Map(result.physical_layout_errors.map((e) => [e.id, e]))
+  assert.equal(byId.get('v-major')!.severity, 'major')
+  assert.equal(byId.get('v-review')!.severity, 'review')
+  // Unclassified stays visible and never counted.
+  assert.equal(byId.get('v-unknown')!.severity, 'unknown')
+  assert.equal(result.physical_layout_errors.length, 3)
+  assert.equal(result.major_count, 1)
+  assert.equal(result.minor_count, 0)
+  assert.equal(result.weighted_compliance_score, 95)
+})
+
+test('an unknown severity cannot make a finding Guided-Fix eligible', () => {
+  // Guided Fixes eligibility is decided by the backend rule whitelist, which
+  // is severity-independent: an unclassified FONT_SIZE finding stays
+  // manual-only, exactly as a valid MINOR FONT_SIZE finding does.
+  assert.equal(severityBadge('unknown').label, 'Unclassified')
+  assert.notEqual(severityBadge('unknown').label, severityBadge('minor').label)
+})
+
+test('whitespace-padded valid tokens still normalize to their exact severity', () => {
+  assert.equal(normalizeViolationSeverity(' major '), 'major')
+  assert.equal(normalizeViolationSeverity('review '), 'review')
 })

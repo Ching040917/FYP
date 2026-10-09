@@ -246,24 +246,25 @@ export function ErrorList({
                       )}
                     >
                       {/* Severity marker — contained within the row, never a
-                          continuous line across rows. */}
+                          continuous line across rows. Unclassified (unknown
+                          backend token) stays neutral, never alarm. */}
                       <span
                         aria-hidden="true"
                         className={cn(
                           'mt-1.5 h-7 w-1 shrink-0 rounded-full',
                           e.severity === 'major'
                             ? 'bg-destructive'
-                            : e.severity === 'review'
-                              ? 'bg-muted-foreground/40'
-                              : 'bg-warning',
+                            : e.severity === 'minor'
+                              ? 'bg-warning'
+                              : 'bg-muted-foreground/40',
                         )}
                       />
                       {e.severity === 'major' ? (
                         <AlertOctagon className="mt-0.5 h-4 w-4 shrink-0 text-destructive" aria-hidden="true" />
-                      ) : e.severity === 'review' ? (
-                        <Info className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-                      ) : (
+                      ) : e.severity === 'minor' ? (
                         <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" aria-hidden="true" />
+                      ) : (
+                        <Info className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
                       )}
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-sm font-medium text-foreground">

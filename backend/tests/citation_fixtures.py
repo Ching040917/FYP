@@ -253,9 +253,15 @@ CLEAN_FIXTURES = (
 # uncited and must be reported when that rule is on.
 UNSUPPORTED_OCCURRENCE_FIXTURES = ("personal_communication", "as_cited_in")
 
+# `year_suffixes` cites (Smith, 2024b) while the list holds 2024a and 2024b:
+# cited state is work-level, so the uncited 2024a entry is correctly reported.
+UNCITED_ENTRY_UNDER_ALL_RULES = ("year_suffixes",)
+
 CLEAN_UNDER_ALL_RULES = tuple(
     name for name in CLEAN_FIXTURES
-    if name not in ("numeric_citation", "malformed_citation") + UNSUPPORTED_OCCURRENCE_FIXTURES
+    if name not in ("numeric_citation", "malformed_citation")
+    + UNSUPPORTED_OCCURRENCE_FIXTURES
+    + UNCITED_ENTRY_UNDER_ALL_RULES
 )
 
 

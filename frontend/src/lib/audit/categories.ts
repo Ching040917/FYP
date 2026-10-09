@@ -29,6 +29,8 @@ export const CATEGORY_DESCRIPTIONS: Record<AuditCategory, string> = {
  *
  * Review findings are neutral (never alarm styling): they are manual-review
  * flags, excluded from the score and from the major/minor counts.
+ * Unrecognized/malformed backend tokens render as neutral "Unclassified":
+ * visible, never styled as a scored severity, never counted.
  */
 export const severityBadge = (sev: ViolationSeverity) => {
   if (sev === 'major') {
@@ -36,6 +38,9 @@ export const severityBadge = (sev: ViolationSeverity) => {
   }
   if (sev === 'review') {
     return { label: 'Manual review', className: 'bg-muted text-muted-foreground border-border' }
+  }
+  if (sev === 'unknown') {
+    return { label: 'Unclassified', className: 'bg-muted text-muted-foreground border-dashed' }
   }
   return { label: 'Minor', className: 'bg-amber-500/15 text-amber-300 border-amber-500/30' }
 }

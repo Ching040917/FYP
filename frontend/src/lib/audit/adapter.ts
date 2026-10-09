@@ -90,17 +90,27 @@ export function humanizeRuleCode(ruleCode: string): string {
     .join(' ')
 }
 
-/** Normalize a backend severity token.
+/** Normalize a backend severity token to an explicit display severity.
  *
- * MAJOR → 'major'; REVIEW → 'review' (manual review, unscored); any other
- * or missing token → 'minor' (the historical default, so an unrecognized
- * severity is never silently upgraded to major).
+ * MAJOR → 'major', MINOR → 'minor', REVIEW → 'review'. Anything else —
+ * missing, malformed, or a token from a future release — becomes 'unknown',
+ * which renders neutrally as "Unclassified" and is excluded from the
+ * major/minor/review counts. An unrecognized token is never silently
+ * presented as a scored severity.
  */
 export function normalizeViolationSeverity(raw: string | null | undefined): ViolationSeverity {
-  const token = (raw ?? '').toUpperCase()
-  if (token === 'MAJOR') return 'major'
-  if (token === 'REVIEW') return 'review'
-  return 'minor'
+  // Defensive: a malformed (non-string) token must never throw in the adapter.
+  const token = typeof raw === 'string' ? raw.trim().toUpperCase() : ''
+  switch (token) {
+    case 'MAJOR':
+      return 'major'
+    case 'MINOR':
+      return 'minor'
+    case 'REVIEW':
+      return 'review'
+    default:
+      return 'unknown'
+  }
 }
 
 function adaptViolation(v: Violation): LayoutError {

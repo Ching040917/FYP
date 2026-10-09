@@ -334,6 +334,62 @@ def _citation_finding(
         actual_value=actual_value,
     )
 
+@dataclass
+class CitedWorkKeys:
+    """Work-level cited state derived from SUPPORTED citations only.
+
+    `exact_full_keys` — works a suffix-bearing citation pointed at.
+    `uniquely_resolved_base_keys` — author+year pairs where exactly one
+    compatible Reference List entry exists, so an unsuffixed citation
+    identifies that work.
+    `undecided_candidates` — works an ambiguous unsuffixed citation could
+    have referred to. They are neither cited nor definitely uncited.
+    """
+
+    exact_full_keys: Set[Tuple[str, str, str]] = field(default_factory=set)
+    uniquely_resolved_base_keys: Set[Tuple[str, str]] = field(default_factory=set)
+    undecided_candidates: Set[Tuple[str, str, str]] = field(default_factory=set)
+
+
+def resolve_cited_work_keys(
+    citations: Sequence[CitationRef],
+    index: ReferenceIndex,
+) -> CitedWorkKeys:
+    """Resolve which individual Reference List WORKS are cited.
+
+    Deliberately work-level: one cited work never marks the author's other
+    works as cited. Rules, in order per supported citation:
+
+      A. A citation with a year suffix identifies only the exact work
+         (`Smith 2024 a`); every other work by that author stays uncited.
+      B. An unsuffixed citation with exactly one compatible entry (same
+         author + year) identifies that work.
+      C. An unsuffixed citation with several compatible entries cannot
+         identify one: the candidates become UNDECIDED, never "cited".
+      D-F. Year and `n.d.` are part of the work key, so a dated citation
+         never covers an `n.d.` entry and vice versa.
+
+    Unsupported occurrences (personal communication, secondary citations,
+    out-of-grammar forms) are absent from `citations` and therefore add no
+    work key here. No fuzzy comparison is involved: keys are exact tuples.
+    """
+    keys = CitedWorkKeys()
+    for cite in citations:
+        key = cite.key
+        if key.suffix:
+            if index.has_full_key(key.full_key):
+                keys.exact_full_keys.add(key.full_key)
+            continue
+        compatible = [
+            entry for entry in index.author_entries(key.author_key)
+            if entry.key.year_key == key.year_key
+        ]
+        if len(compatible) == 1:
+            keys.uniquely_resolved_base_keys.add(key.base_key)
+        elif len(compatible) > 1:
+            for entry in compatible:
+                keys.undecided_candidates.add(entry.key.full_key)
+    return keys
 
 # ---------------------------------------------------------------------------
 # Matching
@@ -352,26 +408,26 @@ def match(
     exemption set anywhere in this pipeline, so an unrelated entry by an
     author named in unsupported material is still reported as uncited.
 
-    Precedence per citation key: exact match → nothing; ≥2 entries for the
-    author and no exact match → REVIEW (ambiguous); a single entry with a
-    different year → MAJOR year mismatch; a matching year with a different
+    Direction 1 precedence per citation key: exact match → nothing; ≥2 entries
+    for the author and no exact match → REVIEW (ambiguous); a single entry with
+    a different year → MAJOR year mismatch; a matching year with a different
     suffix → MINOR suffix mismatch; no entry for the author → MAJOR mismatch.
     A disabled rule emits nothing and never falls through to another code.
+
+    Direction 2 decides each entry's cited state at WORK level (author + year
+    + suffix), never at author level: see `resolve_cited_work_keys`.
     """
     rules = rules or CitationMatchingRules()
     violations: List[LayoutViolation] = []
 
-    # An entry counts as cited only when a SUPPORTED citation occurrence
-    # matches its author — never because the author was named in excluded
-    # material.
-    cited_author_keys = {c.key.author_key for c in citations}
+    # Work-level cited state. No author-wide "cited" set exists here: one
+    # cited work never marks the author's other works as cited.
+    cited_works = resolve_cited_work_keys(citations, index)
 
     # ---- Direction 1: in-text citations → Reference List entries ----------
     groups: Dict[Tuple[str, str, str], List[CitationRef]] = {}
     for cite in citations:
         groups.setdefault(cite.key.full_key, []).append(cite)
-
-    cited_author_keys = {c.key.author_key for c in citations}
 
     for group in groups.values():
         first = group[0]
@@ -448,10 +504,24 @@ def match(
             ))
 
     # ---- Direction 2: Reference List entries → citations ------------------
+    #
+    # Precedence against ambiguity (one consistent contract): when a supported
+    # unsuffixed citation has several compatible candidates, direction 1 has
+    # already emitted CITATION_REFERENCE_AMBIGUOUS (REVIEW) and the UI asks the
+    # user to confirm the intended source. Those candidates are therefore
+    # neither counted as cited nor claimed to be definitely uncited — emitting
+    # both would contradict each other. The suppression is per candidate WORK,
+    # never author-wide: an unrelated work by the same author is still
+    # reported as uncited.
     if rules.check_references_are_cited:
         for group in index.by_full_key.values():
             entry = group[0]
-            if entry.key.author_key in cited_author_keys:
+            full_key = entry.key.full_key
+            if full_key in cited_works.exact_full_keys:
+                continue
+            if entry.key.base_key in cited_works.uniquely_resolved_base_keys:
+                continue
+            if full_key in cited_works.undecided_candidates:
                 continue
             violations.append(_citation_finding(
                 RULE_REFERENCE_NOT_CITED,

@@ -8,6 +8,7 @@ precedence, and the profile toggles (disabled rules emit nothing).
 """
 import pytest
 
+from app.services.citation_sensor import scan_citations as scan_citations_for
 from app.services.citation_matching import (
     CitationMatchingRules,
     CitationRef,
@@ -461,9 +462,16 @@ def test_all_rules_off_emit_nothing():
         (12, "Smith, J. (2019). Wrong year duplicate."),
         (15, "Jones, A. (2018). Uncited."),
     )
-    # The parent toggle is off → the citation side reports nothing.
+    # The parent toggle is off → the citation side reports nothing. Direction 2
+    # still works at work level: no citation matches Smith 2019 or Jones 2018,
+    # so both are uncited (the duplicated Smith entry counts once) plus the
+    # duplicate-entry finding.
     viols = match(citations, index, rules)
-    assert [v.rule_code for v in viols] == [RULE_REFERENCE_NOT_CITED, RULE_REFERENCE_DUPLICATE]
+    assert [v.rule_code for v in viols] == [
+        RULE_REFERENCE_NOT_CITED,
+        RULE_REFERENCE_NOT_CITED,
+        RULE_REFERENCE_DUPLICATE,
+    ]
 
 
 def test_disabled_year_rule_does_not_fall_through_to_suffix_rule():
@@ -554,3 +562,166 @@ def test_review_severity_adds_no_deduction_or_count():
     assert result.minor_count == 0
     apa = next(b for b in result.breakdown if b.category == "citation_apa")
     assert (apa.major, apa.minor, apa.deduction) == (0, 0, 0)
+
+
+# ---------------------------------------------------------------------------
+# Work-level cited state (direction 2) — contract
+# ---------------------------------------------------------------------------
+
+def _uncited(violations):
+    return [v for v in violations if v.rule_code == RULE_REFERENCE_NOT_CITED]
+
+
+def test_same_author_other_work_is_uncited():
+    """Rule D: citing Smith (2019) cites that work only — Smith (2021) is
+    reported as an uncited Reference List entry."""
+    viols = match(
+        [_cite("Smith", "2019", 1)],
+        _index((9, "Smith, J. (2019). Cited. Press."), (10, "Smith, J. (2021). Other. Press.")),
+        _cited_rules(),
+    )
+    assert [v.rule_code for v in viols] == [RULE_REFERENCE_NOT_CITED]
+    assert viols[0].actual_value == "Smith, J. (2021). Other. Press."
+    assert viols[0].location["paragraph_index"] == 10
+
+
+def test_other_suffix_of_the_same_year_is_uncited():
+    """Rule A/E: a suffix-bearing citation identifies only its exact work."""
+    viols = match(
+        [_cite("Smith", "2024a", 1)],
+        _index((9, "Smith, J. (2024a). Cited. Press."), (10, "Smith, J. (2024b). Other. Press.")),
+        _cited_rules(),
+    )
+    assert [v.rule_code for v in viols] == [RULE_REFERENCE_NOT_CITED]
+    assert "2024b" in viols[0].actual_value
+
+
+def test_no_date_citation_does_not_cover_a_dated_entry():
+    """Rule F: `n.d.` is a work-level year key."""
+    viols = match(
+        [_cite("Smith", "n.d.", 1)],
+        _index((9, "Smith, J. (n.d.). Cited. Press."), (10, "Smith, J. (2024). Other. Press.")),
+        _cited_rules(),
+    )
+    assert [v.rule_code for v in viols] == [RULE_REFERENCE_NOT_CITED]
+    assert "2024" in viols[0].actual_value
+
+
+def test_dated_citation_does_not_cover_a_no_date_entry():
+    viols = match(
+        [_cite("Smith", "2024", 1)],
+        _index((9, "Smith, J. (2024). Cited. Press."), (10, "Smith, J. (n.d.). Other. Press.")),
+        _cited_rules(),
+    )
+    assert [v.rule_code for v in viols] == [RULE_REFERENCE_NOT_CITED]
+    assert "n.d." in viols[0].actual_value
+
+
+def test_different_authors_with_the_same_year_do_not_cross_match():
+    viols = match(
+        [_cite("Jones", "2020", 1)],
+        _index((9, "Smith, J. (2020). Other author. Press."), (10, "Jones, A. (2020). Cited. Press.")),
+        _cited_rules(),
+    )
+    assert [v.rule_code for v in viols] == [RULE_REFERENCE_NOT_CITED]
+    assert viols[0].actual_value == "Smith, J. (2020). Other author. Press."
+
+
+def test_unsuffixed_citation_resolves_one_exact_unsuffixed_entry():
+    """Rule B: exactly one compatible entry → that work is cited."""
+    viols = match(
+        [_cite("Smith", "2024", 1)],
+        _index((9, "Smith, J. (2024). Cited. Press.")),
+        _cited_rules(),
+    )
+    assert viols == []
+
+
+def test_ambiguous_candidates_are_neither_cited_nor_definitely_uncited():
+    """Rule C + ambiguity precedence: one REVIEW finding, no score change, and
+    no contradictory definite claim against the same candidates."""
+    from app.services.scoring import calculate_weighted_score_detailed
+
+    violations = match(
+        [_cite("Smith", "2024", 1)],
+        _index((9, "Smith, J. (2024a). A. Press."), (10, "Smith, J. (2024b). B. Press.")),
+        _cited_rules(),
+    )
+    assert [v.rule_code for v in violations] == [RULE_CITATION_REFERENCE_AMBIGUOUS]
+    assert violations[0].severity == SEVERITY_REVIEW
+    assert _uncited(violations) == []
+    score = calculate_weighted_score_detailed(violations)
+    assert score.total == 100
+    assert score.major_count == 0 and score.minor_count == 0
+
+
+def test_ambiguity_suppression_is_candidate_specific_not_author_wide():
+    """An unrelated work by the same author is still reported as uncited."""
+    viols = match(
+        [_cite("Smith", "2024", 1)],
+        _index(
+            (9, "Smith, J. (2024a). A. Press."),
+            (10, "Smith, J. (2024b). B. Press."),
+            (11, "Smith, J. (2019). Unrelated. Press."),
+        ),
+        _cited_rules(),
+    )
+    assert [v.rule_code for v in viols] == [
+        RULE_CITATION_REFERENCE_AMBIGUOUS,
+        RULE_REFERENCE_NOT_CITED,
+    ]
+    assert "2019" in viols[1].actual_value
+
+
+def test_unsupported_occurrences_never_create_a_cited_work_key():
+    """Rules G/H: personal communication and secondary citations add no work key,
+    so the entry they name stays uncited."""
+    for text in (
+        "Per (J. Smith, personal communication, October 5, 2024) it holds.",
+        "Reported by (Smith, 2020, as cited in Jones, 2019).",
+        "As shown in [12] the effect holds.",
+    ):
+        scan = scan_citations_for(text)
+        assert scan.citations == [], text
+        viols = match(scan.citations, _index((9, "Smith, J. (2020). A. Press.")), _cited_rules())
+        assert [v.rule_code for v in viols] == [RULE_REFERENCE_NOT_CITED], text
+
+
+def test_direction_two_has_no_author_wide_cited_state():
+    """No author-level cited-set logic remains in the matching engine."""
+    import inspect
+
+    from app.services import citation_matching
+
+    source = inspect.getsource(citation_matching)
+    for banned in ("cited_author_keys", "cited_surnames", "author_seen", "author_only"):
+        assert banned not in source, banned
+
+
+def test_work_level_matching_keeps_finding_consolidation():
+    """Consolidation is unchanged: repeated citations of one work still yield
+    one finding with occurrences + paragraph_indexes."""
+    viols = match(
+        [_cite("Smith", "2020", 1), _cite("Smith", "2020", 5)],
+        _index((9, "Jones, A. (2019). Unrelated. Press.")),
+    )
+    assert len(viols) == 1
+    assert viols[0].location == {"paragraph_index": 1, "occurrences": 2, "paragraph_indexes": [1, 5]}
+
+
+def test_profile_toggles_still_gate_direction_two():
+    """The uncited-entry toggle only gates direction 2; the citation-side year
+    mismatch still reports."""
+    off = CitationMatchingRules(check_references_are_cited=False)
+    viols = match(
+        [_cite("Smith", "2019", 1)],
+        _index((9, "Smith, J. (2021). Other. Press.")),
+        off,
+    )
+    assert [v.rule_code for v in viols] == [RULE_CITATION_REFERENCE_MISMATCH]
+    on = CitationMatchingRules(check_references_are_cited=True)
+    assert [v.rule_code for v in match(
+        [_cite("Smith", "2019", 1)],
+        _index((9, "Smith, J. (2021). Other. Press.")),
+        on,
+    )] == [RULE_CITATION_REFERENCE_MISMATCH, RULE_REFERENCE_NOT_CITED]

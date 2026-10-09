@@ -78,15 +78,21 @@ def test_silent_fixtures_stay_silent_with_every_rule_enabled(name, docx_factory)
     "malformed_citation",
     "personal_communication",
     "as_cited_in",
+    "year_suffixes",
 ])
-def test_unsupported_occurrences_produce_no_citation_finding(name, docx_factory):
-    """No supported citation key is produced (out-of-scope form, personal
-    communication, or secondary "as cited in") — but the Reference List entry
-    that names the same author is still a genuinely uncited entry, so the
-    opt-in rule reports it. Exclusion is per occurrence, never author-wide."""
+def test_unsupported_or_unmatched_occurrences_produce_no_citation_finding(name, docx_factory):
+    """No supported CITATION_MISMATCH arises for these documents: their
+    citations are out of scope, unsupported occurrences (personal
+    communication / "as cited in"), or they match an entry exactly. With
+    every rule armed, the genuinely uncited WORK is still reported —
+    cited state is work-level, never author-level."""
     assert scan(FIXTURES[name], docx_factory) == []
     viols = scan(FIXTURES[name], docx_factory, config=_all_on_config())
     assert [v.rule_code for v in viols] == ["REFERENCE_NOT_CITED"]
+    # The reported work is the one nothing points at, not merely "the author".
+    assert "2024a" in viols[0].actual_value or viols[0].actual_value in FIXTURES[
+        name
+    ].references[0]
 
 
 # ---------------------------------------------------------------------------
