@@ -35,6 +35,11 @@ from app.services.citation_matching import (
     make_key,
     match,
 )
+
+from app.services.reference_section import (
+    is_reference_heading_text,
+    reference_entry_pairs,
+)
 from app.services.layout_violation import LayoutViolation
 
 
@@ -138,15 +143,12 @@ _CHAIN_SPLIT = re.compile(r"\s+(?:&|and)\s+|\s+[Ee]t\s+[Aa][Ll]\.")
 def _is_references_header(text: str) -> bool:
     """True when a paragraph is a References/Bibliography section header.
 
-    Accepts bare headers ("References", "REFERENCES") and numbered heading
-    forms ("6 References", "6. References", "6.1 References"). Only
-    leading whitespace and one numeric section prefix are normalized away
-    before the exact header match — body text such as "References are
-    listed below" is never accepted, and no substring matching is used.
+    Delegates to `app.services.reference_section`, the single owner of the
+    accepted alias vocabulary. Behaviour is unchanged: case-insensitive,
+    whole-paragraph match after stripping one leading numeric section prefix,
+    so body text such as "References are listed below" is still rejected.
     """
-    candidate = (text or "").strip()
-    candidate = _NUMERIC_SECTION_PREFIX.sub("", candidate)
-    return bool(REFERENCES_HEADER_PATTERN.match(candidate))
+    return is_reference_heading_text(text)
 
 
 def _find_references_start(paragraphs: List[Dict[str, Any]]) -> Optional[int]:
@@ -165,28 +167,14 @@ def _find_references_start(paragraphs: List[Dict[str, Any]]) -> Optional[int]:
 def reference_entry_paragraphs(paragraphs: List[Dict[str, Any]]) -> List[Tuple[int, str]]:
     """Return (paragraph_index, text) pairs of the bibliography block.
 
-    The block starts AFTER the References header paragraph and ends at the
-    first Appendix heading. Paragraph identity is preserved so findings can
-    point at the exact entry paragraph.
+    Delegates to the shared boundary owner in
+    `app.services.reference_section`: the block starts after the References
+    heading and ends at the first Appendix heading; paragraph identity is
+    preserved so findings can point at the exact entry paragraph. Behaviour
+    is unchanged — see `tests/test_reference_structure_regression.py`.
     """
-    start = _find_references_start(paragraphs)
-    if start is None:
-        return []
+    return reference_entry_pairs(paragraphs)
 
-    entries: List[Tuple[int, str]] = []
-    for para in paragraphs:
-        idx = para.get("index")
-        if idx is None or idx <= start:
-            continue
-        text = (para.get("text") or "").strip()
-        if not text:
-            continue
-        # An Appendix heading ends the bibliography: reference entries live
-        # between the References header and the first appendix.
-        if APPENDIX_HEADER_PATTERN.match(text):
-            break
-        entries.append((idx, text))
-    return entries
 
 
 

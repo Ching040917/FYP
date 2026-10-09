@@ -14,9 +14,8 @@ from app.services.document_parser import (
 )
 from app.services.citation_sensor import (
     run_citation_sensor,
-    _find_references_start,
-    APPENDIX_HEADER_PATTERN,
 )
+from app.services.reference_section import reference_section_bounds
 from app.services.role_eligibility import (
     is_font_eligible,
     is_heading_role,
@@ -380,20 +379,16 @@ def _style_has_numbering(style) -> bool:
 def _references_span(paragraphs: List[Dict]):
     """Index span of the References section, or None when undetected.
 
-    Reuses the citation sensor's References-header detection; the span ends
-    at the first Appendix heading (bibliography ends there), matching the
-    sensor's own boundary logic.
+    Delegates to the shared section-bounds owner in
+    `app.services.reference_section` so the boundary agrees with the
+    citation sensor and role classifier. The span starts at the heading and
+    ends just after the last entry paragraph; callers test membership with
+    ``para.get("index", -1) in references_span``.
     """
-    start = _find_references_start(paragraphs)
-    if start is None:
+    bounds = reference_section_bounds(paragraphs)
+    if bounds is None:
         return None
-    end = len(paragraphs)
-    for para in paragraphs[start:]:
-        text = (para.get("text") or "").strip()
-        if text and APPENDIX_HEADER_PATTERN.match(text):
-            end = para.get("index", end)
-            break
-    return range(start, end)
+    return range(bounds.heading_index, bounds.end_index)
 
 
 def _alignment_eligible(

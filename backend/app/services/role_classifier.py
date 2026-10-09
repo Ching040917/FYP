@@ -73,6 +73,7 @@ from docx.oxml.ns import qn
 
 from app.services.document_parser import get_heading_level, extract_paragraphs
 from app.services.citation_sensor import _find_references_start
+from app.services.reference_section import is_reference_heading_text
 
 # ---------------------------------------------------------------------------
 # Role enums (plain strings — no DB/API schema dependency)
@@ -225,8 +226,11 @@ def _body_sequence(doc: Document) -> List[Dict]:
 
 
 def _is_references_heading_text(text: str) -> bool:
-    candidate = _NUMERIC_SECTION_PREFIX.sub("", (text or "").strip())
-    return candidate.lower() in _REFERENCES_HEADERS
+    """Delegates to `app.services.reference_section`, the single owner of the
+    accepted Reference List heading vocabulary. Previously this duplicated
+    the sensor's own predicate with a slightly different implementation;
+    both now resolve to one shared matcher."""
+    return is_reference_heading_text(text)
 
 
 def _is_appendix_heading(para: Dict, text: str) -> bool:
