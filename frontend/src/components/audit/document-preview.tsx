@@ -22,6 +22,8 @@ import { AlertOctagon, AlertTriangle, Check, FileText, Info, Loader2, ScrollText
 import { cn } from '../../lib/utils'
 import { evidenceSummary } from '../../lib/audit/evidence-summary.ts'
 import type { DocumentBlock, Violation } from '../../types/api'
+import type { ViolationSeverity } from '../../types/audit'
+import { severityBadge } from '../../lib/audit/categories'
 import { RenderedPreview } from './rendered-preview'
 import type { RenderedPdfState } from '../../hooks/use-rendered-pdf.ts'
 
@@ -350,9 +352,9 @@ export function DocumentPreview({
                 </span>
                 {viols && viols.length > 0 && (
                   <span className="flex flex-wrap items-center justify-end gap-1.5">
-                    {hasMajor && <SeverityChip label="Major" major />}
-                    {hasMinor && <SeverityChip label="Minor" major={false} />}
-                    {!hasMajor && !hasMinor && hasReview && <SeverityChip label="Manual review" major={false} />}
+                    {hasMajor && <SeverityChip severity="major" />}
+                    {hasMinor && !hasMajor && <SeverityChip severity="minor" />}
+                    {!hasMajor && !hasMinor && hasReview && <SeverityChip severity="review" />}
                     <span className="text-[11px] text-muted-foreground">
                       {viols.length} finding{viols.length > 1 ? 's' : ''}
                     </span>
@@ -521,22 +523,22 @@ function headingClass(level: number): string {
   return cn('block font-semibold text-foreground', sizes[level] ?? 'text-sm')
 }
 
-function SeverityChip({ label, major }: { label: string; major: boolean }) {
+/**
+ * Preview severity chip. Reads the same badge the Findings list uses, so a
+ * Manual-review flag can never render in Minor colours.
+ */
+function SeverityChip({ severity }: { severity: ViolationSeverity }) {
+  const badge = severityBadge(severity)
+  const Icon = severity === 'major' ? AlertOctagon : severity === 'minor' ? AlertTriangle : Info
   return (
     <span
       className={cn(
         'inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[11px] font-medium',
-        major
-          ? 'border-destructive/30 bg-destructive/10 text-destructive'
-          : 'border-warning/30 bg-warning/10 text-warning',
+        badge.className,
       )}
     >
-      {major ? (
-        <AlertOctagon className="h-3 w-3" aria-hidden="true" />
-      ) : (
-        <AlertTriangle className="h-3 w-3" aria-hidden="true" />
-      )}
-      {label}
+      <Icon className={cn('h-3 w-3', badge.indicatorTextClassName)} aria-hidden="true" />
+      {badge.label}
     </span>
   )
 }

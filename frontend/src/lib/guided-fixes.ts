@@ -12,6 +12,8 @@
  *  - run indexes / internal OOXML terminology are never displayed.
  */
 
+import { alignmentWord, friendlyRuleTitle, friendlyValue } from './friendly-finding.ts'
+
 /** Backend whitelist — SAFE_RUN_RULES ∪ SAFE_PARA_RULES (guided_fix.py). */
 export const SUPPORTED_FIX_RULES: ReadonlySet<string> = new Set([
   'FONT_CONSISTENCY',
@@ -200,16 +202,10 @@ export function workflowStepForStage(stage: string): number | null {
  * claimed applied before the backend confirms.
  */
 export function guidedProposalFor(ruleCode: string, expected: string | null | undefined): string {
-  const value = String(expected ?? '').trim()
+  const value = friendlyValue(expected)
   if (!value) return 'Profile requirement (see finding details)'
   const upper = ruleCode.toUpperCase()
-  if (upper === 'ALIGNMENT') {
-    const v = value.toLowerCase()
-    if (v === 'center') return 'Centered'
-    if (v === 'justify') return 'Justified'
-    if (v === 'left') return 'Left-aligned'
-    if (v === 'right') return 'Right-aligned'
-  }
+  if (upper === 'ALIGNMENT') return alignmentWord(value)
   if (upper === 'LINE_SPACING') return `${value} line spacing`
   if (upper === 'SPACE_BEFORE') return `${value} spacing before`
   if (upper === 'SPACE_AFTER') return `${value} spacing after`
@@ -245,18 +241,13 @@ export interface GuidedFindingPresentation {
  */
 export function guidedPresentationFor(v: GuidedViolationLike): GuidedFindingPresentation {
   const ruleCode = (v.rule_code ?? '').toUpperCase()
-  const friendlyName = ruleCode
-    .toLowerCase()
-    .split('_')
-    .filter(Boolean)
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-    .join(' ') || 'Finding'
+  const friendlyName = friendlyRuleTitle(ruleCode) ?? 'Finding'
   const loc = v.location ?? {}
   const para = typeof loc.paragraph_index === 'number' && loc.paragraph_index >= 0
     ? loc.paragraph_index + 1
     : null
   const friendlyLocation = para !== null ? `Paragraph ${para}` : null
-  const current = String(v.actual_value ?? '').trim() || 'Not shown'
+  const current = friendlyValue(v.actual_value) ?? 'Not shown'
   const supported = SUPPORTED_FIX_RULES.has(ruleCode)
   const proposed = supported ? guidedProposalFor(ruleCode, v.expected_value) : ''
   return { ruleCode, supported, friendlyName, friendlyLocation, current, proposed }

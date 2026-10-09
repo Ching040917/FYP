@@ -106,7 +106,10 @@ class Violation(Base):
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     audit_id = Column(String(36), ForeignKey("audit_records.id", ondelete="CASCADE"), nullable=False)
     rule_code = Column(String(50), nullable=False)
-    severity = Column(String(10), nullable=False)  # MAJOR / MINOR
+    # MAJOR / MINOR / REVIEW. REVIEW is a manual-review flag: never scored,
+    # never counted. No CheckConstraint — an unrecognised token is rendered
+    # as "Unclassified" rather than dropped.
+    severity = Column(String(10), nullable=False)
     location = Column(JSON, nullable=True)
     message = Column(Text, nullable=False)
     expected_value = Column(Text, nullable=True)

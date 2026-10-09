@@ -73,9 +73,6 @@ const REFERENCE_SIDE_RULES: Record<string, true> = {
   REFERENCE_DUPLICATE: true,
 }
 
-const CITATION_ACTION =
-  'Add the matching APA 7 reference entry. If the citation refers to the wrong source or is no longer needed, correct or remove it.'
-
 export function presentationFor(v: {
   rule_code: string
   message: string
@@ -108,7 +105,7 @@ export function presentationFor(v: {
     return {
       issue: friendlyFindingMessage(code, v.message, v.expected_value, v.actual_value, v.location),
       evidence: v.actual_value ?? undefined,
-      requiredAction: CITATION_ACTION,
+      requiredAction: friendlyRequiredAction(code, v.expected_value, v.actual_value, v.location) ?? undefined,
     }
   }
 
@@ -164,13 +161,6 @@ export function presentationFor(v: {
   return genericPresentation(v)
 }
 
-export function formattingAction(): undefined {
-  // Superseded by friendlyRequiredAction in lib/friendly-finding (single
-  // source of student-facing wording). Kept as a no-op export only for
-  // backward-compatible imports; remove once nothing imports it.
-  return undefined
-}
-
 function affectedElementFor(
   code: string,
   location: Record<string, unknown> | null,
@@ -203,9 +193,9 @@ function headingPresentation(v: {
   if (expectedLevel === 1 && actualLevel !== null && actualLevel !== 1) {
     return {
       issue: cleanMessage(v.message),
-      expectedHeadingSequence: 'H1 → …',
-      actualHeadingSequence: `H${actualLevel}`,
-      requiredAction: 'Add an H1 heading at the start of the document.',
+      expectedHeadingSequence: 'Heading 1 → …',
+      actualHeadingSequence: `Heading ${actualLevel}`,
+      requiredAction: 'Add a Heading 1 at the start of the document.',
     }
   }
 
@@ -214,9 +204,9 @@ function headingPresentation(v: {
     const prev = expectedLevel - 1
     return {
       issue: cleanMessage(v.message),
-      expectedHeadingSequence: `H${prev} → H${expectedLevel} → H${actualLevel}`,
-      actualHeadingSequence: `H${prev} → H${actualLevel}`,
-      requiredAction: `Add the missing H${expectedLevel} heading between H${prev} and H${actualLevel}.`,
+      expectedHeadingSequence: `Heading ${prev} → Heading ${expectedLevel} → Heading ${actualLevel}`,
+      actualHeadingSequence: `Heading ${prev} → Heading ${actualLevel}`,
+      requiredAction: `Add the missing Heading ${expectedLevel} between Heading ${prev} and Heading ${actualLevel}.`,
     }
   }
 

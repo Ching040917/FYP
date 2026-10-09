@@ -8,6 +8,7 @@ non-mutation of persisted results.
 import io
 import re
 import uuid
+import pathlib
 
 from sqlalchemy.orm import sessionmaker
 
@@ -115,9 +116,12 @@ def test_export_pdf_contains_core_sections(client, docx_factory):
         "Required Action",
         "Deployment Mode",
         "Page Margins",
-        "HEADING_HIERARCHY",
+        # Plain-language title, never the internal rule code.
+        "Heading levels skip a step",
     ):
         assert section in text, f"missing section: {section}"
+    # No internal rule code ever reaches the reader.
+    assert "HEADING_HIERARCHY" not in text
     # The default SUC profile does not check margins — no MARGIN_LEFT finding.
     assert "MARGIN_LEFT" not in text
     # Score wording applies to enabled checks only.
@@ -423,15 +427,16 @@ def test_grouped_minors_preserve_all_findings(client, test_engine):
     assert resp.status_code == 200
     text = _pdf_text(resp.content)
     # Group panel: G### id + friendly rule name + severity/count header
-    assert "G001 — Font Consistency" in text
+    assert "G001 — Font family does not match" in text
     assert "Minor · 10 finding(s)" in text
     # Appendix is a compact register (not verbose Finding N tables)
     assert "Appendix" in text
     assert "Findings Register" in text
     assert "F001" in text
     assert "F010" in text
-    # All 10 findings present exactly once in appendix (secondary rule code per row)
-    assert text.count("FONT_CONSISTENCY") >= 10
+    # All 10 findings present exactly once in the appendix register, each
+    # labelled with the plain-language rule name (never the raw code).
+    assert text.count("Font family does not match") >= 11  # 1 group header + 10 register rows
 
 
 def test_major_findings_remain_individual(client, test_engine):
@@ -452,8 +457,8 @@ def test_major_findings_remain_individual(client, test_engine):
     )
     text = _pdf_text(_export(client, audit_id).content)
     # Each major finding gets its own panel with a P### header
-    assert "P001 — Left Margin" in text
-    assert "P002 — Heading Hierarchy" in text
+    assert "P001 — Left page margin does not match" in text
+    assert "P002 — Heading levels skip a step" in text
     assert "Finding 1" not in text
     assert "Finding 2" not in text
 
@@ -595,13 +600,12 @@ def test_space_before_separate_groups_by_expected_value(client, test_engine):
     # Two distinct groups, each with correct friendly-name header
     assert "G001" in text
     assert "G002" in text
-    assert text.count("Space Before") >= 8  # 2 group headers + 6 appendix rows
+    assert text.count("Space before the paragraph does not match") >= 8  # 2 group headers + 6 appendix rows
     # Each group shows its own required value in the comparison row
     assert "Required" in text
     assert "0pt" in text
     assert "12pt" in text
-    # Appendix has all 6 findings (secondary rule code per row)
-    assert text.count("SPACE_BEFORE") >= 6
+    assert text.count("Space before the paragraph does not match") >= 8  # 2 group headers + 6 register rows
 
 
 def test_consistent_id_format_in_pdf(client, test_engine):
@@ -630,7 +634,7 @@ def test_consistent_id_format_in_pdf(client, test_engine):
 
 
 def test_appendix_is_compact_table(client, test_engine):
-    """Appendix must be a table (ID/Severity/Rule/Location/Actual/Expected), not full finding blocks."""
+    """Appendix must be a compact table (ID/Severity/Rule/Location/Current/Required), not full finding blocks."""
     violations = [
         {"rule_code": "FONT_SIZE", "severity": "MINOR",
          "location": {"paragraph_index": i}, "message": f"Font size wrong {i}",
@@ -644,11 +648,11 @@ def test_appendix_is_compact_table(client, test_engine):
     text = _pdf_text(_export(client, audit_id).content)
     assert "Findings Register" in text
     # Compact columns present
-    assert "Friendly Rule" in text
+    assert "Rule" in text
     assert "ID" in text
     assert "Severity" in text
-    assert "Actual" in text
-    assert "Expected" in text
+    assert "Current" in text
+    assert "Required" in text
     # No verbose "Finding N" header rows in appendix
     assert text.count("Finding ") == 0
 
@@ -664,7 +668,7 @@ def test_group_panel_structure(client, test_engine):
     audit_id = _seed_audit(test_engine, status="completed", weighted_score=80,
                            violations=violations)
     text = _pdf_text(_export(client, audit_id).content)
-    assert "G001 — Line Spacing" in text
+    assert "G001 — Line spacing does not match" in text
     assert "Minor · 3 finding(s)" in text
     assert "Required" in text
     assert "Observed" in text
@@ -713,7 +717,7 @@ def test_singleton_heading_uses_g_id_with_friendly_name(client, test_engine):
                      "expected_value": "Times New Roman", "actual_value": "Arial"}],
     )
     text = _pdf_text(_export(client, audit_id).content)
-    assert "G001 — Font Consistency" in text
+    assert "G001 — Font family does not match" in text
     assert "Minor · 1 finding(s)" in text
     assert "Finding " not in text
 
@@ -792,7 +796,7 @@ def test_appendix_lands_on_new_landscape_page_split_by_severity(client, test_eng
     text = _pdf_text(resp.content)
     assert "Major Findings" in text
     assert "Minor Findings" in text
-    assert "Friendly Rule" in text
+    assert "Rule" in text
 
 
 def test_citation_guidance_preserved_for_garcia_and_lee(client, test_engine):
@@ -862,10 +866,10 @@ def test_new_citation_reference_codes_render_friendly_wording(client, test_engin
          "actual_value": "Jones, A. (2019). Other. Press."},
     ])
     text = _pdf_text(_export(client, audit_id).content)
-    assert "Citation Year Mismatch" in text
-    assert "Citation Year Suffix Missing" in text
-    assert "Reference Entry Not Cited" in text
-    assert "Duplicate Reference Entry" in text
+    assert "Citation year does not match the Reference List entry" in text
+    assert "Citation is missing or uses the wrong year suffix" in text
+    assert "Reference List entry is not cited in the text" in text
+    assert "Duplicate Reference List entry" in text
     for action in (
         "Correct the year in the in-text citation or in the Reference List entry so both state the same year.",
         "Add the matching year suffix (a, b, ...) to the in-text citation or correct it in the Reference List entry.",
@@ -873,14 +877,14 @@ def test_new_citation_reference_codes_render_friendly_wording(client, test_engin
         "Keep one entry and remove the duplicate.",
     ):
         assert action in text, action
-    # The technical codes must not leak into the priority panels' friendly names.
-    assert "CITATION_REFERENCE_MISMATCH" in text  # register keeps the code as secondary text
+    # The technical codes must not leak into the report at all.
+    assert "CITATION_REFERENCE_MISMATCH" not in text
 
 
-def test_review_finding_gets_its_own_register_group_and_no_score_impact(client, test_engine):
-    """REVIEW findings appear in the Findings Register under "For review",
-    are labelled "For review" (never Major/Minor), and stay out of the
-    major/minor counts and the score."""
+def test_review_finding_gets_its_own_panel_register_group_and_no_score_impact(client, test_engine):
+    """REVIEW findings get an individual panel and a "Manual review" register
+    group (never the old "For review"), and stay out of the major/minor counts
+    and the score."""
     audit_id = _seed_audit(test_engine, violations=[
         {"rule_code": "CITATION_REFERENCE_AMBIGUOUS", "severity": "REVIEW",
          "location": {"paragraph_index": 7, "occurrences": 1, "paragraph_indexes": [7]},
@@ -891,11 +895,15 @@ def test_review_finding_gets_its_own_register_group_and_no_score_impact(client, 
     resp = _export(client, audit_id)
     assert resp.status_code == 200
     text = _pdf_text(resp.content)
-    assert "For review" in text
-    assert "Citation Match Needs Review" in text
-    # REVIEW severity is labelled "For review", never Major/Minor.
-    assert "For review" in text
-    assert "Major Citation Match Needs Review" not in text
+    assert "Manual review" in text
+    assert "Citation could match more than one entry" in text
+    # REVIEW severity is labelled "Manual review", never Major/Minor, and the
+    # retired "For review" wording is gone from the whole document.
+    assert "For review" not in text
+    assert "Major Citation could match more than one entry" not in text
+    # The explanatory panel exists, not just a bare register row.
+    assert "Manual Review Findings" in text
+    assert "ACA could not determine whether these citations" in text
     # One finding, zero major, zero minor, and the score stays 100.
     assert "1 deterministic finding(s): 0 major" in text
     assert "0 minor" in text
@@ -904,8 +912,8 @@ def test_review_finding_gets_its_own_register_group_and_no_score_impact(client, 
     assert "100" in text
 
 
-def test_existing_citation_mismatch_wording_is_unchanged(client, test_engine):
-    """The historical CITATION_MISMATCH presentation must not regress."""
+def test_citation_mismatch_uses_the_shared_plain_language_title(client, test_engine):
+    """CITATION_MISMATCH uses the same plain-language title as the web UI."""
     audit_id = _seed_audit(test_engine, violations=[
         {"rule_code": "CITATION_MISMATCH", "severity": "MAJOR",
          "location": {"paragraph_index": 3, "occurrences": 1, "paragraph_indexes": [3]},
@@ -915,7 +923,7 @@ def test_existing_citation_mismatch_wording_is_unchanged(client, test_engine):
          "actual_value": "(Garcia, 2018)"},
     ])
     text = _pdf_text(_export(client, audit_id).content)
-    assert "Citation Mismatch" in text
+    assert "Citation has no matching Reference List entry" in text
     assert "Garcia" in text
     # Deterministic, author-specific correction (unchanged behaviour).
     assert (
@@ -954,3 +962,160 @@ def test_missing_section_finding_is_not_phrased_as_one_citation(client, test_eng
     assert "Add a References section and list every source cited in the text." in text
     # Never the generic single-citation wording.
     assert "Add a matching References entry for this citation" not in text
+
+
+# ---------------------------------------------------------------------------
+# Frontend ↔ PDF presentation mirror
+#
+# ReportLab cannot read TypeScript, so the Python maps below are a hand-kept
+# mirror. These tests read the TypeScript source of truth and fail the moment
+# the two drift — the mirror can never silently go stale.
+# ---------------------------------------------------------------------------
+
+_FRONTEND_ROOT = pathlib.Path(__file__).resolve().parents[2] / "frontend" / "src"
+
+
+def _ts_object_literal(source: str, name: str) -> dict:
+    """Parse a flat `const <name>: ... = { 'K': 'V', ... }` TS object literal."""
+    start = source.index(f"const {name}")
+    open_brace = source.index("{", start)
+    depth = 0
+    for i in range(open_brace, len(source)):
+        if source[i] == "{":
+            depth += 1
+        elif source[i] == "}":
+            depth -= 1
+            if depth == 0:
+                body = source[open_brace + 1 : i]
+                break
+    else:  # pragma: no cover - malformed source fails loudly below
+        raise AssertionError(f"unterminated object literal for {name}")
+    entries = {}
+    for key, value in re.findall(r"([A-Z_]+):\s*'((?:[^'\\]|\\.)*)'", body):
+        entries[key] = value.replace("\\'", "'")
+    assert entries, f"no entries parsed from {name}"
+    return entries
+
+
+def test_pdf_rule_names_mirror_the_frontend_title_map():
+    """_RULE_NAME must equal FRIENDLY_RULE_TITLES, code for code."""
+    from app.services.pdf_report import _RULE_NAME
+
+    source = (_FRONTEND_ROOT / "lib" / "friendly-finding.ts").read_text(encoding="utf-8")
+    frontend = _ts_object_literal(source, "FRIENDLY_RULE_TITLES")
+    assert frontend == _RULE_NAME, (
+        "PDF rule names have drifted from the frontend title map: "
+        f"only-in-frontend={sorted(set(frontend) - set(_RULE_NAME))} "
+        f"only-in-pdf={sorted(set(_RULE_NAME) - set(frontend))} "
+        f"differing={[k for k in set(frontend) & set(_RULE_NAME) if frontend[k] != _RULE_NAME[k]]}"
+    )
+
+
+def test_pdf_severity_labels_mirror_the_frontend_badge():
+    """_SEVERITY_LABEL must equal severityBadge's labels for MAJOR/MINOR/REVIEW."""
+    from app.services.pdf_report import _SEVERITY_LABEL, _UNCLASSIFIED_SEVERITY
+
+    source = (_FRONTEND_ROOT / "lib" / "audit" / "categories.ts").read_text(encoding="utf-8")
+    labels = dict(
+        (sev, re.search(rf"label: '{re.escape(label)}'", source))
+        for sev, label in _SEVERITY_LABEL.items()
+    )
+    assert all(labels.values()), f"missing frontend labels for {_SEVERITY_LABEL}"
+    # The retired "For review" wording must not survive anywhere.
+    assert "For review" not in source
+    # The unrecognised-token label exists on both sides.
+    assert f"label: '{_UNCLASSIFIED_SEVERITY}'" in source
+
+
+def test_unclassified_severity_renders_in_the_register_and_is_never_scored(client, test_engine):
+    """A severity token outside MAJOR/MINOR/REVIEW is reachable (the column has
+    no CheckConstraint). It must be counted, labelled and rendered — never
+    dropped from the report."""
+    audit_id = _seed_audit(test_engine, weighted_score=90, violations=[
+        {"rule_code": "FONT_SIZE", "severity": "ARCHIVE",
+         "location": {"paragraph_index": 2},
+         "message": "Font size 14pt != required 12pt",
+         "expected_value": "12pt", "actual_value": "14pt"},
+    ])
+    text = _pdf_text(_export(client, audit_id).content)
+    # Counted in the summary, with its own reconciling clause.
+    assert "1 deterministic finding(s): 0 major" in text
+    assert "0 minor" in text
+    assert "1 unclassified (historical severity, never scored)" in text
+    # Rendered under its own register sub-table with the reader-facing label.
+    assert "Unclassified" in text
+    assert "Font size does not match" in text
+    # Never the raw token, and never counted as a scored severity.
+    assert "ARCHIVE" not in text
+    assert "Major Font size does not match" not in text
+    assert "Minor Font size does not match" not in text
+
+
+def test_summary_totals_reconcile_across_all_four_severities(client, test_engine):
+    """Every stored finding lands in exactly one severity group and the summary
+    arithmetic adds up — a dropped finding makes these numbers disagree."""
+    audit_id = _seed_audit(test_engine, weighted_score=75, violations=[
+        {"rule_code": "MARGIN_LEFT", "severity": "MAJOR",
+         "location": {"paragraph_index": 0}, "message": "Left margin is 1.00in, required 1.5in.",
+         "expected_value": "1.5in", "actual_value": "1.00in"},
+        {"rule_code": "FONT_SIZE", "severity": "MINOR",
+         "location": {"paragraph_index": 1}, "message": "Font size 14pt != required 12pt",
+         "expected_value": "12pt", "actual_value": "14pt"},
+        {"rule_code": "LINE_SPACING", "severity": "MINOR",
+         "location": {"paragraph_index": 2}, "message": "Line spacing 1.0, required 1.5",
+         "expected_value": "1.5", "actual_value": "1.0"},
+        {"rule_code": "CITATION_REFERENCE_AMBIGUOUS", "severity": "REVIEW",
+         "location": {"paragraph_index": 3}, "message": "Citation could match 2 entries.",
+         "expected_value": "One unambiguous matching entry", "actual_value": "(Smith, 2024)"},
+        {"rule_code": "ALIGNMENT", "severity": "ARCHIVE",
+         "location": {"paragraph_index": 4}, "message": "Alignment left, required justify",
+         "expected_value": "justify", "actual_value": "left"},
+    ])
+    text = _pdf_text(_export(client, audit_id).content)
+    # Exact reconciliation: 5 findings, split 1 / 2 / 1 / 1.
+    assert (
+        "5 deterministic finding(s): 1 major (shown individually), "
+        "2 minor (grouped by rule code and expected value), "
+        "1 for manual review (never scored), "
+        "1 unclassified (historical severity, never scored)."
+    ) in text, "summary does not reconcile across the four severity groups"
+
+    # Each group is labelled and carries its own findings.
+    assert "Major Findings" in text
+    assert "Minor Findings" in text
+    assert "Manual review" in text
+    assert "Unclassified" in text
+    # Every finding appears in the register, exactly once, by its F### id.
+    for fid in ("F001", "F002", "F003", "F004", "F005"):
+        assert text.count(fid) == 1, f"{fid} is not listed exactly once in the register"
+    # No raw severity token or rule code leaks into the reader-facing report.
+    assert "ARCHIVE" not in text
+    for code in ("MARGIN_LEFT", "FONT_SIZE", "LINE_SPACING",
+                 "CITATION_REFERENCE_AMBIGUOUS", "ALIGNMENT"):
+        assert code not in text, f"raw rule code {code} reached the report"
+
+
+def test_register_columns_and_manual_review_panel_contract(client, test_engine):
+    """The register header reads Current/Required (matching the panels), and a
+    REVIEW finding gets the same individual panel treatment as a Major one."""
+    audit_id = _seed_audit(test_engine, violations=[
+        {"rule_code": "CITATION_REFERENCE_AMBIGUOUS", "severity": "REVIEW",
+         "location": {"paragraph_index": 5},
+         "message": "Citation could match 2 entries for Smith.",
+         "expected_value": "One unambiguous matching entry", "actual_value": "(Smith, 2024)"},
+    ])
+    text = _pdf_text(_export(client, audit_id).content)
+    # Register column order: ID, Severity, Rule, Location, Current, Required.
+    assert re.search(r"ID\s+Severity\s+Rule\s+Location\s+Current\s+Required", text)
+    # The retired wording is gone entirely.
+    assert "For review" not in text
+    # The panel carries the same Current/Required pair as the register.
+    assert "Current (Smith, 2024)" in text
+    assert "Required One unambiguous matching entry" in text
+    # A REVIEW finding is never counted as a scored severity. ("Major"/"Minor"
+    # remain legitimate column headers elsewhere, so the counts are the
+    # contract that must hold.)
+    assert "1 deterministic finding(s): 0 major" in text
+    assert "0 minor" in text
+    assert "1 for manual review (never scored)" in text
+    assert "Compliance Score (enabled checks)" in text

@@ -25,6 +25,7 @@ import {
 } from './paragraph-mapping.ts'
 import { measurePdfText, type MeasureText } from './pdf-measure.ts'
 import { matchCitationOnPage, type CitationRect } from './citation-highlight.ts'
+import { friendlyRuleTitle } from '../friendly-finding.ts'
 
 export type FormattingEvidenceKind = 'run' | 'paragraph' | 'none'
 
@@ -55,14 +56,12 @@ export const FORMATTING_RULES: ReadonlySet<string> = new Set([
   'HEADING_HIERARCHY',
 ])
 
-export const FORMATTING_LABELS: Record<string, string> = {
-  FONT_CONSISTENCY: 'Font consistency',
-  FONT_SIZE: 'Font size',
-  ALIGNMENT: 'Alignment',
-  LINE_SPACING: 'Line spacing',
-  SPACE_BEFORE: 'Space before',
-  SPACE_AFTER: 'Space after',
-  HEADING_HIERARCHY: 'Heading hierarchy',
+/**
+ * Reader-facing rule label for a formatting overlay. Reads the shared
+ * friendly title map so the PDF overlay can never drift from the web UI.
+ */
+export function formattingRuleLabel(ruleCode: string | null | undefined): string {
+  return friendlyRuleTitle(ruleCode) ?? 'Formatting'
 }
 
 export type FindingLike = {
@@ -130,7 +129,7 @@ export function resolveFormattingHighlight(
     if (txt) headingExcerpt = txt.length > 60 ? txt.slice(0, 60).trim() + '…' : txt
   }
   const locPart = headingExcerpt ? `Heading “${headingExcerpt}”` : `Paragraph ${paragraphNumber}`
-  const runLabel = `${ruleLabel(rule)} · ${pagePart}${locPart}`
+  const runLabel = `${formattingRuleLabel(rule)} · ${pagePart}${locPart}`
 
   // Run-level: exact highlight only with unambiguous run text evidence.
   if (isRunLevel) {
@@ -370,10 +369,6 @@ export function enclose(
   const height = clamp01(y1 + padY - y)
   if (width <= 0 || height <= 0) return null
   return { page: rects[0].page, x, y, width, height }
-}
-
-function ruleLabel(rule: string): string {
-  return FORMATTING_LABELS[rule] ?? 'Formatting'
 }
 
 /**

@@ -24,18 +24,49 @@ export function objectLabel(
 }
 
 /**
- * Student-facing finding titles. Only the citation/reference codes carry a
- * bespoke title; everything else falls back to the mechanical rule-code
- * humanization in lib/audit/adapter (never a developer token).
+ * Student-facing finding titles — one entry per production rule code.
+ *
+ * This map is the single source of the reader-visible finding title across
+ * the Findings list, Finding Details, the Document Preview, Guided Fixes and
+ * (mirrored in Python) the PDF report. It is complete on purpose: with every
+ * production code covered, `humanizeRuleCode` is a fallback for unknown codes
+ * only and is never visible for a rule ACA can actually emit.
+ *
+ * Titles describe the mismatch, never the direction of it. `expected_value`
+ * is profile- and section-dependent, so "too large" / "too small" would be a
+ * claim the data cannot support.
+ *
+ * Mirrored verbatim by `_RULE_NAME` in backend/app/services/pdf_report.py;
+ * backend/tests/test_export_pdf.py enforces the match.
  */
 const FRIENDLY_RULE_TITLES: Record<string, string> = {
-  CITATION_MISMATCH: 'Citation without a Reference List entry',
+  FONT_CONSISTENCY: 'Font family does not match',
+  FONT_SIZE: 'Font size does not match',
+  LINE_SPACING: 'Line spacing does not match',
+  SPACE_BEFORE: 'Space before the paragraph does not match',
+  SPACE_AFTER: 'Space after the paragraph does not match',
+  ALIGNMENT: 'Paragraph alignment does not match',
+  MARGIN_LEFT: 'Left page margin does not match',
+  MARGIN_RIGHT: 'Right page margin does not match',
+  MARGIN_TOP: 'Top page margin does not match',
+  MARGIN_BOTTOM: 'Bottom page margin does not match',
+  HEADING_HIERARCHY: 'Heading levels skip a step',
+  TABLE_CAPTION_MISSING: 'Table caption is missing',
+  IMAGE_CAPTION_MISSING: 'Figure caption is missing',
+  IMAGE_ALT_TEXT_MISSING: 'Figure alternative text is missing',
+  MANUAL_CAPTION: 'Caption was typed instead of inserted',
+  CITATION_MISMATCH: 'Citation has no matching Reference List entry',
   CITATION_REFERENCE_MISMATCH: 'Citation year does not match the Reference List entry',
-  CITATION_YEAR_SUFFIX_MISMATCH: 'Citation is missing the year suffix',
+  CITATION_YEAR_SUFFIX_MISMATCH: 'Citation is missing or uses the wrong year suffix',
   CITATION_REFERENCE_AMBIGUOUS: 'Citation could match more than one entry',
-  REFERENCE_NOT_CITED: 'Reference List entry not cited in the text',
+  REFERENCE_NOT_CITED: 'Reference List entry is not cited in the text',
   REFERENCE_DUPLICATE: 'Duplicate Reference List entry',
 }
+
+/** Every rule code with a bespoke student-facing title (contract tests). */
+export const FRIENDLY_RULE_TITLE_CODES: readonly string[] = Object.keys(
+  FRIENDLY_RULE_TITLES,
+)
 
 /** Friendly title for a rule code, or null when there is no bespoke title. */
 export function friendlyRuleTitle(ruleCode: string | null | undefined): string | null {
@@ -47,6 +78,17 @@ export function friendlyRuleTitle(ruleCode: string | null | undefined): string |
 function occurrenceCount(location: Record<string, unknown> | null | undefined): number {
   const n = (location ?? {}).occurrences
   return typeof n === 'number' && n > 1 ? n : 0
+}
+
+/**
+ * Occurrence label for a consolidated finding, e.g. "3 occurrences".
+ * Null unless the finding genuinely repeats — a single hit shows nothing.
+ */
+export function occurrenceLabel(
+  location: Record<string, unknown> | null | undefined,
+): string | null {
+  const n = occurrenceCount(location)
+  return n > 0 ? `${n} occurrences` : null
 }
 
 /** Duplicate-entry count carried by a duplicate finding's location. */
@@ -239,6 +281,12 @@ export function friendlyRequiredAction(
   if (code === 'CITATION_MISMATCH' && isMissingReferenceSection(location)) {
     return 'Add a References section and list every source cited in the text.'
   }
+  if (code === 'CITATION_MISMATCH') {
+    return (
+      `Add the matching APA 7 reference entry. If the citation refers to the ` +
+      `wrong source or is no longer needed, correct or remove it.`
+    )
+  }
   if (code === 'CITATION_REFERENCE_MISMATCH') {
     return 'Correct the year in the in-text citation or in the Reference List entry so both state the same year.'
   }
@@ -266,22 +314,88 @@ export function friendlyRequiredAction(
   return 'Review this finding in Microsoft Word and apply the required formatting.'
 }
 
-/** "15.0pt" → "15 pt"; "1.5in" → "1.5 in"; "2.0" stays "2.0"; else unchanged. */
+/**
+ * Reader-facing Current/Required value. Pure formatting of one value — no
+ * rule logic, no direction claims, no case changes.
+ *
+ * "15.0pt" → "15 pt" · "1.5in" → "1.5 in" · "2.0cm" → "2 cm" · "12.0mm" →
+ * "12 mm" · "2.0" stays "2.0" (a bare line-spacing multiple has no unit to
+ * attach one to). Apostrophes and font names pass through untouched.
+ */
 export function friendlyValue(value: string | null | undefined): string | null {
   if (value == null) return null
   let s = String(value).trim()
-  if (/^\d+\.0(?=pt|in\b)/i.test(s)) s = s.replace(/(\d+)\.0(?=pt|in\b)/i, '$1')
-  s = s.replace(/(\d)pt\b/i, '$1 pt')
-  s = s.replace(/(\d)in\b/i, '$1 in')
-  return s || null
+  if (!s) return null
+  // Drop a meaningless trailing ".0" only when a real unit follows. The unit
+  // alternation is word-bounded on every branch, so "2.0inside" or "3mmy" can
+  // never be mistaken for a measurement.
+  s = s.replace(/(\d+)\.0(?=pt\b|in\b|cm\b|mm\b)/i, '$1')
+  s = s.replace(/(\d)(pt|in|cm|mm)\b/i, '$1 $2')
+  return s
 }
 
-/** "center" → "centered", "justify" → "justified"; left/right unchanged. */
+
+/**
+ * Short "Current → Required" comparison for one finding.
+ *
+ * Returns null unless BOTH sides survive formatting: an arrow with a missing
+ * side ("14 pt → ", " → 12 pt") claims a comparison the data cannot make.
+ * Callers render a labelled fallback instead — see `comparisonText`.
+ *
+ * "14pt"/"12pt" → "14 pt → 12 pt" · "Arial"/"Times New Roman" → pass through ·
+ * "left"/"justify" → "left → justified" · "0"/"6pt" → "0 → 6 pt".
+ */
+export function friendlyComparison(
+  actual: string | null | undefined,
+  expected: string | null | undefined,
+): string | null {
+  const from = friendlyValue(actual)
+  const to = friendlyValue(expected)
+  if (!from || !to) return null
+  // Alignment values read as words, not enum tokens: "left → justified".
+  return `${alignmentWord(from)} → ${alignmentWord(to)}`
+}
+
+/**
+ * The single comparison line for a finding card.
+ *
+ * Four states, and the wording never overstates what the data shows:
+ *   both sides      → "14 pt → 12 pt"
+ *   Current only    → "Current: 14 pt"
+ *   Required only   → "Required: 12 pt"
+ *   neither         → null (the caller renders no line at all)
+ *
+ * A missing Required value means ACA has nothing to state, NOT that the
+ * property is unnecessary — so the single-value fallback always names which
+ * side it has rather than implying the other side does not apply.
+ */
+export function comparisonText(
+  actual: string | null | undefined,
+  expected: string | null | undefined,
+): string | null {
+  const both = friendlyComparison(actual, expected)
+  if (both) return both
+  const from = friendlyValue(actual)
+  const to = friendlyValue(expected)
+  if (from) return `Current: ${from}`
+  if (to) return `Required: ${to}`
+  return null
+}
+
+/**
+ * Alignment values read as English words: "center" → "centered",
+ * "justify"/"justified" → "justified". Left and right are unchanged.
+ *
+ * Any other value is returned with its ORIGINAL casing intact. This is a
+ * comparison helper, not a case-folding one — routing font names through it
+ * must not turn "Arial → Times New Roman" into "arial → times new roman".
+ */
 export function alignmentWord(value: string): string {
-  const v = value.trim().toLowerCase()
+  const trimmed = value.trim()
+  const v = trimmed.toLowerCase()
   if (v === 'center') return 'centered'
   if (v === 'justify' || v === 'justified') return 'justified'
-  return v
+  return trimmed
 }
 
 /** Cleaned raw message: no developer tokens, internal terms, or raw enums. */

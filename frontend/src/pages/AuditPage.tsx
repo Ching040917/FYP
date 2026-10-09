@@ -34,7 +34,13 @@ import {
   geometryLoaderFromBytes,
   dropPageGeometry,
 } from '../lib/pdf/figure-outlines.ts'
-import { friendlyFindingMessage, friendlyRuleTitle } from '../lib/friendly-finding'
+import {
+  comparisonText,
+  friendlyFindingMessage,
+  friendlyRuleTitle,
+  occurrenceLabel,
+} from '../lib/friendly-finding'
+import { presentationFor } from '../lib/audit/finding-presentation'
 import { interruptionMessage } from '../lib/audit/interrupted-audit'
 import { formatAuditDateTime, auditDateTimeAttr } from '../lib/format-date'
 import { PendingNav, hasParagraphIdentity, type NavCommand } from '../lib/pdf/pending-navigation.ts'
@@ -90,6 +96,7 @@ function toLayoutError(v: Violation): LayoutError {
   const loc = (v.location ?? {}) as Record<string, unknown>
   const paragraphIndex = typeof loc.paragraph_index === 'number' ? loc.paragraph_index : -1
   const position = paragraphIndex >= 0 ? paragraphIndex + 1 : 0
+  const pres = presentationFor(v)
   return {
     id: v.id,
     category: categoryForRuleCode(v.rule_code),
@@ -100,7 +107,11 @@ function toLayoutError(v: Violation): LayoutError {
     // untouched in the violation record.
     detail: friendlyFindingMessage(v.rule_code, v.message, v.expected_value, v.actual_value, v.location),
     suggestion: v.expected_value ?? v.actual_value ?? 'No automatic fix available — review manually.',
-    snippet: (v.actual_value ?? '').toString().slice(0, 140) || undefined,
+    // Card preview line: the rule's own evidence span when it has one,
+    // otherwise the plain-language explanation.
+    evidencePreview: pres.evidence ?? undefined,
+    comparison: comparisonText(v.actual_value, v.expected_value),
+    occurrences: occurrenceLabel(v.location),
   }
 }
 

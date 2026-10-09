@@ -52,6 +52,42 @@ export default {
         'sidebar-border': '#D9DCE1',
         'sidebar-ring': '#1E3A5F',
 
+        // ═══════════════════════════════════════════════════════════════
+        // Severity palette — measured for WCAG AA. Text-on-badge ≥ 4.5:1,
+        // indicators ≥ 3:1 (WCAG 1.4.11 non-text contrast). Badge borders are
+        // decorative; the icon and the label carry the meaning.
+        // Pinned by frontend/tests/severity-tokens.test.ts.
+        // ═══════════════════════════════════════════════════════════════
+        'severity-major-text': '#B42318',
+        'severity-major-bg': '#FEE4E2',
+        'severity-major-border': '#FDA29B',
+        'severity-major-indicator': '#D92D20',
+        'severity-minor-text': '#8A4B08',
+        'severity-minor-bg': '#FFF3D6',
+        'severity-minor-border': '#E9B949',
+        'severity-minor-indicator': '#B66A00',
+        'severity-review-text': '#344054',
+        'severity-review-bg': '#EAECF5',
+        'severity-review-border': '#98A2B3',
+        'severity-review-indicator': '#667085',
+        'severity-unknown-text': '#475467',
+        'severity-unknown-bg': '#F9FAFB',
+        'severity-unknown-border': '#D0D5DD',
+        'severity-unknown-indicator': '#7A8699',
+
+        // Selected-finding surface. Distinct from `selected`/`muted`
+        // (#E8ECF4) so selection can never be confused with hover/focus.
+        'finding-selected-bg': '#EEF4FF',
+        'finding-selected-border': '#2E6BE6',
+        'finding-selected-title': '#102A56',
+        'finding-selected-indicator': '#175CD3',
+
+        // Ink scale for audit evidence text and 1px value-box rules.
+        ink: '#101828',
+        'ink-secondary': '#475467',
+        'ink-muted': '#667085',
+        'rule-border': '#D0D5DD',
+
         // ───────── Legacy M3 aliases (light mapping) — pages still use these;
         //            keep until their Build removes them. ─────────
         surface: '#FFFFFF',

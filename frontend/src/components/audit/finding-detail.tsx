@@ -18,7 +18,9 @@
  * exact page location.
  */
 
-import { MapPin, ShieldCheck } from 'lucide-react'
+
+import { Info, MapPin, ShieldCheck } from 'lucide-react'
+
 import type { ReactNode } from 'react'
 import { Badge } from '../ui/badge'
 import { CATEGORY_LABELS, severityBadge } from '../../lib/audit/categories'
@@ -27,6 +29,23 @@ import { friendlyRuleTitle } from '../../lib/friendly-finding'
 import { ExpectedActualTable } from './expected-actual-table'
 import { presentationFor } from '../../lib/audit/finding-presentation'
 import type { Violation } from '../../types/api'
+import type { ViolationSeverity } from '../../types/audit'
+
+/**
+ * What the reader should conclude about how this finding was produced.
+ * Only scored severities were decided by an automated formatting check.
+ */
+function checkStatement(sev: ViolationSeverity): string {
+  switch (sev) {
+    case 'major':
+    case 'minor':
+      return 'Automated formatting check'
+    case 'review':
+      return 'Needs a person to check'
+    default:
+      return 'Severity not recognised'
+  }
+}
 
 function paragraphNumber(v: Violation): number | null {
   const loc = v.location as Record<string, unknown> | null
@@ -79,7 +98,7 @@ export function FindingDetail({ violation }: { violation: Violation | null }) {
         <h3 className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
           Reference List entry
         </h3>
-        <blockquote className="mt-1.5 whitespace-pre-wrap break-words rounded border-l-2 border-border bg-input/20 px-3 py-2 text-sm leading-[21px] text-foreground">
+        <blockquote className="mt-1.5 whitespace-pre-wrap break-words rounded border-l-2 border-border bg-muted/40 px-3 py-2 text-sm leading-[21px] text-foreground">
           {pres.entryPreview}
         </blockquote>
       </div>,
@@ -92,7 +111,7 @@ export function FindingDetail({ violation }: { violation: Violation | null }) {
           <dt className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
             Missing requirement
           </dt>
-          <dd className="mt-1.5 rounded border border-border bg-input/20 px-3 py-2 text-sm leading-[21px] text-foreground">
+          <dd className="mt-1.5 rounded border border-rule-border bg-muted/40 px-3 py-2 text-sm leading-[21px] text-foreground">
             {pres.missingRequirement}
           </dd>
         </div>
@@ -100,7 +119,7 @@ export function FindingDetail({ violation }: { violation: Violation | null }) {
           <dt className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
             Affected element
           </dt>
-          <dd className="mt-1.5 rounded border border-border bg-input/20 px-3 py-2 font-mono text-[13px] leading-[19px] text-foreground">
+          <dd className="mt-1.5 rounded border border-rule-border bg-muted/40 px-3 py-2 font-mono text-[13px] leading-[19px] text-foreground">
             {pres.affectedElement}
           </dd>
         </div>
@@ -112,17 +131,17 @@ export function FindingDetail({ violation }: { violation: Violation | null }) {
       <dl key="heading" className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <div className="min-w-0">
           <dt className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-            Expected heading sequence
+            Required heading sequence
           </dt>
-          <dd className="mt-1.5 whitespace-pre-wrap break-words rounded border border-border bg-input/20 px-3 py-2 font-mono text-[13px] leading-[19px] text-foreground">
+          <dd className="mt-1.5 whitespace-pre-wrap break-words rounded border border-rule-border bg-muted/40 px-3 py-2 font-mono text-[13px] leading-[19px] text-foreground">
             {pres.expectedHeadingSequence}
           </dd>
         </div>
         <div className="min-w-0">
           <dt className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-            Actual heading sequence
+            Current heading sequence
           </dt>
-          <dd className="mt-1.5 whitespace-pre-wrap break-words rounded border border-border bg-input/20 px-3 py-2 font-mono text-[13px] leading-[19px] text-foreground">
+          <dd className="mt-1.5 whitespace-pre-wrap break-words rounded border border-rule-border bg-muted/40 px-3 py-2 font-mono text-[13px] leading-[19px] text-foreground">
             {pres.actualHeadingSequence}
           </dd>
         </div>
@@ -148,12 +167,22 @@ export function FindingDetail({ violation }: { violation: Violation | null }) {
         <Badge
           variant="outline"
           className={severityBadge(normalizeViolationSeverity(v.severity)).className}
+          title={severityBadge(normalizeViolationSeverity(v.severity)).scored
+            ? undefined
+            : 'Severity not recognised — not scored'}
         >
           {severityBadge(normalizeViolationSeverity(v.severity)).label}
         </Badge>
+        {/* Only a scored deterministic check says so; Manual review and
+            Unclassified findings need a person, and claiming an automated
+            formatting check there would be false. */}
         <span className="inline-flex items-center gap-1.5 text-[13px] leading-[19px] text-muted-foreground">
-          <ShieldCheck className="h-3.5 w-3.5 text-success" aria-hidden="true" />
-          Automated formatting check
+          {severityBadge(normalizeViolationSeverity(v.severity)).scored ? (
+            <ShieldCheck className="h-3.5 w-3.5 text-success" aria-hidden="true" />
+          ) : (
+            <Info className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
+          )}
+          {checkStatement(normalizeViolationSeverity(v.severity))}
         </span>
       </div>
 
@@ -169,15 +198,21 @@ export function FindingDetail({ violation }: { violation: Violation | null }) {
             </dd>
           </div>
         )}
-        <div className="flex items-baseline gap-3">
-          <dt className="w-28 shrink-0 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-            Confirmed issue
-          </dt>
+        {/* The Confirmed-issue sentence is omitted whenever a Current/Required
+            comparison is shown below: for formatting rules it restates the
+            same two values in prose, so both the title and the table would
+            carry the finding. Rules with no value comparison keep it. */}
+        {!(pres.expected != null || pres.actual != null) && (
+          <div className="flex items-baseline gap-3">
+            <dt className="w-28 shrink-0 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+              Confirmed issue
+            </dt>
             <dd className="text-sm leading-[21px] text-foreground">{pres.issue}</dd>
           </div>
+        )}
       </dl>
 
-      {/* Formatting findings: meaningful Expected + Actual kept side by side. */}
+      {/* Formatting findings: one Current → Required comparison, untruncated. */}
       {pres.expected != null || pres.actual != null ? (
         <div className="mt-4">
           <ExpectedActualTable expected={pres.expected ?? null} actual={pres.actual ?? null} />
@@ -190,7 +225,7 @@ export function FindingDetail({ violation }: { violation: Violation | null }) {
           <h3 className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
             Required action
           </h3>
-          <p className="mt-1.5 whitespace-pre-wrap break-words rounded border border-border bg-input/20 px-3 py-2 text-sm leading-[21px] text-foreground">
+          <p className="mt-1.5 whitespace-pre-wrap break-words rounded border border-rule-border bg-muted/40 px-3 py-2 text-sm leading-[21px] text-foreground">
             {pres.requiredAction}
           </p>
         </div>
@@ -202,14 +237,6 @@ export function FindingDetail({ violation }: { violation: Violation | null }) {
             Extended details
           </summary>
           <div className="space-y-4 border-t border-border p-3">
-            <dl className="space-y-2.5">
-              <div className="flex items-baseline gap-3">
-                <dt className="w-28 shrink-0 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-                  Rule reference
-                </dt>
-                <dd className="font-mono text-[13px] leading-[19px] text-foreground">{v.rule_code}</dd>
-              </div>
-            </dl>
             {secondarySections}
           </div>
         </details>

@@ -41,6 +41,7 @@ import {
   selectAllInView,
   workflowStepForStage,
 } from '../../lib/guided-fixes'
+import { friendlyRuleTitle } from '../../lib/friendly-finding'
 import type { Violation } from '../../types/api'
 
 export type GuidedFixStage =
@@ -61,13 +62,12 @@ const FILTER_OPTIONS: Array<{ id: GuidedFilter; label: string }> = [
   { id: 'manual', label: 'Manual correction required' },
 ]
 
-const REVIEW_TITLES: Record<string, string> = {
-  FONT_CONSISTENCY: 'Font',
-  FONT_SIZE: 'Font size',
-  ALIGNMENT: 'Alignment',
-  LINE_SPACING: 'Line spacing',
-  SPACE_BEFORE: 'Space before paragraph',
-  SPACE_AFTER: 'Space after paragraph',
+/**
+ * Removal-button label for a finding. Reads the shared friendly title map so
+ * the panel can never drift from the Findings list wording.
+ */
+function reviewLabelFor(v: Violation): string {
+  return friendlyRuleTitle(v.rule_code) ?? 'finding'
 }
 
 function formatValueForPanel(v: Violation): { current: string; proposed: string } {
@@ -564,14 +564,14 @@ export function GuidedFixesPanel({
                   <li key={v.id} className="rounded-md border border-border bg-input/20 px-3 py-2">
                     <div className="flex items-start justify-between gap-2">
                       <span className="text-sm font-medium text-foreground">
-                        {REVIEW_TITLES[v.rule_code] ?? v.rule_code}
+                        {reviewLabelFor(v)}
                       </span>
                       <Button
                         variant="ghost"
                         size="sm"
                         className="h-7 px-2 text-xs text-muted-foreground"
                         onClick={() => setSelectedIds((cur) => cur.filter((x) => x !== v.id))}
-                        aria-label={`Remove ${REVIEW_TITLES[v.rule_code] ?? 'finding'} from selection`}
+                        aria-label={`Remove ${reviewLabelFor(v)} from selection`}
                       >
                         Remove from selection
                       </Button>

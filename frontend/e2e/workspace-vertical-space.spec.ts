@@ -483,7 +483,9 @@ test.describe('workspace vertical space @vertical-space', () => {
       const panel = document.getElementById('ws-panel-details')
       if (!panel) return null
       const bounds = panel.getBoundingClientRect()
-      const labels = ['Confirmed issue', 'Expected', 'Actual', 'Required action', 'Location']
+      // Comparison cells read Current/Required; the retired Actual/Expected
+      // labels must never reappear.
+      const labels = ['Location', 'Required action', 'Current', 'Required']
       const visible = labels.filter((label) =>
         Array.from(panel.querySelectorAll('*')).some((el) => {
           if (el.children.length > 0) return false
@@ -501,13 +503,20 @@ test.describe('workspace vertical space @vertical-space', () => {
       }
     })
     expect(primary, 'details column must be present at 1366x768').not.toBeNull()
-    expect(primary!.visible, 'primary evidence must be readable without scrolling').toEqual([
-      'Confirmed issue',
-      'Expected',
-      'Actual',
-      'Required action',
-      'Location',
-    ])
+    // Location and the required action are always on screen.
+    expect(primary!.visible, 'primary evidence must be readable without scrolling').toEqual(
+      expect.arrayContaining(['Location', 'Required action']),
+    )
+    // When a value comparison is shown it is labelled Current / Required, and
+    // the generic Confirmed-issue sentence is suppressed so the same two
+    // values are not stated twice.
+    const showsComparison = primary!.visible.includes('Current') || primary!.visible.includes('Required')
+    if (showsComparison) {
+      expect(primary!.visible).toEqual(expect.arrayContaining(['Current', 'Required']))
+      expect(primary!.visible).not.toContain('Confirmed issue')
+    }
+    expect(primary!.visible, 'retired Actual/Expected labels must not return').not.toContain('Actual')
+    expect(primary!.visible, 'retired Actual/Expected labels must not return').not.toContain('Expected')
     expect(primary!.disclosures.length, 'secondary detail content uses one disclosure').toBeGreaterThan(0)
     expect(
       primary!.disclosures.every((d) => !d.open),

@@ -190,13 +190,22 @@ _CITATION_MATCH_RULES = frozenset({
     "REFERENCE_DUPLICATE",
 })
 
-# Severity labels shown to the reader. REVIEW is a manual-review flag: it is
-# never scored and never counted as major or minor.
+# Reader-facing severity labels. Mirrors `severityBadge` in
+# frontend/src/lib/audit/categories.ts; backend/tests/test_export_pdf.py
+# enforces the match. REVIEW is a manual-review flag: never scored, never
+# counted as major or minor.
 _SEVERITY_LABEL = {
     "MAJOR": "Major",
     "MINOR": "Minor",
-    "REVIEW": "For review",
+    "REVIEW": "Manual review",
 }
+
+# Any historical/unrecognised Violation.severity token renders as this, never
+# as the raw snake_case token.
+_UNCLASSIFIED_SEVERITY = "Unclassified"
+
+# The three severities that carry panels; anything else is unclassified.
+_PANEL_SEVERITIES = ("MAJOR", "MINOR", "REVIEW")
 
 _PROP_NAME = {
     "FONT_CONSISTENCY": "font",
@@ -222,28 +231,31 @@ _PROP_NAME = {
     "REFERENCE_DUPLICATE": "Reference List entry",
 }
 
+# Plain-language rule titles. Mirrored verbatim from
+# frontend/src/lib/friendly-finding.ts (FRIENDLY_RULE_TITLES) so the PDF and
+# the web never disagree; backend/tests/test_export_pdf.py enforces the match.
 _RULE_NAME = {
-    "FONT_CONSISTENCY": "Font Consistency",
-    "FONT_SIZE": "Font Size",
-    "LINE_SPACING": "Line Spacing",
-    "SPACE_BEFORE": "Space Before",
-    "SPACE_AFTER": "Space After",
-    "ALIGNMENT": "Alignment",
-    "MARGIN_LEFT": "Left Margin",
-    "MARGIN_RIGHT": "Right Margin",
-    "MARGIN_TOP": "Top Margin",
-    "MARGIN_BOTTOM": "Bottom Margin",
-    "HEADING_HIERARCHY": "Heading Hierarchy",
-    "TABLE_CAPTION_MISSING": "Table Caption Missing",
-    "IMAGE_CAPTION_MISSING": "Image Caption Missing",
-    "IMAGE_ALT_TEXT_MISSING": "Image Alt-Text Missing",
-    "MANUAL_CAPTION": "Manual Caption",
-    "CITATION_MISMATCH": "Citation Mismatch",
-    "CITATION_REFERENCE_MISMATCH": "Citation Year Mismatch",
-    "CITATION_YEAR_SUFFIX_MISMATCH": "Citation Year Suffix Missing",
-    "CITATION_REFERENCE_AMBIGUOUS": "Citation Match Needs Review",
-    "REFERENCE_NOT_CITED": "Reference Entry Not Cited",
-    "REFERENCE_DUPLICATE": "Duplicate Reference Entry",
+    "FONT_CONSISTENCY": "Font family does not match",
+    "FONT_SIZE": "Font size does not match",
+    "LINE_SPACING": "Line spacing does not match",
+    "SPACE_BEFORE": "Space before the paragraph does not match",
+    "SPACE_AFTER": "Space after the paragraph does not match",
+    "ALIGNMENT": "Paragraph alignment does not match",
+    "MARGIN_LEFT": "Left page margin does not match",
+    "MARGIN_RIGHT": "Right page margin does not match",
+    "MARGIN_TOP": "Top page margin does not match",
+    "MARGIN_BOTTOM": "Bottom page margin does not match",
+    "HEADING_HIERARCHY": "Heading levels skip a step",
+    "TABLE_CAPTION_MISSING": "Table caption is missing",
+    "IMAGE_CAPTION_MISSING": "Figure caption is missing",
+    "IMAGE_ALT_TEXT_MISSING": "Figure alternative text is missing",
+    "MANUAL_CAPTION": "Caption was typed instead of inserted",
+    "CITATION_MISMATCH": "Citation has no matching Reference List entry",
+    "CITATION_REFERENCE_MISMATCH": "Citation year does not match the Reference List entry",
+    "CITATION_YEAR_SUFFIX_MISMATCH": "Citation is missing or uses the wrong year suffix",
+    "CITATION_REFERENCE_AMBIGUOUS": "Citation could match more than one entry",
+    "REFERENCE_NOT_CITED": "Reference List entry is not cited in the text",
+    "REFERENCE_DUPLICATE": "Duplicate Reference List entry",
 }
 
 
@@ -252,8 +264,8 @@ def _rule_name(code: str) -> str:
 
 
 def _severity_label(severity: str) -> str:
-    """Reader-facing severity label (unknown tokens print verbatim)."""
-    return _SEVERITY_LABEL.get(severity, severity)
+    """Reader-facing severity label; unknown tokens never print raw."""
+    return _SEVERITY_LABEL.get(severity, _UNCLASSIFIED_SEVERITY)
 
 
 def _citation_action(v) -> str:
@@ -295,9 +307,6 @@ _LOCATION_KEYS = (
     ("table_index", "Table {n}"),
     ("image_index", "Figure {n}"),
 )
-
-# Internal location keys (never shown to users) — preserved for detection.
-_INTERNAL_LOCATION_KEYS = ("run_index", "run_indexes", "block_index")
 
 
 def _heading_text_for_paragraph(paragraph_index, document_blocks):
@@ -708,10 +717,10 @@ def _priority_table(pid, v, audit=None) -> Table:
     if affected:
         rows.append(affected)
     rows.append(("Issue", _student_clean(v.message) or ""))
-    if v.expected_value:
-        rows.append(("Expected", _student_clean(v.expected_value)))
     if v.actual_value:
-        rows.append(("Actual", _student_clean(v.actual_value)))
+        rows.append(("Current", _student_clean(v.actual_value)))
+    if v.expected_value:
+        rows.append(("Required", _student_clean(v.expected_value)))
     # Friendly required action without Run.
     rows.append(("Required Action", _friendly_required_action(v, friendly_loc, affected)))
     return _panel(f"{pid} — {_rule_name(v.rule_code)}", _severity_label(v.severity), rows)
@@ -840,19 +849,18 @@ def _group_panel(gid, members, rule_code, exp_val, action, audit=None) -> Table:
 
 
 def _rule_cell(v) -> Paragraph:
-    """Friendly rule name with the technical rule code as secondary text."""
+    """Plain-language rule name. Never prints the internal rule code."""
     return Paragraph(
-        f"{_clean(_rule_name(v.rule_code))}<br/>"
-        f"<font name='Helvetica' size='6.5' color='#5B6470'>{_clean(v.rule_code)}</font>",
+        _clean(_rule_name(v.rule_code)),
         ParagraphStyle("rule-cell", fontName="Helvetica-Bold", fontSize=8,
                        leading=10.8, textColor=INK),
     )
 
 
 def _appendix_table(entries, audit=None) -> Table:
-    """Register rows: ID, Severity, Friendly Rule, Location, Actual, Expected."""
+    """Register rows: ID, Severity, Rule, Location, Current, Required."""
     rows = [[_p(h, size=8, font="Helvetica-Bold", color=colors.white) for h in
-             ("ID", "Severity", "Friendly Rule", "Location", "Actual", "Expected")]]
+             ("ID", "Severity", "Rule", "Location", "Current", "Required")]]
     for f_idx, v in entries:
         # Friendly location without Run; include page when available
         friendly_loc = friendly_location_text(v.location, getattr(audit, "document_blocks", None) if audit else None)
@@ -1094,6 +1102,10 @@ def generate_audit_pdf(audit, violations, citation_issues, profile_snapshot=None
     major = [v for v in violations if v.severity == "MAJOR"]
     minor = [v for v in violations if v.severity == "MINOR"]
     review = [v for v in violations if v.severity == "REVIEW"]
+    # Violation.severity carries no CheckConstraint, so a historical or
+    # malformed token is reachable. Without this partition such a finding would
+    # be counted in the total below yet rendered nowhere.
+    unclassified = [v for v in violations if v.severity not in _PANEL_SEVERITIES]
     if not violations:
         story.append(_p(
             "No issues were detected by the enabled deterministic checks. This does not "
@@ -1107,6 +1119,11 @@ def generate_audit_pdf(audit, violations, citation_issues, profile_snapshot=None
         )
         if review:
             summary += f", {len(review)} for manual review (never scored)"
+        if unclassified:
+            summary += (
+                f", {len(unclassified)} unclassified "
+                f"(historical severity, never scored)"
+            )
         summary += ". Findings are rule-based; AI guidance below is advisory only."
         story.append(_p(summary, size=8.5, color=MUTED))
         story.append(Spacer(1, 2 * mm))
@@ -1183,6 +1200,25 @@ def generate_audit_pdf(audit, violations, citation_issues, profile_snapshot=None
             story.append(Spacer(1, 4 * mm))
             group_idx += 1
 
+    # ---- Manual Review Findings ----
+    # REVIEW is a manual-review flag: never scored, never counted, but it must
+    # still get an individual panel so the reader is not left with a bare
+    # register row and no explanation.
+    if review:
+        story.append(Spacer(1, 3 * mm))
+        story.append(_section("Manual Review Findings"))
+        story.append(Spacer(1, 2 * mm))
+        story.append(_p(
+            "ACA could not determine whether these citations or entries match "
+            "reliably. Confirm each one against the source; none of them affect "
+            "the score.",
+            size=9.5, color=MUTED,
+        ))
+        story.append(Spacer(1, 2 * mm))
+        for i, v in enumerate(review):
+            story.append(KeepTogether([_priority_table(_p_id(i + 1), v, audit)]))
+            story.append(Spacer(1, 3 * mm))
+
     # ---- Document Statistics ----
     story.append(Spacer(1, 3 * mm))
     story.append(_section("Document Statistics"))
@@ -1238,8 +1274,9 @@ def generate_audit_pdf(audit, violations, citation_issues, profile_snapshot=None
         story.append(_section("Appendix — Findings Register"))
         story.append(Spacer(1, 2 * mm))
         story.append(_p(
-            "Every finding from the Priority section appears exactly once below, grouped by "
-            "severity. Technical rule codes appear under each friendly rule name.",
+            "Every finding in this report appears exactly once below, grouped by "
+            "severity. Individual detail panels are shown earlier for Major and "
+            "Manual review findings; Minor findings are grouped by rule.",
             size=8.5, color=MUTED,
         ))
         story.append(Spacer(1, 3 * mm))
@@ -1275,9 +1312,22 @@ def generate_audit_pdf(audit, violations, citation_issues, profile_snapshot=None
             f_idx += 1
             review_entries.append((f_idx, v))
         if review_entries:
-            story.append(_p("For review", size=9.5, font="Helvetica-Bold", color=NAVY))
+            story.append(_p("Manual review", size=9.5, font="Helvetica-Bold", color=NAVY))
             story.append(Spacer(1, 1.5 * mm))
             story.append(_appendix_table(review_entries, audit))
+            story.append(Spacer(1, 5 * mm))
+
+        unclassified_entries = []
+        for v in unclassified:
+            f_idx += 1
+            unclassified_entries.append((f_idx, v))
+        if unclassified_entries:
+            story.append(_p(
+                _UNCLASSIFIED_SEVERITY,
+                size=9.5, font="Helvetica-Bold", color=NAVY,
+            ))
+            story.append(Spacer(1, 1.5 * mm))
+            story.append(_appendix_table(unclassified_entries, audit))
 
     buf = io.BytesIO()
     doc = BaseDocTemplate(

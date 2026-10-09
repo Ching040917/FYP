@@ -54,6 +54,14 @@ import type {
   ViolationSeverity,
 } from '../../types/audit'
 
+/**
+ * Severity filter options, built from `severityBadge` so the filter and the
+ * badge can never drift apart. `only` reads naturally after the label.
+ */
+const SEVERITY_FILTER_OPTIONS: ReadonlyArray<{ value: ViolationSeverity; label: string }> = (
+  ['major', 'minor', 'review', 'unknown'] as const
+).map((sev) => ({ value: sev, label: severityBadge(sev).label }))
+
 export function ErrorList({
   result,
   selectedId,
@@ -173,8 +181,11 @@ export function ErrorList({
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All severities</SelectItem>
-              <SelectItem value="major">Major only</SelectItem>
-              <SelectItem value="minor">Minor only</SelectItem>
+              {SEVERITY_FILTER_OPTIONS.map((opt) => (
+                <SelectItem key={opt.value} value={opt.value}>
+                  {opt.label} only
+                </SelectItem>
+              ))}
             </SelectContent>
           </Select>
           <Select
@@ -233,38 +244,43 @@ export function ErrorList({
             <ul className="divide-y divide-border px-2 pb-4 pt-2">
               {filtered.map((e, index) => {
                 const selected = selectedId === e.id
+                const badge = severityBadge(e.severity)
+                const location = locatingId === e.id ? 'Locating finding…' : locationLabels?.get(e.id)
+                const occurrences = e.occurrences
+                const comparison = e.comparison
+                const evidence = e.evidencePreview || e.detail
+                // The badges are decoration for a screen reader; the row's
+                // accessible name is spelled out here so deleting the ¶ and
+                // category badges never shrinks it.
+                const accessibleName = [e.title, badge.label, location].filter(Boolean).join(', ')
                 return (
                   <li key={e.id} data-index={index}>
                     <button
                       type="button"
                       onClick={() => onSelect?.(e)}
                       aria-pressed={selected}
+                      aria-label={accessibleName}
                       className={cn(
-                        'flex w-full items-start gap-2.5 px-3 py-2.5 text-left transition-colors',
-                        'focus-visible:outline-none focus-visible:bg-muted focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/50',
-                        selected ? 'bg-selected' : 'hover:bg-muted',
+                        'flex w-full items-start gap-2.5 border-l-2 px-3 py-2.5 text-left transition-colors',
+                        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary',
+                        selected
+                          ? 'border-l-finding-selected-indicator bg-finding-selected-bg text-finding-selected-title ring-1 ring-finding-selected-border'
+                          : 'border-l-transparent hover:bg-muted/40',
                       )}
                     >
                       {/* Severity marker — contained within the row, never a
-                          continuous line across rows. Unclassified (unknown
-                          backend token) stays neutral, never alarm. */}
+                          continuous line across rows. Always the measured
+                          3:1 indicator token for this severity. */}
                       <span
                         aria-hidden="true"
-                        className={cn(
-                          'mt-1.5 h-7 w-1 shrink-0 rounded-full',
-                          e.severity === 'major'
-                            ? 'bg-destructive'
-                            : e.severity === 'minor'
-                              ? 'bg-warning'
-                              : 'bg-muted-foreground/40',
-                        )}
+                        className={cn('mt-1.5 h-7 w-1 shrink-0 rounded-full', badge.indicatorClassName)}
                       />
                       {e.severity === 'major' ? (
-                        <AlertOctagon className="mt-0.5 h-4 w-4 shrink-0 text-destructive" aria-hidden="true" />
+                        <AlertOctagon className="mt-0.5 h-4 w-4 shrink-0 text-severity-major-indicator" aria-hidden="true" />
                       ) : e.severity === 'minor' ? (
-                        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" aria-hidden="true" />
+                        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-severity-minor-indicator" aria-hidden="true" />
                       ) : (
-                        <Info className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+                        <Info className="mt-0.5 h-4 w-4 shrink-0 text-severity-review-indicator" aria-hidden="true" />
                       )}
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-sm font-medium text-foreground">
@@ -273,45 +289,39 @@ export function ErrorList({
                         <span className="mt-1 flex flex-wrap items-center gap-1.5">
                           <Badge
                             variant="outline"
-                            className="h-4 px-1.5 text-[11px] leading-none border-border text-muted-foreground font-mono"
+                            className={cn('h-4 px-1.5 text-[11px] leading-none', badge.className)}
+                            title={e.severity === 'unknown' ? 'Severity not recognised — not scored' : undefined}
                           >
-                            ¶{e.position > 0 ? e.position : '?'}
+                            {badge.label}
                           </Badge>
-                          <Badge
-                            variant="outline"
-                            className="h-4 px-1.5 text-[11px] leading-none border-border text-muted-foreground"
-                          >
-                            {CATEGORY_LABELS[e.category]}
-                          </Badge>
-                          <Badge
-                            variant="outline"
-                            className={cn(
-                              'h-4 px-1.5 text-[11px] leading-none',
-                              severityBadge(e.severity).className,
-                            )}
-                          >
-                            {severityBadge(e.severity).label}
-                          </Badge>
-                          {locatingId === e.id ? (
-                            <span className="text-[11px] leading-none text-muted-foreground">
-                              Locating finding…
+                          {location && (
+                            <span className="text-[11px] leading-none text-ink-muted">
+                              {location}
                             </span>
-                          ) : (
-                            locationLabels?.get(e.id) && (
-                              <span className="text-[11px] leading-none text-muted-foreground">
-                                {locationLabels.get(e.id)}
-                              </span>
-                            )
+                          )}
+                          {occurrences && (
+                            <span className="text-[11px] leading-none text-ink-muted">
+                              {occurrences}
+                            </span>
                           )}
                         </span>
-                        {e.snippet && (
-                          <span className="mt-1.5 line-clamp-2 block break-words font-mono text-[11px] leading-[18px] text-muted-foreground">
-                            “{e.snippet}”
+                        {comparison && (
+                          <span className="mt-1 block truncate text-[12px] leading-4 text-foreground">
+                            {comparison}
+                          </span>
+                        )}
+                        {evidence && (
+                          <span
+                            className="mt-1 block truncate text-[11px] leading-4 text-ink-muted"
+                            title={evidence}
+                          >
+                            {evidence}
+                            <span className="sr-only">{evidence}</span>
                           </span>
                         )}
                       </span>
                       {selected ? (
-                        <Check className="mt-1 h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
+                        <Check className="mt-1 h-4 w-4 shrink-0 text-finding-selected-indicator" aria-hidden="true" />
                       ) : (
                         <ChevronRight className="mt-1 h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
                       )}

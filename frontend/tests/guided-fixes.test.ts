@@ -61,7 +61,7 @@ describe('guided presentation', () => {
       const pres = guidedPresentationFor(violation(rule))
       assert.equal(pres.supported, false, rule)
       assert.equal(pres.proposed, '')
-      assert.equal(pres.current, '11pt')
+      assert.equal(pres.current, '11 pt')
     }
   })
 
@@ -79,7 +79,7 @@ describe('guided presentation', () => {
 
   test('proposed values come only from persisted expected_value', () => {
     const pres = guidedPresentationFor(violation('ALIGNMENT', { expected_value: 'justify', actual_value: 'left' }))
-    assert.equal(pres.proposed, 'Justified')
+    assert.equal(pres.proposed, 'justified')
     const noExpected = guidedPresentationFor({ ...violation('FONT_SIZE'), expected_value: null })
     assert.equal(noExpected.proposed, 'Profile requirement (see finding details)')
   })
@@ -144,8 +144,8 @@ describe('guided selection', () => {
 describe('review values', () => {
   test('review shows current and proposed from persisted data', () => {
     const pres = guidedPresentationFor(violation('FONT_SIZE', { expected_value: '12pt', actual_value: '11pt' }))
-    assert.equal(pres.current, '11pt')
-    assert.equal(pres.proposed, '12pt')
+    assert.equal(pres.current, '11 pt')
+    assert.equal(pres.proposed, '12 pt')
   })
 
   test('checkbox accessible name contains friendly name and location', () => {
@@ -154,10 +154,10 @@ describe('review values', () => {
       expected_value: '1.5',
       actual_value: '1.0',
     }))
-    assert.equal(pres.friendlyName, 'Line Spacing')
+    assert.equal(pres.friendlyName, 'Line spacing does not match')
     assert.equal(pres.friendlyLocation, 'Paragraph 3')
     const label = `${pres.friendlyName}, ${pres.friendlyLocation}`
-    assert.ok(label.includes('Line Spacing'))
+    assert.ok(label.includes('Line spacing does not match'))
     assert.ok(label.includes('Paragraph 3'))
   })
 })

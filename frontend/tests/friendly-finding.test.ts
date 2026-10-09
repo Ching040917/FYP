@@ -9,12 +9,16 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  FRIENDLY_RULE_TITLE_CODES,
+  cleanMessage,
+  comparisonText,
+  friendlyComparison,
   friendlyFindingMessage,
   friendlyRequiredAction,
   friendlyRuleTitle,
   friendlyValue,
-  cleanMessage,
   objectLabel,
+  occurrenceLabel,
 } from '../src/lib/friendly-finding.ts'
 import {
   normalizeViolationSeverity,
@@ -170,18 +174,58 @@ test('cleanMessage never mutates the source raw message', () => {
 // Citation ↔ Reference List matching findings (citation reference build)
 // ---------------------------------------------------------------------------
 
-test('friendly titles exist for the citation/reference codes only', () => {
-  assert.equal(friendlyRuleTitle('CITATION_MISMATCH'), 'Citation without a Reference List entry')
+test('every production rule code has a plain-language title', () => {
+  assert.deepEqual(
+    FRIENDLY_RULE_TITLE_CODES.slice().sort(),
+    [
+      'ALIGNMENT',
+      'CITATION_MISMATCH',
+      'CITATION_REFERENCE_AMBIGUOUS',
+      'CITATION_REFERENCE_MISMATCH',
+      'CITATION_YEAR_SUFFIX_MISMATCH',
+      'FONT_CONSISTENCY',
+      'FONT_SIZE',
+      'HEADING_HIERARCHY',
+      'IMAGE_ALT_TEXT_MISSING',
+      'IMAGE_CAPTION_MISSING',
+      'LINE_SPACING',
+      'MANUAL_CAPTION',
+      'MARGIN_BOTTOM',
+      'MARGIN_LEFT',
+      'MARGIN_RIGHT',
+      'MARGIN_TOP',
+      'REFERENCE_DUPLICATE',
+      'REFERENCE_NOT_CITED',
+      'SPACE_AFTER',
+      'SPACE_BEFORE',
+      'TABLE_CAPTION_MISSING',
+    ],
+  )
+  // No title is the raw code, and none claims a direction the data cannot support.
+  for (const code of FRIENDLY_RULE_TITLE_CODES) {
+    const title = friendlyRuleTitle(code)
+    assert.ok(title, code)
+    assert.notEqual(title, code, code)
+    assert.doesNotMatch(title, /_/, code)
+    assert.doesNotMatch(title, /too large|too small/i, code)
+  }
+})
+
+test('citation and reference codes carry their agreed wording', () => {
+  assert.equal(friendlyRuleTitle('CITATION_MISMATCH'), 'Citation has no matching Reference List entry')
   assert.equal(
     friendlyRuleTitle('CITATION_REFERENCE_MISMATCH'),
     'Citation year does not match the Reference List entry',
   )
-  assert.equal(friendlyRuleTitle('CITATION_YEAR_SUFFIX_MISMATCH'), 'Citation is missing the year suffix')
+  assert.equal(
+    friendlyRuleTitle('CITATION_YEAR_SUFFIX_MISMATCH'),
+    'Citation is missing or uses the wrong year suffix',
+  )
   assert.equal(friendlyRuleTitle('CITATION_REFERENCE_AMBIGUOUS'), 'Citation could match more than one entry')
-  assert.equal(friendlyRuleTitle('REFERENCE_NOT_CITED'), 'Reference List entry not cited in the text')
+  assert.equal(friendlyRuleTitle('REFERENCE_NOT_CITED'), 'Reference List entry is not cited in the text')
   assert.equal(friendlyRuleTitle('REFERENCE_DUPLICATE'), 'Duplicate Reference List entry')
   // Unknown codes have no bespoke title (caller falls back to humanization).
-  assert.equal(friendlyRuleTitle('FONT_SIZE'), null)
+  assert.equal(friendlyRuleTitle('SOME_FUTURE_RULE'), null)
   assert.equal(friendlyRuleTitle(null), null)
 })
 
@@ -302,15 +346,23 @@ test('severity normalization is explicit for every valid token', () => {
   assert.equal(normalizeViolationSeverity('REVIEW'), 'review')
 })
 
-test('review severity badge is neutral and labelled Manual review', () => {
+test('severity badges pair one label with one palette and an indicator', () => {
   const review = severityBadge('review')
   assert.equal(review.label, 'Manual review')
-  assert.ok(!/rose|amber|destructive|warning/.test(review.className), review.className)
-  // Major/minor keep their alarm styling.
+  assert.equal(review.scored, false)
+  // Only a scored severity uses the scored palette.
+  assert.notEqual(review.className, severityBadge('major').className)
+  assert.notEqual(review.className, severityBadge('minor').className)
   assert.equal(severityBadge('major').label, 'Major')
-  assert.match(severityBadge('major').className, /rose/)
+  assert.equal(severityBadge('major').scored, true)
   assert.equal(severityBadge('minor').label, 'Minor')
-  assert.match(severityBadge('minor').className, /amber/)
+  assert.equal(severityBadge('minor').scored, true)
+  // Every severity ships a 3:1 indicator colour for its stripe and icon.
+  for (const sev of ['major', 'minor', 'review', 'unknown'] as const) {
+    const badge = severityBadge(sev)
+    assert.match(badge.indicatorClassName, /^bg-severity-/, sev)
+    assert.match(badge.indicatorTextClassName, /^text-severity-/, sev)
+  }
 })
 
 test('citation/reference rule codes share the APA citations category', async () => {
@@ -405,10 +457,17 @@ test('unknown or malformed severity never becomes a scored severity', () => {
   }
 })
 
-test('unclassified severity has neutral presentation with no alarm styling', () => {
+test('unclassified severity is visible, unscored and never styled as Minor', () => {
   const badge = severityBadge('unknown')
   assert.equal(badge.label, 'Unclassified')
-  assert.ok(!/rose|amber|destructive|warning|red/.test(badge.className), badge.className)
+  assert.equal(badge.scored, false)
+  // An out-of-union value must resolve to Unclassified, never fall through
+  // to Minor the way a missing `default` branch would.
+  for (const rogue of ['critical', 'MAJOR ', '', 'nope'] as never[]) {
+    assert.equal(severityBadge(rogue).label, 'Unclassified', String(rogue))
+  }
+  assert.notEqual(badge.className, severityBadge('minor').className)
+  assert.notEqual(badge.indicatorClassName, severityBadge('minor').indicatorClassName)
   // Scoped presentation stays neutral, review presentation is unchanged.
   assert.equal(severityBadge('review').label, 'Manual review')
   assert.equal(severityBadge('major').label, 'Major')
@@ -476,4 +535,109 @@ test('an unknown severity cannot make a finding Guided-Fix eligible', () => {
 test('whitespace-padded valid tokens still normalize to their exact severity', () => {
   assert.equal(normalizeViolationSeverity(' major '), 'major')
   assert.equal(normalizeViolationSeverity('review '), 'review')
+})
+
+// ---------------------------------------------------------------------------
+// Current → Required comparison and occurrence labelling
+// ---------------------------------------------------------------------------
+
+test('both values render as one spaced arrow comparison', () => {
+  assert.equal(friendlyComparison('14pt', '12pt'), '14 pt → 12 pt')
+  // Font names keep their casing — a comparison helper must not case-fold.
+  assert.equal(friendlyComparison('Arial', 'Times New Roman'), 'Arial → Times New Roman')
+  assert.equal(friendlyComparison('left', 'justify'), 'left → justified')
+  assert.equal(friendlyComparison('1.5', '2.0'), '1.5 → 2.0')
+  assert.equal(friendlyComparison('0', '6pt'), '0 → 6 pt')
+  assert.equal(friendlyComparison('2.0cm', '1.0mm'), '2 cm → 1 mm')
+  // An internal apostrophe survives verbatim.
+  assert.equal(
+    friendlyComparison("O'Brien", 'Times New Roman'),
+    "O'Brien → Times New Roman",
+  )
+})
+
+test('unit formatting is word-bounded and leaves unrelated text alone', () => {
+  assert.equal(friendlyValue('2.0cm'), '2 cm')
+  assert.equal(friendlyValue('1.0mm'), '1 mm')
+  assert.equal(friendlyValue('14pt'), '14 pt')
+  assert.equal(friendlyValue('1.5in'), '1.5 in')
+  // Already spaced / bare values are idempotent or left alone.
+  assert.equal(friendlyValue('12 pt'), '12 pt')
+  assert.equal(friendlyValue('2.0'), '2.0')
+  // No accidental unit insertion where the letters are part of a word.
+  assert.equal(friendlyValue('2.0inside'), '2.0inside')
+  assert.equal(friendlyValue('3mmy'), '3mmy')
+  assert.equal(friendlyValue('Times New Roman'), 'Times New Roman')
+  assert.equal(friendlyValue("O'Brien"), "O'Brien")
+})
+
+test('a missing side never produces an arrow', () => {
+  for (const [actual, expected] of [
+    ['14pt', null],
+    ['14pt', undefined],
+    [null, '12pt'],
+    [undefined, '12pt'],
+    [null, null],
+    ['', '12pt'],
+    ['14pt', ''],
+    ['   ', '   '],
+  ] as Array<[string | null | undefined, string | null | undefined]>) {
+    assert.equal(friendlyComparison(actual, expected), null, `${actual} → ${expected}`)
+  }
+})
+
+test('all four value-presence states render an honest line', () => {
+  // 1. Both available → arrow.
+  assert.equal(comparisonText('14pt', '12pt'), '14 pt → 12 pt')
+  // 2. Current only → names what it has.
+  assert.equal(comparisonText('14pt', null), 'Current: 14 pt')
+  // 3. Required only → names what it has.
+  assert.equal(comparisonText(null, '12pt'), 'Required: 12 pt')
+  // 4. Neither available → no line at all.
+  assert.equal(comparisonText(null, null), null)
+  assert.equal(comparisonText('', ''), null)
+  assert.equal(comparisonText(undefined, undefined), null)
+})
+
+test('a missing Required never implies the property is unnecessary', () => {
+  // Negative assertion only: the retired wording may appear here, nowhere else.
+  for (const actual of ['14pt', 'Arial', 'left', '0']) {
+    for (const expected of [null, undefined, '']) {
+      const out = comparisonText(actual, expected)
+      assert.ok(out, `${actual} / ${expected}`)
+      assert.doesNotMatch(out, /Not required in this profile/)
+      assert.match(out, /^Current: /, out)
+    }
+  }
+})
+
+test('no helper emits a raw rule code, paragraph index or location JSON', () => {
+  const code = 'FONT_SIZE'
+  const location = { paragraph_index: 7, run_index: 3 }
+  const outputs = [
+    friendlyRuleTitle(code),
+    friendlyValue('14pt'),
+    friendlyComparison('14pt', '12pt'),
+    comparisonText('14pt', null),
+    occurrenceLabel(location),
+    friendlyFindingMessage(code, 'Font size 14pt != required 12pt', '12pt', '14pt', location),
+    friendlyRequiredAction(code, '12pt', '14pt', location),
+    friendlyComparison('1pt', null),
+    comparisonText(null, 'x'),
+    friendlyValue(null),
+  ]
+  for (const out of outputs) {
+    if (out == null) continue
+    assert.ok(!out.includes(code), `raw rule code leaked: ${out}`)
+    assert.ok(!/\bH[1-6]\b/.test(out), `heading token leaked: ${out}`)
+    assert.ok(!out.includes('paragraph_index'), `index key leaked: ${out}`)
+    assert.ok(!out.includes('run_index'), `run key leaked: ${out}`)
+    assert.ok(!out.includes('{'), `location JSON leaked: ${out}`)
+    assert.ok(!/[!=]/.test(out), `operator token leaked: ${out}`)
+  }
+  // The occurrence label is derived, never the raw index.
+  assert.equal(occurrenceLabel({ paragraph_index: 7, occurrences: 3 }), '3 occurrences')
+  assert.equal(occurrenceLabel({ paragraph_index: 7, occurrences: 1 }), null)
+  assert.equal(occurrenceLabel({ paragraph_index: 7 }), null)
+  assert.equal(occurrenceLabel(null), null)
 })

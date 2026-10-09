@@ -39,6 +39,12 @@ export interface LayoutError {
   detail: string
   suggestion: string
   snippet?: string
+  /** One-line evidence preview for the findings card (full text in Details). */
+  evidencePreview?: string
+  /** "14 pt → 12 pt", or a labelled fallback; null when neither exists. */
+  comparison?: string | null
+  /** "3 occurrences" for a consolidated finding; null when it repeats once. */
+  occurrences?: string | null
 }
 
 export interface CitationTip {
