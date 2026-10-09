@@ -17,6 +17,7 @@ import {
   friendlyFindingMessage,
   friendlyRequiredAction,
   friendlyValue,
+  isMissingReferenceSection,
   objectLabel,
 } from '../friendly-finding.ts'
 
@@ -36,18 +37,18 @@ export interface RulePresentation {
 }
 
 /** Formatting rules with meaningful Expected/Actual values + a deterministic action. */
-const FORMATTING_RULES = new Set([
-  'FONT_SIZE',
-  'FONT_CONSISTENCY',
-  'LINE_SPACING',
-  'SPACE_BEFORE',
-  'SPACE_AFTER',
-  'ALIGNMENT',
-  'MARGIN_LEFT',
-  'MARGIN_RIGHT',
-  'MARGIN_TOP',
-  'MARGIN_BOTTOM',
-])
+const FORMATTING_RULES: Record<string, true> = {
+  FONT_SIZE: true,
+  FONT_CONSISTENCY: true,
+  LINE_SPACING: true,
+  SPACE_BEFORE: true,
+  SPACE_AFTER: true,
+  ALIGNMENT: true,
+  MARGIN_LEFT: true,
+  MARGIN_RIGHT: true,
+  MARGIN_TOP: true,
+  MARGIN_BOTTOM: true,
+}
 
 const MISSING_REQUIREMENT_RULES: Record<string, string> = {
   TABLE_CAPTION_MISSING: 'Table caption',
@@ -55,18 +56,22 @@ const MISSING_REQUIREMENT_RULES: Record<string, string> = {
   IMAGE_ALT_TEXT_MISSING: 'Figure alt-text',
 }
 
-/** Citation-side matching rules whose evidence is the citation span. */
-const CITATION_MATCH_RULES = new Set([
-  'CITATION_REFERENCE_MISMATCH',
-  'CITATION_YEAR_SUFFIX_MISMATCH',
-  'CITATION_REFERENCE_AMBIGUOUS',
-])
+/** Citation-side matching rules whose comparison is shown as Expected/Actual. */
+const CITATION_EXPECTED_ACTUAL_RULES: Record<string, true> = {
+  CITATION_REFERENCE_MISMATCH: true,
+  CITATION_YEAR_SUFFIX_MISMATCH: true,
+}
+
+/** Citation-side matching rules whose only evidence is the citation span. */
+const CITATION_EVIDENCE_RULES: Record<string, true> = {
+  CITATION_REFERENCE_AMBIGUOUS: true,
+}
 
 /** Reference-side matching rules: the evidence is the entry text, not a citation. */
-const REFERENCE_SIDE_RULES = new Set([
-  'REFERENCE_NOT_CITED',
-  'REFERENCE_DUPLICATE',
-])
+const REFERENCE_SIDE_RULES: Record<string, true> = {
+  REFERENCE_NOT_CITED: true,
+  REFERENCE_DUPLICATE: true,
+}
 
 const CITATION_ACTION =
   'Add the matching APA 7 reference entry. If the citation refers to the wrong source or is no longer needed, correct or remove it.'
@@ -80,7 +85,7 @@ export function presentationFor(v: {
 }): RulePresentation {
   const code = v.rule_code
 
-  if (FORMATTING_RULES.has(code)) {
+  if (FORMATTING_RULES[code]) {
     return {
       issue: friendlyFindingMessage(code, v.message, v.expected_value, v.actual_value, v.location),
       expected: friendlyValue(cleanMessage(v.expected_value)),
@@ -90,6 +95,13 @@ export function presentationFor(v: {
   }
 
   if (code === 'CITATION_MISMATCH') {
+    if (isMissingReferenceSection(v.location)) {
+      // Document-wide finding: there is no citation span to show as evidence.
+      return {
+        issue: friendlyFindingMessage(code, v.message, v.expected_value, v.actual_value, v.location),
+        requiredAction: friendlyRequiredAction(code, v.expected_value, v.actual_value, v.location) ?? undefined,
+      }
+    }
     // Source-faithful evidence for display (the exact matched span, e.g.
     // `(Garcia, 2018)`) — the raw message's canonical narrative form is
     // never shown as the citation. Canonical identity stays internal.
@@ -100,28 +112,27 @@ export function presentationFor(v: {
     }
   }
 
-  if (CITATION_MATCH_RULES.has(code)) {
-    // The citation span stays evidence (never an "Actual" value); the year /
-    // suffix expectation is shown as the Expected value.
-    switch (code) {
-      case 'CITATION_REFERENCE_MISMATCH':
-      case 'CITATION_YEAR_SUFFIX_MISMATCH':
-        return {
-          issue: friendlyFindingMessage(code, v.message, v.expected_value, v.actual_value, v.location),
-          expected: friendlyValue(cleanMessage(v.expected_value)),
-          actual: friendlyValue(cleanMessage(v.actual_value)),
-          requiredAction: friendlyRequiredAction(code, v.expected_value, v.actual_value, v.location) ?? undefined,
-        }
-      default:
-        return {
-          issue: friendlyFindingMessage(code, v.message, v.expected_value, v.actual_value, v.location),
-          evidence: v.actual_value ?? undefined,
-          requiredAction: friendlyRequiredAction(code, v.expected_value, v.actual_value, v.location) ?? undefined,
-        }
+  if (CITATION_EXPECTED_ACTUAL_RULES[code]) {
+    // The year / suffix expectation is the Expected value; the
+    // source-faithful span is the Actual value shown next to it.
+    return {
+      issue: friendlyFindingMessage(code, v.message, v.expected_value, v.actual_value, v.location),
+      expected: friendlyValue(cleanMessage(v.expected_value)),
+      actual: friendlyValue(cleanMessage(v.actual_value)),
+      requiredAction: friendlyRequiredAction(code, v.expected_value, v.actual_value, v.location) ?? undefined,
     }
   }
 
-  if (REFERENCE_SIDE_RULES.has(code)) {
+  if (CITATION_EVIDENCE_RULES[code]) {
+    // Ambiguous match: the citation span stays evidence, never an "Actual".
+    return {
+      issue: friendlyFindingMessage(code, v.message, v.expected_value, v.actual_value, v.location),
+      evidence: v.actual_value ?? undefined,
+      requiredAction: friendlyRequiredAction(code, v.expected_value, v.actual_value, v.location) ?? undefined,
+    }
+  }
+
+  if (REFERENCE_SIDE_RULES[code]) {
     return {
       issue: friendlyFindingMessage(code, v.message, v.expected_value, v.actual_value, v.location),
       entryPreview: v.actual_value ?? undefined,

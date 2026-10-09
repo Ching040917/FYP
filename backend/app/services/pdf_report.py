@@ -521,6 +521,16 @@ def _affected_text_info(violation, document_blocks):
     return None
 
 
+def _is_missing_reference_section(location) -> bool:
+    """True for the document-wide "no References section" citation finding."""
+    loc = location or {}
+    return (
+        isinstance(loc, dict)
+        and isinstance(loc.get("citation_count"), int)
+        and loc.get("paragraph_index") is None
+    )
+
+
 def _friendly_required_action(violation, friendly_loc, affected_info):
     """
     Friendly Required Action without Run. Uses ordinary-user wording.
@@ -533,6 +543,11 @@ def _friendly_required_action(violation, friendly_loc, affected_info):
     code = violation.rule_code
     exp = _student_clean(violation.expected_value) if violation.expected_value else None
     act = _student_clean(violation.actual_value) if violation.actual_value else None
+
+    # Document-wide finding (citations but no References section): the
+    # action is to add the section, not to fix one citation.
+    if code == "CITATION_MISMATCH" and _is_missing_reference_section(violation.location):
+        return "Add a References section and list every source cited in the text."
 
     # Citation has its own friendly action.
     if code == "CITATION_MISMATCH":

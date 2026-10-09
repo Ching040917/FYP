@@ -330,3 +330,33 @@ test('citation/reference rule codes share the APA citations category', async () 
     assert.equal(categoryForRuleCode(code), 'citation_apa', code)
   }
 })
+
+// ---------------------------------------------------------------------------
+// Document-wide finding: citations present, no References section
+// ---------------------------------------------------------------------------
+
+test('missing References section is never phrased as one bad citation', () => {
+  const location = { paragraph_index: null, citation_count: 2 }
+  const message = 'No References section was found, so 2 in-text citation(s) could not be checked.'
+  const issue = friendlyFindingMessage('CITATION_MISMATCH', message, 'References section', null, location)
+  assert.equal(
+    issue,
+    'No References section was found, so 2 in-text citations could not be checked against a Reference List.',
+  )
+  assert.ok(!issue.includes('The in-text citation'))
+  assert.equal(
+    friendlyRequiredAction('CITATION_MISMATCH', 'References section', null, location),
+    'Add a References section and list every source cited in the text.',
+  )
+})
+
+test('a single uncitable citation still uses the per-citation wording', () => {
+  const issue = friendlyFindingMessage(
+    'CITATION_MISMATCH',
+    "Citation 'Smith (2020)' was found in text, but no matching entry was found in the References bibliography.",
+    'Reference entry for Smith',
+    '(Smith, 2020)',
+    { paragraph_index: 2, occurrences: 1 },
+  )
+  assert.match(issue, /^The in-text citation \(Smith, 2020\)/)
+})

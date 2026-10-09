@@ -262,3 +262,21 @@ test('citation/reference presentations never leak raw message tokens', () => {
     }
   }
 })
+
+test('document-wide missing-References finding shows no citation evidence', () => {
+  const pres = presentationFor({
+    id: 'root',
+    rule_code: 'CITATION_MISMATCH',
+    severity: 'MAJOR',
+    location: { paragraph_index: null, citation_count: 2 },
+    message: 'No References section was found, so 2 in-text citation(s) could not be checked.',
+    expected_value: 'References section',
+    actual_value: null,
+  })
+  assert.equal(
+    pres.issue,
+    'No References section was found, so 2 in-text citations could not be checked against a Reference List.',
+  )
+  assert.ok(pres.evidence == null)
+  assert.equal(pres.requiredAction, 'Add a References section and list every source cited in the text.')
+})

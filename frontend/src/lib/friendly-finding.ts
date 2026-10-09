@@ -55,6 +55,18 @@ function duplicateCount(location: Record<string, unknown> | null | undefined): n
   return typeof n === 'number' && n > 1 ? n : 0
 }
 
+/**
+ * A document-wide CITATION_MISMATCH: the document has citations but no
+ * References section at all (the backend's single root finding). It carries
+ * no per-citation evidence, so it must never be phrased as "the citation X".
+ */
+export function isMissingReferenceSection(
+  location: Record<string, unknown> | null | undefined,
+): boolean {
+  const loc = location ?? {}
+  return typeof loc.citation_count === 'number' && loc.paragraph_index == null
+}
+
 export function friendlyFindingMessage(
   ruleCode: string | null | undefined,
   message: string | null | undefined,
@@ -104,6 +116,14 @@ export function friendlyFindingMessage(
     return `${label} does not have alternative text for screen-reader users.`
   }
   if (code === 'CITATION_MISMATCH') {
+    if (isMissingReferenceSection(location)) {
+      const count = Number((location as Record<string, unknown>).citation_count)
+      const citations = count === 1 ? 'in-text citation' : 'in-text citations'
+      return (
+        `No References section was found, so ${count} ${citations} could not be ` +
+        `checked against a Reference List.`
+      )
+    }
     // Source-faithful evidence for display (exact matched span, e.g.
     // `(Garcia, 2018)`) — never the message's canonical narrative form.
     const evidence = extractCitationEvidence(message, actual)
@@ -216,6 +236,9 @@ export function friendlyRequiredAction(
     return null // Finding Detail renders its own heading-sequence action
   }
   // Citation/Reference List matching — fixed copy, never a formatting step.
+  if (code === 'CITATION_MISMATCH' && isMissingReferenceSection(location)) {
+    return 'Add a References section and list every source cited in the text.'
+  }
   if (code === 'CITATION_REFERENCE_MISMATCH') {
     return 'Correct the year in the in-text citation or in the Reference List entry so both state the same year.'
   }
