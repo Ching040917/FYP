@@ -3,7 +3,7 @@
 Covers: key normalization (Unicode, apostrophes, hyphens, trailing
 punctuation), year/suffix splitting, entry keyability guards, the six-rule
 matrix with its severity ladder, consolidation counts (occurrences /
-paragraph_indexes / entry_count), direction-2 exemptions, REVIEW ambiguity
+paragraph_indexes / entry_count), direction-2 rules, REVIEW ambiguity
 precedence, and the profile toggles (disabled rules emit nothing).
 """
 import pytest
@@ -157,7 +157,7 @@ def test_index_skips_unkeyable_entries_and_groups_keys():
 # ---------------------------------------------------------------------------
 
 def test_exact_match_emits_nothing():
-    viols, _ = match(
+    viols = match(
         [_cite("Smith", "2020", 5)],
         _index((9, "Smith, J. (2020). Title. Press.")),
     )
@@ -165,7 +165,7 @@ def test_exact_match_emits_nothing():
 
 
 def test_missing_author_is_major_citation_mismatch():
-    viols, _ = match(
+    viols = match(
         [_cite("Smith", "2020", 5, snippet="(Smith, 2020)")],
         _index((9, "Jones, A. (2019). Other. Press.")),
     )
@@ -183,7 +183,7 @@ def test_missing_author_is_major_citation_mismatch():
 
 
 def test_year_mismatch_is_major_reference_mismatch():
-    viols, _ = match(
+    viols = match(
         [_cite("Smith", "2020", 5, snippet="(Smith, 2020)")],
         _index((9, "Smith, J. (2019). Title. Press.")),
     )
@@ -197,7 +197,7 @@ def test_year_mismatch_is_major_reference_mismatch():
 
 
 def test_year_suffix_mismatch_is_minor():
-    viols, _ = match(
+    viols = match(
         [_cite("Smith", "2020", 5, snippet="(Smith, 2020)")],
         _index((9, "Smith, J. (2020a). Title. Press.")),
     )
@@ -210,7 +210,7 @@ def test_year_suffix_mismatch_is_minor():
 
 
 def test_suffix_mismatch_also_fires_when_citation_has_the_wrong_letter():
-    viols, _ = match(
+    viols = match(
         [_cite("Smith", "2020b", 7)],
         _index((9, "Smith, J. (2020a). Title. Press.")),
     )
@@ -219,7 +219,7 @@ def test_suffix_mismatch_also_fires_when_citation_has_the_wrong_letter():
 
 
 def test_ambiguous_author_without_exact_match_is_review():
-    viols, _ = match(
+    viols = match(
         [_cite("Smith", "2024", 5, snippet="(Smith, 2024)")],
         _index(
             (9, "Smith, A. (2020). First. Press."),
@@ -239,7 +239,7 @@ def test_same_surname_same_year_entries_keep_exact_match_precedence():
     matches that key exactly, so the precedence rule (exact → nothing) wins
     and initials are never invented into the comparison. The two entries do
     share a key, so the duplicate-entry rule is what reports them."""
-    viols, _ = match(
+    viols = match(
         [_cite("Smith", "2024", 5)],
         _index(
             (9, "Smith, A. (2024). First. Press."),
@@ -251,7 +251,7 @@ def test_same_surname_same_year_entries_keep_exact_match_precedence():
 
 
 def test_two_entries_with_different_suffixes_are_ambiguous_not_suffix():
-    viols, _ = match(
+    viols = match(
         [_cite("Smith", "2024", 5)],
         _index(
             (9, "Smith, A. (2024a). First. Press."),
@@ -264,7 +264,7 @@ def test_two_entries_with_different_suffixes_are_ambiguous_not_suffix():
 
 def test_ambiguous_flag_off_emits_nothing():
     rules = CitationMatchingRules(flag_ambiguous_matches=False)
-    viols, _ = match(
+    viols = match(
         [_cite("Smith", "2024", 5)],
         _index(
             (9, "Smith, A. (2020). First. Press."),
@@ -276,7 +276,7 @@ def test_ambiguous_flag_off_emits_nothing():
 
 
 def test_namedate_entry_versus_dated_citation_is_a_year_mismatch():
-    viols, _ = match(
+    viols = match(
         [_cite("Smith", "2020", 5)],
         _index((9, "Smith, J. (n.d.). Title. Press.")),
     )
@@ -285,7 +285,7 @@ def test_namedate_entry_versus_dated_citation_is_a_year_mismatch():
 
 
 def test_namedate_citation_matching_namedate_entry_is_clean():
-    viols, _ = match(
+    viols = match(
         [_cite("Smith", "n.d.", 5)],
         _index((9, "Smith, J. (n.d.). Title. Press.")),
     )
@@ -297,7 +297,7 @@ def test_namedate_citation_matching_namedate_entry_is_clean():
 # ---------------------------------------------------------------------------
 
 def test_repeated_missing_citation_consolidates_with_occurrences():
-    viols, _ = match(
+    viols = match(
         [
             _cite("Smith", "2020", 3, snippet="Smith (2020)"),
             _cite("Smith", "2020", 8, snippet="(Smith, 2020)"),
@@ -318,13 +318,13 @@ def test_repeated_missing_citation_consolidates_with_occurrences():
 
 def test_paragraph_indexes_are_capped_at_ten():
     cites = [_cite("Smith", "2020", idx) for idx in range(25)]
-    viols, _ = match(cites, _index((99, "Jones, A. (2019). Other. Press.")))
+    viols = match(cites, _index((99, "Jones, A. (2019). Other. Press.")))
     assert len(viols[0].location["paragraph_indexes"]) == 10
     assert viols[0].location["occurrences"] == 25
 
 
 def test_one_finding_per_unique_citation_key():
-    viols, _ = match(
+    viols = match(
         [_cite("Smith", "2020", 3), _cite("Smith", "2020a", 4)],
         _index((20, "Jones, A. (2019). Other. Press.")),
     )
@@ -337,7 +337,7 @@ def test_one_finding_per_unique_citation_key():
 
 def test_evidence_is_bounded():
     long_snippet = "Smith (2020) " + ("x" * 400)
-    viols, _ = match([_cite("Smith", "2020", 3, snippet=long_snippet)], _index())
+    viols = match([_cite("Smith", "2020", 3, snippet=long_snippet)], _index())
     assert len(viols[0].actual_value) == MAX_EVIDENCE_CHARS
 
 
@@ -352,7 +352,7 @@ def _cited_rules(**overrides):
 
 
 def test_uncited_entry_is_minor():
-    viols, _ = match(
+    viols = match(
         [_cite("Smith", "2020", 3)],
         _index((9, "Smith, J. (2020). A."), (12, "Jones, A. (2019). B.")),
         _cited_rules(),
@@ -366,7 +366,7 @@ def test_uncited_entry_is_minor():
 
 
 def test_uncited_duplicated_entry_reports_one_finding():
-    viols, _ = match(
+    viols = match(
         [_cite("Smith", "2020", 3)],
         _index(
             (9, "Smith, J. (2020). A."),
@@ -380,36 +380,32 @@ def test_uncited_duplicated_entry_reports_one_finding():
 
 
 def test_uncited_rule_off_by_default():
-    viols, _ = match(
+    viols = match(
         [_cite("Smith", "2020", 3)],
         _index((9, "Smith, J. (2020). A."), (12, "Jones, A. (2019). B.")),
     )
     assert viols == []
 
 
-def test_exempt_author_keys_suppress_uncited_reference():
-    viols, exemptions = match(
+def test_match_accepts_no_author_exemption_input():
+    """There is no author-wide exemption channel: an entry whose author only
+    appears in excluded (unsupported) material is still reported uncited."""
+    import inspect
+
+    parameters = inspect.signature(match).parameters
+    assert "exempt_author_keys" not in parameters
+    assert list(parameters) == ["citations", "index", "rules"]
+    viols = match(
         [_cite("Smith", "2020", 3)],
         _index((9, "Smith, J. (2020). A."), (12, "Jones, A. (2019). B.")),
         _cited_rules(),
-        exempt_author_keys={"Jones"},
     )
-    assert viols == []
-    assert exemptions == {"jones"}
-
-
-def test_exemptions_are_returned_normalized():
-    viols, exemptions = match(
-        [_cite("Smith", "2020", 3)],
-        _index(),
-        _cited_rules(),
-        exempt_author_keys={"Jones", "O’Brien"},
-    )
-    assert exemptions == {"jones", "o'brien"}
+    assert [v.rule_code for v in viols] == [RULE_REFERENCE_NOT_CITED]
+    assert viols[0].actual_value == "Jones, A. (2019). B."
 
 
 def test_duplicate_entries_report_the_later_entry():
-    viols, _ = match(
+    viols = match(
         [_cite("Smith", "2020", 3)],
         _index(
             (9, "Smith, J. (2020). A."),
@@ -429,7 +425,7 @@ def test_duplicate_entries_report_the_later_entry():
 
 
 def test_same_author_different_years_is_not_a_duplicate():
-    viols, _ = match(
+    viols = match(
         [_cite("Smith", "2020", 3), _cite("Smith", "2019", 4)],
         _index((9, "Smith, J. (2020). A."), (12, "Smith, J. (2019). B.")),
     )
@@ -437,7 +433,7 @@ def test_same_author_different_years_is_not_a_duplicate():
 
 
 def test_duplicate_rule_can_be_disabled():
-    viols, _ = match(
+    viols = match(
         [_cite("Smith", "2020", 3)],
         _index((9, "Smith, J. (2020). A."), (12, "Smith, J. (2020). B.")),
         CitationMatchingRules(check_duplicate_references=False),
@@ -466,13 +462,13 @@ def test_all_rules_off_emit_nothing():
         (15, "Jones, A. (2018). Uncited."),
     )
     # The parent toggle is off → the citation side reports nothing.
-    viols, _ = match(citations, index, rules)
+    viols = match(citations, index, rules)
     assert [v.rule_code for v in viols] == [RULE_REFERENCE_NOT_CITED, RULE_REFERENCE_DUPLICATE]
 
 
 def test_disabled_year_rule_does_not_fall_through_to_suffix_rule():
     rules = CitationMatchingRules(check_author_year_consistency=False)
-    viols, _ = match(
+    viols = match(
         [_cite("Smith", "2020", 3)],
         _index((9, "Smith, J. (2019). Title. Press.")),
         rules,
@@ -482,7 +478,7 @@ def test_disabled_year_rule_does_not_fall_through_to_suffix_rule():
 
 def test_disabled_suffix_rule_emits_nothing():
     rules = CitationMatchingRules(check_year_suffixes=False)
-    viols, _ = match(
+    viols = match(
         [_cite("Smith", "2020", 3)],
         _index((9, "Smith, J. (2020a). Title. Press.")),
         rules,

@@ -336,7 +336,7 @@ test('citation/reference rule codes share the APA citations category', async () 
 // ---------------------------------------------------------------------------
 
 test('missing References section is never phrased as one bad citation', () => {
-  const location = { paragraph_index: null, citation_count: 2 }
+  const location = { paragraph_index: 3, citation_count: 2, missing_references_section: true }
   const message = 'No References section was found, so 2 in-text citation(s) could not be checked.'
   const issue = friendlyFindingMessage('CITATION_MISMATCH', message, 'References section', null, location)
   assert.equal(
@@ -359,4 +359,33 @@ test('a single uncitable citation still uses the per-citation wording', () => {
     { paragraph_index: 2, occurrences: 1 },
   )
   assert.match(issue, /^The in-text citation \(Smith, 2020\)/)
+})
+
+test('the explicit flag identifies the root finding even with a real paragraph index', () => {
+  // Navigable root finding: same rule code, real (navigable) paragraph index
+  // plus the explicit flag — the wording must stay document-wide.
+  const issue = friendlyFindingMessage(
+    'CITATION_MISMATCH',
+    'No References section was found, so 2 in-text citation(s) could not be checked.',
+    'References section',
+    null,
+    { paragraph_index: 3, citation_count: 2, missing_references_section: true },
+  )
+  assert.equal(
+    issue,
+    'No References section was found, so 2 in-text citations could not be checked against a Reference List.',
+  )
+})
+
+test('a location without the flag is never treated as document-wide', () => {
+  // An unrelated finding with no paragraph index must not borrow the
+  // missing-References wording.
+  const issue = friendlyFindingMessage(
+    'CITATION_MISMATCH',
+    "Citation 'Smith (2020)' was found in text, but no matching entry was found in the References bibliography.",
+    'Reference entry for Smith',
+    '(Smith, 2020)',
+    { paragraph_index: null },
+  )
+  assert.match(issue, /^The in-text citation/)
 })

@@ -124,3 +124,42 @@ def test_is_whole_paragraph_affected():
     assert is_whole_paragraph_affected("ALIGNMENT", {"paragraph_index": 0}) is True
     assert is_whole_paragraph_affected("FONT_SIZE", {"paragraph_index": 0, "run_index": 0}) is False
     assert is_whole_paragraph_affected("FONT_SIZE", {"paragraph_index": 0}) is True
+
+
+# ---------------------------------------------------------------------------
+# Missing-References root finding navigates to its first citation
+# ---------------------------------------------------------------------------
+
+def test_missing_section_root_finding_resolves_to_the_first_citation_page(client, docx_factory):
+    """The single missing-References finding must carry the first supported
+    citation's paragraph index, so page mapping and document navigation land on
+    a real page instead of a document-level stub."""
+    file_bytes = docx_factory(
+        paragraphs=[
+            "Intro paragraph.",
+            "Smith (2020) reported the first finding.",
+            "Lee (2021) disagreed.",
+        ],
+        references=None,
+    )
+    resp = client.post(
+        "/api/audit",
+        files={"file": ("nosection.docx", file_bytes, "application/octet-stream")},
+    )
+    assert resp.status_code == 200
+    audit_id = resp.json()["audit_id"]
+
+    detail = client.get(f"/api/audit/{audit_id}").json()
+    citation_findings = [v for v in detail["violations"] if v["rule_code"] == "CITATION_MISMATCH"]
+    assert len(citation_findings) == 1
+    location = citation_findings[0]["location"]
+    assert location["paragraph_index"] == 1
+    assert location["citation_count"] == 2
+    assert location["missing_references_section"] is True
+
+    mapping = detail.get("paragraph_page_mapping") or {}
+    if mapping:
+        # Persisted page mapping is JSON-keyed (string paragraph indexes), so
+        # the navigable location must be an integer that maps to a real page.
+        assert isinstance(location["paragraph_index"], int)
+        assert str(location["paragraph_index"]) in mapping

@@ -246,9 +246,16 @@ CLEAN_FIXTURES = (
 # `malformed_citation` are excluded: their (unmatched) citations are out of
 # scope, but their Reference List entry is genuinely uncited, so the opt-in
 # REFERENCE_NOT_CITED rule reports it.
+#
+# `personal_communication` and `as_cited_in` are excluded for the opposite
+# reason: the in-text citation is an UNSUPPORTED occurrence (excluded per
+# occurrence, never author-wide), so the entry it names is still genuinely
+# uncited and must be reported when that rule is on.
+UNSUPPORTED_OCCURRENCE_FIXTURES = ("personal_communication", "as_cited_in")
+
 CLEAN_UNDER_ALL_RULES = tuple(
     name for name in CLEAN_FIXTURES
-    if name not in ("numeric_citation", "malformed_citation")
+    if name not in ("numeric_citation", "malformed_citation") + UNSUPPORTED_OCCURRENCE_FIXTURES
 )
 
 

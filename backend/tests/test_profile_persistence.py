@@ -334,3 +334,30 @@ def test_custom_citation_toggles_persist_in_snapshot(client):
         "allow_personal_communication": False,
     }
     assert resp.json()["audit_id"]
+
+
+def test_missing_references_location_survives_persistence_and_reload(client, docx_factory):
+    """POST and GET must return the identical navigable location, so History
+    reload reopens the finding on the same page."""
+    file_bytes = docx_factory(
+        paragraphs=["Intro paragraph.", "Smith (2020) reported it.", "Lee (2021) disagreed."],
+        references=None,
+    )
+    post = client.post(
+        "/api/audit",
+        files={"file": ("nosection.docx", file_bytes, "application/octet-stream")},
+    )
+    assert post.status_code == 200
+    audit_id = post.json()["audit_id"]
+
+    posted = [v for v in post.json()["physical_layout_errors"] if v["rule_code"] == "CITATION_MISMATCH"]
+    reloaded = [v for v in client.get(f"/api/audit/{audit_id}").json()["violations"]
+                if v["rule_code"] == "CITATION_MISMATCH"]
+    assert len(posted) == len(reloaded) == 1
+    expected = {
+        "paragraph_index": 1,
+        "citation_count": 2,
+        "missing_references_section": True,
+    }
+    assert posted[0]["location"] == expected
+    assert reloaded[0]["location"] == expected

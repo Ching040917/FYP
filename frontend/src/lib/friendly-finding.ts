@@ -56,15 +56,15 @@ function duplicateCount(location: Record<string, unknown> | null | undefined): n
 }
 
 /**
- * A document-wide CITATION_MISMATCH: the document has citations but no
- * References section at all (the backend's single root finding). It carries
- * no per-citation evidence, so it must never be phrased as "the citation X".
+ * The single document-wide CITATION_MISMATCH: the document has citations but
+ * no References section (the backend's root finding). It is identified by the
+ * explicit `missing_references_section` flag — never by a missing paragraph
+ * index, which would also match findings that simply have no location.
  */
 export function isMissingReferenceSection(
   location: Record<string, unknown> | null | undefined,
 ): boolean {
-  const loc = location ?? {}
-  return typeof loc.citation_count === 'number' && loc.paragraph_index == null
+  return (location ?? {}).missing_references_section === true
 }
 
 export function friendlyFindingMessage(

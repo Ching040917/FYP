@@ -929,7 +929,7 @@ def test_missing_section_root_finding_exports_without_crashing(client, test_engi
     show the root message without a fabricated paragraph location."""
     audit_id = _seed_audit(test_engine, violations=[
         {"rule_code": "CITATION_MISMATCH", "severity": "MAJOR",
-         "location": {"paragraph_index": None, "citation_count": 3},
+         "location": {"paragraph_index": 3, "citation_count": 3, "missing_references_section": True},
          "message": "No References section was found, so 3 in-text citation(s) could not be checked.",
          "expected_value": "References section", "actual_value": None},
     ])
@@ -945,7 +945,7 @@ def test_missing_section_finding_is_not_phrased_as_one_citation(client, test_eng
     """A document-wide finding must never render as a per-citation repair."""
     audit_id = _seed_audit(test_engine, violations=[
         {"rule_code": "CITATION_MISMATCH", "severity": "MAJOR",
-         "location": {"paragraph_index": None, "citation_count": 2},
+         "location": {"paragraph_index": 1, "citation_count": 2, "missing_references_section": True},
          "message": "No References section was found, so 2 in-text citation(s) could not be checked.",
          "expected_value": "References section", "actual_value": None},
     ])

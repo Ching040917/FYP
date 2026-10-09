@@ -103,10 +103,6 @@ _NARRATIVE_ITEM = re.compile(
     r"\s*\((\d{4}[a-z]?|n\.d\.)(?:\s*,\s*[^)]*)?\)"
 )
 
-# Any capitalized token — used ONLY to collect exemption names from
-# personal-communication / "as cited in" material.
-_SURNAME_TOKEN = re.compile(r"[A-Z][A-Za-zÀ-ſ'\-]+")
-_EXEMPT_IGNORE_TOKENS = frozenset({"personal", "communication"})
 
 # Parentheticals that carry a URL/DOI are data references, never citations.
 _URL_GUARD = re.compile(r"https?://|www\.|\bdoi\b|10\.\d{4}/", re.IGNORECASE)
@@ -193,13 +189,11 @@ def reference_entry_paragraphs(paragraphs: List[Dict[str, Any]]) -> List[Tuple[i
     return entries
 
 
-def _exempt_names_in(text: str) -> Set[str]:
-    """Author keys named inside exempt material (personal comm / as cited in)."""
-    return {
-        token for token in _SURNAME_TOKEN.findall(text)
-        if token.casefold() not in _EXEMPT_IGNORE_TOKENS
-    }
 
+
+def _primary_surname(chain: str) -> str:
+    """First surname of a narrative chain ("Taylor & Green" -> "Taylor")."""
+    return _CHAIN_SPLIT.split(chain)[0]
 
 def _personal_communication_names(text: str) -> List[str]:
     """Author names a personal-communication parenthetical attributes."""
@@ -209,22 +203,16 @@ def _personal_communication_names(text: str) -> List[str]:
     return names
 
 
-def _personal_communication_exemptions(text: str) -> Set[str]:
-    """Names exempted by personal-communication material."""
-    names = set(_personal_communication_names(text))
-    return names or _exempt_names_in(text)
-
-
-def _primary_surname(chain: str) -> str:
-    """First surname of a narrative chain ("Taylor & Green" -> "Taylor")."""
-    return _CHAIN_SPLIT.split(chain)[0]
-
-
 @dataclass
 class CitationScan:
     """Result of scanning one paragraph."""
+    #: Citation occurrences that were detected but must NOT be compared
+    #: against the Reference List — a personal communication or a secondary
+    #: "as cited in" citation. They are excluded per occurrence; no
+    #: author-wide or document-wide exemption is ever derived from them, so
+    #: an unrelated work by the same author is never treated as cited.
+    unsupported: int = 0
     citations: List[CitationRef] = field(default_factory=list)
-    exempt_author_keys: Set[str] = field(default_factory=set)
 
 
 def _parse_parenthetical_items(
@@ -292,13 +280,16 @@ def scan_citations(
     paragraph_index: Optional[int] = None,
     rules: Optional[CitationMatchingRules] = None,
 ) -> CitationScan:
-    """Scan one paragraph for in-text citations + exemption names.
+    """Scan one paragraph for supported in-text citations.
 
     Guards: parentheticals longer than 300 characters, parentheticals
     carrying a URL/DOI, and document-furniture chains ("Table (2020)") never
-    become citations. Personal-communication and "as cited in" material is
-    exempted (and contributes names to the REFERENCE_NOT_CITED exemption set)
-    unless the profile disallows personal communications.
+    become citations. A personal-communication parenthetical and a secondary
+    "as cited in" citation are UNSUPPORTED occurrences: they are counted but
+    never become citation keys, so they produce no finding and — crucially —
+    never mark any Reference List entry as cited. No author-wide or
+    document-wide exemption is derived from them. A personal communication
+    becomes a checked citation only when the profile disallows them.
     """
     rules = rules or CitationMatchingRules()
     scan = CitationScan()
@@ -314,11 +305,11 @@ def scan_citations(
         lowered = content.casefold()
         whole_match = container.group(0)
         if "as cited in" in lowered:
-            scan.exempt_author_keys |= _exempt_names_in(content)
+            scan.unsupported += 1
             continue
         if "personal communication" in lowered:
             if rules.allow_personal_communication:
-                scan.exempt_author_keys |= _personal_communication_exemptions(content)
+                scan.unsupported += 1
                 continue
             items = _personal_communication_items(content, whole_match, paragraph_index)
         else:
@@ -334,12 +325,11 @@ def scan_citations(
         whole_match = m.group(0)
         lowered = whole_match.casefold()
         if "as cited in" in lowered:
-            scan.exempt_author_keys |= _exempt_names_in(whole_match)
+            scan.unsupported += 1
             continue
-        if "personal communication" in lowered:
-            if rules.allow_personal_communication:
-                scan.exempt_author_keys |= _personal_communication_exemptions(whole_match)
-                continue
+        if "personal communication" in lowered and rules.allow_personal_communication:
+            scan.unsupported += 1
+            continue
         chain, year = m.group(1), m.group(2)
         primary = _primary_surname(chain)
         if primary.casefold() in _STOPWORD_CHAIN_STARTS:
@@ -354,12 +344,39 @@ def scan_citations(
     return scan
 
 
-def _missing_section_violation(citation_count: int) -> LayoutViolation:
-    """One root finding for a document with citations and no References."""
+def _first_citation_paragraph(citations: List[CitationRef]) -> Optional[int]:
+    """Earliest paragraph index carrying a supported citation, or None.
+
+    Citations arrive in document order, so the first entry with a paragraph
+    identity is the primary occurrence. Only returns None when no supported
+    citation carries a paragraph index at all.
+    """
+    for citation in citations:
+        if citation.paragraph_index is not None:
+            return citation.paragraph_index
+    return None
+
+
+def _missing_section_violation(
+    citation_count: int,
+    paragraph_index: Optional[int],
+) -> LayoutViolation:
+    """One root finding for a document with citations and no References.
+
+    The primary location is the FIRST supported citation occurrence, so the
+    finding stays navigable: page mapping, evidence highlighting and document
+    navigation all key on `paragraph_index`. `missing_references_section`
+    marks the document-wide cause; `paragraph_index` is null only when no
+    supported citation carries a paragraph identity.
+    """
     return LayoutViolation(
         rule_code=RULE_CITATION_MISMATCH,
         severity="MAJOR",
-        location={"paragraph_index": None, "citation_count": citation_count},
+        location={
+            "paragraph_index": paragraph_index,
+            "citation_count": citation_count,
+            "missing_references_section": True,
+        },
         message=(
             f"No References section was found, so {citation_count} in-text "
             f"citation(s) could not be checked."
@@ -388,7 +405,7 @@ def run_citation_sensor(
     ref_start = _find_references_start(paragraphs)
 
     citations: List[CitationRef] = []
-    exemptions: Set[str] = set()
+    unsupported = 0
     for position, para in enumerate(paragraphs):
         if roles is not None and position < len(roles) and roles[position] in _CITATION_EXCLUDED_ROLES:
             continue
@@ -400,13 +417,12 @@ def run_citation_sensor(
             continue
         scan = scan_citations(text, idx, rules)
         citations.extend(scan.citations)
-        exemptions |= scan.exempt_author_keys
+        unsupported += scan.unsupported
 
     if ref_start is None:
         if not rules.check_citations_have_references or not citations:
             return []
-        return [_missing_section_violation(len(citations))]
+        return [_missing_section_violation(len(citations), _first_citation_paragraph(citations))]
 
     index = build_reference_index(reference_entry_paragraphs(paragraphs))
-    violations, _ = match(citations, index, rules, exemptions)
-    return violations
+    return match(citations, index, rules)

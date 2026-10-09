@@ -90,7 +90,11 @@ def test_missing_references_section_is_one_root_finding(docx_factory):
     assert len(citation_findings) == 1
     root = citation_findings[0]
     assert root.severity == "MAJOR"
-    assert root.location == {"paragraph_index": None, "citation_count": 2}
+    assert root.location == {
+        "paragraph_index": 1,
+        "citation_count": 2,
+        "missing_references_section": True,
+    }
     assert "2 in-text citation(s)" in root.message
 
 

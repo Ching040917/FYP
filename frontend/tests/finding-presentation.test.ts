@@ -268,7 +268,7 @@ test('document-wide missing-References finding shows no citation evidence', () =
     id: 'root',
     rule_code: 'CITATION_MISMATCH',
     severity: 'MAJOR',
-    location: { paragraph_index: null, citation_count: 2 },
+    location: { paragraph_index: 3, citation_count: 2, missing_references_section: true },
     message: 'No References section was found, so 2 in-text citation(s) could not be checked.',
     expected_value: 'References section',
     actual_value: null,

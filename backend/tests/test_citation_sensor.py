@@ -122,7 +122,7 @@ def test_no_references_header_reports_one_root_finding():
     v = viols[0]
     assert v.rule_code == "CITATION_MISMATCH"
     assert v.severity == "MAJOR"
-    assert v.location == {"paragraph_index": None, "citation_count": 2}
+    assert v.location == {"paragraph_index": 1, "citation_count": 2, "missing_references_section": True}
     assert v.message == (
         "No References section was found, so 2 in-text citation(s) could not be checked."
     )
@@ -455,7 +455,11 @@ def test_misleading_references_body_text_not_a_header(misleading):
     # (the entry paragraph after it is body text, not a bibliography entry).
     assert len(viols) == 1
     assert viols[0].rule_code == "CITATION_MISMATCH"
-    assert viols[0].location == {"paragraph_index": None, "citation_count": 1}
+    assert viols[0].location == {
+        "paragraph_index": 0,
+        "citation_count": 1,
+        "missing_references_section": True,
+    }
 
 
 def test_numbered_heading_smith_resolves_garcia_lee_mismatch():
@@ -776,9 +780,9 @@ def test_personal_communication_allowed_by_default():
         ["Smith, J. (2019). Earlier paper. Press."],
         config=_CitationConfig(CITATION_CHECK_REFERENCES_ARE_CITED=True),
     )
-    # No citation finding for the personal communication, and the named
-    # author is exempt from the uncited-entry check.
-    assert viols == []
+    # No finding: the personal communication is an unsupported occurrence, and
+    # the entry by the same author stays eligible for REFERENCE_NOT_CITED.
+    assert [v.rule_code for v in viols] == ["REFERENCE_NOT_CITED"]
 
 
 def test_personal_communication_checked_when_not_allowed():
@@ -799,13 +803,16 @@ def test_personal_communication_checked_when_not_allowed():
     assert viols[0].location["paragraph_index"] == 0
 
 
-def test_as_cited_in_secondary_citation_emits_nothing_and_exempts_both_names():
+def test_as_cited_in_secondary_citation_emits_nothing_and_exempts_no_author():
+    """A secondary citation produces no citation finding, and the entry it
+    names is NOT treated as cited — the exclusion is per occurrence."""
     viols = _scan(
         ["Reported by (Smith, 2020, as cited in Jones, 2019)."],
         ["Jones, A. (2019). Secondary source. Press."],
         config=_CitationConfig(CITATION_CHECK_REFERENCES_ARE_CITED=True),
     )
-    assert viols == []
+    assert [v.rule_code for v in viols] == ["REFERENCE_NOT_CITED"]
+    assert "Jones" in viols[0].actual_value
 
 
 def test_organisation_author_is_not_matched_by_either_direction():

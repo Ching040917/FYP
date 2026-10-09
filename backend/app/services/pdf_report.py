@@ -522,13 +522,13 @@ def _affected_text_info(violation, document_blocks):
 
 
 def _is_missing_reference_section(location) -> bool:
-    """True for the document-wide "no References section" citation finding."""
+    """True for the document-wide "no References section" citation finding.
+
+    Identified by the explicit flag the sensor sets — never by a missing
+    paragraph index, which would also match findings with no location.
+    """
     loc = location or {}
-    return (
-        isinstance(loc, dict)
-        and isinstance(loc.get("citation_count"), int)
-        and loc.get("paragraph_index") is None
-    )
+    return isinstance(loc, dict) and loc.get("missing_references_section") is True
 
 
 def _friendly_required_action(violation, friendly_loc, affected_info):

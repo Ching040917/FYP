@@ -343,13 +343,14 @@ def match(
     citations: Sequence[CitationRef],
     index: ReferenceIndex,
     rules: Optional[CitationMatchingRules] = None,
-    exempt_author_keys: Iterable[str] = (),
-) -> Tuple[List[LayoutViolation], Set[str]]:
+) -> List[LayoutViolation]:
     """Compare citations against the Reference List in both directions.
 
-    Returns `(violations, exempt_author_keys)`. The exemption set carries the
-    author keys that must not produce REFERENCE_NOT_CITED (personal
-    communication while allowed, and both names of `as cited in` items).
+    `citations` are SUPPORTED occurrences only: the scanner has already
+    excluded unsupported ones (personal communication, secondary "as cited in"
+    citations) per occurrence. There is no author-wide or document-wide
+    exemption set anywhere in this pipeline, so an unrelated entry by an
+    author named in unsupported material is still reported as uncited.
 
     Precedence per citation key: exact match → nothing; ≥2 entries for the
     author and no exact match → REVIEW (ambiguous); a single entry with a
@@ -358,8 +359,12 @@ def match(
     A disabled rule emits nothing and never falls through to another code.
     """
     rules = rules or CitationMatchingRules()
-    exemptions: Set[str] = {normalise_surname(k) for k in exempt_author_keys if k}
     violations: List[LayoutViolation] = []
+
+    # An entry counts as cited only when a SUPPORTED citation occurrence
+    # matches its author — never because the author was named in excluded
+    # material.
+    cited_author_keys = {c.key.author_key for c in citations}
 
     # ---- Direction 1: in-text citations → Reference List entries ----------
     groups: Dict[Tuple[str, str, str], List[CitationRef]] = {}
@@ -448,8 +453,6 @@ def match(
             entry = group[0]
             if entry.key.author_key in cited_author_keys:
                 continue
-            if entry.key.author_key in exemptions:
-                continue
             violations.append(_citation_finding(
                 RULE_REFERENCE_NOT_CITED,
                 "MINOR",
@@ -487,4 +490,4 @@ def match(
                 },
             ))
 
-    return violations, exemptions
+    return violations

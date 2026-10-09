@@ -14,6 +14,7 @@ from docx.oxml import parse_xml
 from docx.oxml.ns import nsdecls
 
 from app.services.citation_sensor import APPENDIX_HEADER_PATTERN, run_citation_sensor
+from app.services.citation_sensor import scan_citations as scan_citations_for
 from app.services.document_parser import extract_paragraphs, parse_document
 from app.services.layout_engine import run_static_rules_engine
 from app.services.profile_preset_adapter import EffectiveProfileConfig
@@ -21,7 +22,14 @@ from app.services.profile_registry import get_builtin_profile, SUC_PROFILE_ID
 from app.services.profile_snapshot import resolve_snapshot
 from app.services.role_classifier import classify_paragraphs
 from app.services.scoring import calculate_weighted_score_detailed
-from tests.citation_fixtures import CLEAN_FIXTURES, CLEAN_UNDER_ALL_RULES, FIXTURES, scan
+from tests.citation_fixtures import (
+    CLEAN_FIXTURES,
+    CLEAN_UNDER_ALL_RULES,
+    UNSUPPORTED_OCCURRENCE_FIXTURES,
+    CitationDoc,
+    FIXTURES,
+    scan,
+)
 
 CITATION_CODES = (
     "CITATION_MISMATCH",
@@ -65,10 +73,17 @@ def test_silent_fixtures_stay_silent_with_every_rule_enabled(name, docx_factory)
     assert scan(FIXTURES[name], docx_factory, config=_all_on_config()) == []
 
 
-@pytest.mark.parametrize("name", ["numeric_citation", "malformed_citation"])
-def test_out_of_scope_citations_produce_no_citation_finding(name, docx_factory):
-    """Numeric/malformed citations are never matched — but their Reference
-    List entry is still an uncited entry when that opt-in rule is enabled."""
+@pytest.mark.parametrize("name", [
+    "numeric_citation",
+    "malformed_citation",
+    "personal_communication",
+    "as_cited_in",
+])
+def test_unsupported_occurrences_produce_no_citation_finding(name, docx_factory):
+    """No supported citation key is produced (out-of-scope form, personal
+    communication, or secondary "as cited in") — but the Reference List entry
+    that names the same author is still a genuinely uncited entry, so the
+    opt-in rule reports it. Exclusion is per occurrence, never author-wide."""
     assert scan(FIXTURES[name], docx_factory) == []
     viols = scan(FIXTURES[name], docx_factory, config=_all_on_config())
     assert [v.rule_code for v in viols] == ["REFERENCE_NOT_CITED"]
@@ -139,7 +154,11 @@ def test_missing_section_reports_one_root_finding(docx_factory):
     v = viols[0]
     assert v.rule_code == "CITATION_MISMATCH"
     assert v.severity == "MAJOR"
-    assert v.location == {"paragraph_index": None, "citation_count": 2}
+    assert v.location == {
+        "paragraph_index": 0,
+        "citation_count": 2,
+        "missing_references_section": True,
+    }
     assert "2 in-text citation(s)" in v.message
 
 
@@ -269,3 +288,165 @@ def test_citation_inside_a_text_box_is_not_detected(docx_factory):
     )
     para._p.append(pict)
     assert _scan_bytes(_save(doc)) == []
+
+
+# ---------------------------------------------------------------------------
+# Navigable missing-References location
+# ---------------------------------------------------------------------------
+
+def test_missing_section_root_finding_points_at_the_first_citation(docx_factory):
+    """Two supported citations, no References section: ONE finding whose
+    paragraph_index is the earliest supported citation paragraph."""
+    fixture = CitationDoc(
+        "two_citations_no_section",
+        ["Body line.", "Smith (2020) reported it.", "Lee (2021) agreed."],
+        include_header=False,
+    )
+    viols = scan(fixture, docx_factory)
+    assert len(viols) == 1
+    v = viols[0]
+    assert v.rule_code == "CITATION_MISMATCH"
+    assert v.severity == "MAJOR"
+    assert v.location == {
+        "paragraph_index": 1,
+        "citation_count": 2,
+        "missing_references_section": True,
+    }
+def test_missing_section_root_finding_counts_every_occurrence_truthfully(docx_factory):
+    """Repeated citations of one source stay a single finding whose count is
+    the number of detected citation occurrences."""
+    fixture = CitationDoc(
+        "repeated_no_section",
+        ["Smith (2020) first.", "Smith (2020) again.", "Smith (2020) once more."],
+        include_header=False,
+    )
+    viols = scan(fixture, docx_factory)
+    assert len(viols) == 1
+    assert viols[0].location == {
+        "paragraph_index": 0,
+        "citation_count": 3,
+        "missing_references_section": True,
+    }
+
+
+def test_no_supported_citation_means_no_missing_section_finding(docx_factory):
+    """Document-level null location is never fabricated: with no supported
+    citation the sensor emits no missing-References finding at all."""
+    fixture = CitationDoc(
+        "no_citations_no_section",
+        ["Body text only.", "Per (J. Smith, personal communication, 2024) it holds."],
+        include_header=False,
+    )
+    assert scan(fixture, docx_factory) == []
+
+
+def test_null_primary_location_is_built_safely_when_no_citation_has_one(docx_factory):
+    """The defensive null case is reachable and well formed: a citation whose
+    paragraph identity is unknown yields a null paragraph_index plus the
+    explicit flag — never a fabricated page anchor."""
+    from app.services.citation_sensor import _first_citation_paragraph, _missing_section_violation
+    from app.services.citation_matching import CitationRef, make_key
+
+    citation = CitationRef(
+        author_display="Smith",
+        key=make_key("Smith", "2020"),
+        paragraph_index=None,
+        snippet="(Smith, 2020)",
+    )
+    assert _first_citation_paragraph([citation]) is None
+    violation = _missing_section_violation(1, _first_citation_paragraph([citation]))
+    assert violation.location == {
+        "paragraph_index": None,
+        "citation_count": 1,
+        "missing_references_section": True,
+    }
+
+    # An unsupported occurrence is never a citation key, so it cannot anchor
+    # the root finding either.
+    scan = scan_citations_for("Per (J. Smith, personal communication, 2024) it holds.")
+    assert scan.citations == []
+    assert scan.unsupported == 1
+
+
+
+def test_personal_communication_alone_produces_no_missing_reference(docx_factory):
+    """The personal communication itself never needs a Reference List entry."""
+    fixture = CitationDoc(
+        "pc_only",
+        [
+            "Per (J. Smith, personal communication, October 5, 2024) the value holds.",
+            "Jones (2018) is cited here.",
+        ],
+        ["Other, X. (2019). Unrelated. Press.", "Jones, A. (2018). Cited above. Press."],
+    )
+    assert scan(fixture, docx_factory) == []
+
+
+def test_personal_communication_does_not_exempt_the_same_author_entry(docx_factory):
+    """An unrelated Reference List work by the personal-communication author
+    is STILL reported as uncited — the exclusion is per occurrence."""
+    fixture = CitationDoc(
+        "pc_and_entry",
+        ["Per (J. Smith, personal communication, October 5, 2024) the value holds."],
+        ["Smith, J. (2019). Unrelated paper. Press."],
+    )
+    assert scan(fixture, docx_factory) == []
+    viols = scan(fixture, docx_factory, config=_all_on_config())
+    assert [v.rule_code for v in viols] == ["REFERENCE_NOT_CITED"]
+    assert "Smith" in viols[0].actual_value
+
+
+def test_normal_citation_by_the_same_author_is_matched_independently(docx_factory):
+    """A personal communication never suppresses a separate normal citation by
+    the same author: the normal citation is compared against the list."""
+    fixture = CitationDoc(
+        "pc_plus_normal",
+        [
+            "Per (J. Smith, personal communication, October 5, 2024) it holds.",
+            "An earlier study (Smith, 2019) agrees.",
+        ],
+        ["Smith, J. (2019). The earlier paper. Press."],
+    )
+    assert scan(fixture, docx_factory) == []
+
+
+def test_as_cited_in_occurrence_generates_no_deterministic_match(docx_factory):
+    """A secondary citation is unsupported material: no key, no finding."""
+    fixture = CitationDoc(
+        "as_cited_in_only",
+        ["Reported by (Smith, 2020, as cited in Jones, 2019)."],
+        ["Other, X. (2017). Unrelated. Press."],
+    )
+    viols = scan(fixture, docx_factory)
+    assert [v.rule_code for v in viols] == []
+
+
+def test_as_cited_in_does_not_exempt_either_named_author(docx_factory):
+    """Neither author mentioned in "as cited in" is exempt: their unrelated
+    entries remain eligible for REFERENCE_NOT_CITED."""
+    fixture = CitationDoc(
+        "as_cited_in_entries",
+        ["Reported by (Smith, 2020, as cited in Jones, 2019)."],
+        [
+            "Smith, J. (2020). Unrelated Smith work. Press.",
+            "Jones, A. (2019). Unrelated Jones work. Press.",
+        ],
+    )
+    assert scan(fixture, docx_factory) == []
+    viols = scan(fixture, docx_factory, config=_all_on_config())
+    assert [v.rule_code for v in viols] == ["REFERENCE_NOT_CITED", "REFERENCE_NOT_CITED"]
+
+
+def test_matching_pipeline_has_no_author_exemption_surface():
+    """Structural guarantee: neither module exposes an author-wide exemption."""
+    import inspect
+
+    from app.services import citation_matching, citation_sensor
+
+    for module in (citation_matching, citation_sensor):
+        source = inspect.getsource(module).lower()
+        for banned in ("exempt_author_keys", "exempt_authors", "exempt_names"):
+            assert banned not in source, f"{module.__name__} still references {banned}"
+    assert "exempt" not in inspect.signature(citation_matching.match).parameters
+    # The scanner reports unsupported occurrences as a count, not a name set.
+    scan_fields = set(citation_sensor.CitationScan.__dataclass_fields__)
