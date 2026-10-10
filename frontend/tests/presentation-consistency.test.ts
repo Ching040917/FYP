@@ -31,7 +31,7 @@ const PAGE = read('src/pages/AuditPage.tsx')
 const HIGHLIGHT = read('src/lib/pdf/formatting-highlight.ts')
 const GUIDED = read('src/lib/guided-fixes.ts')
 
-/** All 21 codes ACA can emit today. */
+/** All 31 codes ACA can emit today. */
 const PRODUCTION_CODES = [
   'FONT_CONSISTENCY',
   'FONT_SIZE',
@@ -54,13 +54,23 @@ const PRODUCTION_CODES = [
   'CITATION_REFERENCE_AMBIGUOUS',
   'REFERENCE_NOT_CITED',
   'REFERENCE_DUPLICATE',
+  'REFERENCE_HEADING_TEXT',
+  'REFERENCE_HEADING_BOLD',
+  'REFERENCE_HEADING_ALIGNMENT',
+  'REFERENCE_SECTION_NEW_PAGE',
+  'REFERENCE_HANGING_INDENT',
+  'REFERENCE_SPACE_BEFORE',
+  'REFERENCE_SPACE_AFTER',
+  'REFERENCE_FONT_FAMILY',
+  'REFERENCE_FONT_SIZE',
+  'REFERENCE_ALIGNMENT',
 ]
 
 // ---------------------------------------------------------------------------
 // Title map completeness
 // ---------------------------------------------------------------------------
 
-test('every one of the 21 production codes has a title, and no others do', () => {
+test('every one of the 31 production codes has a title, and no others do', () => {
   assert.deepEqual([...FRIENDLY_RULE_TITLE_CODES].sort(), [...PRODUCTION_CODES].sort())
 })
 

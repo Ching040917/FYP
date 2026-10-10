@@ -272,6 +272,13 @@ def _explicit_break_in_paragraph(paragraph_obj: Any) -> bool:
 
 
 
+def _as_index(key: Any) -> Optional[int]:
+    """Paragraph index from a mapping key, whatever shape it arrives in."""
+    try:
+        return int(key)
+    except (TypeError, ValueError):
+        return None
+
 
 def classify_reference_page_start(
     paragraphs: Sequence[Dict[str, Any]],
@@ -321,7 +328,16 @@ def classify_reference_page_start(
         if (para.get("text") or "").strip():
             previous_body_index = idx
 
-    mapping = page_mapping or {}
+    # A persisted mapping is JSON-shaped ({"3": 7}); a mapping built in
+    # memory is int-keyed. Both are accepted, because guessing one shape
+    # would silently turn a proven same-page start into "unavailable".
+    mapping = {
+        index: value
+        for index, value in (
+            (_as_index(key), value) for key, value in (page_mapping or {}).items()
+        )
+        if index is not None
+    }
     heading_page = mapping.get(heading_index)
     previous_body_page = (
         mapping.get(previous_body_index) if previous_body_index is not None else None

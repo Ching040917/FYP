@@ -310,3 +310,180 @@ def resolve_paragraph_format(paragraph_obj: Any) -> ParagraphFormatEvidence:
         has_mixed_font_family=len(families) > 1,
         has_mixed_font_size=len(sizes) > 1,
     )
+
+
+# Alignment vocabulary shared with the profile schema. Any other OOXML
+# alignment token (THAI_DISTRIBUTE, JUSTIFY_HI, ...) is left unresolved
+# rather than guessed at — an unresolved value emits no finding.
+_ALIASMENT_TOKENS = {
+    "LEFT": "left",
+    "CENTER": "center",
+    "RIGHT": "right",
+    "JUSTIFY": "justify",
+    "DISTRIBUTE": "justify",
+    "THAI_JUSTIFY": "justify",
+    "JUSTIFY_MED": "justify",
+    "JUSTIFY_HI": "justify",
+    "JUSTIFY_LOW": "justify",
+}
+
+
+def _alignment_token(value: Any) -> Optional[str]:
+    """Normalize a python-docx alignment enum (or string) to our vocabulary."""
+    if value is None:
+        return None
+    name = getattr(value, "name", None) or str(value)
+    name = str(name).strip().upper()
+    if name.startswith("WD_ALIGN_PARAGRAPH."):
+        name = name.split(".", 1)[1]
+    return _ALIASMENT_TOKENS.get(name)
+
+
+@dataclass(frozen=True)
+class AlignmentEvidence:
+    """Effective paragraph alignment with provenance.
+
+    `alignment` is one of left/center/right/justify, or None when nothing
+    resolves — never a default. An absent value is NOT "left".
+    """
+
+    alignment: Optional[str]
+    source: str
+
+    @property
+    def is_resolved(self) -> bool:
+        return self.alignment is not None
+
+
+def resolve_alignment(paragraph_obj: Any) -> AlignmentEvidence:
+    """Effective alignment: direct → paragraph style → style chain.
+
+    Nearest-first, the same precedence the indentation resolver walks. When
+    no level defines an alignment the result stays unresolved, because an
+    absent value must never be reported as a mismatch against a profile
+    requirement.
+    """
+    try:
+        token = _alignment_token(paragraph_obj.paragraph_format.alignment)
+    except Exception:
+        token = None
+    if token is not None:
+        return AlignmentEvidence(alignment=token, source=SOURCE_DIRECT)
+
+    try:
+        style = paragraph_obj.style
+    except Exception:
+        return AlignmentEvidence(alignment=None, source=SOURCE_UNRESOLVED)
+    seen = set()
+    depth = 0
+    while style is not None and id(style) not in seen:
+        seen.add(id(style))
+        try:
+            token = _alignment_token(style.paragraph_format.alignment)
+        except Exception:
+            return AlignmentEvidence(alignment=None, source=SOURCE_UNRESOLVED)
+        if token is not None:
+            return AlignmentEvidence(
+                alignment=token,
+                source=SOURCE_PARAGRAPH_STYLE if depth == 0 else SOURCE_STYLE_CHAIN,
+            )
+        style = getattr(style, "base_style", None)
+        depth += 1
+    return AlignmentEvidence(alignment=None, source=SOURCE_UNRESOLVED)
+
+
+@dataclass(frozen=True)
+class BoldEvidence:
+    """Effective bold state of a paragraph's visible text.
+
+    `effective_bold` is a definite True/False only when EVERY visible run
+    agrees and each one resolved. `has_mixed` marks genuine disagreement;
+    `None` with `has_mixed=False` means unresolved. A paragraph whose runs
+    simply carry no bold value is never reported as "not bold" when an
+    inherited value may still apply.
+    """
+
+    effective_bold: Optional[bool]
+    source: str
+    has_mixed: bool
+
+    @property
+    def is_resolved(self) -> bool:
+        return self.effective_bold is not None
+
+
+def _run_bold(run: Any) -> Optional[bool]:
+    """Effective bold for one run: direct → character style → run style."""
+    try:
+        value = run.font.bold
+    except Exception:
+        value = None
+    if value is not None:
+        return bool(value)
+    try:
+        style = run.style
+    except Exception:
+        return None
+    seen = set()
+    while style is not None and id(style) not in seen:
+        seen.add(id(style))
+        try:
+            value = style.font.bold
+        except Exception:
+            return None
+        if value is not None:
+            return bool(value)
+        style = getattr(style, "base_style", None)
+    return None
+
+
+def _paragraph_style_bold(paragraph_obj: Any) -> Optional[bool]:
+    """Bold declared by the paragraph's own style chain."""
+    try:
+        style = paragraph_obj.style
+    except Exception:
+        return None
+    seen = set()
+    while style is not None and id(style) not in seen:
+        seen.add(id(style))
+        try:
+            value = style.font.bold
+        except Exception:
+            return None
+        if value is not None:
+            return bool(value)
+        style = getattr(style, "base_style", None)
+    return None
+
+
+def resolve_bold(paragraph_obj: Any) -> BoldEvidence:
+    """Effective bold evidence for a paragraph's visible runs.
+
+    Each visible run resolves independently (direct → character style);
+    a run that resolves nothing inherits the paragraph style chain. Only a
+    unanimous, fully resolved result is definite.
+    """
+    inherited = _paragraph_style_bold(paragraph_obj)
+    values: Dict[bool, int] = {}
+    for run in getattr(paragraph_obj, "runs", ()):
+        try:
+            if not (run.text or "").strip():
+                continue
+        except Exception:
+            continue
+        value = _run_bold(run)
+        if value is None:
+            value = inherited
+        if value is None:
+            continue
+        values[value] = values.get(value, 0) + 1
+    if not values:
+        return BoldEvidence(effective_bold=None, source=SOURCE_UNRESOLVED, has_mixed=False)
+    if len(values) > 1:
+        return BoldEvidence(effective_bold=None, source=SOURCE_UNRESOLVED, has_mixed=True)
+    only = next(iter(values))
+    return BoldEvidence(
+        effective_bold=only,
+        source=SOURCE_DIRECT if inherited != only else SOURCE_STYLE_CHAIN,
+        has_mixed=False,
+    )

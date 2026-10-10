@@ -7,7 +7,7 @@
  *   - duplicate SUC Academic Report / APA 7 Student Paper;
  *   - create a safe blank custom profile;
  *   - edit custom profile name + description;
- *   - Body, Headings, Margins, References, Captions, and Lists controls;
+ *   - Body, Headings, Margins, Reference List, Captions, and Lists controls;
  *   - save ONLY after POST /api/formatting-profiles/validate succeeds;
  *   - return to the upload workflow.
  *
@@ -113,12 +113,28 @@ import {
   type StoreEnvelope,
   type StoredCustomProfile,
 } from '../lib/custom-profile-store/editor'
+import {
+  REFERENCE_HEADING_TEXT_OPTIONS,
+  REFERENCE_HEADING_TEXT_LABELS,
+  type ReferenceHeadingText,
+} from '../lib/custom-profile-store/editor'
 import { createBrowserStoreAdapter } from '../lib/custom-profile-store/localstorage-adapter'
 import { cn } from '../lib/utils'
 
 // Known citation-style terms that may appear in profile names. We only warn;
 // we do not block or auto-correct the name.
 const CITATION_STYLE_NAME_HINTS = ['chicago', 'ama', 'mla', 'harvard']
+
+/** Reader-facing alignment options shared by the Reference List selects. */
+const ALIGNMENT_SELECT_OPTIONS = [
+  { value: 'left', label: 'Left' },
+  { value: 'center', label: 'Center' },
+  { value: 'right', label: 'Right' },
+  { value: 'justify', label: 'Justified' },
+] as const
+
+/** Neutral Reference List model, shown before a draft is loaded. */
+const EMPTY_REFERENCES_UI: ReferencesUiModel = referencesToUiModel({})
 
 /** DOM ids for the citation-controls checkboxes (error-focus targets). */
 const CITATION_INPUT_IDS: Record<CitationMatchingField, string> = {
@@ -659,11 +675,7 @@ export function ProfileEditor() {
         if (!prev) return prev
         const next = updater(prev)
         if (draft) {
-          const prevRefs = draft.payload.references as Record<string, unknown> | undefined
-          const prevHanging = typeof prevRefs?.hanging_indent_in === 'number'
-            ? prevRefs.hanging_indent_in
-            : null
-          setDraft((d) => d ? { ...d, payload: setPayloadGroup(d.payload, 'references', referencesFromUiModel(next, prevHanging)) } : d)
+          setDraft((d) => d ? { ...d, payload: setPayloadGroup(d.payload, 'references', referencesFromUiModel(next)) } : d)
         }
         setDirty(true)
         setOpStatusSafe({ kind: 'idle' })
@@ -754,6 +766,14 @@ export function ProfileEditor() {
     'margins.top': 'margin-top',
     'margins.bottom': 'margin-bottom',
     'references.line_spacing': 'references-line-spacing',
+    'references.heading_text': 'references-heading-text',
+    'references.heading_alignment': 'references-heading-alignment',
+    'references.hanging_indent_in': 'references-hanging-indent',
+    'references.space_before_pt': 'references-space-before',
+    'references.space_after_pt': 'references-space-after',
+    'references.font_family': 'references-font-family',
+    'references.font_size_pt': 'references-font-size',
+    'references.alignment': 'references-alignment',
     'captions.space_before': 'captions-space-before',
     'captions.space_after': 'captions-space-after',
     'lists.space_after': 'lists-space-after',
@@ -786,9 +806,7 @@ export function ProfileEditor() {
     }
     if (marginsUi) payload = setPayloadGroup(payload, 'margins', marginsFromUiModel(marginsUi))
     if (referencesUi) {
-      const prevR = payload.references as Record<string, unknown> | undefined
-      const prevHanging = typeof prevR?.hanging_indent_in === 'number' ? prevR.hanging_indent_in : null
-      payload = setPayloadGroup(payload, 'references', referencesFromUiModel(referencesUi, prevHanging))
+      payload = setPayloadGroup(payload, 'references', referencesFromUiModel(referencesUi))
     }
     if (captionsUi) payload = setPayloadGroup(payload, 'captions', captionsFromUiModel(captionsUi))
     if (listsUi) payload = setPayloadGroup(payload, 'lists', listsFromUiModel(listsUi))
@@ -1047,6 +1065,7 @@ export function ProfileEditor() {
   const hasCustomProfiles = (envelope?.profiles.length ?? 0) > 0
   const selectedBuiltin = builtins.find((b) => b.profileId === editingId)
   const citationModel = citationUi ?? DEFAULT_CITATION_MATCHING
+  const referenceModel = referencesUi ?? EMPTY_REFERENCES_UI
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -2252,12 +2271,12 @@ export function ProfileEditor() {
                     </details>
 
                     {/* ------------------------------------------------------------------ */}
-                    {/* References controls                                                  */}
+                    {/* Reference List controls                                              */}
                     {/* ------------------------------------------------------------------ */}
                     <details className="group mt-4 rounded-md border border-border" open={allExpanded || undefined}>
                       <summary className="cursor-pointer list-none rounded-md px-3 py-2.5 text-sm font-semibold text-foreground select-none transition-colors hover:bg-input/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2">
                         <div className="flex items-center justify-between">
-                          <span>References</span>
+                          <span>Reference List</span>
                           <svg
                             className="h-4 w-4 text-muted-foreground transition-transform group-open:rotate-90"
                             aria-hidden="true"
@@ -2272,28 +2291,435 @@ export function ProfileEditor() {
                       <div className="space-y-4 px-3 pb-3 pt-1">
                         <p className="text-xs leading-[16px] text-muted-foreground">
                           Turning off a requirement means it will not be checked or included in the score.
+                          A value can only be edited while its check is on.
                         </p>
 
-                        <RequirementToggle
-                          label="Reference line spacing"
-                          enabled={referencesUi?.lineSpacingEnabled ?? false}
-                          onToggle={() => updateReferences((u) => ({ ...u, lineSpacingEnabled: !u.lineSpacingEnabled }))}
-                          value={referencesUi?.lineSpacing ?? ''}
-                          onChange={(v) => updateReferences((u) => ({ ...u, lineSpacing: v }))}
-                          min={1}
-                          max={4}
-                          step={0.1}
-                          unit="× (multiplier)"
-                          error={reqFieldErrors['references.line_spacing']}
-                          hint="Off means reference line spacing is not checked."
-                          fieldId="references-line-spacing"
-                        />
-
-                        <div className="rounded-md border border-dashed border-border bg-input/10 px-3 py-2.5">
-                          <p className="text-sm text-muted-foreground">Hanging indentation</p>
-                          <p className="mt-0.5 text-xs leading-[16px] text-muted-foreground">
-                            Hanging indentation checking is not available in this version.
+                        {/* Heading text */}
+                        <div className="rounded-md border border-border p-3">
+                          <label htmlFor="references-check-heading-text" className="flex items-start gap-2">
+                            <input
+                              id="references-check-heading-text"
+                              type="checkbox"
+                              className="mt-0.5 h-4 w-4 accent-primary"
+                              checked={referenceModel.headingTextEnabled}
+                              aria-describedby="references-check-heading-text-hint"
+                              onChange={(e) => updateReferences((u) => ({
+                                ...u,
+                                headingTextEnabled: e.target.checked,
+                                allowHeadingAliases: e.target.checked && u.allowHeadingAliases,
+                              }))}
+                            />
+                            <span className="text-sm text-foreground">Check Reference List heading text</span>
+                          </label>
+                          <p id="references-check-heading-text-hint" className="mt-1 text-xs leading-[16px] text-muted-foreground">
+                            Flags a Reference List heading that uses different wording.
                           </p>
+                          <div className="mt-2 flex flex-wrap items-center gap-2">
+                            <label htmlFor="references-heading-text" className="text-sm text-foreground">
+                              Required heading text
+                            </label>
+                            <select
+                              id="references-heading-text"
+                              value={referenceModel.headingText}
+                              disabled={!referenceModel.headingTextEnabled}
+                              aria-describedby="references-check-heading-text-hint"
+                              onChange={(e) => updateReferences((u) => ({ ...u, headingText: e.target.value as ReferenceHeadingText }))}
+                              className="w-full max-w-xs rounded-md border border-border bg-white px-3 py-1.5 text-sm focus:border-ring focus:ring-1 focus:ring-ring focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              {REFERENCE_HEADING_TEXT_OPTIONS.map((option) => (
+                                <option key={option} value={option}>
+                                  {REFERENCE_HEADING_TEXT_LABELS[option]}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                          <label
+                            htmlFor="references-allow-heading-aliases"
+                            className={cn(
+                              'mt-2 flex items-start gap-2',
+                              !referenceModel.headingTextEnabled && 'opacity-60',
+                            )}
+                          >
+                            <input
+                              id="references-allow-heading-aliases"
+                              type="checkbox"
+                              className="mt-0.5 h-4 w-4 accent-primary"
+                              checked={referenceModel.allowHeadingAliases}
+                              disabled={!referenceModel.headingTextEnabled}
+                              aria-describedby="references-allow-heading-aliases-hint"
+                              onChange={(e) => updateReferences((u) => ({ ...u, allowHeadingAliases: e.target.checked }))}
+                            />
+                            <span className="text-sm text-foreground">Allow common heading alternatives</span>
+                          </label>
+                          <p id="references-allow-heading-aliases-hint" className="mt-1 text-xs leading-[16px] text-muted-foreground">
+                            Also accepts “Works Cited” and “Bibliography” as the heading. Requires the heading-text check.
+                          </p>
+                          {reqFieldErrors['references.heading_text'] && (
+                            <p role="alert" className="mt-1 text-xs text-destructive">
+                              {reqFieldErrors['references.heading_text']}
+                            </p>
+                          )}
+                        </div>
+
+                        {/* Heading bold */}
+                        <div className="rounded-md border border-border p-3">
+                          <label htmlFor="references-check-heading-bold" className="flex items-start gap-2">
+                            <input
+                              id="references-check-heading-bold"
+                              type="checkbox"
+                              className="mt-0.5 h-4 w-4 accent-primary"
+                              checked={referenceModel.headingBoldEnabled && referenceModel.headingBold}
+                              aria-describedby="references-check-heading-bold-hint"
+                              onChange={(e) => updateReferences((u) => ({
+                                ...u,
+                                headingBoldEnabled: e.target.checked,
+                                headingBold: e.target.checked,
+                              }))}
+                            />
+                            <span className="text-sm text-foreground">Heading should be bold</span>
+                          </label>
+                          <p id="references-check-heading-bold-hint" className="mt-1 text-xs leading-[16px] text-muted-foreground">
+                            Off means the heading’s bold or regular state is not checked.
+                          </p>
+                        </div>
+
+                        {/* Heading alignment */}
+                        <div className="rounded-md border border-border p-3">
+                          <label htmlFor="references-heading-alignment-enabled" className="flex items-start gap-2">
+                            <input
+                              id="references-heading-alignment-enabled"
+                              type="checkbox"
+                              className="mt-0.5 h-4 w-4 accent-primary"
+                              checked={referenceModel.headingAlignmentEnabled}
+                              aria-describedby="references-check-heading-alignment-hint"
+                              onChange={(e) => updateReferences((u) => ({ ...u, headingAlignmentEnabled: e.target.checked }))}
+                            />
+                            <span className="text-sm text-foreground">Check heading alignment</span>
+                          </label>
+                          <p id="references-check-heading-alignment-hint" className="mt-1 text-xs leading-[16px] text-muted-foreground">
+                            Off means heading alignment is not checked.
+                          </p>
+                          <div className="mt-2 flex flex-wrap items-center gap-2">
+                            <label htmlFor="references-heading-alignment" className="text-sm text-foreground">
+                              Heading alignment
+                            </label>
+                            <select
+                              id="references-heading-alignment"
+                              value={referenceModel.headingAlignment}
+                              disabled={!referenceModel.headingAlignmentEnabled}
+                              aria-describedby="references-check-heading-alignment-hint"
+                              onChange={(e) => updateReferences((u) => ({ ...u, headingAlignment: e.target.value as AlignmentValue }))}
+                              className="w-full max-w-xs rounded-md border border-border bg-white px-3 py-1.5 text-sm focus:border-ring focus:ring-1 focus:ring-ring focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              <option value="">Choose an alignment</option>
+                              {ALIGNMENT_SELECT_OPTIONS.map((o) => (
+                                <option key={o.value} value={o.value}>{o.label}</option>
+                              ))}
+                            </select>
+                          </div>
+                          {reqFieldErrors['references.heading_alignment'] && (
+                            <p role="alert" className="mt-1 text-xs text-destructive">
+                              {reqFieldErrors['references.heading_alignment']}
+                            </p>
+                          )}
+                        </div>
+
+                        {/* Section start */}
+                        <label htmlFor="references-check-start-on-new-page" className="flex items-start gap-2 rounded-md border border-border px-3 py-2">
+                          <input
+                            id="references-check-start-on-new-page"
+                            type="checkbox"
+                            className="mt-0.5 h-4 w-4 accent-primary"
+                            checked={referenceModel.startOnNewPageEnabled}
+                            aria-describedby="references-check-start-on-new-page-hint"
+                            onChange={(e) => updateReferences((u) => ({ ...u, startOnNewPageEnabled: e.target.checked }))}
+                          />
+                          <span>
+                            <span className="block text-sm text-foreground">Start References on a new page</span>
+                            <span id="references-check-start-on-new-page-hint" className="mt-0.5 block text-xs leading-[16px] text-muted-foreground">
+                              Flags a Reference List that shares a page with the text above it.
+                            </span>
+                          </span>
+                        </label>
+
+                        {/* Hanging indent */}
+                        <div className="rounded-md border border-border p-3">
+                          <label htmlFor="references-check-hanging-indent" className="flex items-start gap-2">
+                            <input
+                              id="references-check-hanging-indent"
+                              type="checkbox"
+                              className="mt-0.5 h-4 w-4 accent-primary"
+                              checked={referenceModel.hangingIndentEnabled}
+                              aria-describedby="references-check-hanging-indent-hint"
+                              onChange={(e) => updateReferences((u) => ({ ...u, hangingIndentEnabled: e.target.checked }))}
+                            />
+                            <span className="text-sm text-foreground">Check hanging indent</span>
+                          </label>
+                          <p id="references-check-hanging-indent-hint" className="mt-1 text-xs leading-[16px] text-muted-foreground">
+                            The first line sits flush left and the lines that follow are indented. Range: 0–4.0 in.
+                          </p>
+                          <div className="mt-2 flex flex-wrap items-center gap-2">
+                            <label htmlFor="references-hanging-indent" className="text-sm text-foreground">
+                              Indent following lines by
+                            </label>
+                            <input
+                              id="references-hanging-indent"
+                              type="number"
+                              min={0}
+                              max={4}
+                              step={0.05}
+                              value={referenceModel.hangingIndent}
+                              disabled={!referenceModel.hangingIndentEnabled}
+                              aria-describedby="references-check-hanging-indent-hint"
+                              onChange={(e) => updateReferences((u) => ({ ...u, hangingIndent: e.target.value }))}
+                              className="w-24 rounded-md border border-border bg-white px-3 py-1.5 text-sm focus:border-ring focus:ring-1 focus:ring-ring focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
+                            />
+                            <span className="text-sm text-muted-foreground">in</span>
+                          </div>
+                          {reqFieldErrors['references.hanging_indent_in'] && (
+                            <p role="alert" className="mt-1 text-xs text-destructive">
+                              {reqFieldErrors['references.hanging_indent_in']}
+                            </p>
+                          )}
+                        </div>
+
+                        {/* Line spacing */}
+                        <div className="rounded-md border border-border p-3">
+                          <label htmlFor="references-check-line-spacing" className="flex items-start gap-2">
+                            <input
+                              id="references-check-line-spacing"
+                              type="checkbox"
+                              className="mt-0.5 h-4 w-4 accent-primary"
+                              checked={referenceModel.lineSpacingEnabled}
+                              aria-describedby="references-check-line-spacing-hint"
+                              onChange={(e) => updateReferences((u) => ({ ...u, lineSpacingEnabled: e.target.checked }))}
+                            />
+                            <span className="text-sm text-foreground">Check Reference List line spacing</span>
+                          </label>
+                          <p id="references-check-line-spacing-hint" className="mt-1 text-xs leading-[16px] text-muted-foreground">
+                            Range: 1.0–4.0. Off means reference line spacing is not checked.
+                          </p>
+                          <div className="mt-2 flex flex-wrap items-center gap-2">
+                            <label htmlFor="references-line-spacing" className="text-sm text-foreground">
+                              Line spacing
+                            </label>
+                            <input
+                              id="references-line-spacing"
+                              type="number"
+                              min={1}
+                              max={4}
+                              step={0.1}
+                              value={referenceModel.lineSpacing}
+                              disabled={!referenceModel.lineSpacingEnabled}
+                              aria-describedby="references-check-line-spacing-hint"
+                              onChange={(e) => updateReferences((u) => ({ ...u, lineSpacing: e.target.value }))}
+                              className="w-24 rounded-md border border-border bg-white px-3 py-1.5 text-sm focus:border-ring focus:ring-1 focus:ring-ring focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
+                            />
+                            <span className="text-sm text-muted-foreground">× (multiplier)</span>
+                          </div>
+                          {reqFieldErrors['references.line_spacing'] && (
+                            <p role="alert" className="mt-1 text-xs text-destructive">
+                              {reqFieldErrors['references.line_spacing']}
+                            </p>
+                          )}
+                        </div>
+
+                        {/* Space before / after */}
+                        <div className="rounded-md border border-border p-3">
+                          <label htmlFor="references-check-space-before" className="flex items-start gap-2">
+                            <input
+                              id="references-check-space-before"
+                              type="checkbox"
+                              className="mt-0.5 h-4 w-4 accent-primary"
+                              checked={referenceModel.spaceBeforeEnabled}
+                              aria-describedby="references-check-space-before-hint"
+                              onChange={(e) => updateReferences((u) => ({ ...u, spaceBeforeEnabled: e.target.checked }))}
+                            />
+                            <span className="text-sm text-foreground">Check space before each entry</span>
+                          </label>
+                          <p id="references-check-space-before-hint" className="mt-1 text-xs leading-[16px] text-muted-foreground">
+                            Range: 0–240 pt.
+                          </p>
+                          <div className="mt-2 flex flex-wrap items-center gap-2">
+                            <label htmlFor="references-space-before" className="text-sm text-foreground">
+                              Space before
+                            </label>
+                            <input
+                              id="references-space-before"
+                              type="number"
+                              min={0}
+                              max={240}
+                              step={1}
+                              value={referenceModel.spaceBefore}
+                              disabled={!referenceModel.spaceBeforeEnabled}
+                              aria-describedby="references-check-space-before-hint"
+                              onChange={(e) => updateReferences((u) => ({ ...u, spaceBefore: e.target.value }))}
+                              className="w-24 rounded-md border border-border bg-white px-3 py-1.5 text-sm focus:border-ring focus:ring-1 focus:ring-ring focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
+                            />
+                            <span className="text-sm text-muted-foreground">pt</span>
+                          </div>
+                          {reqFieldErrors['references.space_before_pt'] && (
+                            <p role="alert" className="mt-1 text-xs text-destructive">
+                              {reqFieldErrors['references.space_before_pt']}
+                            </p>
+                          )}
+
+                          <label htmlFor="references-check-space-after" className="mt-3 flex items-start gap-2">
+                            <input
+                              id="references-check-space-after"
+                              type="checkbox"
+                              className="mt-0.5 h-4 w-4 accent-primary"
+                              checked={referenceModel.spaceAfterEnabled}
+                              aria-describedby="references-check-space-after-hint"
+                              onChange={(e) => updateReferences((u) => ({ ...u, spaceAfterEnabled: e.target.checked }))}
+                            />
+                            <span className="text-sm text-foreground">Check space after each entry</span>
+                          </label>
+                          <p id="references-check-space-after-hint" className="mt-1 text-xs leading-[16px] text-muted-foreground">
+                            Range: 0–240 pt.
+                          </p>
+                          <div className="mt-2 flex flex-wrap items-center gap-2">
+                            <label htmlFor="references-space-after" className="text-sm text-foreground">
+                              Space after
+                            </label>
+                            <input
+                              id="references-space-after"
+                              type="number"
+                              min={0}
+                              max={240}
+                              step={1}
+                              value={referenceModel.spaceAfter}
+                              disabled={!referenceModel.spaceAfterEnabled}
+                              aria-describedby="references-check-space-after-hint"
+                              onChange={(e) => updateReferences((u) => ({ ...u, spaceAfter: e.target.value }))}
+                              className="w-24 rounded-md border border-border bg-white px-3 py-1.5 text-sm focus:border-ring focus:ring-1 focus:ring-ring focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
+                            />
+                            <span className="text-sm text-muted-foreground">pt</span>
+                          </div>
+                          {reqFieldErrors['references.space_after_pt'] && (
+                            <p role="alert" className="mt-1 text-xs text-destructive">
+                              {reqFieldErrors['references.space_after_pt']}
+                            </p>
+                          )}
+                        </div>
+
+                        {/* Font family */}
+                        <div className="rounded-md border border-border p-3">
+                          <label htmlFor="references-check-font-family" className="flex items-start gap-2">
+                            <input
+                              id="references-check-font-family"
+                              type="checkbox"
+                              className="mt-0.5 h-4 w-4 accent-primary"
+                              checked={referenceModel.fontFamilyEnabled}
+                              aria-describedby="references-check-font-family-hint"
+                              onChange={(e) => updateReferences((u) => ({ ...u, fontFamilyEnabled: e.target.checked }))}
+                            />
+                            <span className="text-sm text-foreground">Check Reference List font family</span>
+                          </label>
+                          <p id="references-check-font-family-hint" className="mt-1 text-xs leading-[16px] text-muted-foreground">
+                            Flags an entry set in a different font from the one you name.
+                          </p>
+                          <div className="mt-2 flex flex-wrap items-center gap-2">
+                            <label htmlFor="references-font-family" className="text-sm text-foreground">
+                              Font family
+                            </label>
+                            <input
+                              id="references-font-family"
+                              type="text"
+                              value={referenceModel.fontFamily}
+                              disabled={!referenceModel.fontFamilyEnabled}
+                              aria-describedby="references-check-font-family-hint"
+                              onChange={(e) => updateReferences((u) => ({ ...u, fontFamily: e.target.value }))}
+                              className="w-full max-w-xs rounded-md border border-border bg-white px-3 py-1.5 text-sm focus:border-ring focus:ring-1 focus:ring-ring focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
+                            />
+                          </div>
+                          {reqFieldErrors['references.font_family'] && (
+                            <p role="alert" className="mt-1 text-xs text-destructive">
+                              {reqFieldErrors['references.font_family']}
+                            </p>
+                          )}
+                        </div>
+
+                        {/* Font size */}
+                        <div className="rounded-md border border-border p-3">
+                          <label htmlFor="references-check-font-size" className="flex items-start gap-2">
+                            <input
+                              id="references-check-font-size"
+                              type="checkbox"
+                              className="mt-0.5 h-4 w-4 accent-primary"
+                              checked={referenceModel.fontSizeEnabled}
+                              aria-describedby="references-check-font-size-hint"
+                              onChange={(e) => updateReferences((u) => ({ ...u, fontSizeEnabled: e.target.checked }))}
+                            />
+                            <span className="text-sm text-foreground">Check Reference List font size</span>
+                          </label>
+                          <p id="references-check-font-size-hint" className="mt-1 text-xs leading-[16px] text-muted-foreground">
+                            Range: 6–72 pt.
+                          </p>
+                          <div className="mt-2 flex flex-wrap items-center gap-2">
+                            <label htmlFor="references-font-size" className="text-sm text-foreground">
+                              Font size
+                            </label>
+                            <input
+                              id="references-font-size"
+                              type="number"
+                              min={6}
+                              max={72}
+                              step={0.5}
+                              value={referenceModel.fontSize}
+                              disabled={!referenceModel.fontSizeEnabled}
+                              aria-describedby="references-check-font-size-hint"
+                              onChange={(e) => updateReferences((u) => ({ ...u, fontSize: e.target.value }))}
+                              className="w-24 rounded-md border border-border bg-white px-3 py-1.5 text-sm focus:border-ring focus:ring-1 focus:ring-ring focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
+                            />
+                            <span className="text-sm text-muted-foreground">pt</span>
+                          </div>
+                          {reqFieldErrors['references.font_size_pt'] && (
+                            <p role="alert" className="mt-1 text-xs text-destructive">
+                              {reqFieldErrors['references.font_size_pt']}
+                            </p>
+                          )}
+                        </div>
+
+                        {/* Entry alignment */}
+                        <div className="rounded-md border border-border p-3">
+                          <label htmlFor="references-check-alignment" className="flex items-start gap-2">
+                            <input
+                              id="references-check-alignment"
+                              type="checkbox"
+                              className="mt-0.5 h-4 w-4 accent-primary"
+                              checked={referenceModel.alignmentEnabled}
+                              aria-describedby="references-check-alignment-hint"
+                              onChange={(e) => updateReferences((u) => ({ ...u, alignmentEnabled: e.target.checked }))}
+                            />
+                            <span className="text-sm text-foreground">Check Reference List paragraph alignment</span>
+                          </label>
+                          <p id="references-check-alignment-hint" className="mt-1 text-xs leading-[16px] text-muted-foreground">
+                            Off means entry alignment is not checked.
+                          </p>
+                          <div className="mt-2 flex flex-wrap items-center gap-2">
+                            <label htmlFor="references-alignment" className="text-sm text-foreground">
+                              Paragraph alignment
+                            </label>
+                            <select
+                              id="references-alignment"
+                              value={referenceModel.alignment}
+                              disabled={!referenceModel.alignmentEnabled}
+                              aria-describedby="references-check-alignment-hint"
+                              onChange={(e) => updateReferences((u) => ({ ...u, alignment: e.target.value as AlignmentValue }))}
+                              className="w-full max-w-xs rounded-md border border-border bg-white px-3 py-1.5 text-sm focus:border-ring focus:ring-1 focus:ring-ring focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              <option value="">Choose an alignment</option>
+                              {ALIGNMENT_SELECT_OPTIONS.map((o) => (
+                                <option key={o.value} value={o.value}>{o.label}</option>
+                              ))}
+                            </select>
+                          </div>
+                          {reqFieldErrors['references.alignment'] && (
+                            <p role="alert" className="mt-1 text-xs text-destructive">
+                              {reqFieldErrors['references.alignment']}
+                            </p>
+                          )}
                         </div>
                       </div>
                     </details>

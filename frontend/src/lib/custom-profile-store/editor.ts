@@ -22,6 +22,8 @@ import {
   type StoreEnvelope,
   type StoredCustomProfile,
 } from './store.ts'
+import { referencesDisclosure } from '../audit/enabled-checks-wording.ts'
+import type { ProfileSnapshotReferences } from '../../types/api'
 
 /** The three creation paths the editor exposes (Build 3). */
 export type CreationKind = 'copy-suc' | 'copy-apa' | 'blank'
@@ -208,8 +210,30 @@ export function blankProfilePayload(
       margin_bottom_in: null,
     },
     references: {
-      line_spacing: null,
+      // Every Reference List check is opt-in: the booleans are the switches,
+      // the nulls the values behind them.
+      check_heading_text: false,
+      heading_text: null,
+      allow_heading_aliases: false,
+      check_heading_bold: false,
+      heading_bold: true,
+      check_heading_alignment: false,
+      heading_alignment: null,
+      check_start_on_new_page: false,
+      check_hanging_indent: false,
       hanging_indent_in: null,
+      check_line_spacing: false,
+      line_spacing: null,
+      check_space_before: false,
+      space_before_pt: null,
+      check_space_after: false,
+      space_after_pt: null,
+      check_font_family: false,
+      font_family: null,
+      check_font_size: false,
+      font_size_pt: null,
+      check_alignment: false,
+      alignment: null,
     },
     captions: {
       space_before_pt: null,
@@ -331,6 +355,32 @@ export const MARGIN_MAX_IN = 4.0
 export const REFERENCES_LINE_SPACING_MIN = 1.0
 export const REFERENCES_LINE_SPACING_MAX = 4.0
 
+/** Reference hanging indent range in inches (mirrors the backend schema). */
+export const REFERENCES_INDENT_MIN_IN = 0
+export const REFERENCES_INDENT_MAX_IN = 4.0
+
+/**
+ * The heading words a profile may require — a fixed vocabulary, never free
+ * text. Mirrors `REFERENCE_HEADING_TEXT_CHOICES` in the backend schema; the
+ * stored value is always lowercase.
+ */
+export const REFERENCE_HEADING_TEXT_OPTIONS = [
+  'references',
+  'bibliography',
+  'works cited',
+  'reference list',
+] as const
+
+export type ReferenceHeadingText = (typeof REFERENCE_HEADING_TEXT_OPTIONS)[number]
+
+/** Reader-facing wording for each heading word in the select. */
+export const REFERENCE_HEADING_TEXT_LABELS: Record<ReferenceHeadingText, string> = {
+  references: 'References',
+  bibliography: 'Bibliography',
+  'works cited': 'Works Cited',
+  'reference list': 'Reference List',
+}
+
 export const ALIGNMENT_OPTIONS = ['left', 'center', 'right', 'justify'] as const
 export type AlignmentValue = (typeof ALIGNMENT_OPTIONS)[number]
 
@@ -405,12 +455,38 @@ export interface HeadingUiModel {
 
 export type MarginsUiModel = Record<MarginSide, { enabled: boolean; value: string }>
 
-/** References section UI (Build 5). Only line spacing is audited; hanging
- * indent is stored with the profile but never checked in this release, so it
- * is never exposed as an editable control. */
+/**
+ * Reference List section UI. Every deterministic check is an opt-in toggle
+ * with a dependent value: when the toggle is off the value is never compared,
+ * so an historical profile can never gain a rule it never opted into.
+ * `lineSpacingEnabled` is the rendered state of the tri-state
+ * `check_line_spacing` field (absent = derived from the stored value).
+ */
 export interface ReferencesUiModel {
+  headingTextEnabled: boolean
+  headingText: ReferenceHeadingText
+  allowHeadingAliases: boolean
+  /** True when the heading's bold or regular state is required. */
+  headingBoldEnabled: boolean
+  /** The required value — bold when the heading-bold check is on. */
+  headingBold: boolean
+  headingAlignmentEnabled: boolean
+  headingAlignment: AlignmentValue | ''
+  startOnNewPageEnabled: boolean
+  hangingIndentEnabled: boolean
+  hangingIndent: string
   lineSpacingEnabled: boolean
   lineSpacing: string
+  spaceBeforeEnabled: boolean
+  spaceBefore: string
+  spaceAfterEnabled: boolean
+  spaceAfter: string
+  fontFamilyEnabled: boolean
+  fontFamily: string
+  fontSizeEnabled: boolean
+  fontSize: string
+  alignmentEnabled: boolean
+  alignment: AlignmentValue | ''
 }
 
 /** Captions section UI (Build 5). Space before/after are independent. */
@@ -639,25 +715,87 @@ export function marginsFromUiModel(ui: MarginsUiModel): MarginGroup {
   }
 }
 
-/** Read the schema-backed References group into the editable UI model. */
+/** Coerce a stored heading word to the fixed vocabulary (lowercase). */
+const asHeadingText = (v: unknown): ReferenceHeadingText => {
+  const normalized = typeof v === 'string' ? v.trim().toLowerCase() : ''
+  const match = REFERENCE_HEADING_TEXT_OPTIONS.find((o) => o === normalized)
+  return match ?? 'references'
+}
+
+/** Coerce a stored alignment to the shared vocabulary ('' = not set). */
+const asAlignment = (v: unknown): AlignmentValue | '' =>
+  ALIGNMENT_OPTIONS.find((o) => o === v) ?? ''
+
+/**
+ * Read the schema-backed References group into the editable UI model.
+ *
+ * `check_line_spacing` is the one tri-state field: an absent/None toggle means
+ * this profile predates it, so the check is active exactly when a line-spacing
+ * value is stored. An explicit true/false always wins.
+ */
 export function referencesToUiModel(references: ReferencesGroup): ReferencesUiModel {
+  const lineSpacingEnabled =
+    references.check_line_spacing == null
+      ? references.line_spacing != null
+      : references.check_line_spacing === true
   return {
-    lineSpacingEnabled: references.line_spacing != null,
+    headingTextEnabled: references.check_heading_text === true,
+    headingText: asHeadingText(references.heading_text),
+    allowHeadingAliases: references.allow_heading_aliases === true,
+    headingBoldEnabled: references.check_heading_bold === true,
+    headingBold: references.heading_bold !== false,
+    headingAlignmentEnabled: references.check_heading_alignment === true,
+    headingAlignment: asAlignment(references.heading_alignment),
+    startOnNewPageEnabled: references.check_start_on_new_page === true,
+    hangingIndentEnabled: references.check_hanging_indent === true,
+    hangingIndent: numStr(references.hanging_indent_in),
+    lineSpacingEnabled,
     lineSpacing: numStr(references.line_spacing),
+    spaceBeforeEnabled: references.check_space_before === true,
+    spaceBefore: numStr(references.space_before_pt),
+    spaceAfterEnabled: references.check_space_after === true,
+    spaceAfter: numStr(references.space_after_pt),
+    fontFamilyEnabled: references.check_font_family === true,
+    fontFamily: typeof references.font_family === 'string' ? references.font_family : '',
+    fontSizeEnabled: references.check_font_size === true,
+    fontSize: numStr(references.font_size_pt),
+    alignmentEnabled: references.check_alignment === true,
+    alignment: asAlignment(references.alignment),
   }
 }
 
-/** Build the schema-backed References group from the editable UI model.
- * The stored hanging indent is preserved verbatim (never editable, never
- * clobbered) so built-in copies keep their exact values — it is not audited
- * in this release. */
-export function referencesFromUiModel(
-  ui: ReferencesUiModel,
-  preserveHangingIndent: number | null | undefined,
-): ReferencesGroup {
+/**
+ * Build the schema-backed References group from the editable UI model.
+ *
+ * `check_line_spacing` is always written explicitly so a user who turns the
+ * line-spacing check off really turns it off; the backend reads a missing or
+ * null toggle as "enforce whenever a value is stored". Aliases follow their
+ * parent heading-text check, exactly as the dependent citation toggles do.
+ */
+export function referencesFromUiModel(ui: ReferencesUiModel): ReferencesGroup {
   return {
     line_spacing: ui.lineSpacingEnabled ? parseNum(ui.lineSpacing) : null,
-    hanging_indent_in: typeof preserveHangingIndent === 'number' ? preserveHangingIndent : null,
+    check_line_spacing: ui.lineSpacingEnabled,
+    hanging_indent_in: ui.hangingIndentEnabled ? parseNum(ui.hangingIndent) : null,
+    check_hanging_indent: ui.hangingIndentEnabled,
+    check_heading_text: ui.headingTextEnabled,
+    heading_text: ui.headingTextEnabled ? ui.headingText.toLowerCase() : null,
+    allow_heading_aliases: ui.headingTextEnabled && ui.allowHeadingAliases,
+    check_heading_bold: ui.headingBoldEnabled,
+    heading_bold: ui.headingBold,
+    check_heading_alignment: ui.headingAlignmentEnabled,
+    heading_alignment: ui.headingAlignmentEnabled ? ui.headingAlignment || null : null,
+    check_start_on_new_page: ui.startOnNewPageEnabled,
+    check_space_before: ui.spaceBeforeEnabled,
+    space_before_pt: ui.spaceBeforeEnabled ? parseNum(ui.spaceBefore) : null,
+    check_space_after: ui.spaceAfterEnabled,
+    space_after_pt: ui.spaceAfterEnabled ? parseNum(ui.spaceAfter) : null,
+    check_font_family: ui.fontFamilyEnabled,
+    font_family: ui.fontFamilyEnabled ? ui.fontFamily.trim() || null : null,
+    check_font_size: ui.fontSizeEnabled,
+    font_size_pt: ui.fontSizeEnabled ? parseNum(ui.fontSize) : null,
+    check_alignment: ui.alignmentEnabled,
+    alignment: ui.alignmentEnabled ? ui.alignment || null : null,
   }
 }
 
@@ -891,7 +1029,8 @@ export function validateRequirements(
     }
   }
 
-  // References — line spacing only (Build 5).
+  // Reference List — heading, section start and entry layout. A value is
+  // validated only while its check is switched on.
   const references = referencesToUiModel((payload.references ?? {}) as ReferencesGroup)
   const refLs = references.lineSpacingEnabled ? parseNum(references.lineSpacing) : null
   if (references.lineSpacingEnabled && (refLs === null || refLs < REFERENCES_LINE_SPACING_MIN || refLs > REFERENCES_LINE_SPACING_MAX)) {
@@ -899,6 +1038,46 @@ export function validateRequirements(
       field: 'references.line_spacing',
       message: `Enter reference line spacing between ${REFERENCES_LINE_SPACING_MIN} and ${REFERENCES_LINE_SPACING_MAX}.`,
     })
+  }
+  const refIndent = references.hangingIndentEnabled ? parseNum(references.hangingIndent) : null
+  if (references.hangingIndentEnabled && (refIndent === null || refIndent < REFERENCES_INDENT_MIN_IN || refIndent > REFERENCES_INDENT_MAX_IN)) {
+    errors.push({
+      field: 'references.hanging_indent_in',
+      message: `Enter a hanging indent between ${REFERENCES_INDENT_MIN_IN} and ${REFERENCES_INDENT_MAX_IN} in.`,
+    })
+  }
+  for (const [field, value] of [
+    ['references.space_before_pt', references.spaceBefore],
+    ['references.space_after_pt', references.spaceAfter],
+  ] as const) {
+    const enabled = field === 'references.space_before_pt'
+      ? references.spaceBeforeEnabled
+      : references.spaceAfterEnabled
+    const parsed = enabled ? parseNum(value) : null
+    if (enabled && (parsed === null || parsed < SPACING_PT_MIN || parsed > SPACING_PT_MAX)) {
+      errors.push({
+        field,
+        message: `Enter spacing between ${SPACING_PT_MIN} and ${SPACING_PT_MAX} pt.`,
+      })
+    }
+  }
+  const refSize = references.fontSizeEnabled ? parseNum(references.fontSize) : null
+  if (references.fontSizeEnabled && (refSize === null || refSize < FONT_SIZE_MIN || refSize > FONT_SIZE_MAX)) {
+    errors.push({
+      field: 'references.font_size_pt',
+      message: `Enter a font size between ${FONT_SIZE_MIN} and ${FONT_SIZE_MAX} pt.`,
+    })
+  }
+  if (references.fontFamilyEnabled && !references.fontFamily.trim()) {
+    errors.push({ field: 'references.font_family', message: 'Enter a font name.' })
+  }
+  for (const [field, enabled, alignment] of [
+    ['references.heading_alignment', references.headingAlignmentEnabled, references.headingAlignment],
+    ['references.alignment', references.alignmentEnabled, references.alignment],
+  ] as const) {
+    if (enabled && !alignment) {
+      errors.push({ field, message: 'Choose an alignment.' })
+    }
   }
 
   // Captions — space before / after, independent (Build 5).
@@ -1040,13 +1219,9 @@ export function summarizeProfile(payload: Record<string, unknown>): ProfileSumma
     lines.push(`Margins: ${parts.join(', ')}`)
   }
 
-  // References (Build 5)
-  const references = referencesToUiModel((payload.references ?? {}) as ReferencesGroup)
-  if (references.lineSpacingEnabled && references.lineSpacing) {
-    lines.push(`References: ${references.lineSpacing} line spacing`)
-  } else {
-    lines.push('References: Not checked')
-  }
+  // Reference List — the editor draft and the audit report must describe the
+  // same requirements in the same words, so both use this one helper.
+  lines.push(referencesDisclosure((payload.references ?? null) as ProfileSnapshotReferences | null))
 
   // Captions (Build 5)
   const captions = captionsToUiModel((payload.captions ?? {}) as CaptionGroup)

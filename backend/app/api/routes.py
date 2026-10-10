@@ -178,6 +178,28 @@ async def audit_document(
         # keep it (never reconstructed from PDF text after the DOCX is gone).
         section_metadata = extract_sections(doc)
 
+        # Paragraph→physical rendered-page mapping (Build friendly locations):
+        # computed only when preview bytes are validated and paragraphs are
+        # available. Stored as {paragraph_index: page_number} with 1-based
+        # physical pages. NULL for historical/unavailable cases. Never stores
+        # document text; never fails the audit.
+        #
+        # Computed BEFORE the rules run because the Reference List new-page
+        # rule is the one rule that needs rendered evidence: without this
+        # mapping it could only ever stay silent.
+        try:
+            if preview_pdf_bytes is not None and audit.rendered_preview_status == preview_storage.PREVIEW_STATUS_AVAILABLE:
+                audit.paragraph_page_mapping = compute_paragraph_page_mapping(
+                    paragraphs,
+                    preview_pdf_bytes,
+                    rendered_preview_pages=audit.rendered_preview_pages,
+                )
+            else:
+                audit.paragraph_page_mapping = None
+        except Exception:
+            logger.info("page_mapping failed audit=%s", audit.id)
+            audit.paragraph_page_mapping = None
+
         # ---- Static rules engine (Build 4: snapshot-derived config) ----
         # The resolved immutable snapshot drives every supported deterministic
         # rule — global PresetConfig defaults are never read during a
@@ -186,6 +208,11 @@ async def audit_document(
         layout_violations = run_static_rules_engine(
             file_bytes,
             config=EffectiveProfileConfig(profile_snapshot),
+            page_mapping=(
+                audit.paragraph_page_mapping
+                if isinstance(audit.paragraph_page_mapping, dict)
+                else None
+            ),
         )
 
         # ---- Authoritative scoring with per-category breakdown ----
@@ -211,24 +238,6 @@ async def audit_document(
         # Section boundary metadata (PoC): persisted so POST, GET, refresh,
         # and History all see identical metadata. Historical rows stay NULL.
         audit.section_metadata = section_metadata
-
-        # Paragraph→physical rendered-page mapping (Build friendly locations):
-        # computed only when preview bytes are validated and paragraphs are
-        # available. Stored as {paragraph_index: page_number} with 1-based
-        # physical pages. NULL for historical/unavailable cases. Never stores
-        # document text; never fails the audit.
-        try:
-            if preview_pdf_bytes is not None and audit.rendered_preview_status == preview_storage.PREVIEW_STATUS_AVAILABLE:
-                audit.paragraph_page_mapping = compute_paragraph_page_mapping(
-                    paragraphs,
-                    preview_pdf_bytes,
-                    rendered_preview_pages=audit.rendered_preview_pages,
-                )
-            else:
-                audit.paragraph_page_mapping = None
-        except Exception:
-            logger.info("page_mapping failed audit=%s", audit.id)
-            audit.paragraph_page_mapping = None
 
         # Immutable Document Formatting Profile snapshot (Build 3): resolved
         # BEFORE deterministic processing and persisted in the SAME

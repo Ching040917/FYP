@@ -61,6 +61,38 @@ const FRIENDLY_RULE_TITLES: Record<string, string> = {
   CITATION_REFERENCE_AMBIGUOUS: 'Citation could match more than one entry',
   REFERENCE_NOT_CITED: 'Reference List entry is not cited in the text',
   REFERENCE_DUPLICATE: 'Duplicate Reference List entry',
+  // Reference List formatting rules — the heading and the entry layout.
+  REFERENCE_HEADING_TEXT: 'Reference List heading does not match',
+  REFERENCE_HEADING_BOLD: 'Reference List heading should be bold',
+  REFERENCE_HEADING_ALIGNMENT: 'Reference List heading alignment does not match',
+  REFERENCE_SECTION_NEW_PAGE: 'Reference List should start on a new page',
+  REFERENCE_HANGING_INDENT: 'Reference entry hanging indent does not match',
+  REFERENCE_SPACE_BEFORE: 'Space before Reference List entries does not match',
+  REFERENCE_SPACE_AFTER: 'Space after Reference List entries does not match',
+  REFERENCE_FONT_FAMILY: 'Reference entry font family does not match',
+  REFERENCE_FONT_SIZE: 'Reference entry font size does not match',
+  REFERENCE_ALIGNMENT: 'Reference entry alignment does not match',
+}
+
+/**
+ * Fixed Required Action copy for the Reference List formatting rules. The
+ * profile decides whether a rule fires at all, so the action never quotes a
+ * profile-specific value — it names the single change the reader must make.
+ *
+ * Mirrored verbatim by `_REQUIRED_ACTIONS` in
+ * backend/app/services/pdf_report.py.
+ */
+const REFERENCE_REQUIRED_ACTIONS: Record<string, string> = {
+  REFERENCE_HEADING_TEXT: 'Rename the Reference List heading to the required wording.',
+  REFERENCE_HEADING_BOLD: 'Apply or remove bold on the Reference List heading as required.',
+  REFERENCE_HEADING_ALIGNMENT: 'Align the Reference List heading as required.',
+  REFERENCE_SECTION_NEW_PAGE: 'Insert a page break before the Reference List heading.',
+  REFERENCE_HANGING_INDENT: 'Apply a hanging indent so the first line is flush left and the following lines are indented by the configured amount.',
+  REFERENCE_SPACE_BEFORE: 'Set the required space before these Reference List entries.',
+  REFERENCE_SPACE_AFTER: 'Set the required space after these Reference List entries.',
+  REFERENCE_FONT_FAMILY: 'Set every Reference List entry to the required font family.',
+  REFERENCE_FONT_SIZE: 'Set every Reference List entry to the required font size.',
+  REFERENCE_ALIGNMENT: 'Align the Reference List entries as required.',
 }
 
 /** Every rule code with a bespoke student-facing title (contract tests). */
@@ -301,6 +333,10 @@ export function friendlyRequiredAction(
   }
   if (code === 'REFERENCE_DUPLICATE') {
     return 'Keep one entry and remove the duplicate.'
+  }
+  // Reference List formatting rules — fixed copy before the generic fallback.
+  if (REFERENCE_REQUIRED_ACTIONS[code]) {
+    return REFERENCE_REQUIRED_ACTIONS[code]
   }
   if (exp && act) {
     return `Update this element to meet the required specification (${exp}).`

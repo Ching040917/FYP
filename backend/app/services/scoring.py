@@ -43,7 +43,7 @@ CATEGORY_META: Dict[str, CategoryMeta] = {
     "font_consistency":     CategoryMeta("Font Consistency",     major_weight=4, minor_weight=1, cap=18),
     "font_size":            CategoryMeta("Font Size Alignment",  major_weight=4, minor_weight=1, cap=18),
     "paragraph_typography": CategoryMeta("Paragraph Typography", major_weight=4, minor_weight=1, cap=20),
-    "citation_apa":         CategoryMeta("APA Citations (AI)",   major_weight=5, minor_weight=2, cap=25),
+    "citation_apa":         CategoryMeta("APA Citations and References", major_weight=5, minor_weight=2, cap=25),
 }
 
 # Display order — controls how the breakdown renders in the radar chart.
@@ -62,6 +62,33 @@ CATEGORY_ORDER: List[str] = [
 # that pass rule_code="X" continue to produce 85/97/67/0 exactly.
 _DEFAULT_CATEGORY = CategoryMeta("Uncategorised", major_weight=15, minor_weight=3, cap=100)
 
+# Explicit category for rules whose code does NOT follow the generic
+# substring conventions below.
+#
+# Reference List FORMATTING rules are the reason this table exists: the
+# generic `"REFERENCE" in code` branch routes every Reference code to
+# citation_apa, which would score a hanging-indent problem as if it were a
+# citation problem. Formatting codes are therefore classified explicitly
+# FIRST, and only the semantic Phase 2 codes fall through to the generic
+# branch. No category, cap, or weight is added or changed — the seven
+# existing categories cover every new rule.
+_RULE_CATEGORY_OVERRIDES: Dict[str, str] = {
+    # Reference section structure: heading text, weight, alignment, page start.
+    "REFERENCE_HEADING_TEXT": "heading_hierarchy",
+    "REFERENCE_HEADING_BOLD": "heading_hierarchy",
+    "REFERENCE_HEADING_ALIGNMENT": "heading_hierarchy",
+    "REFERENCE_SECTION_NEW_PAGE": "heading_hierarchy",
+    # Reference entry paragraph formatting — the closest existing paragraph
+    # format category.
+    "REFERENCE_HANGING_INDENT": "paragraph_typography",
+    "REFERENCE_SPACE_BEFORE": "paragraph_typography",
+    "REFERENCE_SPACE_AFTER": "paragraph_typography",
+    "REFERENCE_ALIGNMENT": "paragraph_typography",
+    # Fonts.
+    "REFERENCE_FONT_FAMILY": "font_consistency",
+    "REFERENCE_FONT_SIZE": "font_size",
+}
+
 
 def rule_code_to_category(rule_code: str) -> str:
     """Map a backend rule_code (e.g. 'MARGIN_LEFT') to a category key.
@@ -71,11 +98,15 @@ def rule_code_to_category(rule_code: str) -> str:
     bucket, which uses legacy flat weights — preserves test expectations.
     """
     code = (rule_code or "").upper()
+    override = _RULE_CATEGORY_OVERRIDES.get(code)
+    if override is not None:
+        return override
     if "CITATION" in code or "APA" in code:
         return "citation_apa"
     if "REFERENCE" in code:
-        # Reference List matching rules (uncited entry, duplicate entry)
-        # belong to the same citation/reference category.
+        # Reference List SEMANTIC matching rules (uncited entry, duplicate
+        # entry). Formatting rules never reach here: they are classified
+        # explicitly above.
         return "citation_apa"
     if "MARGIN" in code or code.startswith("PAGE_"):
         return "page_margins"

@@ -24,7 +24,7 @@ export const CATEGORY_LABELS: Record<AuditCategory, string> = {
   font_consistency: 'Font Consistency',
   font_size: 'Font Size',
   paragraph_typography: 'Paragraph Typography',
-  citation_apa: 'APA Citations',
+  citation_apa: 'APA Citations and References',
 }
 
 export interface SeverityBadge {

@@ -118,8 +118,66 @@ class MarginSettings:
 
 @dataclass
 class ReferencesSettings:
+    """Reference List formatting requirements.
+
+    Two fields pre-date the Reference List rules (`line_spacing`,
+    `hanging_indent_in`); they keep their names and meaning. Every other
+    field is an opt-in deterministic check with a dependent value: when the
+    `check_*` toggle is off the value is stored but never compared, so an
+    historical profile can never gain a rule it never opted into.
+
+    `check_line_spacing` is the one tri-state field. `None` means "this
+    profile predates the toggle": the line-spacing rule is then exactly as
+    active as before this feature, i.e. active if and only if a
+    `line_spacing` value is present. An explicit True/False always wins, so
+    the editor can turn the already-enforced rule off and no stale payload
+    can silently keep it on.
+    """
+
+    # --- existing fields (names and meaning preserved) -------------------
     line_spacing: Optional[float] = None
     hanging_indent_in: Optional[float] = None
+
+    # --- heading ---------------------------------------------------------
+    check_heading_text: bool = False
+    heading_text: Optional[str] = None
+    allow_heading_aliases: bool = False
+    check_heading_bold: bool = False
+    heading_bold: bool = True
+    check_heading_alignment: bool = False
+    heading_alignment: Optional[str] = None
+
+    # --- section ---------------------------------------------------------
+    check_start_on_new_page: bool = False
+
+    # --- entries ---------------------------------------------------------
+    check_hanging_indent: bool = False
+    check_line_spacing: Optional[bool] = None
+    check_space_before: bool = False
+    space_before_pt: Optional[float] = None
+    check_space_after: bool = False
+    space_after_pt: Optional[float] = None
+    check_font_family: bool = False
+    font_family: Optional[str] = None
+    check_font_size: bool = False
+    font_size_pt: Optional[float] = None
+    check_alignment: bool = False
+    alignment: Optional[str] = None
+
+
+# The heading words a profile may require. A fixed vocabulary, never free
+# text: no regex, no JSON, no pattern matching is exposed to the user.
+# `reference` (singular) is intentionally absent — the detector does not
+# accept it as a heading, so requiring it could never be satisfied.
+REFERENCE_HEADING_TEXT_CHOICES: Tuple[str, ...] = (
+    "references",
+    "bibliography",
+    "works cited",
+    "reference list",
+)
+
+# Alignment vocabulary shared with body/heading settings.
+_ALIGNMENTS = ("left", "center", "right", "justify")
 
 
 @dataclass
@@ -303,6 +361,61 @@ class DocumentFormattingProfile:
         e = _require_unit(self.references.hanging_indent_in, "references.hanging_indent_in", *_INDENT_IN_RANGE)
         if e:
             errors.append(("references.hanging_indent_in", e))
+
+        # Reference List (Phase 3). Toggles are booleans only — a string,
+        # null or number is rejected instead of being truthy-coerced. The
+        # one tri-state toggle is `check_line_spacing` (None = derive from
+        # the stored value), so its None case is explicitly allowed.
+        r = self.references
+        for field_name, allow_none in (
+            ("check_heading_text", False),
+            ("allow_heading_aliases", False),
+            ("check_heading_bold", False),
+            ("heading_bold", False),
+            ("check_heading_alignment", False),
+            ("check_start_on_new_page", False),
+            ("check_hanging_indent", False),
+            ("check_line_spacing", True),
+            ("check_space_before", False),
+            ("check_space_after", False),
+            ("check_font_family", False),
+            ("check_font_size", False),
+            ("check_alignment", False),
+        ):
+            raw = getattr(r, field_name)
+            if allow_none and raw is None:
+                continue
+            if not isinstance(raw, bool):
+                errors.append((
+                    f"references.{field_name}",
+                    "must be true or false",
+                ))
+
+        if r.heading_text is not None and (
+            not isinstance(r.heading_text, str)
+            or r.heading_text.strip().lower() not in REFERENCE_HEADING_TEXT_CHOICES
+        ):
+            errors.append((
+                "references.heading_text",
+                "must be one of: " + ", ".join(REFERENCE_HEADING_TEXT_CHOICES),
+            ))
+        if r.alignment is not None and r.alignment not in _ALIGNMENTS:
+            errors.append(("references.alignment", f"invalid '{r.alignment}'"))
+        if r.heading_alignment is not None and r.heading_alignment not in _ALIGNMENTS:
+            errors.append(("references.heading_alignment", f"invalid '{r.heading_alignment}'"))
+        if r.font_family is not None and (
+            not isinstance(r.font_family, str) or not r.font_family.strip()
+        ):
+            errors.append(("references.font_family", "must not be empty when set"))
+        e = _require_unit(r.space_before_pt, "references.space_before_pt", *_SPACING_PT_RANGE)
+        if e:
+            errors.append(("references.space_before_pt", e))
+        e = _require_unit(r.space_after_pt, "references.space_after_pt", *_SPACING_PT_RANGE)
+        if e:
+            errors.append(("references.space_after_pt", e))
+        e = _require_unit(r.font_size_pt, "references.font_size_pt", *_FONT_SIZE_PT_RANGE)
+        if e:
+            errors.append(("references.font_size_pt", e))
 
         # Captions / lists
         e = _require_unit(self.captions.space_before_pt, "captions.space_before_pt", *_SPACING_PT_RANGE)

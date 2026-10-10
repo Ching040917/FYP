@@ -467,15 +467,36 @@ def test_v1_payload_carrying_v2_group_rejected():
     assert any(path == "citation_matching" for path, _ in exc.value.errors)
 
 
-def test_v2_snapshot_round_trips_with_citation_group():
+def test_v3_snapshot_round_trips_with_reference_rules():
     snap = resolve_snapshot(get_builtin_profile(APA_PROFILE_ID))
     d = snap.to_dict()
-    assert SNAPSHOT_SCHEMA_VERSION == 2
-    assert d["schema_version"] == 2
+    assert SNAPSHOT_SCHEMA_VERSION == 3
+    assert d["schema_version"] == 3
     assert list(d)[-2:] == ["citation_matching", "fingerprint"]
     assert d["citation_matching"]["check_references_are_cited"] is False
+    assert d["references"]["check_hanging_indent"] is True
     restored = snapshot_from_dict(json.loads(json.dumps(d)))
     assert restored == snap
+
+
+def test_v2_snapshot_round_trips_with_citation_group():
+    from app.services.profile_snapshot import EffectiveProfileSnapshot
+
+    current = resolve_snapshot(get_builtin_profile(APA_PROFILE_ID))
+    legacy = EffectiveProfileSnapshot(
+        schema_version=2,
+        profile_id=current.profile_id,
+        profile_name=current.profile_name,
+        profile_source=current.profile_source,
+        references_line_spacing=current.references_line_spacing,
+        references_hanging_indent_in=current.references_hanging_indent_in,
+        citation_check_references_are_cited=current.citation_check_references_are_cited,
+    ).with_fingerprint()
+    d = legacy.to_dict()
+    assert d["schema_version"] == 2
+    assert set(d["references"]) == {"line_spacing", "hanging_indent_in"}
+    restored = snapshot_from_dict(json.loads(json.dumps(d)))
+    assert restored == legacy
 
 
 def test_v2_citation_toggle_type_rejected():
@@ -488,7 +509,7 @@ def test_v2_citation_toggle_type_rejected():
 
 def test_future_schema_version_rejected():
     d = resolve_snapshot(get_builtin_profile(APA_PROFILE_ID)).to_dict()
-    d["schema_version"] = 3
+    d["schema_version"] = 4
     with pytest.raises(ProfileValidationError) as exc:
         snapshot_from_dict(d)
     assert any(path == "schema_version" for path, _ in exc.value.errors)

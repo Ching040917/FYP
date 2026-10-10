@@ -103,6 +103,38 @@ _FIELD_MAP.update({
     )
 })
 
+# Reference List rule toggles and values — flat identifiers, one editor
+# control each. Toggles map to themselves; values map to the control that
+# carries them, so a bad number focuses the input the user actually sees.
+_FIELD_MAP.update({
+    f"references.{name}": f"references.{name}"
+    for name in (
+        "check_heading_text",
+        "allow_heading_aliases",
+        "check_heading_bold",
+        "heading_bold",
+        "check_heading_alignment",
+        "check_start_on_new_page",
+        "check_hanging_indent",
+        "check_line_spacing",
+        "check_space_before",
+        "check_space_after",
+        "check_font_family",
+        "check_font_size",
+        "check_alignment",
+    )
+})
+_FIELD_MAP.update({
+    "references.heading_text": "references.heading_text",
+    "references.heading_alignment": "references.heading_alignment",
+    "references.hanging_indent_in": "references.hanging_indent",
+    "references.space_before_pt": "references.space_before",
+    "references.space_after_pt": "references.space_after",
+    "references.font_family": "references.font_family",
+    "references.font_size_pt": "references.font_size",
+    "references.alignment": "references.alignment",
+})
+
 
 def validate_custom_profile(payload: Any) -> Dict[str, Any]:
     """Validate + normalize one custom profile payload.
@@ -251,6 +283,26 @@ def _message_for(path: str, message: str) -> str:
         if "unknown field" in lower:
             return "This field is not recognized."
         return "Choose true or false for this check."
+
+    if path.startswith("references."):
+        if "unknown field" in lower:
+            return "This field is not recognized."
+        if "must be true or false" in lower:
+            return "Choose true or false for this check."
+        if path in ("references.heading_text",) or "must be one of" in lower:
+            return "Choose References, Bibliography, Works Cited or Reference List."
+        if path in ("references.alignment", "references.heading_alignment"):
+            return "Choose left, center, right or justified."
+        if "must be between" in lower or "between" in lower:
+            if "line_spacing" in path:
+                return "Enter line spacing between 1 and 4."
+            if "hanging_indent" in path:
+                return "Enter an indent between 0 and 4 in."
+            if "font_size" in path:
+                return "Enter a font size between 6 and 72 pt."
+            return "Enter a spacing between 0 and 240 pt."
+        if "must not be empty" in lower:
+            return "Enter a font name."
 
     if path == "citation_style":
         return "APA 7 is the only supported citation style."

@@ -194,8 +194,18 @@ test('every production rule code has a plain-language title', () => {
       'MARGIN_LEFT',
       'MARGIN_RIGHT',
       'MARGIN_TOP',
+      'REFERENCE_ALIGNMENT',
       'REFERENCE_DUPLICATE',
+      'REFERENCE_FONT_FAMILY',
+      'REFERENCE_FONT_SIZE',
+      'REFERENCE_HANGING_INDENT',
+      'REFERENCE_HEADING_ALIGNMENT',
+      'REFERENCE_HEADING_BOLD',
+      'REFERENCE_HEADING_TEXT',
       'REFERENCE_NOT_CITED',
+      'REFERENCE_SECTION_NEW_PAGE',
+      'REFERENCE_SPACE_AFTER',
+      'REFERENCE_SPACE_BEFORE',
       'SPACE_AFTER',
       'SPACE_BEFORE',
       'TABLE_CAPTION_MISSING',
@@ -376,6 +386,69 @@ test('citation/reference rule codes share the APA citations category', async () 
     'REFERENCE_DUPLICATE',
   ]) {
     assert.equal(categoryForRuleCode(code), 'citation_apa', code)
+  }
+})
+
+// ---------------------------------------------------------------------------
+// Reference List formatting rules
+// ---------------------------------------------------------------------------
+
+test('Reference List formatting rules carry their agreed titles', () => {
+  const expected: Record<string, string> = {
+    REFERENCE_HEADING_TEXT: 'Reference List heading does not match',
+    REFERENCE_HEADING_BOLD: 'Reference List heading should be bold',
+    REFERENCE_HEADING_ALIGNMENT: 'Reference List heading alignment does not match',
+    REFERENCE_SECTION_NEW_PAGE: 'Reference List should start on a new page',
+    REFERENCE_HANGING_INDENT: 'Reference entry hanging indent does not match',
+    REFERENCE_SPACE_BEFORE: 'Space before Reference List entries does not match',
+    REFERENCE_SPACE_AFTER: 'Space after Reference List entries does not match',
+    REFERENCE_FONT_FAMILY: 'Reference entry font family does not match',
+    REFERENCE_FONT_SIZE: 'Reference entry font size does not match',
+    REFERENCE_ALIGNMENT: 'Reference entry alignment does not match',
+  }
+  for (const [code, title] of Object.entries(expected)) {
+    assert.equal(friendlyRuleTitle(code), title, code)
+    assert.equal(friendlyRuleTitle(code.toLowerCase()), title, code)
+  }
+})
+
+test('Reference List formatting rules name the one change to make', () => {
+  const expected: Record<string, string> = {
+    REFERENCE_HEADING_TEXT: 'Rename the Reference List heading to the required wording.',
+    REFERENCE_HEADING_BOLD: 'Apply or remove bold on the Reference List heading as required.',
+    REFERENCE_HEADING_ALIGNMENT: 'Align the Reference List heading as required.',
+    REFERENCE_SECTION_NEW_PAGE: 'Insert a page break before the Reference List heading.',
+    REFERENCE_HANGING_INDENT:
+      'Apply a hanging indent so the first line is flush left and the following lines are indented by the configured amount.',
+    REFERENCE_SPACE_BEFORE: 'Set the required space before these Reference List entries.',
+    REFERENCE_SPACE_AFTER: 'Set the required space after these Reference List entries.',
+    REFERENCE_FONT_FAMILY: 'Set every Reference List entry to the required font family.',
+    REFERENCE_FONT_SIZE: 'Set every Reference List entry to the required font size.',
+    REFERENCE_ALIGNMENT: 'Align the Reference List entries as required.',
+  }
+  for (const [code, action] of Object.entries(expected)) {
+    assert.equal(friendlyRequiredAction(code, '0.5 in', '0.25 in'), action, code)
+    // Fixed copy: identical with or without the expected/actual values.
+    assert.equal(friendlyRequiredAction(code, null, null), action, code)
+  }
+})
+
+test('Reference List formatting rules keep their own category', async () => {
+  const { categoryForRuleCode } = await import('../src/lib/audit/adapter.ts')
+  const expected: Record<string, string> = {
+    REFERENCE_HEADING_TEXT: 'heading_hierarchy',
+    REFERENCE_HEADING_BOLD: 'heading_hierarchy',
+    REFERENCE_HEADING_ALIGNMENT: 'heading_hierarchy',
+    REFERENCE_SECTION_NEW_PAGE: 'heading_hierarchy',
+    REFERENCE_HANGING_INDENT: 'paragraph_typography',
+    REFERENCE_SPACE_BEFORE: 'paragraph_typography',
+    REFERENCE_SPACE_AFTER: 'paragraph_typography',
+    REFERENCE_ALIGNMENT: 'paragraph_typography',
+    REFERENCE_FONT_FAMILY: 'font_consistency',
+    REFERENCE_FONT_SIZE: 'font_size',
+  }
+  for (const [code, category] of Object.entries(expected)) {
+    assert.equal(categoryForRuleCode(code), category, code)
   }
 })
 

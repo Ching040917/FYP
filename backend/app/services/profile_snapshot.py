@@ -32,10 +32,14 @@ from app.services.profile_schema import (
 )
 
 # Bump when the snapshot shape changes incompatibly.
-# v2 appends the citation_matching group (deterministic citation ↔ Reference
-# List matching toggles). v1 snapshots stay loadable: their canonical key
-# order is frozen below so their stored SHA-256 keeps verifying byte-for-byte.
-SNAPSHOT_SCHEMA_VERSION = 2
+#  v2 appends the citation_matching group (deterministic citation ↔ Reference
+#  List matching toggles).
+#  v3 extends the NESTED references group with the Reference List formatting
+#  rules. The top-level key order is unchanged; the nested references group is
+#  version-gated below, so v1 and v2 snapshots keep verifying byte-for-byte.
+#  v1 snapshots stay loadable: their canonical key order is frozen below so
+#  their stored SHA-256 keeps verifying byte-for-byte.
+SNAPSHOT_SCHEMA_VERSION = 3
 
 # Frozen v1 canonical key order — NEVER edit. v1 snapshots are fingerprinted
 # over exactly these keys; changing the tuple invalidates stored fingerprints
@@ -48,7 +52,9 @@ _CANONICAL_ORDER_V1 = (
 )
 
 # Canonical key order for deterministic serialization (byte-stable).
-# v2 appends citation_matching immediately before the fingerprint.
+# v2 appends citation_matching immediately before the fingerprint; v3 keeps
+# the same TOP-LEVEL order and changes only the nested references group, so
+# this tuple is intentionally identical for v2 and v3.
 _CANONICAL_ORDER = (
     "schema_version", "profile_id", "profile_name", "profile_version",
     "profile_source", "description", "citation_style", "institution_specific",
@@ -56,8 +62,38 @@ _CANONICAL_ORDER = (
     "role_exemptions", "table_eligibility", "citation_matching", "fingerprint",
 )
 
+# Nested `references` keys of a v3 snapshot. The two pre-existing keys keep
+# their position first so a v3 payload is a superset of v2, never a reorder.
+_REFERENCES_GROUP_KEYS_V3: Tuple[str, ...] = (
+    "line_spacing", "hanging_indent_in",
+    "check_heading_text", "heading_text", "allow_heading_aliases",
+    "check_heading_bold", "heading_bold",
+    "check_heading_alignment", "heading_alignment",
+    "check_start_on_new_page",
+    "check_hanging_indent", "check_line_spacing",
+    "check_space_before", "space_before_pt",
+    "check_space_after", "space_after_pt",
+    "check_font_family", "font_family",
+    "check_font_size", "font_size_pt",
+    "check_alignment", "alignment",
+)
+
+# Nested `references` keys of a v1/v2 snapshot — frozen. A stored historical
+# snapshot must serialize to the exact bytes that produced its fingerprint,
+# so it never gains the v3 Reference List keys.
+_REFERENCES_GROUP_KEYS_LEGACY: Tuple[str, ...] = ("line_spacing", "hanging_indent_in")
+
 # Snapshot schema versions this build can load (older first).
-SUPPORTED_SNAPSHOT_SCHEMA_VERSIONS = (1, SNAPSHOT_SCHEMA_VERSION)
+SUPPORTED_SNAPSHOT_SCHEMA_VERSIONS = (1, 2, SNAPSHOT_SCHEMA_VERSION)
+
+
+def _references_group_keys(version: Any) -> Tuple[str, ...]:
+    """Nested references key order for a stored snapshot schema version."""
+    try:
+        version_int = int(version)
+    except (TypeError, ValueError):
+        return _REFERENCES_GROUP_KEYS_LEGACY
+    return _REFERENCES_GROUP_KEYS_V3 if version_int >= 3 else _REFERENCES_GROUP_KEYS_LEGACY
 
 
 def _canonical_order_for(version: Any) -> Tuple[str, ...]:
@@ -120,6 +156,32 @@ class EffectiveProfileSnapshot:
 
     references_line_spacing: Optional[float] = None
     references_hanging_indent_in: Optional[float] = None
+
+    # Reference List formatting rules (v3+). Flat like every other group so
+    # rules read them directly. Each `references_check_*` toggle is the
+    # RESOLVED effective toggle: a check whose dependent value is absent is
+    # still effective but uncomparable, so a rule can never fire without a
+    # configured value.
+    references_check_heading_text: bool = False
+    references_heading_text: Optional[str] = None
+    references_allow_heading_aliases: bool = False
+    references_check_heading_bold: bool = False
+    references_heading_bold: bool = True
+    references_check_heading_alignment: bool = False
+    references_heading_alignment: Optional[str] = None
+    references_check_start_on_new_page: bool = False
+    references_check_hanging_indent: bool = False
+    references_check_line_spacing: bool = False
+    references_check_space_before: bool = False
+    references_space_before_pt: Optional[float] = None
+    references_check_space_after: bool = False
+    references_space_after_pt: Optional[float] = None
+    references_check_font_family: bool = False
+    references_font_family: Optional[str] = None
+    references_check_font_size: bool = False
+    references_font_size_pt: Optional[float] = None
+    references_check_alignment: bool = False
+    references_alignment: Optional[str] = None
 
     caption_space_before_pt: Optional[float] = None
     caption_space_after_pt: Optional[float] = None
@@ -190,10 +252,7 @@ class EffectiveProfileSnapshot:
                 "top_in": self.margin_top_in,
                 "bottom_in": self.margin_bottom_in,
             },
-            "references": {
-                "line_spacing": self.references_line_spacing,
-                "hanging_indent_in": self.references_hanging_indent_in,
-            },
+            "references": self._references_group(self.schema_version),
             "captions": {
                 "space_before_pt": self.caption_space_before_pt,
                 "space_after_pt": self.caption_space_after_pt,
@@ -215,6 +274,39 @@ class EffectiveProfileSnapshot:
             "fingerprint": self.fingerprint,
         }
         return {k: d[k] for k in _canonical_order_for(self.schema_version) if k in d}
+
+    def _references_group(self, version: Any) -> Dict[str, Any]:
+        """Nested references payload for one stored schema version.
+
+        A v1/v2 snapshot emits exactly the two keys it always had, so its
+        canonical bytes — and therefore its stored fingerprint — are
+        unchanged. Only a v3 snapshot carries the Reference List rules.
+        """
+        full: Dict[str, Any] = {
+            "line_spacing": self.references_line_spacing,
+            "hanging_indent_in": self.references_hanging_indent_in,
+            "check_heading_text": self.references_check_heading_text,
+            "heading_text": self.references_heading_text,
+            "allow_heading_aliases": self.references_allow_heading_aliases,
+            "check_heading_bold": self.references_check_heading_bold,
+            "heading_bold": self.references_heading_bold,
+            "check_heading_alignment": self.references_check_heading_alignment,
+            "heading_alignment": self.references_heading_alignment,
+            "check_start_on_new_page": self.references_check_start_on_new_page,
+            "check_hanging_indent": self.references_check_hanging_indent,
+            "check_line_spacing": self.references_check_line_spacing,
+            "check_space_before": self.references_check_space_before,
+            "space_before_pt": self.references_space_before_pt,
+            "check_space_after": self.references_check_space_after,
+            "space_after_pt": self.references_space_after_pt,
+            "check_font_family": self.references_check_font_family,
+            "font_family": self.references_font_family,
+            "check_font_size": self.references_check_font_size,
+            "font_size_pt": self.references_font_size_pt,
+            "check_alignment": self.references_check_alignment,
+            "alignment": self.references_alignment,
+        }
+        return {k: full[k] for k in _references_group_keys(version)}
 
     def canonical_bytes(self) -> bytes:
         """Byte-stable canonical serialization (JSON with stable key order).
@@ -275,6 +367,26 @@ class EffectiveProfileSnapshot:
             margin_bottom_in=self.margin_bottom_in,
             references_line_spacing=self.references_line_spacing,
             references_hanging_indent_in=self.references_hanging_indent_in,
+            references_check_heading_text=self.references_check_heading_text,
+            references_heading_text=self.references_heading_text,
+            references_allow_heading_aliases=self.references_allow_heading_aliases,
+            references_check_heading_bold=self.references_check_heading_bold,
+            references_heading_bold=self.references_heading_bold,
+            references_check_heading_alignment=self.references_check_heading_alignment,
+            references_heading_alignment=self.references_heading_alignment,
+            references_check_start_on_new_page=self.references_check_start_on_new_page,
+            references_check_hanging_indent=self.references_check_hanging_indent,
+            references_check_line_spacing=self.references_check_line_spacing,
+            references_check_space_before=self.references_check_space_before,
+            references_space_before_pt=self.references_space_before_pt,
+            references_check_space_after=self.references_check_space_after,
+            references_space_after_pt=self.references_space_after_pt,
+            references_check_font_family=self.references_check_font_family,
+            references_font_family=self.references_font_family,
+            references_check_font_size=self.references_check_font_size,
+            references_font_size_pt=self.references_font_size_pt,
+            references_check_alignment=self.references_check_alignment,
+            references_alignment=self.references_alignment,
             caption_space_before_pt=self.caption_space_before_pt,
             caption_space_after_pt=self.caption_space_after_pt,
             list_space_after_pt=self.list_space_after_pt,
@@ -405,6 +517,30 @@ def resolve_snapshot(
     cm = profile.citation_matching
     parent_on = bool(cm.check_citations_have_references)
 
+    # Reference List rules. The snapshot records the EXACT configured values
+    # (never a value silently dropped because its toggle is off — the audit
+    # disclosure must show what the profile says), while each
+    # `references_check_*` toggle is the resolved effective switch. Rules
+    # read a value only when its toggle is on, so a disabled check emits
+    # nothing and never compares against a stored value.
+    refs = profile.references
+    heading_text_on = bool(refs.check_heading_text)
+    resolved_heading_text = (
+        refs.heading_text.strip().lower()
+        if heading_text_on and isinstance(refs.heading_text, str)
+        else refs.heading_text.strip().lower()
+        if isinstance(refs.heading_text, str)
+        else None
+    )
+    # The one PRESERVED rule: an explicit toggle always wins, and a profile
+    # that predates the toggle keeps exactly the enforcement it always had —
+    # active if and only if a line-spacing value is stored.
+    resolved_line_spacing_check = (
+        refs.line_spacing is not None
+        if refs.check_line_spacing is None
+        else bool(refs.check_line_spacing)
+    )
+
     snapshot = EffectiveProfileSnapshot(
         schema_version=SNAPSHOT_SCHEMA_VERSION,
         profile_id=profile.profile_id,
@@ -439,8 +575,28 @@ def resolve_snapshot(
         margin_top_in=profile.margins.margin_top_in,
         margin_bottom_in=profile.margins.margin_bottom_in,
 
-        references_line_spacing=profile.references.line_spacing,
-        references_hanging_indent_in=profile.references.hanging_indent_in,
+        references_line_spacing=refs.line_spacing,
+        references_hanging_indent_in=refs.hanging_indent_in,
+        references_check_heading_text=heading_text_on,
+        references_heading_text=resolved_heading_text,
+        references_allow_heading_aliases=bool(refs.allow_heading_aliases),
+        references_check_heading_bold=bool(refs.check_heading_bold),
+        references_heading_bold=bool(refs.heading_bold),
+        references_check_heading_alignment=bool(refs.check_heading_alignment),
+        references_heading_alignment=refs.heading_alignment,
+        references_check_start_on_new_page=bool(refs.check_start_on_new_page),
+        references_check_hanging_indent=bool(refs.check_hanging_indent),
+        references_check_line_spacing=resolved_line_spacing_check,
+        references_check_space_before=bool(refs.check_space_before),
+        references_space_before_pt=refs.space_before_pt,
+        references_check_space_after=bool(refs.check_space_after),
+        references_space_after_pt=refs.space_after_pt,
+        references_check_font_family=bool(refs.check_font_family),
+        references_font_family=refs.font_family,
+        references_check_font_size=bool(refs.check_font_size),
+        references_font_size_pt=refs.font_size_pt,
+        references_check_alignment=bool(refs.check_alignment),
+        references_alignment=refs.alignment,
 
         caption_space_before_pt=profile.captions.space_before_pt,
         caption_space_after_pt=profile.captions.space_after_pt,
@@ -508,7 +664,10 @@ def snapshot_from_dict(data: Dict[str, Any]) -> EffectiveProfileSnapshot:
         "heading": {"font_family", "font_size_pt", "allowed_font_combos", "alignment",
                     "space_before_pt", "space_after_pt", "level_1", "level_2", "level_3"},
         "margins": {"left_in", "right_in", "top_in", "bottom_in"},
-        "references": {"line_spacing", "hanging_indent_in"},
+        # Nested references keys follow the payload's own version: a v1/v2
+        # payload carrying v3 Reference List keys is malformed, and a v3
+        # payload missing them is completed from the schema defaults.
+        "references": set(_references_group_keys(version_int)),
         "captions": {"space_before_pt", "space_after_pt"},
         "lists": {"space_after_pt"},
     }
@@ -540,6 +699,21 @@ def snapshot_from_dict(data: Dict[str, Any]) -> EffectiveProfileSnapshot:
             ])
         cm_values[f"citation_{name}"] = raw
 
+    # Reference List rule fields (v3+). Defaults come from the snapshot
+    # dataclass, so a v3 payload missing a key completes to the documented
+    # "off" state; a v1/v2 payload can never carry them at all.
+    ref_defaults = EffectiveProfileSnapshot()
+    ref_values: Dict[str, Any] = {}
+    for key in _REFERENCES_GROUP_KEYS_V3:
+        attr = "references_" + key
+        raw = refs.get(key, getattr(ref_defaults, attr))
+        if isinstance(getattr(ref_defaults, attr), bool):
+            if not isinstance(raw, bool):
+                raise ProfileValidationError([
+                    (f"references.{key}", "must be true or false")
+                ])
+        ref_values[attr] = raw
+
     snapshot = EffectiveProfileSnapshot(
         schema_version=int(version),
         profile_id=str(data.get("profile_id") or ""),
@@ -570,8 +744,7 @@ def snapshot_from_dict(data: Dict[str, Any]) -> EffectiveProfileSnapshot:
         margin_right_in=margins.get("right_in"),
         margin_top_in=margins.get("top_in"),
         margin_bottom_in=margins.get("bottom_in"),
-        references_line_spacing=refs.get("line_spacing"),
-        references_hanging_indent_in=refs.get("hanging_indent_in"),
+        **ref_values,
         caption_space_before_pt=caps.get("space_before_pt"),
         caption_space_after_pt=caps.get("space_after_pt"),
         list_space_after_pt=lists.get("space_after_pt"),

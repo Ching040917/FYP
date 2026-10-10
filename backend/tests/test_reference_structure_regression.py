@@ -17,7 +17,7 @@ from app.services.profile_snapshot import (
     SNAPSHOT_SCHEMA_VERSION,
     SUPPORTED_SNAPSHOT_SCHEMA_VERSIONS,
 )
-from app.services.profile_schema import ReferencesSettings
+from app.services.profile_schema import CitationMatchingSettings, ReferencesSettings
 
 # The full rule-code vocabulary that exists on this branch. A new
 # Reference-List rule would show up here.
@@ -29,6 +29,16 @@ KNOWN_RULE_CODES = {
     "CITATION_MISMATCH", "CITATION_REFERENCE_MISMATCH",
     "CITATION_YEAR_SUFFIX_MISMATCH", "CITATION_REFERENCE_AMBIGUOUS",
     "REFERENCE_NOT_CITED", "REFERENCE_DUPLICATE",
+}
+
+# The ten Reference List FORMATTING codes added by Phase 3. Nothing outside
+# this set may ever be added to the PDF/scoring vocabulary.
+REFERENCE_FORMAT_CODES = {
+    "REFERENCE_HEADING_TEXT", "REFERENCE_HEADING_BOLD",
+    "REFERENCE_HEADING_ALIGNMENT", "REFERENCE_SECTION_NEW_PAGE",
+    "REFERENCE_HANGING_INDENT", "REFERENCE_SPACE_BEFORE",
+    "REFERENCE_SPACE_AFTER", "REFERENCE_FONT_FAMILY",
+    "REFERENCE_FONT_SIZE", "REFERENCE_ALIGNMENT",
 }
 
 
@@ -79,9 +89,12 @@ def test_references_line_spacing_still_uses_the_existing_preset_field():
     source = open(le.__file__, encoding="utf-8").read()
     # The existing configuration path must still be the one that runs.
     assert "preset.REFERENCES_LINE_SPACING" in source
-    # ...and no new rule code was introduced alongside it.
-    assert "REFERENCE_HANGING_INDENT" not in source
-    assert "REFERENCE_SECTION_NEW_PAGE" not in source
+    # The Phase 3 formatting rules live in their own module; the generic
+    # typography path never grew a Reference-List code of its own.
+    typography = source.split("def check_paragraph_typography", 1)[1]
+    typography = typography.split("\ndef ", 1)[0]
+    assert "REFERENCE_HANGING_INDENT" not in typography
+    assert "REFERENCE_SECTION_NEW_PAGE" not in typography
 
 
 def test_references_line_spacing_violation_is_unchanged():
@@ -116,15 +129,19 @@ def test_references_line_spacing_violation_is_unchanged():
 # --- 5: score unchanged ----------------------------------------------------
 
 
-def test_no_scoring_module_change_was_required():
-    source = open(
-        __import__("app.services.scoring", fromlist=["x"]).__file__,
-        encoding="utf-8",
-    ).read()
-    # No Reference-List formatting rule was routed anywhere.
-    for code in ("REFERENCE_HANGING_INDENT", "REFERENCE_SECTION_NEW_PAGE",
-                 "REFERENCE_ENTRY_STRUCTURE", "REFERENCE_DOI_FORMAT"):
-        assert code not in source
+def test_scoring_knows_the_reference_formatting_codes():
+    """Phase 3 routes each new code to an existing category. No category,
+    cap or weight was added — see tests/test_reference_rules.py."""
+    from app.services.scoring import rule_code_to_category
+
+    assert rule_code_to_category("REFERENCE_HANGING_INDENT") == "paragraph_typography"
+    assert rule_code_to_category("REFERENCE_SECTION_NEW_PAGE") == "heading_hierarchy"
+    # The Phase 2 semantic codes still score against citations.
+    assert rule_code_to_category("REFERENCE_NOT_CITED") == "citation_apa"
+    assert rule_code_to_category("REFERENCE_DUPLICATE") == "citation_apa"
+    # Codes that were never part of this feature still do not exist.
+    for code in ("REFERENCE_ENTRY_STRUCTURE", "REFERENCE_DOI_FORMAT"):
+        assert rule_code_to_category(code) == "citation_apa"
 
 
 # --- 6: role classification unchanged --------------------------------------
@@ -156,27 +173,47 @@ def test_role_classification_of_reference_documents_is_unchanged():
 # --- 7: snapshot parity ----------------------------------------------------
 
 
-def test_snapshot_version_is_unchanged():
-    assert SNAPSHOT_SCHEMA_VERSION == 2
-    assert tuple(SUPPORTED_SNAPSHOT_SCHEMA_VERSIONS) == (1, 2)
+def test_snapshot_version_carries_the_reference_list_rules():
+    # Phase 3 extended the nested references group, so the current version
+    # is 3 and every earlier version stays loadable.
+    assert SNAPSHOT_SCHEMA_VERSION == 3
+    assert tuple(SUPPORTED_SNAPSHOT_SCHEMA_VERSIONS) == (1, 2, 3)
 
 
-def test_no_profile_schema_key_was_added():
-    fields = set(ReferencesSettings.__dataclass_fields__)
-    assert fields == {"line_spacing", "hanging_indent_in"}
+def test_phase_2_citation_matching_keys_are_untouched():
+    """Phase 3 adds Reference List FORMATTING keys only.
+
+    The citation-matching group — Phase 2's profile contract — is exactly
+    as it was, so no Phase 2 toggle can drift with the new rules.
+    """
+    assert set(CitationMatchingSettings.__dataclass_fields__) == {
+        "check_citations_have_references",
+        "check_references_are_cited",
+        "check_author_year_consistency",
+        "check_year_suffixes",
+        "check_duplicate_references",
+        "flag_ambiguous_matches",
+        "allow_personal_communication",
+    }
 
 
-def test_references_group_still_serialises_identically():
+def test_references_group_keeps_its_two_original_fields():
+    assert {"line_spacing", "hanging_indent_in"} <= set(ReferencesSettings.__dataclass_fields__)
+
+
+def test_legacy_snapshots_serialise_their_own_frozen_references_group():
+    """v1/v2 bytes never gain the v3 Reference List keys."""
     from app.services.profile_snapshot import EffectiveProfileSnapshot
 
-    snapshot = EffectiveProfileSnapshot(
-        references_line_spacing=2.0,
-        references_hanging_indent_in=0.5,
-    )
-    assert snapshot.to_dict()["references"] == {
-        "line_spacing": 2.0,
-        "hanging_indent_in": 0.5,
-    }
+    frozen = {"line_spacing": 2.0, "hanging_indent_in": 0.5}
+    for version in (1, 2):
+        snapshot = EffectiveProfileSnapshot(
+            schema_version=version,
+            references_line_spacing=2.0,
+            references_hanging_indent_in=0.5,
+            references_check_hanging_indent=True,
+        )
+        assert snapshot.to_dict()["references"] == frozen, version
 
 
 # --- 8/9: no new rule code or severity ------------------------------------
@@ -245,12 +282,11 @@ def test_model_download_module_untouched_by_this_feature():
 # --- 15: PDF untouched -----------------------------------------------------
 
 
-def test_pdf_report_has_no_new_reference_rule_names():
+def test_pdf_report_knows_exactly_the_phase_3_rule_names():
     import app.services.pdf_report as pdf
 
     source = open(pdf.__file__, encoding="utf-8").read()
-    assert len(pdf._RULE_NAME) == 21
-    for code in KNOWN_RULE_CODES:
-        pass  # unchanged vocabulary, asserted by count above
-    assert "REFERENCE_HANGING" not in source
+    # 21 pre-existing codes plus the ten Reference List formatting rules.
+    assert len(pdf._RULE_NAME) == 31
+    assert set(pdf._RULE_NAME) == KNOWN_RULE_CODES | REFERENCE_FORMAT_CODES
     assert "REFERENCE_ENTRY_STRUCTURE" not in source

@@ -42,6 +42,9 @@ import {
   resolveUniqueName,
   summarizeProfile,
   upsertAndBump,
+  REFERENCE_HEADING_TEXT_OPTIONS,
+  REFERENCES_INDENT_MAX_IN,
+  REFERENCES_INDENT_MIN_IN,
   validateRequirements,
   CITATION_MATCHING_DEPENDENT_FIELDS,
   CITATION_MATCHING_FIELDS,
@@ -51,6 +54,15 @@ import {
   type OpStatus,
 } from '../src/lib/custom-profile-store/editor.ts'
 import { ACTIVE_KEY, RECOVERY_KEY, emptyEnvelope, serializeEnvelope } from '../src/lib/custom-profile-store/store.ts'
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+import { dirname, resolve } from 'node:path'
+
+/** The editor page source — the DOM contract its controls must keep. */
+const PROFILE_EDITOR = readFileSync(
+  resolve(dirname(fileURLToPath(import.meta.url)), '../src/pages/ProfileEditor.tsx'),
+  'utf8',
+)
 
 function makeProfile(overrides: Record<string, unknown> = {}) {
   const id = generateProfileId()
@@ -136,21 +148,111 @@ test('references: null converts to disabled; enabled value round-trips', () => {
   const disabled = referencesToUiModel({ line_spacing: null, hanging_indent_in: null })
   assert.equal(disabled.lineSpacingEnabled, false)
   assert.equal(disabled.lineSpacing, '')
+  assert.equal(disabled.hangingIndentEnabled, false)
+  assert.equal(disabled.hangingIndent, '')
 
-  const enabled = referencesToUiModel({ line_spacing: 2, hanging_indent_in: 0.5 })
+  const enabled = referencesToUiModel({
+    check_hanging_indent: true,
+    hanging_indent_in: 0.5,
+    check_line_spacing: true,
+    line_spacing: 2,
+  })
   assert.equal(enabled.lineSpacingEnabled, true)
   assert.equal(enabled.lineSpacing, '2')
+  assert.equal(enabled.hangingIndentEnabled, true)
+  assert.equal(enabled.hangingIndent, '0.5')
 
-  const back = referencesFromUiModel(enabled, 0.5)
+  const back = referencesFromUiModel(enabled)
   assert.equal(back.line_spacing, 2)
-  // Hanging indent is preserved verbatim (never editable in this release).
   assert.equal(back.hanging_indent_in, 0.5)
+  assert.equal(back.check_hanging_indent, true)
+  assert.equal(back.check_line_spacing, true)
 })
 
-test('references: disabled saves null and never writes an editable hanging indent', () => {
-  const out = referencesFromUiModel({ lineSpacingEnabled: false, lineSpacing: '' }, null)
+test('references: disabled saves null values with every check off', () => {
+  const out = referencesFromUiModel(referencesToUiModel({}))
   assert.equal(out.line_spacing, null)
+  assert.equal(out.check_line_spacing, false)
   assert.equal(out.hanging_indent_in, null)
+  assert.equal(out.check_hanging_indent, false)
+  assert.equal(out.heading_text, null)
+  assert.equal(out.check_heading_text, false)
+  assert.equal(out.font_size_pt, null)
+  assert.equal(out.check_font_size, false)
+})
+
+test('references: every check round-trips through the UI model', () => {
+  const stored = {
+    check_heading_text: true,
+    heading_text: 'works cited',
+    allow_heading_aliases: true,
+    check_heading_bold: true,
+    heading_bold: true,
+    check_heading_alignment: true,
+    heading_alignment: 'center',
+    check_start_on_new_page: true,
+    check_hanging_indent: true,
+    hanging_indent_in: 0.5,
+    check_line_spacing: true,
+    line_spacing: 2,
+    check_space_before: true,
+    space_before_pt: 0,
+    check_space_after: true,
+    space_after_pt: 6,
+    check_font_family: true,
+    font_family: 'Times New Roman',
+    check_font_size: true,
+    font_size_pt: 12,
+    check_alignment: true,
+    alignment: 'left',
+  }
+  assert.deepEqual(referencesFromUiModel(referencesToUiModel(stored)), stored)
+})
+
+test('references: line-spacing check is the rendered state of the tri-state toggle', () => {
+  // No toggle (historical profile): the rule is on exactly when a value exists.
+  assert.equal(referencesToUiModel({ line_spacing: 2 }).lineSpacingEnabled, true)
+  assert.equal(referencesToUiModel({ line_spacing: null }).lineSpacingEnabled, false)
+  // An explicit false wins, so a switched-off check really turns the rule off.
+  assert.equal(referencesToUiModel({ check_line_spacing: false, line_spacing: 2 }).lineSpacingEnabled, false)
+  assert.equal(referencesToUiModel({ check_line_spacing: true, line_spacing: null }).lineSpacingEnabled, true)
+  // The editor always writes an explicit boolean, never a missing toggle.
+  const written = referencesFromUiModel(referencesToUiModel({ check_line_spacing: false, line_spacing: 2 }))
+  assert.equal(written.check_line_spacing, false)
+  assert.equal(written.line_spacing, null)
+})
+
+test('references: the heading word is a fixed vocabulary, stored lowercase', () => {
+  assert.deepEqual(REFERENCE_HEADING_TEXT_OPTIONS, [
+    'references',
+    'bibliography',
+    'works cited',
+    'reference list',
+  ])
+  assert.equal(referencesToUiModel({ heading_text: 'WORKS CITED' }).headingText, 'works cited')
+  // An unrecognized stored word falls back to the default, never free text.
+  assert.equal(referencesToUiModel({ heading_text: 'sources' }).headingText, 'references')
+  assert.equal(referencesToUiModel({}).headingText, 'references')
+})
+
+test('references: heading aliases never outlive their heading-text check', () => {
+  const aliased = referencesToUiModel({ check_heading_text: true, allow_heading_aliases: true })
+  assert.equal(aliased.allowHeadingAliases, true)
+  assert.equal(referencesFromUiModel(aliased).allow_heading_aliases, true)
+
+  const switchedOff = referencesFromUiModel({
+    ...aliased,
+    headingTextEnabled: false,
+  })
+  assert.equal(switchedOff.allow_heading_aliases, false)
+  assert.equal(switchedOff.heading_text, null)
+})
+
+test('references: alignment values are coerced to the shared vocabulary', () => {
+  assert.equal(referencesToUiModel({ check_heading_alignment: true, heading_alignment: 'center' }).headingAlignment, 'center')
+  assert.equal(referencesToUiModel({ heading_alignment: 'middle' }).headingAlignment, '')
+  assert.equal(referencesToUiModel({}).headingAlignment, '')
+  assert.equal(referencesToUiModel({}).alignment, '')
 })
 
 test('captions: null converts to disabled; values round-trip independently', () => {
@@ -215,6 +317,47 @@ test('references disabled → no validation error', () => {
     references: { line_spacing: null, hanging_indent_in: null },
   })
   assert.ok(!errors.some((e) => e.field === 'references.line_spacing'))
+})
+
+test('references: a checked value must be a number inside its range', () => {
+  const withIndent = (v: unknown) => ({
+    references: { check_hanging_indent: true, hanging_indent_in: v },
+  })
+  assert.deepEqual(validateRequirements(withIndent(0)), [])
+  assert.deepEqual(validateRequirements(withIndent(4)), [])
+  assert.ok(validateRequirements(withIndent(4.1)).some((e) => e.field === 'references.hanging_indent_in'))
+  assert.ok(validateRequirements(withIndent(-1)).some((e) => e.field === 'references.hanging_indent_in'))
+  assert.ok(validateRequirements(withIndent('half')).some((e) => e.field === 'references.hanging_indent_in'))
+  // A stored value behind a switched-off check is never validated.
+  assert.deepEqual(validateRequirements({ references: { check_hanging_indent: false, hanging_indent_in: 99 } }), [])
+
+  const withSpacing = (v: unknown) => ({ references: { check_space_before: true, space_before_pt: v } })
+  assert.deepEqual(validateRequirements(withSpacing(0)), [])
+  assert.deepEqual(validateRequirements(withSpacing(240)), [])
+  assert.ok(validateRequirements(withSpacing(241)).some((e) => e.field === 'references.space_before_pt'))
+
+  const withFontSize = (v: unknown) => ({ references: { check_font_size: true, font_size_pt: v } })
+  assert.deepEqual(validateRequirements(withFontSize(12)), [])
+  assert.ok(validateRequirements(withFontSize(5)).some((e) => e.field === 'references.font_size_pt'))
+  assert.ok(validateRequirements(withFontSize(73)).some((e) => e.field === 'references.font_size_pt'))
+
+  const emptyFont = validateRequirements({ references: { check_font_family: true, font_family: '  ' } })
+  assert.ok(emptyFont.some((e) => e.field === 'references.font_family'))
+})
+
+test('references: an enabled alignment check must have a value', () => {
+  const heading = validateRequirements({
+    references: { check_heading_alignment: true, heading_alignment: null },
+  })
+  assert.ok(heading.some((e) => e.field === 'references.heading_alignment'))
+  const entries = validateRequirements({ references: { check_alignment: true, alignment: '' } })
+  assert.ok(entries.some((e) => e.field === 'references.alignment'))
+  assert.deepEqual(
+    validateRequirements({
+      references: { check_heading_alignment: true, heading_alignment: 'justify', check_alignment: true, alignment: 'left' },
+    }),
+    [],
+  )
 })
 
 test('caption range boundaries: 0 and 240 valid; outside rejected', () => {
@@ -297,7 +440,7 @@ test('APA copy preserves its exact built-in reference/caption/list values', () =
     lists: { space_after_pt: null },
   }, id, 'Copy of APA 7 Student Paper')
   assert.equal(copy.references.line_spacing, 2)
-  // The stored hanging indent survives the copy verbatim (still never editable).
+  // The stored hanging indent survives the copy verbatim and stays editable.
   assert.equal(copy.references.hanging_indent_in, 0.5)
   assert.equal(copy.captions.space_before_pt, null)
   assert.equal(copy.captions.space_after_pt, null)
@@ -320,6 +463,8 @@ test('ranges exported match the backend contract', () => {
   assert.equal(REFERENCES_LINE_SPACING_MIN, 1)
   assert.equal(REFERENCES_LINE_SPACING_MAX, 4)
   assert.equal(SPACING_PT_MIN, 0)
+  assert.equal(REFERENCES_INDENT_MIN_IN, 0)
+  assert.equal(REFERENCES_INDENT_MAX_IN, 4)
   assert.equal(SPACING_PT_MAX, 240)
 })
 
@@ -336,7 +481,9 @@ test('summary wording for references/captions/lists', () => {
     captions: { space_before_pt: 6, space_after_pt: 12 },
     lists: { space_after_pt: 6 },
   })
-  assert.ok(s.lines.includes('References: 2 line spacing'))
+  // The Reference List line is the shared disclosure wording, so a stored
+  // double spacing reads the same here and in the audit report.
+  assert.ok(s.lines.includes('References: double line spacing'))
   assert.ok(s.lines.includes('Captions: 6 pt before, 12 pt after'))
   assert.ok(s.lines.includes('Lists: 6 pt after'))
 })
@@ -353,6 +500,62 @@ test('summary shows Not checked when references/captions/lists disabled', () => 
   assert.ok(s.lines.includes('References: Not checked'))
   assert.ok(s.lines.includes('Captions: Not checked'))
   assert.ok(s.lines.includes('Lists: Not checked'))
+})
+
+test('summary names every enabled Reference List check on one line', () => {
+  const s = summarizeProfile({
+    body: { font_family: null, font_size_pt: null, allowed_font_combos: null, line_spacing: null, alignment: null, space_before_pt: null, space_after_pt: null, first_line_indent_in: null },
+    heading: { inherit_body_font: false, font_family: null, font_size_pt: null, allowed_font_combos: null, alignment: null, space_before_pt: null, space_after_pt: null, level_1: null, level_2: null, level_3: null },
+    margins: { margin_left_in: null, margin_right_in: null, margin_top_in: null, margin_bottom_in: null },
+    references: {
+      check_heading_text: true,
+      heading_text: 'references',
+      check_heading_bold: true,
+      heading_bold: true,
+      check_heading_alignment: true,
+      heading_alignment: 'left',
+      check_start_on_new_page: true,
+      check_hanging_indent: true,
+      hanging_indent_in: 0.5,
+      check_line_spacing: true,
+      line_spacing: 2,
+      check_space_before: true,
+      space_before_pt: 0,
+      check_font_family: true,
+      font_family: 'Times New Roman',
+      check_font_size: true,
+      font_size_pt: 12,
+      check_alignment: true,
+      alignment: 'left',
+    },
+  })
+  const line = s.lines.find((l) => l.startsWith('References:'))
+  assert.equal(
+    line,
+    'References: "References" heading, bold heading, Left-aligned heading, starts on a new page, ' +
+      '0.5 in hanging indent, double line spacing, 0 pt space before, Times New Roman, 12 pt, left-aligned entries',
+  )
+})
+
+test('summary never leaks a Reference List field name and honours the tri-state toggle', () => {
+  const switchedOff = summarizeProfile({
+    body: { font_family: null, font_size_pt: null, allowed_font_combos: null, line_spacing: null, alignment: null, space_before_pt: null, space_after_pt: null, first_line_indent_in: null },
+    heading: { inherit_body_font: false, font_family: null, font_size_pt: null, allowed_font_combos: null, alignment: null, space_before_pt: null, space_after_pt: null, level_1: null, level_2: null, level_3: null },
+    margins: { margin_left_in: null, margin_right_in: null, margin_top_in: null, margin_bottom_in: null },
+    references: { check_line_spacing: false, line_spacing: 2, check_start_on_new_page: true },
+  })
+  assert.ok(switchedOff.lines.includes('References: starts on a new page'))
+  for (const line of switchedOff.lines.filter((l) => l.startsWith('References:'))) {
+    assert.doesNotMatch(line, /line_spacing|check_|heading_text|font_family|_pt\b/)
+  }
+  // A false boolean toggle is never counted as a disabled (null) value.
+  const blankPayload = blankProfilePayload(generateProfileId(), 'B')
+  const blank = summarizeProfile(blankPayload)
+  const withStoredIndent = summarizeProfile({
+    ...blankPayload,
+    references: { ...blankPayload.references, check_hanging_indent: false, hanging_indent_in: 0.5 },
+  })
+  assert.equal(withStoredIndent.disabledCount, blank.disabledCount - 1)
 })
 
 test('disabled count counts the new nullable requirement fields', () => {
@@ -678,5 +881,97 @@ test('dependent toggles are declared as children of the parent check', () => {
   ])
   for (const field of CITATION_MATCHING_DEPENDENT_FIELDS) {
     assert.ok((CITATION_MATCHING_FIELDS as readonly string[]).includes(field))
+  }
+})
+
+// ---------------------------------------------------------------------------
+// Reference List editor wiring (DOM ids + disabled state)
+// ---------------------------------------------------------------------------
+
+/** The Reference List value inputs and the check that owns each one. */
+const REFERENCE_VALUE_CONTROLS: readonly [string, string][] = [
+  ['references-heading-text', 'headingTextEnabled'],
+  ['references-heading-alignment', 'headingAlignmentEnabled'],
+  ['references-hanging-indent', 'hangingIndentEnabled'],
+  ['references-line-spacing', 'lineSpacingEnabled'],
+  ['references-space-before', 'spaceBeforeEnabled'],
+  ['references-space-after', 'spaceAfterEnabled'],
+  ['references-font-family', 'fontFamilyEnabled'],
+  ['references-font-size', 'fontSizeEnabled'],
+  ['references-alignment', 'alignmentEnabled'],
+]
+
+const REFERENCE_CHECKBOXES = [
+  'references-check-heading-text',
+  'references-allow-heading-aliases',
+  'references-check-heading-bold',
+  'references-heading-alignment-enabled',
+  'references-check-start-on-new-page',
+  'references-check-hanging-indent',
+  'references-check-line-spacing',
+  'references-check-space-before',
+  'references-check-space-after',
+  'references-check-font-family',
+  'references-check-font-size',
+  'references-check-alignment',
+]
+
+/** The JSX element that carries a given id, up to the line that closes it. */
+const elementFor = (source: string, id: string): string => {
+  const start = source.indexOf(`id="${id}"`)
+  assert.notEqual(start, -1, `no element with id ${id}`)
+  return source.slice(start, source.indexOf('/>', start) + 2)
+}
+
+test('every Reference List control has a stable DOM id', () => {
+  for (const [id] of REFERENCE_VALUE_CONTROLS) assert.ok(PROFILE_EDITOR.includes(`id="${id}"`), id)
+  for (const id of REFERENCE_CHECKBOXES) assert.ok(PROFILE_EDITOR.includes(`id="${id}"`), id)
+})
+
+test('a Reference List value control is disabled while its check is off', () => {
+  for (const [id, enabledProp] of REFERENCE_VALUE_CONTROLS) {
+    const element = elementFor(PROFILE_EDITOR, id)
+    assert.ok(
+      element.includes(`disabled={!referenceModel.${enabledProp}}`),
+      `${id} must be disabled while ${enabledProp} is off`,
+    )
+    assert.ok(element.includes('aria-describedby='), `${id} must announce its hint`)
+  }
+})
+
+test('heading aliases are disabled while the heading-text check is off', () => {
+  const element = elementFor(PROFILE_EDITOR, 'references-allow-heading-aliases')
+  assert.ok(element.includes('disabled={!referenceModel.headingTextEnabled}'))
+})
+
+test('every Reference List value control is labelled by a real label element', () => {
+  for (const [id] of REFERENCE_VALUE_CONTROLS) {
+    assert.ok(PROFILE_EDITOR.includes(`htmlFor="${id}"`), `${id} needs a label`)
+  }
+})
+
+test('the Reference List section never shows developer terminology', () => {
+  const start = PROFILE_EDITOR.indexOf('{/* Reference List controls')
+  assert.notEqual(start, -1)
+  // Drop internal wiring (error-field keys, DOM ids, styling) so only what a
+  // reader can actually see is checked.
+  const readerText = PROFILE_EDITOR
+    .slice(start, PROFILE_EDITOR.indexOf('{/* Captions controls', start))
+    .replace(/reqFieldErrors\['[^']*'\]/g, '')
+    .replace(/(id|htmlFor|className|value)="[^"]*"/g, '')
+  for (const term of [
+    'first-line',
+    'first_line',
+    'negative',
+    'twip',
+    'EMU',
+    'w:ind',
+    'regex',
+    'confidence',
+    'check_',
+    'heading_text',
+    'line_spacing',
+  ]) {
+    assert.ok(!readerText.includes(term), `Reference List section must not show ${term}`)
   }
 })

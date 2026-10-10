@@ -99,6 +99,34 @@ class EffectiveProfileConfig:
         self.CAPTION_SPACE_AFTER = snapshot.caption_space_after_pt
         self.REFERENCES_LINE_SPACING = snapshot.references_line_spacing
 
+        # Reference List formatting rules (v3 snapshot fields). Each rule
+        # gets its OWN effective name so no two rules can read each other's
+        # value. A rule compares only when its check is on AND its value is
+        # present; a disabled check never looks at the stored value.
+        self.REFERENCES_CHECK_HEADING_TEXT = snapshot.references_check_heading_text
+        self.REFERENCES_HEADING_TEXT = snapshot.references_heading_text
+        self.REFERENCES_ALLOW_HEADING_ALIASES = snapshot.references_allow_heading_aliases
+        self.REFERENCES_CHECK_HEADING_BOLD = snapshot.references_check_heading_bold
+        self.REFERENCES_HEADING_BOLD = snapshot.references_heading_bold
+        self.REFERENCES_CHECK_HEADING_ALIGNMENT = snapshot.references_check_heading_alignment
+        self.REFERENCES_HEADING_ALIGNMENT = snapshot.references_heading_alignment
+        self.REFERENCES_CHECK_START_ON_NEW_PAGE = snapshot.references_check_start_on_new_page
+        self.REFERENCES_CHECK_HANGING_INDENT = snapshot.references_check_hanging_indent
+        self.REFERENCES_HANGING_INDENT_IN = snapshot.references_hanging_indent_in
+        self.REFERENCES_CHECK_SPACE_BEFORE = snapshot.references_check_space_before
+        self.REFERENCES_SPACE_BEFORE_PT = snapshot.references_space_before_pt
+        self.REFERENCES_CHECK_SPACE_AFTER = snapshot.references_check_space_after
+        self.REFERENCES_SPACE_AFTER_PT = snapshot.references_space_after_pt
+        self.REFERENCES_CHECK_FONT_FAMILY = snapshot.references_check_font_family
+        self.REFERENCES_FONT_FAMILY = snapshot.references_font_family
+        self.REFERENCES_CHECK_FONT_SIZE = snapshot.references_check_font_size
+        self.REFERENCES_FONT_SIZE_PT = snapshot.references_font_size_pt
+        self.REFERENCES_CHECK_ALIGNMENT = snapshot.references_check_alignment
+        self.REFERENCES_ALIGNMENT = snapshot.references_alignment
+        # Preserved rule: the snapshot already resolved "was this enforced
+        # before this feature?" — an explicit toggle, else a stored value.
+        self.REFERENCES_CHECK_LINE_SPACING = snapshot.references_check_line_spacing
+
         # Alignment.
         self.ALIGNMENT_BODY = snapshot.body_alignment
         self.ALIGNMENT_HEADING = snapshot.heading_alignment

@@ -178,6 +178,20 @@ _REQUIRED_ACTIONS = {
     ),
     "REFERENCE_NOT_CITED": "Cite this source in the text, or remove the Reference List entry.",
     "REFERENCE_DUPLICATE": "Keep one entry and remove the duplicate.",
+    # Reference List FORMATTING rules (Phase 3) — manual corrections only.
+    "REFERENCE_HEADING_TEXT": "Rename the Reference List heading to the required wording.",
+    "REFERENCE_HEADING_BOLD": "Apply or remove bold on the Reference List heading as required.",
+    "REFERENCE_HEADING_ALIGNMENT": "Align the Reference List heading as required.",
+    "REFERENCE_SECTION_NEW_PAGE": "Insert a page break before the Reference List heading.",
+    "REFERENCE_HANGING_INDENT": (
+        "Apply a hanging indent so the first line is flush left and the following lines "
+        "are indented by the configured amount."
+    ),
+    "REFERENCE_SPACE_BEFORE": "Set the required space before these Reference List entries.",
+    "REFERENCE_SPACE_AFTER": "Set the required space after these Reference List entries.",
+    "REFERENCE_FONT_FAMILY": "Set every Reference List entry to the required font family.",
+    "REFERENCE_FONT_SIZE": "Set every Reference List entry to the required font size.",
+    "REFERENCE_ALIGNMENT": "Align the Reference List entries as required.",
 }
 
 # Deterministic citation/reference matching rules: fixed Required Action copy
@@ -188,6 +202,17 @@ _CITATION_MATCH_RULES = frozenset({
     "CITATION_REFERENCE_AMBIGUOUS",
     "REFERENCE_NOT_CITED",
     "REFERENCE_DUPLICATE",
+})
+
+# Reference List FORMATTING rules (Phase 3). Manual corrections only, with
+# the same fixed-copy treatment the citation matching rules get: "change
+# 0.25in to 0.5in" does not tell a student what a hanging indent is.
+_REFERENCE_FORMAT_RULES = frozenset({
+    "REFERENCE_HEADING_TEXT", "REFERENCE_HEADING_BOLD",
+    "REFERENCE_HEADING_ALIGNMENT", "REFERENCE_SECTION_NEW_PAGE",
+    "REFERENCE_HANGING_INDENT", "REFERENCE_SPACE_BEFORE",
+    "REFERENCE_SPACE_AFTER", "REFERENCE_FONT_FAMILY",
+    "REFERENCE_FONT_SIZE", "REFERENCE_ALIGNMENT",
 })
 
 # Reader-facing severity labels. Mirrors `severityBadge` in
@@ -256,6 +281,16 @@ _RULE_NAME = {
     "CITATION_REFERENCE_AMBIGUOUS": "Citation could match more than one entry",
     "REFERENCE_NOT_CITED": "Reference List entry is not cited in the text",
     "REFERENCE_DUPLICATE": "Duplicate Reference List entry",
+    "REFERENCE_HEADING_TEXT": "Reference List heading does not match",
+    "REFERENCE_HEADING_BOLD": "Reference List heading should be bold",
+    "REFERENCE_HEADING_ALIGNMENT": "Reference List heading alignment does not match",
+    "REFERENCE_SECTION_NEW_PAGE": "Reference List should start on a new page",
+    "REFERENCE_HANGING_INDENT": "Reference entry hanging indent does not match",
+    "REFERENCE_SPACE_BEFORE": "Space before Reference List entries does not match",
+    "REFERENCE_SPACE_AFTER": "Space after Reference List entries does not match",
+    "REFERENCE_FONT_FAMILY": "Reference entry font family does not match",
+    "REFERENCE_FONT_SIZE": "Reference entry font size does not match",
+    "REFERENCE_ALIGNMENT": "Reference entry alignment does not match",
 }
 
 
@@ -291,6 +326,8 @@ def required_action(v) -> str:
     """Action text for a single violation."""
     if v.rule_code == "CITATION_MISMATCH":
         return _citation_action(v)
+    if v.rule_code in _REFERENCE_FORMAT_RULES:
+        return _REQUIRED_ACTIONS[v.rule_code]
     loc = location_text(v.location)
     if v.expected_value and v.actual_value and loc != "—":
         prop = _PROP_NAME.get(v.rule_code, "value")
@@ -564,6 +601,10 @@ def _friendly_required_action(violation, friendly_loc, affected_info):
 
     # Citation/Reference matching findings carry fixed, non-formatting copy.
     if code in _CITATION_MATCH_RULES:
+        return _REQUIRED_ACTIONS[code]
+
+    # Reference List formatting rules carry fixed, student-usable copy.
+    if code in _REFERENCE_FORMAT_RULES:
         return _REQUIRED_ACTIONS[code]
 
     # Use friendly location without Run.
@@ -942,6 +983,54 @@ def _append_profile_disclosure(story, profile_snapshot) -> None:
         size=9,
     ))
     story.append(_p(margin_line, size=9))
+
+    reference_line = _references_disclosure_line(profile_snapshot.get("references") or {})
+    if reference_line:
+        story.append(_p(reference_line, size=9))
+
+
+def _references_disclosure_line(refs) -> str:
+    """Plain-language Reference List requirements from a STORED snapshot.
+
+    Only ENABLED checks are stated. A stored value whose check is off is not
+    a requirement, so it is never claimed. Historical v1/v2 snapshots carry
+    no toggles at all: their line spacing was enforced exactly when a value
+    was stored, which is what this reads.
+    """
+    if not isinstance(refs, dict):
+        return ""
+    parts: List[str] = []
+    if refs.get("check_heading_text") and refs.get("heading_text"):
+        word = str(refs["heading_text"]).strip().capitalize()
+        parts.append(
+            f'"{word}" heading (common alternatives accepted)'
+            if refs.get("allow_heading_aliases")
+            else f'"{word}" heading'
+        )
+    if refs.get("check_heading_bold"):
+        parts.append("bold heading" if refs.get("heading_bold") else "heading not bold")
+    if refs.get("check_heading_alignment") and refs.get("heading_alignment"):
+        parts.append(f"{str(refs['heading_alignment']).capitalize()}-aligned heading")
+    if refs.get("check_start_on_new_page"):
+        parts.append("starts on a new page")
+    if refs.get("check_hanging_indent") and refs.get("hanging_indent_in") is not None:
+        parts.append(f"{refs['hanging_indent_in']:g} in hanging indent")
+    if refs.get("check_line_spacing") is not False and refs.get("line_spacing") is not None:
+        ls = refs["line_spacing"]
+        parts.append("double line spacing" if abs(ls - 2.0) < 0.01 else f"{ls:g} line spacing")
+    if refs.get("check_space_before") and refs.get("space_before_pt") is not None:
+        parts.append(f"{refs['space_before_pt']:g} pt space before")
+    if refs.get("check_space_after") and refs.get("space_after_pt") is not None:
+        parts.append(f"{refs['space_after_pt']:g} pt space after")
+    if refs.get("check_font_family") and refs.get("font_family"):
+        parts.append(str(refs["font_family"]))
+    if refs.get("check_font_size") and refs.get("font_size_pt") is not None:
+        parts.append(f"{refs['font_size_pt']:g} pt")
+    if refs.get("check_alignment") and refs.get("alignment"):
+        parts.append(f"{refs['alignment']}-aligned entries")
+    if not parts:
+        return "References: Not checked"
+    return "References: " + ", ".join(parts)
 
 
 def _score_summary(score, major, minor) -> Table:

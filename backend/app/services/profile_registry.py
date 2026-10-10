@@ -89,8 +89,16 @@ def _suc_academic_report() -> DocumentFormattingProfile:
             margin_bottom_in=None,
         ),
         references=ReferencesSettings(
+            # Preserved enforcement: this profile has always required 2.0
+            # line spacing for Reference entries. The explicit toggle states
+            # that instead of deriving it, and changes no finding.
             line_spacing=2.0,
+            check_line_spacing=True,
+            # No verified hanging-indent requirement for this deployment —
+            # the new rule stays off rather than guessing an institution's
+            # value.
             hanging_indent_in=None,
+            check_hanging_indent=False,
         ),
         captions=CaptionSettings(
             space_before_pt=None,
@@ -170,8 +178,18 @@ def _apa7_student_paper() -> DocumentFormattingProfile:
             margin_bottom_in=1.0,
         ),
         references=ReferencesSettings(
+            # Preserved enforcement, stated explicitly instead of derived.
             line_spacing=2.0,
+            check_line_spacing=True,
+            # APA 7 states a 0.5 in hanging indent for Reference entries. This
+            # profile has always STORED that value; the rule that finally
+            # reads it is enabled here because hanging-indent evidence
+            # resolves reliably for ordinary (non-numbered, resolved)
+            # entries. Every other new Reference rule stays off — APA 7 does
+            # not pin a heading word, page start, entry font or entry spacing
+            # for this profile.
             hanging_indent_in=0.5,
+            check_hanging_indent=True,
         ),
         captions=CaptionSettings(
             space_before_pt=None,
@@ -297,11 +315,41 @@ def _key_requirements_summary(profile: DocumentFormattingProfile) -> List[str]:
     if profile.heading.inherit_body_font:
         lines.append("Headings use the body font")
 
-    # References
-    if refs.line_spacing is not None:
+    # References — only ENABLED checks are described. A stored value whose
+    # check is off is not a requirement, so it is never claimed here.
+    ref_lines: List[str] = []
+    if refs.check_heading_text and refs.heading_text:
+        heading_word = refs.heading_text.strip().capitalize()
+        ref_lines.append(
+            f'"{heading_word}" heading (common alternatives accepted)'
+            if refs.allow_heading_aliases
+            else f'"{heading_word}" heading'
+        )
+    if refs.check_heading_bold:
+        ref_lines.append(
+            "bold Reference heading" if refs.heading_bold
+            else "Reference heading not bold"
+        )
+    if refs.check_heading_alignment and refs.heading_alignment:
+        ref_lines.append(f"{refs.heading_alignment.capitalize()}-aligned Reference heading")
+    if refs.check_start_on_new_page:
+        ref_lines.append("References start on a new page")
+    if refs.check_hanging_indent and refs.hanging_indent_in is not None:
+        ref_lines.append(f"{refs.hanging_indent_in:g} in hanging indent for references")
+    if refs.check_line_spacing is not False and refs.line_spacing is not None:
         ls = "double" if abs(refs.line_spacing - 2.0) < 0.01 else f"{refs.line_spacing:g}"
-        lines.append(f"{ls} line spacing for references")
-    if refs.hanging_indent_in is not None:
-        lines.append(f"{refs.hanging_indent_in:g} in hanging indent for references")
+        ref_lines.append(f"{ls} line spacing for references")
+    if refs.check_space_before and refs.space_before_pt is not None:
+        ref_lines.append(f"{refs.space_before_pt:g} pt space before references")
+    if refs.check_space_after and refs.space_after_pt is not None:
+        ref_lines.append(f"{refs.space_after_pt:g} pt space after references")
+    if refs.check_font_family and refs.font_family:
+        ref_lines.append(f"{refs.font_family} for references")
+    if refs.check_font_size and refs.font_size_pt is not None:
+        ref_lines.append(f"{refs.font_size_pt:g} pt for references")
+    if refs.check_alignment and refs.alignment:
+        ref_lines.append(f"{refs.alignment}-aligned reference entries")
+    for item in ref_lines:
+        lines.append(item)
 
     return lines

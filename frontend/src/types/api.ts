@@ -168,6 +168,37 @@ export interface ProfileSnapshot {
     top_in: number | null
     bottom_in: number | null
   }
+  /**
+   * Reference List rules carried by snapshot schema v3. Older audits (v1/v2)
+   * return only `line_spacing` / `hanging_indent_in`; every toggle is then
+   * absent and the disclosure falls back to what those snapshots enforced.
+   */
+  references?: ProfileSnapshotReferences
+}
+
+export interface ProfileSnapshotReferences {
+  line_spacing: number | null
+  hanging_indent_in: number | null
+  check_heading_text?: boolean
+  heading_text?: string | null
+  allow_heading_aliases?: boolean
+  check_heading_bold?: boolean
+  heading_bold?: boolean
+  check_heading_alignment?: boolean
+  heading_alignment?: string | null
+  check_start_on_new_page?: boolean
+  check_hanging_indent?: boolean
+  check_line_spacing?: boolean
+  check_space_before?: boolean
+  space_before_pt?: number | null
+  check_space_after?: boolean
+  space_after_pt?: number | null
+  check_font_family?: boolean
+  font_family?: string | null
+  check_font_size?: boolean
+  font_size_pt?: number | null
+  check_alignment?: boolean
+  alignment?: string | null
 }
 
 /** Structured paragraph block from GET /api/audit/{id}/document-blocks — mirrors backend extract_document_blocks. */

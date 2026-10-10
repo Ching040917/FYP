@@ -551,7 +551,15 @@ def check_paragraph_typography(
             if is_reference_role(role):
                 # Reference-specific formatting only: REFERENCES_LINE_SPACING.
                 # No BODY line-spacing, alignment, or paragraph-spacing.
-                if preset.REFERENCES_LINE_SPACING is not None:
+                # The effective check is part of the resolved snapshot: it
+                # states whether this profile enforced the rule before the
+                # Reference List rules existed, so adding the toggle cannot
+                # silently disable an already-enforced requirement. Legacy
+                # configs without the field default to the old behaviour.
+                line_spacing_enabled = getattr(
+                    preset, "REFERENCES_CHECK_LINE_SPACING", True,
+                )
+                if line_spacing_enabled and preset.REFERENCES_LINE_SPACING is not None:
                     expected = preset.REFERENCES_LINE_SPACING
                     actual = para.get("line_spacing")
                     if actual is not None and abs(actual - expected) > 0.1:
@@ -1150,6 +1158,7 @@ def check_media_captions(
 def run_static_rules_engine(
     file_bytes: bytes,
     config=None,
+    page_mapping=None,
 ) -> List[LayoutViolation]:
     """Main entry point - runs all static layout checks.
 
@@ -1159,6 +1168,11 @@ def run_static_rules_engine(
     global PresetConfig defaults are never read during a production audit.
     When `config` is None (legacy callers / tests), the global PresetConfig
     is used as the compatibility default.
+
+    `page_mapping` ({paragraph_index: 1-based page}) is the optional
+    rendered-preview mapping. It exists only when a preview was produced;
+    without it the Reference List new-page rule has no rendered evidence and
+    stays silent rather than guessing.
     """
     doc = parse_document(file_bytes)
     preset = config if config is not None else settings.PRESET
@@ -1188,5 +1202,13 @@ def run_static_rules_engine(
         cover_end=cover_end,
     ))
     all_violations.extend(run_citation_sensor(doc, paragraphs, config=preset, roles=roles))
+    # Reference List FORMATTING rules (Phase 3). Semantic citation matching
+    # above is untouched: a document with no Reference section still yields
+    # exactly the one Phase 2 root finding, and these rules emit nothing
+    # when no supported heading exists.
+    from app.services.reference_rules import run_reference_rules
+    all_violations.extend(run_reference_rules(
+        doc, paragraphs, preset, page_mapping=page_mapping,
+    ))
 
     return all_violations

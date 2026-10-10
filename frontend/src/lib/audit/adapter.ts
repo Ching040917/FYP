@@ -37,9 +37,30 @@ export function normalizeScoreCategory(raw: string): ScoreCategory {
     : 'unknown'
 }
 
+/**
+ * Explicit category for each Reference List formatting rule code. Checked
+ * first: the generic CITATION/REFERENCE substring branches below would
+ * otherwise claim every one of them. Mirrors the explicit table in
+ * backend/app/services/scoring.py.
+ */
+const REFERENCE_FORMATTING_CATEGORY: Record<string, AuditCategory> = {
+  REFERENCE_HEADING_TEXT: 'heading_hierarchy',
+  REFERENCE_HEADING_BOLD: 'heading_hierarchy',
+  REFERENCE_HEADING_ALIGNMENT: 'heading_hierarchy',
+  REFERENCE_SECTION_NEW_PAGE: 'heading_hierarchy',
+  REFERENCE_HANGING_INDENT: 'paragraph_typography',
+  REFERENCE_SPACE_BEFORE: 'paragraph_typography',
+  REFERENCE_SPACE_AFTER: 'paragraph_typography',
+  REFERENCE_ALIGNMENT: 'paragraph_typography',
+  REFERENCE_FONT_FAMILY: 'font_consistency',
+  REFERENCE_FONT_SIZE: 'font_size',
+}
 /** Map backend rule_code to reference AuditCategory. Default = paragraph_typography. */
 export function categoryForRuleCode(ruleCode: string): AuditCategory {
   const code = ruleCode.toUpperCase()
+  const referenceCategory = REFERENCE_FORMATTING_CATEGORY[code]
+  if (referenceCategory) return referenceCategory
+
   if (code.includes('CITATION') || code.includes('APA')) return 'citation_apa'
   // Reference List matching rules share the citation/reference category.
   if (code.includes('REFERENCE')) return 'citation_apa'

@@ -123,7 +123,12 @@ class TestIdentity:
 
     def test_exact_bytes_fix_returns_docx(self, client, docx_factory):
         file_bytes = docx_factory(paragraphs=["Body paragraph."], body_size=11)
-        resp = _post_audit(client, docx_factory, ["Body paragraph."], body_size=11)
+        # The SAME bytes are audited and re-uploaded: "exact bytes" is the
+        # claim under test. Building a second document from identical
+        # arguments is NOT byte-identical — make_docx_bytes stamps the
+        # current time into the ZIP entries — so that variant would assert
+        # the fixture's clock instead of Guided Fixes.
+        resp = _post_audit_bytes(client, file_bytes)
         audit_id = resp.json()["audit_id"]
         ids = _rule_ids(resp, "FONT_SIZE")
         assert ids
