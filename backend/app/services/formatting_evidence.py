@@ -77,6 +77,11 @@ SOURCE_UNRESOLVED = "unresolved"
 _EMU_PER_INCH = 914400
 # OOXML w:ind attributes are twips: 1440 twips = 1 inch.
 _TWIPS_PER_INCH = 1440
+# A left indent at or below this magnitude is "no left indent". Word writes
+# an explicitly cleared indent as ``w:left="0"`` (0 twips), which converts to
+# exactly 0.0 in; the epsilon only absorbs float representation error, far
+# below any tolerance ACA compares with.
+_ZERO_INDENT_IN = 1e-9
 
 
 def _to_inches(value: Optional[float]) -> Optional[float]:
@@ -267,6 +272,16 @@ def resolve_indentation(
     required indent and report a truthful "0 in" current value, but the
     source is never labelled ``direct``.
 
+    The same rendering fact resolves the first-line half ALONE: a
+    non-numbered paragraph with no first-line/hanging declaration anywhere
+    and no effective left indent (either unstated, or explicitly cleared as
+    ``w:left="0"``) has its first line flush with the following lines, so
+    its effective hanging indent is 0.0 in — again reported as
+    ``effective_default``. A paragraph that does state a NON-ZERO left
+    indent without any first-line declaration is left unstated instead: the
+    document describes a plain indented block, and claiming a hanging indent
+    for it would overstate what the evidence supports.
+
     When values remain unresolved
     ------------------------------
     Only numbered paragraphs with no stated indentation stay valueless
@@ -358,6 +373,24 @@ def resolve_indentation(
             left, first = 0.0, 0.0
             source = SOURCE_EFFECTIVE_DEFAULT
 
+    # 7. The first-line half is unstated at EVERY level and the paragraph
+    # states no effective left indent. Word renders such a paragraph with
+    # its first line flush against the following lines, so the effective
+    # hanging indent is a truthful 0.0 in. Nothing in the document declares
+    # that value — it is Word's own paragraph default — so the provenance
+    # becomes the effective default (never "direct").
+    #
+    # A NON-ZERO left indent is deliberately left unstated: the paragraph is
+    # a plain indented block whose hanging behaviour the document does not
+    # describe, and asserting 0.0 there would overstate the evidence. The
+    # same applies to numbered paragraphs, whose indentation is owned by the
+    # list definition this module does not read.
+    if first is None and not numbered and (
+        left is None or abs(left) <= _ZERO_INDENT_IN
+    ):
+        first = 0.0
+        source = SOURCE_EFFECTIVE_DEFAULT
+
     # Effective hanging indent, computed from the resolved first-line half:
     #   * first < 0  → a genuine hanging indent (w:hanging / w:firstLine="-N"),
     #     magnitude -first.
@@ -365,8 +398,9 @@ def resolve_indentation(
     #     indent, so hanging stays None — never report the positive value as
     #     a hanging (case G).
     #   * first == 0 → "no hanging". This is either an explicitly stated 0.0
-    #     or the Word effective default (case B/D), so it resolves to 0.0 and
-    #     a rule may compare it truthfully.
+    #     or a Word effective default (the fully bare paragraph, or a
+    #     zero-left-only paragraph resolved in step 7), so it resolves to 0.0
+    #     and a rule may compare it truthfully.
     # A left indent without a first-line value leaves first = None, so
     # hanging stays None too — the value is simply not stated, and we do not
     # overstate it (case H).

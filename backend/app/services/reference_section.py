@@ -300,6 +300,18 @@ def classify_reference_page_start(
       5. a mapping that knows the heading but not its predecessor
          → PAGE_START_UNCERTAIN
 
+    Mapped evidence is read in two ways. The heading's OWN mapping wins when
+    the matcher resolved it. When it did not — the word "References" is
+    short and generic, so it is dropped as ambiguous whenever the same
+    wording also appears on another rendered page — the heading's page is
+    taken from the paragraphs that bracket it: when the nearest mapped
+    paragraph above and the nearest mapped paragraph below agree on one
+    page, the heading between them renders on that page (page order is
+    monotonic). Disagreeing brackets stay unresolved. The same rule covers a
+    preceding paragraph that is itself unmapped: the comparison falls back to
+    the nearest mapped paragraph above the heading instead of giving up.
+    Mappings are accepted with string or integer keys.
+
     A missing mapping never implies a violation, and a later page never
     implies an explicit break: the two states stay distinguishable.
 
@@ -354,6 +366,35 @@ def classify_reference_page_start(
     previous_body_page = (
         mapping.get(previous_body_index) if previous_body_index is not None else None
     )
+
+    # The heading's own text is short and generic ("References"), so the
+    # rendered matcher can leave it UNMAPPED when the same wording also
+    # occurs elsewhere in the PDF (a body cross-reference, back matter) —
+    # the containing page is then ambiguous and the heading is dropped.
+    # A paragraph sitting strictly between two MAPPED paragraphs of one page
+    # renders on that page: page order is monotonic, so the heading's page is
+    # proven by bracketing rather than guessed at. Brackets on different
+    # pages prove nothing (the heading could be on either) and stay unresolved.
+    if heading_page is None:
+        mapped_below = [index for index in mapping if index < heading_index]
+        mapped_above = [index for index in mapping if index > heading_index]
+        if mapped_below and mapped_above:
+            below_page = mapping[max(mapped_below)]
+            above_page = mapping[min(mapped_above)]
+            if below_page == above_page:
+                heading_page = below_page
+
+    # The selected preceding paragraph can itself be unmapped (short or
+    # ambiguous text). Rather than turning the comparison "uncertain", use the
+    # nearest mapped paragraph above the heading: page order is monotonic, so
+    # everything between that paragraph and the heading shares its page
+    # whenever the heading does. Selection and page stay a matched pair.
+    if previous_body_page is None:
+        mapped_below = [index for index in mapping if index < heading_index]
+        if mapped_below:
+            nearest = max(mapped_below)
+            previous_body_index = nearest
+            previous_body_page = mapping[nearest]
 
     base = dict(
         heading_index=heading_index,
