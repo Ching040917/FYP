@@ -194,6 +194,40 @@ _REQUIRED_ACTIONS = {
     "REFERENCE_ALIGNMENT": "Align the Reference List entries as required.",
 }
 
+
+def _hanging_indent_action(expected_value) -> str:
+    """Required Action naming the CONFIGURED hanging indent, never a constant.
+
+    `expected_value` is the profile's configured required value (e.g. "0.5in"),
+    so the sentence changes with the profile instead of always saying 0.5.
+    Falls back to the fixed copy when no value was carried.
+    """
+    amount = _student_clean(expected_value) if expected_value else ""
+    if not amount:
+        return _REQUIRED_ACTIONS["REFERENCE_HANGING_INDENT"]
+    return (
+        f"Apply a {amount} hanging indent so the first line stays at the left margin "
+        "and the following lines are indented."
+    )
+
+
+def _reference_format_action(rule_code, expected_value) -> str:
+    """Value-driven Required Action for the Reference List formatting rules."""
+    if rule_code == "REFERENCE_HANGING_INDENT":
+        return _hanging_indent_action(expected_value)
+    return _REQUIRED_ACTIONS[rule_code]
+
+
+
+def _reference_format_action_safe(rule_code, expected_value) -> str:
+    """As `_reference_format_action`, but never KeyError on an unknown code."""
+    if rule_code == "REFERENCE_HANGING_INDENT":
+        return _hanging_indent_action(expected_value)
+    return _REQUIRED_ACTIONS.get(
+        rule_code, "Review the finding and apply the required formatting."
+    )
+
+
 # Deterministic citation/reference matching rules: fixed Required Action copy
 # (never a formatting instruction, never AI-generated).
 _CITATION_MATCH_RULES = frozenset({
@@ -327,7 +361,7 @@ def required_action(v) -> str:
     if v.rule_code == "CITATION_MISMATCH":
         return _citation_action(v)
     if v.rule_code in _REFERENCE_FORMAT_RULES:
-        return _REQUIRED_ACTIONS[v.rule_code]
+        return _reference_format_action(v.rule_code, v.expected_value)
     loc = location_text(v.location)
     if v.expected_value and v.actual_value and loc != "—":
         prop = _PROP_NAME.get(v.rule_code, "value")
@@ -603,9 +637,10 @@ def _friendly_required_action(violation, friendly_loc, affected_info):
     if code in _CITATION_MATCH_RULES:
         return _REQUIRED_ACTIONS[code]
 
-    # Reference List formatting rules carry fixed, student-usable copy.
+    # Reference List formatting rules carry fixed, student-usable copy —
+    # except the hanging indent, which names the configured value.
     if code in _REFERENCE_FORMAT_RULES:
-        return _REQUIRED_ACTIONS[code]
+        return _reference_format_action(code, violation.expected_value)
 
     # Use friendly location without Run.
     loc_label = friendly_loc  # e.g. "Paragraph 14", "Heading “...”", "Table 3"
@@ -713,8 +748,7 @@ def _group_action(rule_code, exp_val) -> str:
     if rule_code in ("SPACE_BEFORE", "SPACE_AFTER") and exp_val:
         prop = "before" if rule_code == "SPACE_BEFORE" else "after"
         return f"Change the space {prop} for the listed paragraphs to {exp_val}."
-    return _GROUP_ACTIONS.get(rule_code) or _REQUIRED_ACTIONS.get(
-        rule_code, "Review the finding and apply the required formatting.")
+    return _GROUP_ACTIONS.get(rule_code) or _reference_format_action_safe(rule_code, exp_val)
 
 
 def _panel(header_left, header_right, rows) -> Table:

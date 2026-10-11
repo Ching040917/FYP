@@ -21,10 +21,11 @@ export async function createAuditViaApi(
   page: Page,
   docxPath: string,
   filename: string,
+  profileId = 'suc-academic-report',
 ): Promise<AuditSummary> {
   const request: APIRequestContext = page.request
   const bytes = fs.readFileSync(docxPath)
-  const response = await request.post('/api/audit?profile_id=suc-academic-report', {
+  const response = await request.post(`/api/audit?profile_id=${encodeURIComponent(profileId)}`, {
     multipart: {
       file: { name: filename, mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', buffer: bytes },
     },

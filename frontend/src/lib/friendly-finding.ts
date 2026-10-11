@@ -335,6 +335,14 @@ export function friendlyRequiredAction(
     return 'Keep one entry and remove the duplicate.'
   }
   // Reference List formatting rules — fixed copy before the generic fallback.
+  // The hanging indent names the CONFIGURED value (0.25 in is not 0.5 in),
+  // so it is built here rather than read from the fixed-copy table.
+  if (code === 'REFERENCE_HANGING_INDENT' && exp) {
+    return (
+      `Apply a ${exp} hanging indent so the first line stays at the left margin ` +
+      'and the following lines are indented.'
+    )
+  }
   if (REFERENCE_REQUIRED_ACTIONS[code]) {
     return REFERENCE_REQUIRED_ACTIONS[code]
   }

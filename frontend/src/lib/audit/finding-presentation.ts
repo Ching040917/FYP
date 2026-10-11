@@ -73,6 +73,26 @@ const REFERENCE_SIDE_RULES: Record<string, true> = {
   REFERENCE_DUPLICATE: true,
 }
 
+/**
+ * Reference List FORMATTING rules that carry a Current/Required comparison.
+ * They render the same Expected/Actual table as the generic formatting rules
+ * and their action comes from the shared friendly source — which is where the
+ * hanging indent names the CONFIGURED value ("Apply a 0.5 in hanging indent…",
+ * never a hard-coded constant).
+ */
+const REFERENCE_FORMATTING_RULES: Record<string, true> = {
+  REFERENCE_HEADING_TEXT: true,
+  REFERENCE_HEADING_BOLD: true,
+  REFERENCE_HEADING_ALIGNMENT: true,
+  REFERENCE_SECTION_NEW_PAGE: true,
+  REFERENCE_HANGING_INDENT: true,
+  REFERENCE_SPACE_BEFORE: true,
+  REFERENCE_SPACE_AFTER: true,
+  REFERENCE_FONT_FAMILY: true,
+  REFERENCE_FONT_SIZE: true,
+  REFERENCE_ALIGNMENT: true,
+}
+
 export function presentationFor(v: {
   rule_code: string
   message: string
@@ -133,6 +153,15 @@ export function presentationFor(v: {
     return {
       issue: friendlyFindingMessage(code, v.message, v.expected_value, v.actual_value, v.location),
       entryPreview: v.actual_value ?? undefined,
+      requiredAction: friendlyRequiredAction(code, v.expected_value, v.actual_value, v.location) ?? undefined,
+    }
+  }
+
+  if (REFERENCE_FORMATTING_RULES[code]) {
+    return {
+      issue: friendlyFindingMessage(code, v.message, v.expected_value, v.actual_value, v.location),
+      expected: friendlyValue(cleanMessage(v.expected_value)),
+      actual: friendlyValue(cleanMessage(v.actual_value)),
       requiredAction: friendlyRequiredAction(code, v.expected_value, v.actual_value, v.location) ?? undefined,
     }
   }

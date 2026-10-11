@@ -358,3 +358,40 @@ def _make_pdf_for_test(page_count: int = 2) -> bytes:
 
 def _boom_scoring(*args, **kwargs):
     raise RuntimeError("simulated scoring failure")
+
+
+def test_hanging_indent_finding_survives_history_reload(client, docx_factory):
+    """Phase 4 case 16: a new audit's hanging-indent finding persists and is
+    returned identically by the history detail endpoint."""
+    file_bytes = docx_factory(
+        paragraphs=["Prior studies disagree about the effect (Garcia, 2018)."],
+        references=[
+            "Nguyen, T. (2016). An unrelated work. Example Press.",
+            "Smith, A. (2020). First work on the policy. Example Press.",
+        ],
+    )
+    post = client.post(
+        "/api/audit",
+        files={"file": ("history.docx", file_bytes, "application/octet-stream")},
+        params={"profile_id": "apa7-student-paper"},
+    )
+    assert post.status_code == 200
+    audit_id = post.json()["audit_id"]
+
+    data = client.get(f"/api/audit/{audit_id}").json()
+    matches = [v for v in data["violations"] if v["rule_code"] == "REFERENCE_HANGING_INDENT"]
+    assert len(matches) == 1
+    violation = matches[0]
+    assert violation["severity"] == "MINOR"
+    assert violation["actual_value"] == "0in"
+    assert violation["expected_value"] == "0.5in"
+    # The primary location is the first affected Reference entry, and the
+    # consolidated occurrence data is intact.
+    location = violation["location"]
+    assert isinstance(location["paragraph_index"], int)
+    assert location["occurrences"] == 2
+    assert len(location["paragraph_indexes"]) == 2
+
+    # The history list still carries the audit itself.
+    listing = client.get("/api/audits").json()
+    assert any(item["id"] == audit_id for item in listing)

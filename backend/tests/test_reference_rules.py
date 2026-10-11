@@ -481,19 +481,46 @@ def test_hanging_indent_rule_tolerates_word_rounding():
 
 
 def test_hanging_indent_rule_reports_a_first_line_indent_as_no_hanging_indent():
+    """A positive first-line indent is NOT a hanging indent (case G)."""
     violations = _run(
         _hanging_doc(first_line=0.5),
         _profile(check_hanging_indent=True, hanging_indent_in=0.5),
     )
     matches = _by_code(violations, "REFERENCE_HANGING_INDENT")
-    assert matches and matches[0].actual_value == "No hanging indent"
+    # The first line is pushed IN, so there is no hanging indent to compare —
+    # the value is never asserted from a positive first line.
+    assert matches == []
 
 
-def test_hanging_indent_rule_is_silent_when_no_indent_is_stated():
-    """Unresolved is never "zero indent"."""
+def test_hanging_indent_rule_reports_effective_zero_against_a_required_indent():
+    """The owner's case: entries with no indentation at all (case B/D)."""
+    violations = _run(
+        _hanging_doc(),
+        _profile(check_hanging_indent=True, hanging_indent_in=0.5),
+    )
+    matches = _by_code(violations, "REFERENCE_HANGING_INDENT")
+    assert len(matches) == 1
+    assert matches[0].actual_value == "0in"
+    assert matches[0].expected_value == "0.5in"
+    assert matches[0].severity == "MINOR"
+
+
+def test_hanging_indent_rule_reports_a_zero_hanging_indent_stated_directly():
+    """Case B: an explicit zero first-line indent is zero, not 'unstated'."""
+    violations = _run(
+        _hanging_doc(left=0.0, first_line=0.0),
+        _profile(check_hanging_indent=True, hanging_indent_in=0.5),
+    )
+    matches = _by_code(violations, "REFERENCE_HANGING_INDENT")
+    assert len(matches) == 1
+    assert matches[0].actual_value == "0in"
+
+
+def test_hanging_indent_rule_is_silent_on_a_left_indent_without_a_first_line():
+    """Case H: a left indent is not a hanging indent, and is not overstated."""
     assert _by_code(
         _run(
-            _hanging_doc(),
+            _hanging_doc(left=0.5),
             _profile(check_hanging_indent=True, hanging_indent_in=0.5),
         ),
         "REFERENCE_HANGING_INDENT",
@@ -1006,6 +1033,121 @@ def test_reference_semantic_rules_keep_the_citation_category():
     for code in ("REFERENCE_NOT_CITED", "REFERENCE_DUPLICATE",
                  "CITATION_REFERENCE_MISMATCH", "CITATION_MISMATCH"):
         assert rule_code_to_category(code) == "citation_apa", code
+
+
+# --- Hanging-indent correction: value, tolerance, inheritance, persistence ---
+
+
+def _hanging_doc_with_lefts(*lefts):
+    """Entries whose hanging indent equals the given left indents."""
+    doc = Document()
+    doc.add_paragraph("This paragraph discusses prior work (Garcia, 2018).")
+    doc.add_paragraph("References")
+    for left in lefts:
+        p = doc.add_paragraph()
+        p.add_run(ENTRY)
+        p.paragraph_format.left_indent = Inches(left)
+        p.paragraph_format.first_line_indent = Inches(-left)
+    return _bytes(doc)
+
+
+def test_hanging_indent_rule_reports_the_actual_value_it_observed():
+    """A 0.25 in hanging indent is reported as 0.25 in, not as 0."""
+    violations = _run(
+        _hanging_doc_with_lefts(0.25),
+        _profile(check_hanging_indent=True, hanging_indent_in=0.5),
+    )
+    matches = _by_code(violations, "REFERENCE_HANGING_INDENT")
+    assert len(matches) == 1
+    assert matches[0].actual_value == "0.25in"
+    assert matches[0].expected_value == "0.5in"
+
+
+def test_hanging_indent_tolerance_boundary_is_inclusive():
+    """Exactly at the 0.05 in tolerance passes; one step beyond it does not."""
+    at_tolerance = _by_code(
+        _run(
+            _hanging_doc_with_lefts(0.55),
+            _profile(check_hanging_indent=True, hanging_indent_in=0.5),
+        ),
+        "REFERENCE_HANGING_INDENT",
+    )
+    assert at_tolerance == []
+    beyond_tolerance = _by_code(
+        _run(
+            _hanging_doc_with_lefts(0.56),
+            _profile(check_hanging_indent=True, hanging_indent_in=0.5),
+        ),
+        "REFERENCE_HANGING_INDENT",
+    )
+    assert len(beyond_tolerance) == 1
+
+
+def test_hanging_indent_inherited_from_a_style_matches_and_is_silent():
+    """Case C: the value lives on the paragraph style, not the paragraph."""
+    violations = _run(
+        fx.style_inherited_hanging_indent(0.5),
+        _profile(check_hanging_indent=True, hanging_indent_in=0.5),
+    )
+    assert _by_code(violations, "REFERENCE_HANGING_INDENT") == []
+
+
+def test_hanging_indent_inherited_from_a_style_is_reported_when_wrong():
+    """Case D via the style chain: a style-set hanging value is compared too."""
+    violations = _run(
+        fx.base_style_inherited_hanging_indent(0.25),
+        _profile(check_hanging_indent=True, hanging_indent_in=0.5),
+    )
+    matches = _by_code(violations, "REFERENCE_HANGING_INDENT")
+    assert len(matches) == 1
+    assert matches[0].actual_value == "0.25in"
+
+
+def test_unresolvable_indent_evidence_emits_no_finding():
+    """Case F: an unreadable styles part stays unresolved, never asserted."""
+    from app.services.formatting_evidence import resolve_indentation
+
+    class _BrokenPart:
+        @property
+        def rels(self):
+            raise RuntimeError("styles part unreadable")
+
+    class _BrokenParagraph:
+        paragraph_format = type("fmt", (), {"left_indent": None, "first_line_indent": None})()
+        part = _BrokenPart()
+
+        @property
+        def style(self):
+            raise RuntimeError("styles part unreadable")
+
+    evidence = resolve_indentation(_BrokenParagraph(), is_numbered=False)
+    assert evidence.source == "unresolved"
+    assert evidence.hanging_indent_in is None
+
+
+def test_repeated_zero_indent_entries_consolidate_into_one_finding():
+    """Case B at scale: every zero entry is one finding with a truthful count."""
+    violations = _run(
+        _hanging_doc(count=5),
+        _profile(check_hanging_indent=True, hanging_indent_in=0.5),
+    )
+    matches = _by_code(violations, "REFERENCE_HANGING_INDENT")
+    assert len(matches) == 1
+    assert matches[0].location["occurrences"] == 5
+    assert matches[0].location["paragraph_index"] == 2
+    assert matches[0].location["paragraph_indexes"] == [2, 3, 4, 5, 6]
+
+
+def test_snapshot_v3_preserves_the_hanging_indent_check_and_value():
+    """Phase 4 case 15: the immutable snapshot carries both."""
+    snapshot = _snapshot(ReferencesSettings(
+        check_hanging_indent=True, hanging_indent_in=0.5,
+    ))
+    assert snapshot.references_check_hanging_indent is True
+    assert snapshot.references_hanging_indent_in == 0.5
+    config = EffectiveProfileConfig(snapshot)
+    assert config.REFERENCES_CHECK_HANGING_INDENT is True
+    assert config.REFERENCES_HANGING_INDENT_IN == 0.5
 
 
 def test_no_new_scoring_category_or_weight_was_added():

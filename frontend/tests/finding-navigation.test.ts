@@ -48,7 +48,7 @@ test('unavailable mapping stays in extracted text with truthful label', () => {
   const d = resolveFindingNavigation(finding('f3', { paragraph_index: 2 }), byIndex)
   assert.equal(d.mode, 'text')
   assert.equal(d.pageNumber, null)
-  assert.equal(d.locationLabel, 'Paragraph 3 · Page unavailable')
+  assert.equal(d.locationLabel, 'Document paragraph 3 · Page unavailable')
 })
 
 test('empty paragraph never guesses a page', () => {

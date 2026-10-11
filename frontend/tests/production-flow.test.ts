@@ -244,7 +244,7 @@ test('production flow: genuine unavailable falls back only after mapping complet
   assert.ok(!commands.some((c) => c.kind === 'navigate' && c.page === 1), 'never fake page 1')
   // and the decision label is truthful
   const decision = resolveFindingNavigation(violation('u1', 'FONT_SIZE', 2), unavailableByIndex)
-  assert.equal(decision.locationLabel, 'Paragraph 3 · Page unavailable')
+  assert.equal(decision.locationLabel, 'Document paragraph 3 · Page unavailable')
 })
 
 test('production flow: authoritative identity is paragraph_index === block.index', () => {

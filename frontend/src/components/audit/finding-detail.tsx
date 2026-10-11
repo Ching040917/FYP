@@ -13,18 +13,22 @@
  * Backend values are never modified, nothing unsupported is invented, and
  * sections with no meaningful information are omitted.
  *
- * Only fields that exist in the wire type are shown. The paragraph number
- * is derived from the parser's paragraph index — never presented as an
- * exact page location.
- */
+ * Only fields that exist in the wire type are shown. The location reads the
+ * SAME shared friendly label the Findings card and the selected evidence
+ * use (Page 9 · Paragraph 3); this component never derives a document-wide
+ * paragraph number of its own, because that number is ambiguous on its own
+ * and disagrees with every other surface. Without a rendered page mapping
+ * the shared helper's historical fallback ("Document paragraph 65") is
+ * shown instead — never a bare "Paragraph 65".
 
+ */
 
 import { Info, MapPin, ShieldCheck } from 'lucide-react'
 
 import type { ReactNode } from 'react'
 import { Badge } from '../ui/badge'
-import { CATEGORY_LABELS, severityBadge } from '../../lib/audit/categories'
-import { categoryForRuleCode, humanizeRuleCode, normalizeViolationSeverity } from '../../lib/audit/adapter'
+import { severityBadge } from '../../lib/audit/categories'
+import { humanizeRuleCode, normalizeViolationSeverity } from '../../lib/audit/adapter'
 import { friendlyRuleTitle } from '../../lib/friendly-finding'
 import { ExpectedActualTable } from './expected-actual-table'
 import { presentationFor } from '../../lib/audit/finding-presentation'
@@ -47,13 +51,34 @@ function checkStatement(sev: ViolationSeverity): string {
   }
 }
 
-function paragraphNumber(v: Violation): number | null {
+/**
+ * Historical fallback when the shared location label is unavailable.
+ *
+ * Without a rendered physical-page mapping the document-wide paragraph
+ * index is the only honest identity. It is prefixed "Document" so it can
+ * never be confused with the on-page paragraph number that the
+ * "Page N · Paragraph M" label carries.
+ */
+function documentParagraphLabel(v: Violation): string | null {
   const loc = v.location as Record<string, unknown> | null
   const n = loc?.paragraph_index
-  return typeof n === 'number' && n >= 0 ? n + 1 : null
+  if (typeof n !== 'number' || n < 0) return null
+  return `Document paragraph ${n + 1}`
 }
 
-export function FindingDetail({ violation }: { violation: Violation | null }) {
+export function FindingDetail({
+  violation,
+  locationLabel,
+}: {
+  violation: Violation | null
+  /**
+   * Shared friendly location label ("Page 9 · Paragraph 3") — the same value
+   * the Findings card and the selected-evidence chip read. Null when the
+   * parent has none, in which case the historical document-paragraph
+   * fallback below is used instead.
+   */
+  locationLabel?: string | null
+}) {
   if (!violation) {
     return (
       <section
@@ -68,8 +93,10 @@ export function FindingDetail({ violation }: { violation: Violation | null }) {
   }
 
   const v = violation
-  const category = categoryForRuleCode(v.rule_code)
-  const para = paragraphNumber(v)
+  // One shared friendly location for every surface: the parent's label when
+  // it exists, else the honest historical fallback. A bare "Paragraph 65"
+  // is never rendered — it disagrees with the on-page number elsewhere.
+  const location = locationLabel ?? documentParagraphLabel(v)
   const pres = presentationFor(v)
   const hasCitationEvidence = pres.evidence != null
   const hasEntryPreview = pres.entryPreview != null
@@ -160,10 +187,10 @@ export function FindingDetail({ violation }: { violation: Violation | null }) {
         {friendlyRuleTitle(v.rule_code) ?? humanizeRuleCode(v.rule_code)}
       </h2>
 
+      {/* No category badge here: the friendly title already names the rule,
+          so "[Paragraph Typography]" beside it was duplicated meaning. The
+          category still drives filters, summaries, counts and scoring. */}
       <div className="mt-2 flex flex-wrap items-center gap-2">
-        <Badge variant="outline" className="border-border text-foreground">
-          {CATEGORY_LABELS[category]}
-        </Badge>
         <Badge
           variant="outline"
           className={severityBadge(normalizeViolationSeverity(v.severity)).className}
@@ -187,14 +214,19 @@ export function FindingDetail({ violation }: { violation: Violation | null }) {
       </div>
 
       <dl className="mt-4 space-y-3">
-        {para != null && (
+        {location != null && (
           <div className="flex items-baseline gap-3">
             <dt className="w-28 shrink-0 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
               Location
             </dt>
-            <dd className="inline-flex items-center gap-1.5 text-sm text-foreground">
-              <MapPin className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
-              Paragraph {para}
+            {/* A long heading excerpt truncates safely, and the complete
+                value stays reachable via the title attribute. */}
+            <dd
+              className="inline-flex min-w-0 items-center gap-1.5 text-sm text-foreground"
+              title={location}
+            >
+              <MapPin className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+              <span className="truncate">{location}</span>
             </dd>
           </div>
         )}

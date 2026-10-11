@@ -16,8 +16,9 @@ export async function createSyntheticAudit(
   page: Page,
   docxPath: string = SAMPLE_THESIS,
   filename = 'sample-thesis.docx',
+  profileId = 'suc-academic-report',
 ) {
-  return createAuditViaApi(page, docxPath, filename)
+  return createAuditViaApi(page, docxPath, filename, profileId)
 }
 
 export const SCREENSHOT_DIR = path.join(process.cwd(), 'e2e', 'screenshots')

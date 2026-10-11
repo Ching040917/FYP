@@ -181,20 +181,21 @@ test.describe('finding presentation @presentation', () => {
     await expectNoHorizontalOverflow(page)
   })
 
-  test('the severity filter can isolate Manual review findings', async ({ page }, testInfo) => {
+  test('the severity filter offers every severity with a concise label', async ({ page }, testInfo) => {
     annotate(testInfo, {
       id: 'PRESENTATION-SEVERITY-FILTER',
-      objective: 'The severity filter offers Manual review and Unclassified alongside Major and Minor.',
+      objective: 'The severity filter offers Major, Minor, Manual review and Unclassified alongside All severities.',
       precondition: 'Completed synthetic audit.',
       steps: ['Open /audit/:auditId', 'Open the severity filter', 'Assert every option is present'],
-      expected: 'All four severities are offered.',
+      expected: 'All four severities are offered with their concise labels (no " only" suffix).',
       severity: 'medium',
     })
     await openAudit(page)
     // The workspace renders three responsive shells, so scope to the visible one.
     await page.locator('[aria-label="Filter by severity"]:visible').first().click()
+    await expect(page.getByRole('option', { name: 'All severities', exact: true })).toBeVisible()
     for (const label of ['Major', 'Minor', 'Manual review', 'Unclassified']) {
-      await expect(page.getByRole('option', { name: `${label} only` })).toBeVisible()
+      await expect(page.getByRole('option', { name: label, exact: true })).toBeVisible()
     }
   })
 })

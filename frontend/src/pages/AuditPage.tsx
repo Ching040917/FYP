@@ -15,7 +15,11 @@ import { categoryForRuleCode, humanizeRuleCode, aiProviderLabel, normalizeAiProv
 import { useFindingMapping } from '../hooks/use-finding-mapping'
 import { invalidateMapping } from '../lib/pdf/mapping-cache.ts'
 import { useRenderedPdf, dropRenderedPdfCache } from '../hooks/use-rendered-pdf.ts'
-import { classifyFindingTarget, resolveFindingNavigation } from '../lib/pdf/finding-navigation.ts'
+import {
+  classifyFindingTarget,
+  friendlyParagraphLocation,
+  resolveFindingNavigation,
+} from '../lib/pdf/finding-navigation.ts'
 import { resolveCitationHighlight, type CitationRect } from '../lib/pdf/citation-highlight.ts'
 import { resolveFormattingHighlight, evidenceFamily } from '../lib/pdf/formatting-highlight.ts'
 import {
@@ -530,16 +534,18 @@ export function AuditPage() {
         if (decision.locationLabel) labels.set(v.id, decision.locationLabel)
       } else if (hasParagraphIdentity(v)) {
         const para = v.location?.paragraph_index as number
-        // Fallback to persisted mapping when preview is unavailable (e.g. LibreOffice missing)
-        const persisted = (audit as any).paragraph_page_mapping as Record<string, number> | null | undefined
-        const page = persisted?.[String(para)]
-        if (page != null) {
-          labels.set(v.id, `Page ${page} · Paragraph ${para + 1}`)
-        } else if (mappingStatus === 'error') {
-          labels.set(v.id, `Paragraph ${para + 1} · Page unavailable`)
-        } else {
-          labels.set(v.id, `Paragraph ${para + 1}`)
-        }
+        // Fallback to the persisted mapping when the rendered preview is
+        // unavailable (e.g. LibreOffice missing). Same shared helper as the
+        // rendered path, so the wording can never drift between them.
+        const persisted = audit.paragraph_page_mapping
+        const page = persisted?.[String(para)] ?? null
+        const label =
+          page !== null
+            ? friendlyParagraphLocation(para, null, page)
+            : mappingStatus === 'error'
+              ? `${friendlyParagraphLocation(para)} · Page unavailable`
+              : friendlyParagraphLocation(para)
+        if (label) labels.set(v.id, label)
       }
     }
     return labels
@@ -974,9 +980,18 @@ export function AuditPage() {
   )
 
   // Detail stack shared by the mobile Details tab, desktop pane, and drawer.
+  // The SAME friendly location label the Findings card renders is handed to
+  // Finding Details, so the two can never disagree (e.g. "Page 9 · Paragraph 3"
+  // in one and "Paragraph 65" in the other).
+  const selectedLocationLabel = selectedViolation
+    ? locationLabels?.get(selectedViolation.id) ?? null
+    : null
   const renderDetailStack = (a: AuditResponse) => (
     <>
-      <FindingDetail violation={selectedViolation} />
+      <FindingDetail
+        violation={selectedViolation}
+        locationLabel={selectedLocationLabel}
+      />
       <CitationSection audit={a} isProcessing={isProcessing} selectedViolation={selectedViolation} />
       <DocStats stats={a.document_stats} />
     </>
@@ -1763,6 +1778,18 @@ function splitGuidanceSuggestion(suggestion: string | null): { correction: strin
   return { correction, shared: shared || null }
 }
 
+/**
+ * Local AI Citation Guidance — rendered ONLY for a finding already eligible
+ * under the existing Local AI contract.
+ *
+ * Eligibility is unchanged and never widened: an in-text citation whose
+ * author is absent from every Reference List entry (CITATION_MISMATCH with
+ * an integer paragraph index). Every other rule — fonts, alignment, line
+ * spacing, paragraph spacing, margins, headings, Reference List formatting,
+ * year/suffix mismatch, ambiguity, uncited/duplicate entries — is
+ * deterministic only, so the whole section is hidden rather than
+ * explaining that AI is available somewhere else.
+ */
 function CitationSection({
   audit,
   isProcessing,
@@ -1785,8 +1812,12 @@ function CitationSection({
     selectedViolation !== null &&
     selectedViolation.rule_code === 'CITATION_MISMATCH' &&
     selectedPara !== null
+  // Not an eligible Local AI finding: render nothing at all — no section, no
+  // heading, and no "AI is available for citations elsewhere" explanation.
+  if (!isCitationSelected) return null
+
   const matchedIssue =
-    isCitationSelected && selectedViolation
+    selectedViolation
       ? (issues.find(
           (i) => i.paragraph_index === selectedPara && i.message === selectedViolation.message,
         ) ?? null)
@@ -1798,21 +1829,6 @@ function CitationSection({
       <p className="mt-2 flex items-center gap-2 text-[13px] leading-[19px] text-muted-foreground">
         <Loader2 className="h-3.5 w-3.5 animate-spin text-information" aria-hidden="true" />
         Citation review in progress — guidance appears when complete.
-      </p>
-    )
-  } else if (!selectedViolation) {
-    body = (
-      <p className="mt-2 flex items-start gap-2 text-[13px] leading-[19px] text-muted-foreground">
-        <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-        Select a citation finding from the findings list to see AI-assisted guidance.
-      </p>
-    )
-  } else if (!isCitationSelected) {
-    body = (
-      <p className="mt-2 flex items-start gap-2 text-[13px] leading-[19px] text-muted-foreground">
-        <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-        This finding was verified by automated formatting checks. AI-assisted guidance is available for
-        citation findings — select one from the list to see it.
       </p>
     )
   } else if (matchedIssue) {
@@ -1887,12 +1903,10 @@ function CitationSection({
   }
 
   return (
-    <section aria-label="AI-assisted citation guidance" className="border-t border-border pt-5">
+    <section aria-label="Local AI Citation Guidance" className="border-t border-border pt-5">
       <div className="flex flex-wrap items-center gap-2">
         <h3 className="text-component-title text-foreground">
-          {matchedIssue
-            ? 'AI-assisted guidance for Citation Mismatch'
-            : 'AI-assisted guidance'}
+          Local AI Citation Guidance
         </h3>
         <Badge variant="outline" className="border-ai-assisted/40 bg-ai-assisted/10 text-ai-assisted">
           <Quote className="mr-1 h-3 w-3" aria-hidden="true" /> AI-assisted

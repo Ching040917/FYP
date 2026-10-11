@@ -56,7 +56,9 @@ import type {
 
 /**
  * Severity filter options, built from `severityBadge` so the filter and the
- * badge can never drift apart. `only` reads naturally after the label.
+ * badge can never drift apart. Labels are the bare badge labels — "All
+ * severities", "Major", "Minor", "Manual review", "Unclassified" — because
+ * the control itself is already labelled "Filter by severity".
  */
 const SEVERITY_FILTER_OPTIONS: ReadonlyArray<{ value: ViolationSeverity; label: string }> = (
   ['major', 'minor', 'review', 'unknown'] as const
@@ -146,12 +148,26 @@ export function ErrorList({
     return () => io.disconnect()
   }, [filtered])
 
+  const totalFindings = result.physical_layout_errors.length
+  const hiddenCount = totalFindings - filtered.length
+  const filtersActive = severityFilter !== 'all' || categoryFilterValue !== 'all'
+
+  // Filtered-empty: the audit HAS findings, the filters just hide them all.
+  // The count is truthful and the reset restores both controls to "All" —
+  // it never reruns the audit and never alters the findings or the score.
+  const resetFilters = () => {
+    setSeverityFilter('all')
+    handleCategoryChange('all')
+  }
+
   const statusLine =
     filtered.length > 0
       ? visibleRange
         ? `Showing ${visibleRange.first}–${visibleRange.last} of ${filtered.length} findings`
         : `${filtered.length} findings · Scroll to review all`
-      : null
+      : totalFindings > 0
+        ? `Showing 0 of ${totalFindings} findings`
+        : null
 
   return (
     // Bounded flex column: h-full + min-h-0 + overflow-hidden. Without the
@@ -170,20 +186,29 @@ export function ErrorList({
             </CardDescription>
           </div>
         </div>
-        <div className="flex items-center gap-2 pt-1.5">
-          <Filter className="h-3 w-3 text-muted-foreground" />
+        {/* Severity and category controls. At a comfortable width they share
+            one row; when the Findings panel gets narrow each control takes a
+            full row of its own (flex-wrap + min-w) so nothing clips, no
+            chevron overlaps, and the category dropdown stays fully visible.
+            The filter icon stays a separate, aligned leading glyph. */}
+        <div className="flex flex-wrap items-center gap-2 pt-1.5">
+          <Filter className="h-3 w-3 shrink-0 text-muted-foreground" aria-hidden="true" />
           <Select
             value={severityFilter}
             onValueChange={(v) => setSeverityFilter(v as ViolationSeverity | 'all')}
           >
-            <SelectTrigger size="sm" className="w-[120px] text-xs" aria-label="Filter by severity">
+            <SelectTrigger
+              size="sm"
+              className="min-w-0 flex-1 basis-[8.5rem] text-xs"
+              aria-label="Filter by severity"
+            >
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All severities</SelectItem>
               {SEVERITY_FILTER_OPTIONS.map((opt) => (
                 <SelectItem key={opt.value} value={opt.value}>
-                  {opt.label} only
+                  {opt.label}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -192,7 +217,11 @@ export function ErrorList({
             value={categoryFilterValue}
             onValueChange={handleCategoryChange}
           >
-            <SelectTrigger size="sm" className="w-[160px] text-xs" aria-label="Filter by category">
+            <SelectTrigger
+              size="sm"
+              className="min-w-0 flex-1 basis-[10rem] text-xs"
+              aria-label="Filter by category"
+            >
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -237,9 +266,37 @@ export function ErrorList({
           className="scrollbar-thin min-h-[360px] overflow-y-auto overflow-x-hidden lg:min-h-0 lg:flex-1"
         >
           {filtered.length === 0 ? (
-            <div className="flex h-32 items-center justify-center px-4 text-xs text-muted-foreground">
-              No findings match the current filter.
-            </div>
+            totalFindings === 0 ? (
+              // The audit genuinely found nothing — distinct wording, no
+              // reset control, no hidden count.
+              <div className="flex h-32 items-center justify-center px-4 text-center text-xs text-muted-foreground">
+                No compliance findings were detected.
+              </div>
+            ) : (
+              <div className="flex h-32 flex-col items-center justify-center gap-1 px-4 text-center">
+                <p className="text-xs text-muted-foreground">
+                  {severityFilter !== 'all' && categoryFilterValue === 'all'
+                    ? `No ${severityBadge(severityFilter).label} findings`
+                    : 'No findings match these filters'}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {severityFilter !== 'all' && categoryFilterValue === 'all'
+                    ? `${hiddenCount} other findings are hidden by the current filters.`
+                    : `${hiddenCount} findings are hidden.`}
+                </p>
+                {filtersActive && (
+                  <button
+                    type="button"
+                    onClick={resetFilters}
+                    className="mt-1 rounded text-xs font-medium text-primary underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                  >
+                    {severityFilter !== 'all' && categoryFilterValue === 'all'
+                      ? 'Show all findings'
+                      : 'Reset filters'}
+                  </button>
+                )}
+              </div>
+            )
           ) : (
             <ul className="divide-y divide-border px-2 pb-4 pt-2">
               {filtered.map((e, index) => {

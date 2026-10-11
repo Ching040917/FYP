@@ -39,7 +39,6 @@ Severity is MINOR for every definite finding. No new severity exists.
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from app.services.formatting_evidence import (
-    SOURCE_UNRESOLVED,
     resolve_alignment,
     resolve_bold,
     resolve_indentation,
@@ -64,6 +63,11 @@ MAX_LOCATION_INDEXES = 10
 # Indentation has no existing counterpart; 0.05 in is a twentieth of an
 # inch — well below Word's own rounding when a user types "0.5" in a dialog.
 HANGING_INDENT_TOLERANCE_IN = 0.05
+# Binary floats cannot represent 0.55 - 0.5 as exactly 0.05 (it yields
+# 0.05000000000000004), so an inclusive boundary would spuriously fail.
+# This epsilon is far below any tolerance ACA uses and only absorbs float
+# representation error; it can never make a genuinely different indent match.
+_TOLERANCE_EPSILON = 1e-9
 LINE_SPACING_TOLERANCE = 0.1
 SPACE_TOLERANCE_PT = 1.0
 FONT_SIZE_TOLERANCE_PT = 0.5
@@ -298,15 +302,18 @@ def _check_hanging_indent(entry_objects, config, consolidator: _Consolidator) ->
         return
     for index, obj in entry_objects:
         evidence = resolve_indentation(obj)
-        # Numbered entries take their indent from the list definition, and
-        # unresolved means the document never stated one. Neither is a
-        # mismatch this release is willing to claim.
-        if evidence.is_numbered or evidence.source == SOURCE_UNRESOLVED:
+        # Numbered entries take their indent from the list definition (the
+        # module does not read it); valueless or unresolvable evidence
+        # states no indentation ACA can vouch for. Neither is a mismatch
+        # this release is willing to claim.
+        if evidence.is_numbered:
             continue
         actual = evidence.hanging_indent_in
-        if actual is not None and abs(actual - required) <= HANGING_INDENT_TOLERANCE_IN:
+        if actual is None:
             continue
-        current = _inches(actual) if actual is not None else "No hanging indent"
+        if abs(actual - required) <= HANGING_INDENT_TOLERANCE_IN + _TOLERANCE_EPSILON:
+            continue
+        current = _inches(actual)
         required_text = _inches(required)
         consolidator.add(
             "REFERENCE_HANGING_INDENT",

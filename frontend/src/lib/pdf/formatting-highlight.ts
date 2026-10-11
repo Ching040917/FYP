@@ -25,6 +25,7 @@ import {
 } from './paragraph-mapping.ts'
 import { measurePdfText, type MeasureText } from './pdf-measure.ts'
 import { matchCitationOnPage, type CitationRect } from './citation-highlight.ts'
+import { friendlyParagraphLocation } from './finding-navigation.ts'
 import { friendlyRuleTitle } from '../friendly-finding.ts'
 
 export type FormattingEvidenceKind = 'run' | 'paragraph' | 'none'
@@ -117,19 +118,12 @@ export function resolveFormattingHighlight(
   // Spacing side: computed once from ruleCode, used by overlay renderer.
   const spacingSide = rule === 'SPACE_BEFORE' ? 'before' : rule === 'SPACE_AFTER' ? 'after' : null
   const isRunLevel = rule === 'FONT_CONSISTENCY' || rule === 'FONT_SIZE'
-  const paragraphNumber = paraIndex + 1
-  // User-facing label never shows Run (internal DOCX concept); keep run
-  // indexes only for precise evidence highlighting. Show physical page.
-  const pagePart = mapped.pageNumber != null ? `Page ${mapped.pageNumber} · ` : ''
-  const block = bundle.blocks?.find((b) => b.index === paraIndex)
-  const isHeading = block?.role?.startsWith('HEADING_') || block?.role === 'REFERENCES_HEADING' || block?.role === 'APPENDIX_HEADING'
-  let headingExcerpt: string | null = null
-  if (isHeading && block?.text) {
-    const txt = block.text.trim().replace(/\s+/g, ' ')
-    if (txt) headingExcerpt = txt.length > 60 ? txt.slice(0, 60).trim() + '…' : txt
-  }
-  const locPart = headingExcerpt ? `Heading “${headingExcerpt}”` : `Paragraph ${paragraphNumber}`
-  const runLabel = `${formattingRuleLabel(rule)} · ${pagePart}${locPart}`
+  // The SAME friendly location every other surface renders (Findings card,
+  // Finding Details) — the on-page paragraph number, never the document-wide
+  // index. Run indexes stay internal to evidence highlighting and are never
+  // shown (user-facing label only names the physical page + position).
+  const locPart = friendlyParagraphLocation(paraIndex, mapped) ?? ''
+  const runLabel = `${formattingRuleLabel(rule)} · ${locPart}`
 
   // Run-level: exact highlight only with unambiguous run text evidence.
   if (isRunLevel) {

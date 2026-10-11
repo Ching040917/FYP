@@ -326,6 +326,88 @@ def build_review_document_bytes() -> bytes:
     return buf.getvalue()
 
 
+# ---------------------------------------------------------------------------
+# Reference hanging indent / location-correction browser fixture
+# ---------------------------------------------------------------------------
+
+# Drives the "Finding location, filters and Local AI gate" browser case. The
+# APA 7 Student Paper profile is the one that enables the Reference hanging
+# indent check, so the fixture is built for it. Regenerate with:
+#   python -m tests.citation_fixtures
+E2E_HANGING_INDENT_FIXTURE_NAME = "reference-hanging-indent-synthetic.docx"
+E2E_HANGING_INDENT_BODY = [
+    # Eligible CITATION_MISMATCH: Garcia is absent from every Reference entry.
+    "Prior studies disagree about the effect (Garcia, 2018), so the question stays open.",
+    # Manual review: two Smith entries exist, neither year matches.
+    "The policy changed earlier (Smith, 2024) and is still in effect.",
+    # Minor: single spacing where APA 7 asks for double.
+    "This paragraph uses single line spacing on purpose so the audit has a line spacing finding.",
+]
+E2E_HANGING_INDENT_REFERENCES = [
+    "Nguyen, T. (2016). An unrelated work from a different author. Example Press.",
+    "Smith, A. (2020). First work on the policy. Example Press.",
+    "Smith, B. (2019). Second work on the policy. Example Press.",
+]
+
+
+def build_hanging_indent_document_bytes() -> bytes:
+    """Browser fixture for the Reference hanging indent + location case.
+
+    Produces exactly the finding mix the browser suite needs under the APA 7
+    Student Paper profile: a MAJOR citation mismatch (eligible for the Local
+    AI gate), a REVIEW ambiguous citation, a MINOR line-spacing finding, the
+    MAJOR page margins, and the MINOR Reference hanging indent (three entries
+    with no hanging indent, consolidated into one finding at 0 in → 0.5 in).
+    """
+    import io
+
+    from docx import Document
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.shared import Inches, Pt
+
+    doc = Document()
+    normal = doc.styles["Normal"]
+    normal.font.name = "Times New Roman"
+    normal.font.size = Pt(12)
+
+    def add_body(text: str, spacing: float) -> None:
+        para = doc.add_paragraph(text)
+        for run in para.runs:
+            run.font.name = "Times New Roman"
+            run.font.size = Pt(12)
+        para.paragraph_format.line_spacing = spacing
+        para.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.LEFT
+        para.paragraph_format.space_before = Pt(0)
+        para.paragraph_format.space_after = Pt(0)
+        para.paragraph_format.first_line_indent = Inches(0.5)
+
+    add_body(E2E_HANGING_INDENT_BODY[0], 2.0)
+    add_body(E2E_HANGING_INDENT_BODY[1], 2.0)
+    add_body(E2E_HANGING_INDENT_BODY[2], 1.0)
+
+    header = doc.add_paragraph("References")
+    for run in header.runs:
+        run.font.name = "Times New Roman"
+        run.font.size = Pt(12)
+    header.paragraph_format.line_spacing = 1.0
+    header.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+    for text in E2E_HANGING_INDENT_REFERENCES:
+        para = doc.add_paragraph(text)
+        for run in para.runs:
+            run.font.name = "Times New Roman"
+            run.font.size = Pt(12)
+        para.paragraph_format.line_spacing = 2.0
+        para.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.LEFT
+        para.paragraph_format.space_before = Pt(0)
+        para.paragraph_format.space_after = Pt(0)
+        # Deliberately NO hanging indent: this is the finding under test.
+
+    buf = io.BytesIO()
+    doc.save(buf)
+    return buf.getvalue()
+
+
 if __name__ == "__main__":  # pragma: no cover - regeneration helper
     import pathlib
 
@@ -334,4 +416,10 @@ if __name__ == "__main__":  # pragma: no cover - regeneration helper
         / "frontend" / "e2e" / "fixtures" / E2E_REVIEW_FIXTURE_NAME
     )
     target.write_bytes(build_review_document_bytes())
+    print(f"wrote {target}")
+    target = (
+        pathlib.Path(__file__).resolve().parents[2]
+        / "frontend" / "e2e" / "fixtures" / E2E_HANGING_INDENT_FIXTURE_NAME
+    )
+    target.write_bytes(build_hanging_indent_document_bytes())
     print(f"wrote {target}")

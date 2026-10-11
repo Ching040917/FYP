@@ -162,3 +162,61 @@ test('the severity filter offers all four severities from the shared badge', () 
     assert.match(CARD, new RegExp(`'${sev}'`), `filter is missing ${sev}`)
   }
 })
+
+// ---------------------------------------------------------------------------
+// Filter labels, layout, and the filtered-empty state
+// ---------------------------------------------------------------------------
+
+test('filter labels are concise: no "only" suffix on any severity', () => {
+  assert.doesNotMatch(CARD, /\{opt\.label\} only/)
+  assert.match(CARD, />All severities</)
+  // The severity options render the bare badge label ("Major", "Minor",
+  // "Manual review", "Unclassified" come from the shared badge).
+  assert.match(CARD, /\{opt\.label\}/)
+})
+
+test('both filter controls keep their accessible names', () => {
+  assert.match(CARD, /aria-label="Filter by severity"/)
+  assert.match(CARD, /aria-label="Filter by category"/)
+})
+
+test('narrow Findings-panel width stacks the controls instead of clipping them', () => {
+  // Wrap + basis: the two controls share a row when there is room and each
+  // takes a full row of its own when the panel narrows. The chevrons cannot
+  // overlap because no fixed pixel width is used.
+  assert.match(CARD, /flex-wrap items-center gap-2/)
+  assert.match(CARD, /min-w-0 flex-1 basis-\[/)
+  assert.doesNotMatch(CARD, /w-\[120px\]/)
+  assert.doesNotMatch(CARD, /w-\[160px\]/)
+})
+
+test('the filter icon stays separate and aligned with the controls', () => {
+  assert.match(CARD, /<Filter className="h-3 w-3 shrink-0 text-muted-foreground" aria-hidden="true" \/>/)
+})
+
+test('zero total findings and zero filtered findings read differently', () => {
+  assert.match(CARD, /No compliance findings were detected\./)
+  assert.match(CARD, /No findings match these filters/)
+  assert.match(CARD, /No \$\{severityBadge\(severityFilter\)\.label\} findings/)
+})
+
+test('the filtered-empty state states a truthful hidden count and Shows 0 of N', () => {
+  assert.match(CARD, /const hiddenCount = totalFindings - filtered\.length/)
+  assert.match(CARD, /other findings are hidden by the current filters\./)
+  assert.match(CARD, /findings are hidden\./)
+  assert.match(CARD, /Showing 0 of \$\{totalFindings\} findings/)
+})
+
+test('reset appears only while a filter is active and restores BOTH to All', () => {
+  assert.match(CARD, /filtersActive &&/)
+  assert.match(CARD, /const resetFilters = \(\) => \{/)
+  assert.match(CARD, /setSeverityFilter\('all'\)/)
+  assert.match(CARD, /handleCategoryChange\('all'\)/)
+  // Reset is a real button: keyboard operable, no audit re-run.
+  assert.match(CARD, /<button[\s\S]{0,200}onClick=\{resetFilters\}/)
+})
+
+test('the reset control names the action the reader understands', () => {
+  assert.match(CARD, /'Reset filters'/)
+  assert.match(CARD, /'Show all findings'/)
+})

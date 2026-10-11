@@ -418,8 +418,6 @@ test('Reference List formatting rules name the one change to make', () => {
     REFERENCE_HEADING_BOLD: 'Apply or remove bold on the Reference List heading as required.',
     REFERENCE_HEADING_ALIGNMENT: 'Align the Reference List heading as required.',
     REFERENCE_SECTION_NEW_PAGE: 'Insert a page break before the Reference List heading.',
-    REFERENCE_HANGING_INDENT:
-      'Apply a hanging indent so the first line is flush left and the following lines are indented by the configured amount.',
     REFERENCE_SPACE_BEFORE: 'Set the required space before these Reference List entries.',
     REFERENCE_SPACE_AFTER: 'Set the required space after these Reference List entries.',
     REFERENCE_FONT_FAMILY: 'Set every Reference List entry to the required font family.',
@@ -431,6 +429,23 @@ test('Reference List formatting rules name the one change to make', () => {
     // Fixed copy: identical with or without the expected/actual values.
     assert.equal(friendlyRequiredAction(code, null, null), action, code)
   }
+})
+
+test('the hanging-indent action names the configured value, not a constant', () => {
+  assert.equal(
+    friendlyRequiredAction('REFERENCE_HANGING_INDENT', '0.5 in', '0 in'),
+    'Apply a 0.5 in hanging indent so the first line stays at the left margin and the following lines are indented.',
+  )
+  // A different profile must not be told to apply 0.5 in.
+  assert.equal(
+    friendlyRequiredAction('REFERENCE_HANGING_INDENT', '0.25 in', '0 in'),
+    'Apply a 0.25 in hanging indent so the first line stays at the left margin and the following lines are indented.',
+  )
+  // With no configured value it falls back to the fixed copy.
+  assert.equal(
+    friendlyRequiredAction('REFERENCE_HANGING_INDENT', null, null),
+    'Apply a hanging indent so the first line is flush left and the following lines are indented by the configured amount.',
+  )
 })
 
 test('Reference List formatting rules keep their own category', async () => {

@@ -36,15 +36,21 @@ Hence the effective hanging indent is:
 
 A positive first-line indent is a first-line indent, NOT a hanging indent,
 and is reported as such rather than being folded into the hanging value.
-
 Source precedence, nearest wins:
-    direct → paragraph_style → style_chain → numbering → unresolved
+    direct → paragraph_style → style_chain
+    → numbering (when w:numPr and no stated indent)
+    → document_default (w:docDefaults/w:pPrDefault, when declared)
+    → effective_default (Word's built-in zero for un-numbered paragraphs)
+    → unresolved (numbering unread / styles part unreadable)
 
 `numbering` is reported only when no explicit indent resolved AND the
 paragraph carries `w:numPr`; the effective indentation then comes from the
 list definition, which this module does not read. Such a paragraph is
 flagged `is_numbered` so a later rule can decline to judge it rather than
-report a false mismatch.
+report a false mismatch. An un-numbered paragraph that states no
+indentation anywhere is not unresolved: Word renders it flush at the left
+margin (0 inches on every side), so it resolves to `effective_default`
+with 0.0 values and a rule may compare it truthfully.
 """
 
 from dataclasses import dataclass
@@ -60,10 +66,17 @@ SOURCE_PARAGRAPH_STYLE = "paragraph_style"
 SOURCE_STYLE_CHAIN = "style_chain"
 SOURCE_NUMBERING = "numbering"
 SOURCE_DOCUMENT_DEFAULT = "document_default"
+# `effective_default` is its own source (not `document_default`): it means
+# "no formatting layer stated a value and Word's default renders 0". The
+# document_default source is reserved for a value actually declared in the
+# document's w:docDefaults.
+SOURCE_EFFECTIVE_DEFAULT = "effective_default"
 SOURCE_UNRESOLVED = "unresolved"
 
 # python-docx Length values are EMU; 914400 EMU per inch.
 _EMU_PER_INCH = 914400
+# OOXML w:ind attributes are twips: 1440 twips = 1 inch.
+_TWIPS_PER_INCH = 1440
 
 
 def _to_inches(value: Optional[float]) -> Optional[float]:
@@ -72,6 +85,16 @@ def _to_inches(value: Optional[float]) -> Optional[float]:
         return None
     try:
         return round(float(value) / _EMU_PER_INCH, 6)
+    except (TypeError, ValueError):
+        return None
+
+
+def _twips_to_inches(value: Optional[str]) -> Optional[float]:
+    """Convert a raw w:ind twips attribute value to inches, or None."""
+    if value is None:
+        return None
+    try:
+        return round(int(value) / _TWIPS_PER_INCH, 6)
     except (TypeError, ValueError):
         return None
 
@@ -161,20 +184,94 @@ def _has_numbering(paragraph_obj: Any) -> bool:
     return pPr is not None and pPr.find(qn("w:numPr")) is not None
 
 
+def _document_default_indents(paragraph_obj: Any):
+    """Effective indentation declared in `w:docDefaults/w:pPrDefault`.
+
+    Returns `(left, first, ok)`. A value here is a real document-wide
+    default: it applies to every paragraph that does not state its own
+    indentation, so it is reported as `document_default`, never collapsed
+    to zero. Absent (the common case) means the document states no default
+    and the caller falls through to Word's built-in effective default.
+    `ok` is False only when the styles part genuinely cannot be read.
+    """
+    try:
+        part = paragraph_obj.part
+    except Exception:
+        return None, None, False
+    try:
+        styles = None
+        for rel in part.rels.values():
+            if not rel.is_external and rel.reltype.endswith("/styles"):
+                styles = rel.target_part.element
+                break
+        if styles is None:
+            return None, None, True
+        doc_defaults = styles.find(qn("w:docDefaults"))
+        pPr_default = doc_defaults.find(qn("w:pPrDefault")) if doc_defaults is not None else None
+        pPr = pPr_default.find(qn("w:pPr")) if pPr_default is not None else None
+        ind = pPr.find(qn("w:ind")) if pPr is not None else None
+        if ind is None:
+            return None, None, True
+        left = _twips_to_inches(ind.get(qn("w:left")))
+        first = None
+        first_attr = ind.get(qn("w:firstLine"))
+        hanging_attr = ind.get(qn("w:hanging"))
+        if first_attr is not None:
+            first = _twips_to_inches(first_attr)
+        elif hanging_attr is not None:
+            # Word writes a default hanging indent as w:hanging on
+            # w:pPrDefault/w:pPr just as it does on a paragraph.
+            first = -_twips_to_inches(hanging_attr)
+        return left, first, True
+    except Exception:
+        return None, None, False
+
+
 def resolve_indentation(
     paragraph_obj: Any,
     is_numbered: Optional[bool] = None,
 ) -> IndentationEvidence:
     """Resolve effective indentation evidence for one python-docx paragraph.
 
-    Precedence: direct → the paragraph's own style → the style chain.
-    A paragraph with no explicit indent anywhere resolves to `unresolved`
-    unless it is numbered, in which case the indentation comes from the
-    list definition and is reported as `numbering` (never as a value this
-    module can vouch for).
+    How Word represents a hanging indent
+    ------------------------------------
+    OOXML stores paragraph indentation on ``<w:ind>`` with independent
+    attributes: ``w:left`` (paragraph left indent), ``w:firstLine`` and
+    ``w:hanging`` (mutually exclusive). A hanging indent of N means "first
+    line N further left than the following lines", which python-docx
+    surfaces as ``left_indent = N`` and ``first_line_indent = -N``. A
+    positive first line is a first-line indent, never a hanging indent.
+
+    Source precedence (nearest wins):
+        direct → paragraph_style → style_chain
+        → document_default (w:docDefaults/w:pPrDefault, when declared)
+        → effective_default (Word's built-in zero)
+    Numbering: when a paragraph carries ``w:numPr`` and states no
+    indentation of its own, its effective indent comes from the list
+    definition, which this module does not read. It is reported as
+    ``numbering`` with no asserted value so a later rule declines to
+    judge it rather than claim a false mismatch.
+
+    When absent values safely resolve to zero
+    -------------------------------------------
+    Verified against generated OOXML: a paragraph that states no
+    ``<w:ind>`` at any level (direct, style chain, document defaults)
+    renders flush at the left margin in Word — the un-numbered paragraph
+    default for every indentation half is 0 twips. That is a rendering
+    fact, not a formatting declaration, so it is reported as
+    ``effective_default`` with 0.0 values: the rule may compare against a
+    required indent and report a truthful "0 in" current value, but the
+    source is never labelled ``direct``.
+
+    When values remain unresolved
+    ------------------------------
+    Only numbered paragraphs with no stated indentation stay valueless
+    (``numbering``), and a document whose styles part cannot be read
+    stays ``unresolved`` — an unsupported source is never guessed at.
     """
     numbered = _has_numbering(paragraph_obj) if is_numbered is None else bool(is_numbered)
 
+    # 1. Direct paragraph formatting.
     direct_left = direct_first = None
     try:
         fmt = paragraph_obj.paragraph_format
@@ -184,6 +281,8 @@ def resolve_indentation(
         direct_left = direct_first = None
 
     left, first, source = direct_left, direct_first, SOURCE_DIRECT
+
+    # 2. + 3. Paragraph style, then its base-style chain.
     if left is None and first is None:
         for depth, (style_left, style_first) in enumerate(
             _style_chain_indents(paragraph_obj)
@@ -196,10 +295,8 @@ def resolve_indentation(
             source = SOURCE_PARAGRAPH_STYLE if depth == 0 else SOURCE_STYLE_CHAIN
             break
 
-    # No explicit indent anywhere. A numbered paragraph takes its
-    # indentation from the list definition, which this module does not read,
-    # so it is reported as `numbering` with no asserted value rather than as
-    # a mismatch a later rule could act on.
+    # 4. Numbering (conservative): no stated indent + w:numPr → the list
+    # definition owns the value; this module does not read it.
     if left is None and first is None:
         if numbered:
             return IndentationEvidence(
@@ -209,20 +306,49 @@ def resolve_indentation(
                 source=SOURCE_NUMBERING,
                 is_numbered=True,
             )
-        return IndentationEvidence(
-            left_indent_in=None,
-            first_line_indent_in=None,
-            hanging_indent_in=None,
-            source=SOURCE_UNRESOLVED,
-            is_numbered=numbered,
-        )
+        # 5. Document-wide defaults declared in w:docDefaults, when present.
+        doc_left, doc_first, ok = _document_default_indents(paragraph_obj)
+        if ok:
+            if doc_left is not None or doc_first is not None:
+                left, first = doc_left, doc_first
+                source = SOURCE_DOCUMENT_DEFAULT
+            else:
+                # 6. Word-compatible effective default: an un-numbered
+                # paragraph stating no indentation anywhere renders at
+                # 0 inches on every side.
+                left, first = 0.0, 0.0
+                source = SOURCE_EFFECTIVE_DEFAULT
+        else:
+            # The styles part was unreadable: unsupported source, so the
+            # half stays valueless rather than guessed at.
+            return IndentationEvidence(
+                left_indent_in=None,
+                first_line_indent_in=None,
+                hanging_indent_in=None,
+                source=SOURCE_UNRESOLVED,
+                is_numbered=numbered,
+            )
 
-    # Verified against generated XML: w:hanging surfaces as a NEGATIVE
-    # first_line_indent. A positive value is a first-line indent, not a
-    # hanging indent, so it is never folded into the hanging value.
+    # Effective hanging indent, computed from the resolved first-line half:
+    #   * first < 0  → a genuine hanging indent (w:hanging / w:firstLine="-N"),
+    #     magnitude -first.
+    #   * first > 0  → a positive FIRST-LINE indent. It is NOT a hanging
+    #     indent, so hanging stays None — never report the positive value as
+    #     a hanging (case G).
+    #   * first == 0 → "no hanging". This is either an explicitly stated 0.0
+    #     or the Word effective default (case B/D), so it resolves to 0.0 and
+    #     a rule may compare it truthfully.
+    # A left indent without a first-line value leaves first = None, so
+    # hanging stays None too — the value is simply not stated, and we do not
+    # overstate it (case H).
     hanging = None
-    if first is not None and first < 0:
-        hanging = round(-first, 6)
+    if first is not None:
+        if first < 0:
+            hanging = round(-first, 6)
+        elif first > 0:
+            hanging = None
+        else:
+            hanging = 0.0
 
     return IndentationEvidence(
         left_indent_in=left,

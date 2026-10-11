@@ -1119,3 +1119,30 @@ def test_register_columns_and_manual_review_panel_contract(client, test_engine):
     assert "0 minor" in text
     assert "1 for manual review (never scored)" in text
     assert "Compliance Score (enabled checks)" in text
+
+
+def test_reference_hanging_indent_values_and_action_reach_the_pdf(client, test_engine):
+    """Phase 4 case 17: the PDF carries the same Current/Required values the
+    workspace shows, and the action names the CONFIGURED indent — never a
+    hard-coded 0.5 for a profile that required something else."""
+    audit_id = _seed_audit(test_engine, violations=[
+        {"rule_code": "REFERENCE_HANGING_INDENT", "severity": "MINOR",
+         "location": {"paragraph_index": 4, "occurrences": 3,
+                      "paragraph_indexes": [4, 5, 6]},
+         "message": "This reference entry uses 0in. The APA 7 Student Paper profile requires 0.5in.",
+         "expected_value": "0.5in", "actual_value": "0in"},
+        {"rule_code": "REFERENCE_HANGING_INDENT", "severity": "MINOR",
+         "location": {"paragraph_index": 9, "occurrences": 1, "paragraph_indexes": [9]},
+         "message": "This reference entry uses 0.25in. The APA 7 Student Paper profile requires 0.5in.",
+         "expected_value": "0.5in", "actual_value": "0.25in"},
+    ])
+    text = _pdf_text(_export(client, audit_id).content)
+    # Same Current and Required values as the workspace.
+    assert "0 in" in text
+    assert "0.5 in" in text
+    assert "0.25 in" in text
+    # The action names the configured value.
+    assert "Apply a 0.5 in hanging indent" in text
+    # No raw unit token or rule code leaks.
+    assert "0in" not in text.replace("0 in", "")
+    assert "REFERENCE_HANGING_INDENT" not in text

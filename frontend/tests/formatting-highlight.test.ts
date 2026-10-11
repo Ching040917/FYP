@@ -53,7 +53,7 @@ function page(pageNumber: number, items: TextItemLike[], width = 595, height = 8
 function bundle(pages: PageText[], blocks: Array<{ index: number; text: string }>, pageOf: (i: number) => number) {
   const byIndex = new Map<number, BlockMapping>()
   for (const b of blocks) {
-    byIndex.set(b.index, { index: b.index, pageNumber: pageOf(b.index), pageRange: null, paragraphOnPage: 1, confidence: 'exact' })
+    byIndex.set(b.index, { index: b.index, pageNumber: pageOf(b.index), pageRange: null, paragraphOnPage: b.index + 1, confidence: 'exact' })
   }
   return { byIndex, pages, blocks }
 }

@@ -15,6 +15,7 @@ from app.services import role_classifier as rc
 from app.services.document_parser import extract_paragraphs
 from app.services.formatting_evidence import (
     SOURCE_DIRECT,
+    SOURCE_EFFECTIVE_DEFAULT,
     SOURCE_NUMBERING,
     SOURCE_PARAGRAPH_STYLE,
     SOURCE_STYLE_CHAIN,
@@ -190,15 +191,23 @@ def test_wrong_hanging_indent_distance_is_reported_verbatim():
     assert resolve_indentation(objs[1]).hanging_indent_in == pytest.approx(1.0)
 
 
-def test_no_explicit_indent_anywhere_is_unresolved_not_zero():
+def test_no_explicit_indent_anywhere_resolves_to_effective_zero():
+    """The owner's common case: an ordinary entry with no <w:ind> at all.
+
+    Word renders an un-numbered paragraph that states no indentation at any
+    layer flush at the left margin, so the effective hanging indent is
+    provably 0 inches. It is labelled `effective_default`, never `direct`:
+    the document declared nothing.
+    """
     objs = _objects(fx.no_explicit_indent())
     evidence = resolve_indentation(objs[1])
-    assert evidence.source == SOURCE_UNRESOLVED
-    assert evidence.left_indent_in is None
-    assert evidence.hanging_indent_in is None
-    # Critically: not silently reported as 0.
-    assert evidence.left_indent_in != 0
-    assert evidence.hanging_indent_in != 0
+    assert evidence.source == SOURCE_EFFECTIVE_DEFAULT
+    assert evidence.hanging_indent_in == pytest.approx(0.0)
+    assert evidence.left_indent_in == pytest.approx(0.0)
+    assert evidence.is_numbered is False
+    # Honest provenance: never labelled as formatting the paragraph stated.
+    assert evidence.source != SOURCE_DIRECT
+    assert evidence.source != SOURCE_PARAGRAPH_STYLE
 
 
 def test_style_inherited_hanging_indent_resolves_to_paragraph_style():

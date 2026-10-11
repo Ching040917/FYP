@@ -133,8 +133,38 @@ test('secondary disclosures stay reachable', () => {
   assert.match(DETAIL, /heading sequence/i)
 })
 
-test('the detail still names the location and the required action', () => {
+test('the detail names the location and the required action', () => {
   assert.match(DETAIL, />\s*Location\s*</)
-  assert.match(DETAIL, /Paragraph \{para\}/)
   assert.match(DETAIL, /Required action/)
+})
+
+test('the location is the shared friendly label, never a bare paragraph number', () => {
+  const rendered = stripComments(DETAIL)
+  // The component renders the parent's shared label verbatim...
+  assert.match(rendered, /\{location\}/)
+  assert.match(rendered, /locationLabel/)
+  // ...and never renders the ambiguous bare form the screenshot showed.
+  assert.doesNotMatch(rendered, /Paragraph \{para\}/)
+  assert.doesNotMatch(rendered, /Paragraph \{paragraphNumber/)
+})
+
+test('the historical fallback is labelled Document paragraph N', () => {
+  const rendered = stripComments(DETAIL)
+  assert.match(rendered, /Document paragraph \$\{n \+ 1\}/)
+})
+
+test('a long location truncates safely and stays fully readable', () => {
+  const rendered = stripComments(DETAIL)
+  // Truncation in the layout, the complete value in the title attribute.
+  assert.match(rendered, /className="truncate">\{location\}/)
+  assert.match(rendered, /title=\{location\}/)
+})
+
+test('Finding Details carries no duplicated category badge', () => {
+  const rendered = stripComments(DETAIL)
+  // The friendly title already names the rule.
+  assert.doesNotMatch(rendered, /CATEGORY_LABELS/)
+  // Severity and how the finding was produced remain.
+  assert.match(rendered, /severityBadge/)
+  assert.match(rendered, /checkStatement/)
 })
