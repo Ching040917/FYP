@@ -41,3 +41,4 @@ backend/.venv/
 
 # Windows installer output (compiled Setup EXE + validation logs) — never track
 release-output/
+/.workbuddy-ai
