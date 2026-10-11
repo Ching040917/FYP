@@ -323,10 +323,22 @@ def classify_reference_page_start(
     previous_body_index: Optional[int] = None
     for para in paragraphs:
         idx = para.get("index")
-        if idx is None or idx >= heading_index:
+        if idx is None:
+            # An index-less paragraph (e.g. a synthetic/degenerate entry)
+            # proves nothing and must not abort the scan: skipping it keeps
+            # the selection of the LAST eligible content paragraph before
+            # the heading honest, so a proven same-page start is not turned
+            # into "uncertain" by an unrelated gap.
+            continue
+        if idx >= heading_index:
+            # `extract_paragraphs` emits strictly ascending indexes, so the
+            # heading is the first paragraph at or past it and nothing later
+            # can precede it. Selection is therefore the highest index below
+            # the heading that carries text.
             break
         if (para.get("text") or "").strip():
-            previous_body_index = idx
+            if previous_body_index is None or idx > previous_body_index:
+                previous_body_index = idx
 
     # A persisted mapping is JSON-shaped ({"3": 7}); a mapping built in
     # memory is int-keyed. Both are accepted, because guessing one shape

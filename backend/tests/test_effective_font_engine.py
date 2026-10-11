@@ -282,8 +282,11 @@ def test_apa_allowed_pairs_remain_pairwise_and_grouped():
 
 def test_role_exemptions_remain_intact():
     """Cover/TOC/reference-ENTRY/empty/caption/figure-host/UNKNOWN roles are
-    never font-flagged. REFERENCES_HEADING is heading-like by policy and
-    legitimately receives the heading font requirement."""
+    never font-flagged. REFERENCES_HEADING is a structural section label, not
+    an ordinary numbered heading: it is exempt from the ordinary Heading 1
+    font-size requirement and is owned entirely by its Reference-specific
+    rules (REFERENCE_HEADING_TEXT / _BOLD / _ALIGNMENT and
+    REFERENCE_SECTION_NEW_PAGE). Ordinary HEADING_1/2/3 remain font-flagged."""
 
     def build(doc):
         _normal_12(doc)
@@ -300,17 +303,19 @@ def test_role_exemptions_remain_intact():
     violations = check_font_size(paras, ExactPreset(), roles=roles)
     flagged = {v.location["paragraph_index"] for v in violations}
     exempt_roles = {"COVER", "TABLE_OF_CONTENTS_HEADING", "TABLE_OF_CONTENTS_ENTRY",
-                    "REFERENCE_ENTRY", "EMPTY", "FIELD_ONLY",
+                    "REFERENCE_ENTRY", "REFERENCES_HEADING",
+                    "EMPTY", "FIELD_ONLY",
                     "DISPLAYED_EQUATION", "FIGURE_HOST",
                     "CAPTION_TABLE", "CAPTION_FIGURE", "UNKNOWN"}
     for i, role in enumerate(roles):
         if role in exempt_roles:
             assert i not in flagged, f"role {role} at {i} must stay exempt"
-    # And heading-like roles (incl. REFERENCES_HEADING) ARE flagged — pin it.
+    # The Reference heading must NOT be measured against the ordinary
+    # Heading 1 font size — pinned so a regression is deliberate.
     ref_heading = [i for i, r in enumerate(roles) if r == "REFERENCES_HEADING"]
     assert ref_heading, "fixture must produce a REFERENCES_HEADING"
     for i in ref_heading:
-        assert i in flagged
+        assert i not in flagged, "REFERENCES_HEADING must not get the ordinary H1 size rule"
 
 
 def test_inherited_family_creates_consistency_finding():

@@ -569,14 +569,18 @@ def test_sanitized_real_doc_score_improves():
     references typography removed) → 84 (Phase 2B: 3 administrative/rubric
     Table Caption false positives removed, each MINOR=2pt) → 72 (effective-
     font resolution: three style-inherited H1 runs now correctly resolve to
-    12 pt vs the required 16 pt — genuine MAJOR FONT_SIZE findings that were
-    previously invisible when run.font.size returned None)."""
+    12 pt vs the required 16 pt) → 76 (Reference-heading role gating: the
+    References heading is a structural section label, so the ordinary Heading 1
+    FONT_SIZE finding against it — one spurious MAJOR — is no longer emitted;
+    only the two genuine Heading 1 findings remain)."""
     from app.services.scoring import calculate_weighted_score_detailed
     viols = run_static_rules_engine(_sanitized_real_doc())
     score = calculate_weighted_score_detailed(viols).total
-    assert score == 72, f"expected 72, got {score}"
-    # The three newly detected violations are heading-size findings on
-    # distinct paragraphs — traceable, not aggregated.
+    assert score == 76, f"expected 76, got {score}"
+    # The remaining heading-size violations are the two ordinary Heading 1
+    # paragraphs (4, 6) — traceable, not aggregated. Index 8 is the References
+    # heading and must NOT appear here.
     font_findings = [v for v in viols if v.rule_code == "FONT_SIZE"]
-    assert len(font_findings) == 3
-    assert {v.location["paragraph_index"] for v in font_findings} == {4, 6, 8}
+    assert len(font_findings) == 2
+    assert {v.location["paragraph_index"] for v in font_findings} == {4, 6}
+    assert all(v.severity == "MAJOR" for v in font_findings)

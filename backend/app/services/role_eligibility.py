@@ -9,10 +9,19 @@ Eligibility policy (one source of truth):
 
   BODY, APPENDIX_BODY(prose)        → body font/size/alignment/line-spacing/
                                       space-before/space-after.
-  HEADING_1/2/3, REFERENCES_HEADING,
-  APPENDIX_HEADING                  → configured heading font/size/alignment/
+  HEADING_1/2/3                     → configured heading font/size/alignment/
                                       spacing; heading hierarchy is untouched
                                       (separate rule, not role-gated).
+  REFERENCES_HEADING                → Reference-specific rules ONLY
+                                      (REFERENCE_HEADING_TEXT / _BOLD /
+                                      _ALIGNMENT and REFERENCE_SECTION_NEW_PAGE).
+                                      Must NOT receive the ordinary Heading 1
+                                      font-size rule, ordinary font-consistency,
+                                      ordinary heading-hierarchy findings, or
+                                      body paragraph-format rules.
+  APPENDIX_HEADING                  → configured heading requirements
+                                      (unchanged; Appendix eligibility is a
+                                      separate classification).
   LIST_ITEM                         → visible-text font checks only; list
                                       spacing policy preserved
                                       (LIST_SPACE_AFTER=None ⇒ no finding).
@@ -46,6 +55,13 @@ _HEADING_LIKE = frozenset({
     "REFERENCES_HEADING", "APPENDIX_HEADING",
 })
 
+# Roles that receive the ORDINARY heading FORMATTING rules. Deliberately
+# excludes REFERENCES_HEADING: the Reference List heading is gated to its own
+# Reference-specific rules only (see `receives_ordinary_heading_rules`).
+# APPENDIX_HEADING is left in so Appendix behaviour is unchanged (Phase 5
+# classification only; not broadened here).
+_ORDINARY_HEADING = frozenset({"HEADING_1", "HEADING_2", "HEADING_3"})
+
 # Roles that receive visible-text font checks but NOT body typography rules.
 _FONT_ONLY = frozenset({"LIST_ITEM"})
 
@@ -70,17 +86,40 @@ def is_body_role(role: Optional[str]) -> bool:
 
 
 def is_heading_role(role: Optional[str]) -> bool:
-    """True when the role receives configured HEADING requirements."""
+    """True when the role receives configured HEADING requirements.
+
+    Includes REFERENCES_HEADING and APPENDIX_HEADING: both are heading-LIKE,
+    which callers (e.g. guided-fix family selection) still need to know.
+    Ordinary heading FORMATTING rules must additionally require
+    `receives_ordinary_heading_rules()` — see below.
+    """
     return role in _HEADING_LIKE
+
+
+def receives_ordinary_heading_rules(role: Optional[str]) -> bool:
+    """True only for the ordinary Heading 1/2/3 roles.
+
+    The Reference List heading is a structural section label, not a numbered
+    document heading: it must never be measured against the ordinary Heading 1
+    font size, nor inherit ordinary heading-hierarchy requirements. Its own
+    Reference-specific rules (REFERENCE_HEADING_TEXT / _BOLD / _ALIGNMENT and
+    REFERENCE_SECTION_NEW_PAGE) are its only requirements. This helper is the
+    single gate the generic heading formatting rules consult, so the exclusion
+    cannot drift between them.
+    """
+    return role in _ORDINARY_HEADING
 
 
 def is_font_eligible(role: Optional[str]) -> bool:
     """True when visible-text font checks apply (body, headings, list items).
 
     Cover, TOC, equations, figure hosts, empty/field-only, UNKNOWN, and
-    reference entries are NOT font-eligible.
+    reference entries are NOT font-eligible. REFERENCES_HEADING is excluded
+    here so the ordinary font-consistency rule cannot apply a body/heading
+    font requirement to the Reference List heading; its Reference-specific
+    rules own that heading entirely.
     """
-    return role in _BODY_LIKE or role in _HEADING_LIKE or role in _FONT_ONLY
+    return role in _BODY_LIKE or role in _ORDINARY_HEADING or role in _FONT_ONLY
 
 
 def is_list_item_role(role: Optional[str]) -> bool:

@@ -152,7 +152,11 @@ def _style_chain_indents(paragraph_obj: Any):
 
     Nearest-first, mirroring the precedence used by the font resolvers.
     Yields at most one pair per style; `None` members mean "this style does
-    not define that half".
+    not define that half". A style that states only one half (a very common
+    Word shape — e.g. the built-in `List Paragraph` style declares
+    ``w:left="720"`` and no first-line value) yields that half as a value and
+    the other half as ``None``. Callers must therefore treat the two halves
+    INDEPENDENTLY: a stated left indent does not resolve the first-line half.
     """
     try:
         style = paragraph_obj.style
@@ -280,20 +284,34 @@ def resolve_indentation(
     except Exception:
         direct_left = direct_first = None
 
-    left, first, source = direct_left, direct_first, SOURCE_DIRECT
+    left, first = direct_left, direct_first
+    source = SOURCE_DIRECT
+    style_source: Optional[str] = None
 
-    # 2. + 3. Paragraph style, then its base-style chain.
-    if left is None and first is None:
+    # 2. + 3. Paragraph style, then its base-style chain. Each half is
+    # resolved independently: a level that states only the left half (e.g.
+    # the built-in `List Paragraph` style, which declares w:left="720" and
+    # no first-line value) must not terminate the search for the first-line
+    # half, or a hanging indent stated further up the chain is missed.
+    if left is None or first is None:
         for depth, (style_left, style_first) in enumerate(
             _style_chain_indents(paragraph_obj)
         ):
-            if style_left is None and style_first is None:
-                continue
-            left, first = style_left, style_first
-            # depth 0 is the paragraph's own style; anything deeper was
-            # inherited through a base style.
-            source = SOURCE_PARAGRAPH_STYLE if depth == 0 else SOURCE_STYLE_CHAIN
-            break
+            if left is None and style_left is not None:
+                left = style_left
+            if first is None and style_first is not None:
+                first = style_first
+            if left is not None or first is not None:
+                if style_source is None:
+                    # depth 0 is the paragraph's own style; anything deeper
+                    # was inherited through a base style.
+                    style_source = (
+                        SOURCE_PARAGRAPH_STYLE if depth == 0 else SOURCE_STYLE_CHAIN
+                    )
+            if left is not None and first is not None:
+                break
+        if style_source is not None:
+            source = style_source
 
     # 4. Numbering (conservative): no stated indent + w:numPr → the list
     # definition owns the value; this module does not read it.
@@ -306,28 +324,39 @@ def resolve_indentation(
                 source=SOURCE_NUMBERING,
                 is_numbered=True,
             )
-        # 5. Document-wide defaults declared in w:docDefaults, when present.
+
+    # 5. Document-wide defaults declared in w:docDefaults, when present.
+    # Consulted for whichever half is still unstated, so a document-default
+    # hanging indent is honoured even when a style supplied only the left half.
+    if left is None or first is None:
         doc_left, doc_first, ok = _document_default_indents(paragraph_obj)
-        if ok:
-            if doc_left is not None or doc_first is not None:
-                left, first = doc_left, doc_first
-                source = SOURCE_DOCUMENT_DEFAULT
-            else:
-                # 6. Word-compatible effective default: an un-numbered
-                # paragraph stating no indentation anywhere renders at
-                # 0 inches on every side.
-                left, first = 0.0, 0.0
-                source = SOURCE_EFFECTIVE_DEFAULT
-        else:
+        if not ok:
             # The styles part was unreadable: unsupported source, so the
-            # half stays valueless rather than guessed at.
+            # unstated half stays valueless rather than guessed at.
             return IndentationEvidence(
-                left_indent_in=None,
-                first_line_indent_in=None,
+                left_indent_in=None if left is None else left,
+                first_line_indent_in=None if first is None else first,
                 hanging_indent_in=None,
                 source=SOURCE_UNRESOLVED,
                 is_numbered=numbered,
             )
+        doc_applied = False
+        if left is None and doc_left is not None:
+            left = doc_left
+            doc_applied = True
+        if first is None and doc_first is not None:
+            first = doc_first
+            doc_applied = True
+        if doc_applied:
+            source = SOURCE_DOCUMENT_DEFAULT
+        # 6. Word-compatible effective default: an un-numbered paragraph that
+        # states no indentation ANYWHERE renders flush at the left margin, so
+        # both halves are 0.0. This applies to the PAIR, not per-half: a left
+        # indent stated without a first-line value is a plain left indent, NOT
+        # a zero hanging indent, so it must not be overstated as one.
+        if left is None and first is None:
+            left, first = 0.0, 0.0
+            source = SOURCE_EFFECTIVE_DEFAULT
 
     # Effective hanging indent, computed from the resolved first-line half:
     #   * first < 0  → a genuine hanging indent (w:hanging / w:firstLine="-N"),

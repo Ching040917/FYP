@@ -19,6 +19,7 @@ from app.services.reference_section import reference_section_bounds
 from app.services.role_eligibility import (
     is_font_eligible,
     is_heading_role,
+    receives_ordinary_heading_rules,
     is_body_role,
     is_list_item_role,
     is_caption_role,
@@ -40,12 +41,24 @@ LayoutViolation = __import__(
 
 def _heading_style_level(style_name: Optional[str], role: Optional[str]) -> Optional[int]:
     """Heading level for font/typography: authoritative role wins when the
-    paragraph is heading-like; otherwise the style-derived level (legacy
-    fallback for callers without roles)."""
-    if is_heading_role(role):
-        if role in ("REFERENCES_HEADING", "APPENDIX_HEADING"):
+    paragraph is an ORDINARY heading; otherwise the style-derived level
+    (legacy fallback for callers without roles).
+
+    REFERENCES_HEADING is deliberately NOT an ordinary heading: it returns
+    None so the generic Heading 1 font-size / typography rules never apply to
+    it. Its Reference-specific rules own that heading entirely. APPENDIX_HEADING
+    keeps its historical level-1 treatment.
+    """
+    if role is not None:
+        if receives_ordinary_heading_rules(role):
+            return int(role.rsplit("_", 1)[-1])
+        if role == "APPENDIX_HEADING":
             return 1
-        return int(role.rsplit("_", 1)[-1])
+        if is_heading_role(role):
+            # Any other heading-like role that is neither ordinary nor the
+            # Appendix heading (currently none) is not measured by the
+            # ordinary heading rules.
+            return None
     return get_heading_level(style_name)
 
 
@@ -523,6 +536,14 @@ def check_paragraph_typography(
         if role is not None:
             if typography_skipped(role):
                 continue
+            if role == "REFERENCES_HEADING":
+                # The Reference List heading is a structural section label:
+                # it must receive NONE of the ordinary heading or body
+                # paragraph-typography rules. Its requirements are the
+                # Reference-specific ones only (heading wording, bold,
+                # alignment and section page start), all of which live in
+                # reference_rules.py and are therefore never emitted here.
+                continue
             if is_caption_role(role):
                 # Caption-specific spacing only — no line-spacing/alignment.
                 expected_before = preset.CAPTION_SPACE_BEFORE
@@ -752,19 +773,31 @@ def check_page_margins(sections: List[Dict], preset) -> List[LayoutViolation]:
     return violations
 
 
-def check_heading_hierarchy(paragraphs: List[Dict]) -> List[LayoutViolation]:
+def check_heading_hierarchy(
+    paragraphs: List[Dict],
+    roles: Optional[List[Optional[str]]] = None,
+) -> List[LayoutViolation]:
     """FR-2.5: Heading hierarchy — detect skipped levels AND orphan first headings.
 
     Two checks:
     1. Skip detection: H1 -> H3 (missing H2) is a MAJOR violation.
     2. Orphan detection: the very first heading in the document must be H1.
        Starting at H2 or H3 breaks Word's outline view and any auto-TOC.
+
+    Role-aware: a REFERENCES_HEADING paragraph is a structural section label,
+    not a numbered document heading, so it neither raises nor participates in
+    an ordinary heading-hierarchy finding — even when it carries a `Heading N`
+    style. When `roles` is None (legacy callers), the style-only behaviour is
+    preserved exactly.
     """
     violations = []
     last_heading_level = 0
     first_heading_seen = False
 
-    for para in paragraphs:
+    for i, para in enumerate(paragraphs):
+        role = roles[i] if roles is not None else None
+        if role == "REFERENCES_HEADING":
+            continue
         level = get_heading_level(para.get("style_name"))
         if level is None:
             continue
@@ -1194,7 +1227,7 @@ def run_static_rules_engine(
     all_violations.extend(check_font_size(paragraphs, preset, roles=roles))
     all_violations.extend(check_paragraph_typography(paragraphs, preset, doc=doc, roles=roles))
     all_violations.extend(check_page_margins(sections, preset))
-    all_violations.extend(check_heading_hierarchy(paragraphs))
+    all_violations.extend(check_heading_hierarchy(paragraphs, roles=roles))
     all_violations.extend(check_media_captions(
         doc, paragraphs, preset,
         table_roles=table_roles,
