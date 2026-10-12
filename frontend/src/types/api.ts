@@ -64,6 +64,8 @@ export interface AuditSubmitResponse {
   ai_provider?: string | null
   /** Paragraph→physical rendered-page mapping (Build friendly locations). Null when unavailable. */
   paragraph_page_mapping?: Record<string, number> | null
+  /** Historical scoring-contract reconciliation. POST always 'consistent'; optional. */
+  score_consistency?: ScoreConsistency | null
 }
 
 /** Section boundary metadata (PoC) — mirrors backend SectionMetadata. */
@@ -78,6 +80,27 @@ export interface SectionMetadata {
   margin_right: number | null
   margin_top: number | null
   margin_bottom: number | null
+}
+/**
+ * Historical scoring-contract reconciliation — mirrors backend
+ * ScoreConsistencyResponse. Present only on the GET surface (and POST,
+ * always `consistent`); absent on payloads that predate the field, so it
+ * is optional everywhere and old clients ignore it.
+ *
+ * `status`:
+ *  - 'consistent'     stored score reproduces under the current contract.
+ *  - 'legacy_spacing' an earlier spacing contract produced the stored
+ *                      score; a presentation-only "Legacy spacing
+ *                      adjustment" row in the breakdown closes the gap.
+ *  - 'inconsistent'   stored score matches neither contract; it is
+ *                      preserved unchanged and may not fully reconcile.
+ *
+ * `note` is reader-safe: no internal rule codes, bucket names, or
+ * implementation-version identifiers.
+ */
+export interface ScoreConsistency {
+  status: 'consistent' | 'legacy_spacing' | 'inconsistent'
+  note?: string | null
 }
 
 export interface AuditResponse {
@@ -109,6 +132,8 @@ export interface AuditResponse {
   profile_snapshot?: ProfileSnapshot | null
   /** Paragraph→physical rendered-page mapping (Build friendly locations). Null when unavailable. */
   paragraph_page_mapping?: Record<string, number> | null
+  /** Historical scoring-contract reconciliation. Optional; null/absent on payloads that predate it. */
+  score_consistency?: ScoreConsistency | null
 }
 
 export interface AuditListItem {

@@ -30,11 +30,33 @@ const AUDIT_CATEGORY_VALUES: readonly AuditCategory[] = [
  * canonical keys (scoring.py CATEGORY_META); any unknown value maps to the
  * presentation-only `'unknown'` bucket so unknown rows stay visible and are
  * never mislabelled as a known category (e.g. paragraph_typography).
+ *
+ * `'legacy_spacing'` is the one OTHER presentation-only bucket: the
+ * "Legacy spacing adjustment" row the backend attaches to historical
+ * audits. It is a known key, so it must pass through unchanged — never be
+ * collapsed to `'unknown'` (which would mislabel it "Other").
  */
 export function normalizeScoreCategory(raw: string): ScoreCategory {
+  if (raw === 'legacy_spacing') return 'legacy_spacing'
   return (AUDIT_CATEGORY_VALUES as readonly string[]).includes(raw)
     ? (raw as AuditCategory)
     : 'unknown'
+}
+/**
+ * Normalize the backend historical scoring-contract status. Unknown or
+ * missing values stay null — never fabricated as 'consistent' (which
+ * would hide a legacy/inconsistent audit behind a clean state).
+ */
+export function normalizeScoreConsistencyStatus(
+  raw: string | null | undefined,
+): 'consistent' | 'legacy_spacing' | 'inconsistent' | null {
+  return (
+    raw === 'consistent' ||
+    raw === 'legacy_spacing' ||
+    raw === 'inconsistent'
+      ? raw
+      : null
+  )
 }
 
 /**
@@ -212,5 +234,12 @@ export function adaptAuditResponse(input: AdaptInput): AuditResult {
     audit_id: raw.audit_id,
     ai_review_status: normalizeAiReviewStatus(raw.ai_review_status),
     ai_provider: normalizeAiProvider(raw.ai_provider),
+    score_consistency:
+      raw.score_consistency && normalizeScoreConsistencyStatus(raw.score_consistency.status)
+        ? {
+            status: normalizeScoreConsistencyStatus(raw.score_consistency.status)!,
+            note: raw.score_consistency.note ?? null,
+          }
+        : null,
   }
 }

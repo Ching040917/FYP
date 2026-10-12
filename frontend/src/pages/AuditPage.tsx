@@ -969,15 +969,27 @@ export function AuditPage() {
   const selectedViolation = violations.find((v) => v.id === selectedId) ?? null
 
   const breakdown = audit?.score_breakdown ?? []
-  const catCounts = breakdown.reduce(
-    (acc, b) => {
-      if (b.deduction <= 0) acc.pass += 1
-      else if (b.major > 0) acc.fail += 1
-      else acc.warn += 1
-      return acc
-    },
-    { fail: 0, warn: 0, pass: 0 },
-  )
+  // The "Legacy spacing adjustment" row is a presentation-only
+  // reconciliation artifact for historical audits — never a category
+  // verdict. It shows in the checklist but must not skew the
+  // pass/warn/fail tallies on the category trigger.
+  const catCounts = breakdown
+    .filter((b) => b.category !== 'legacy_spacing')
+    .reduce(
+      (acc, b) => {
+        if (b.deduction <= 0) acc.pass += 1
+        else if (b.major > 0) acc.fail += 1
+        else acc.warn += 1
+        return acc
+      },
+      { fail: 0, warn: 0, pass: 0 },
+    )
+  // Historical scoring-contract notice. The backend's note is
+  // reader-safe wording; 'consistent' (or absent) shows nothing.
+  const consistencyNote =
+    audit?.score_consistency && audit.score_consistency.status !== 'consistent'
+      ? audit.score_consistency.note
+      : null
 
   // Detail stack shared by the mobile Details tab, desktop pane, and drawer.
   // The SAME friendly location label the Findings card renders is handed to
@@ -1151,6 +1163,14 @@ export function AuditPage() {
                 </div>
               </div>
             </div>
+            {consistencyNote && (
+              <p
+                role="note"
+                className="mt-2 rounded-md border border-border bg-muted/30 px-3 py-2 text-[12px] leading-[18px] text-muted-foreground"
+              >
+                {consistencyNote}
+              </p>
+            )}
 
             {isProcessing && <ProcessingBanner pollAttempts={pollAttempts} />}
             {audit.status === 'failed' && <FailedBanner />}

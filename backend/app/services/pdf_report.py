@@ -7,10 +7,13 @@ the STSong-Light CID font as a fallback for non-WinAnsi text), so no
 external font files or PDF programs are required.
 """
 import io
+import logging
 import re
 from collections import defaultdict
 from datetime import datetime
 from xml.sax.saxutils import escape as _xml_escape
+
+logger = logging.getLogger("app.services.pdf_report")
 
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
@@ -32,7 +35,10 @@ from reportlab.platypus import (
 )
 
 from app.services.layout_violation import LayoutViolation
-from app.services.scoring import calculate_weighted_score_detailed
+from app.services.scoring import (
+    calculate_weighted_score_detailed,
+    select_scoring_contract,
+)
 from app.services.table_page_resolution import resolve_table_page
 
 # Built-in CID font — renders any Unicode text (incl. Chinese captions)
@@ -1215,6 +1221,38 @@ def generate_audit_pdf(audit, violations, citation_issues, profile_snapshot=None
         for v in violations
     ]
     score_result = calculate_weighted_score_detailed(reconstructed)
+    breakdown_items = list(score_result.breakdown)
+
+    # Historical scoring-contract selection (completed audits only): the
+    # stored score is immutable and may have been produced under the
+    # pre-fix spacing contract, whose deduction hid from the visible
+    # breakdown. Match the stored score against BOTH contracts over the
+    # persisted findings; a confirmed legacy audit gets the
+    # presentation-only "Legacy spacing adjustment" row so the table
+    # explains the STORED score, not a fresh recomputation.
+    display_score = score_result.total
+    consistency_note = None
+    if audit.status == "completed" and getattr(audit, "weighted_score", None) is not None:
+        display_score = audit.weighted_score
+        legacy_result = calculate_weighted_score_detailed(
+            reconstructed, legacy_spacing=True
+        )
+        selection = select_scoring_contract(
+            audit.weighted_score, score_result, legacy_result
+        )
+        if selection.status == "legacy_spacing" and selection.legacy_row:
+            breakdown_items.append(selection.legacy_row)
+        elif selection.status == "inconsistent":
+            # Never mislabel an unexplained mismatch as legacy spacing.
+            logger.warning(
+                "Score consistency mismatch audit_id=%s stored=%s "
+                "current=%s legacy=%s",
+                audit.id,
+                audit.weighted_score,
+                score_result.total,
+                legacy_result.total,
+            )
+        consistency_note = selection.note
 
     story = []
     story.append(_p("Academic Compliance Report", size=18, font="Helvetica-Bold", color=NAVY, leading=22))
@@ -1238,15 +1276,20 @@ def generate_audit_pdf(audit, violations, citation_issues, profile_snapshot=None
     # ---- Executive Summary ----
     story.append(_section("Executive Summary"))
     story.append(Spacer(1, 2 * mm))
-    story.append(_score_summary(score_result.total, score_result.major_count, score_result.minor_count))
+    story.append(_score_summary(display_score, score_result.major_count, score_result.minor_count))
     story.append(Spacer(1, 2 * mm))
     story.append(_p(
-        f"The score of {score_result.total}/100 applies only to the enabled deterministic "
+        f"The score of {display_score}/100 applies only to the enabled deterministic "
         "checks in the selected formatting profile. It does not assess writing quality, "
         "factual accuracy, or requirements that are not enabled in that profile.",
         size=8.5, color=MUTED,
     ))
-    story.append(Spacer(1, 2 * mm))
+    if consistency_note:
+        # Safe historical-consistency disclosure. Plain reader-facing
+        # language: no internal rule codes, bucket names, or version
+        # identifiers. The stored score is never rewritten.
+        story.append(Spacer(1, 2 * mm))
+        story.append(_p(consistency_note, size=8.5, color=MUTED))
     if not violations:
         story.append(_p("All enabled checks passed.", size=9.5, font="Helvetica-Bold", color=GREEN))
         story.append(_p(
@@ -1265,7 +1308,7 @@ def generate_audit_pdf(audit, violations, citation_issues, profile_snapshot=None
     story.append(Spacer(1, 2 * mm))
     break_rows = [[_p(h, size=8.5, font="Helvetica-Bold", color=colors.white) for h in
                    ("Category", "Major", "Minor", "Deducted", "Remaining")]]
-    for item in score_result.breakdown:
+    for item in breakdown_items:
         label = item.label
         if item.category == "citation_apa":
             label = "APA Citations"

@@ -21,32 +21,44 @@
  * The presentation-only 'unknown' category renders as "Other."
  */
 
-import { AlertTriangle, CheckCircle2, XCircle } from 'lucide-react'
-import { CATEGORY_LABELS } from '../../lib/audit/categories'
+import { AlertTriangle, CheckCircle2, Info, XCircle } from 'lucide-react'
+import { CATEGORY_LABELS, LEGACY_SPACING_CATEGORY_LABEL } from '../../lib/audit/categories'
 import { normalizeScoreCategory } from '../../lib/audit/adapter'
 import { cn } from '../../lib/utils'
 import type { ScoreBreakdown } from '../../types/api'
 
-type Verdict = 'pass' | 'warning' | 'fail'
+type Verdict = 'pass' | 'warning' | 'fail' | 'neutral'
 
 function verdictFor(b: ScoreBreakdown): Verdict {
+  // The "Legacy spacing adjustment" row is a reconciliation artifact for a
+  // historical audit's stored score — not a category verdict. It renders
+  // neutral: no Pass/Warning/Fail styling, no finding counts.
+  if (b.category === 'legacy_spacing') return 'neutral'
   if (b.deduction <= 0) return 'pass'
   return b.major > 0 ? 'fail' : 'warning'
 }
+
 
 const VERDICT_ICON = {
   pass: CheckCircle2,
   warning: AlertTriangle,
   fail: XCircle,
+  neutral: Info,
 } as const
 
 const VERDICT_TONE = {
   pass: 'text-success',
   warning: 'text-warning',
   fail: 'text-destructive',
+  neutral: 'text-muted-foreground',
 } as const
 
-const VERDICT_LABEL = { pass: 'Pass', warning: 'Warning', fail: 'Fail' } as const
+const VERDICT_LABEL = {
+  pass: 'Pass',
+  warning: 'Warning',
+  fail: 'Fail',
+  neutral: 'Adjustment',
+} as const
 
 export function VerdictChecklist({
   breakdown,
@@ -80,7 +92,8 @@ export function VerdictChecklist({
         {breakdown.map((b) => {
           const verdict = verdictFor(b)
           const cat = normalizeScoreCategory(b.category)
-          const label = cat === 'unknown' ? 'Other' : CATEGORY_LABELS[cat]
+          const label = cat === 'unknown' ? 'Other' : cat === 'legacy_spacing' ? LEGACY_SPACING_CATEGORY_LABEL : CATEGORY_LABELS[cat]
+          const isLegacy = cat === 'legacy_spacing'
           const Icon = VERDICT_ICON[verdict]
           const selected = selectable && selectedCategory === b.category
           const cell = (
@@ -96,26 +109,39 @@ export function VerdictChecklist({
                 </span>
               </div>
 
-              {/* Bottom row: status, counts, deduction */}
+              {/* Bottom row: status, counts, deduction. The legacy
+                  adjustment row is a reconciliation artifact, not a real
+                  category — it shows only its deduction, never finding
+                  counts. */}
               <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[13px] leading-[19px] text-muted-foreground">
                 <span className={`font-medium ${VERDICT_TONE[verdict]}`}>
                   {VERDICT_LABEL[verdict]}
                 </span>
-                <span aria-hidden="true">·</span>
-                {b.major > 0 && (
-                  <span className="text-destructive" title={`${b.major} major findings`}>
-                    {b.major}M
-                  </span>
+                {isLegacy ? (
+                  b.deduction > 0 ? (
+                    <span aria-hidden="true">·</span>
+                  ) : null
+                ) : (
+                  <>
+                    <span aria-hidden="true">·</span>
+                    {b.major > 0 && (
+                      <span className="text-destructive" title={`${b.major} major findings`}>
+                        {b.major}M
+                      </span>
+                    )}
+                    {b.minor > 0 && (
+                      <span className="text-warning" title={`${b.minor} minor findings`}>
+                        {b.minor}m
+                      </span>
+                    )}
+                    {b.major === 0 && b.minor === 0 && (
+                      <span className="text-success">0</span>
+                    )}
+                  </>
                 )}
-                {b.minor > 0 && (
-                  <span className="text-warning" title={`${b.minor} minor findings`}>
-                    {b.minor}m
-                  </span>
-                )}
-                {b.major === 0 && b.minor === 0 && (
-                  <span className="text-success">0</span>
-                )}
-                <span aria-hidden="true">·</span>
+                {b.deduction > 0 ? (
+                  <span aria-hidden="true">·</span>
+                ) : null}
                 {b.deduction > 0 ? (
                   <span className="font-mono text-foreground" title={`−${b.deduction} points deducted`}>
                     −{b.deduction}
@@ -127,7 +153,7 @@ export function VerdictChecklist({
             </>
           )
 
-          if (selectable && cat !== 'unknown') {
+          if (selectable && cat !== 'unknown' && !isLegacy) {
             return (
               <li key={b.category} role="listitem">
                 <button

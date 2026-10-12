@@ -37,6 +37,29 @@ class ScoreBreakdownResponse(BaseModel):
     remaining: int
 
 
+# Historical scoring-contract reconciliation (GET / PDF surface only).
+# Optional and additive: old clients and old payloads never carry it, and
+# `consistent` needs no note. A note is set for the other two statuses and
+# uses plain reader-facing language — no internal rule codes, no bucket
+# names, no version identifiers.
+class ScoreConsistencyResponse(BaseModel):
+    """How a completed audit's immutable stored score relates to the
+    currently visible category breakdown.
+
+    status:
+      - "consistent"     stored score reproduces under the current scoring
+                         contract; the breakdown explains it in full.
+      - "legacy_spacing" the audit completed under an earlier spacing
+                         scoring contract; a presentation-only
+                         "Legacy spacing adjustment" row closes the gap.
+      - "inconsistent"   the stored score matches neither contract; it is
+                         preserved unchanged and the breakdown may not
+                         fully reconcile it.
+    """
+    status: str
+    note: Optional[str] = None
+
+
 # Document-level stats for the dashboard hero. Fields are nullable because
 # the retrieval endpoint serves audit records from the database, and records
 # created before stats were persisted have NULL values — the UI must render
@@ -94,6 +117,9 @@ class AuditSubmitResponse(BaseModel):
     # Nullable JSON {paragraph_index: page_number} with 1-based pages. NULL for
     # historical audits or when preview was unavailable.
     paragraph_page_mapping: Optional[Any] = None
+    # NEW — historical scoring-contract reconciliation. Always optional:
+    # POST responses carry `consistent`; old payloads carry nothing.
+    score_consistency: Optional[ScoreConsistencyResponse] = None
 
 
 class AuditResponse(BaseModel):
@@ -130,6 +156,9 @@ class AuditResponse(BaseModel):
     profile_snapshot: Optional[Any] = None
     # NEW — paragraph→physical rendered-page mapping (Build friendly locations).
     paragraph_page_mapping: Optional[Any] = None
+    # NEW — historical scoring-contract reconciliation (GET surface).
+    # Optional: null/absent on payloads that predate the field.
+    score_consistency: Optional[ScoreConsistencyResponse] = None
 
 
 class AuditListResponse(BaseModel):

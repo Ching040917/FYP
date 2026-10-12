@@ -8,7 +8,7 @@ Returns BOTH the integer total AND a per-category breakdown so the frontend
 no longer needs to re-derive scoring client-side (kills adapter.ts residual).
 """
 from dataclasses import dataclass, field
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 
 from app.services.layout_violation import LayoutViolation
 
@@ -84,21 +84,53 @@ _RULE_CATEGORY_OVERRIDES: Dict[str, str] = {
     "REFERENCE_SPACE_BEFORE": "paragraph_typography",
     "REFERENCE_SPACE_AFTER": "paragraph_typography",
     "REFERENCE_ALIGNMENT": "paragraph_typography",
+    # Generic paragraph spacing. The generic substring branch below cannot
+    # catch these: "SPACE_BEFORE" contains neither "SPACING" nor "LINE", so
+    # without explicit entries they would fall to the uncategorised
+    # fallback bucket (legacy flat weights, deduction hidden from the
+    # breakdown). Paragraph spacing belongs in paragraph_typography — the
+    # same category the frontend adapter assigns by default.
+    "SPACE_BEFORE": "paragraph_typography",
+    "SPACE_AFTER": "paragraph_typography",
     # Fonts.
     "REFERENCE_FONT_FAMILY": "font_consistency",
     "REFERENCE_FONT_SIZE": "font_size",
 }
 
+# Exact pre-fix override table: the current table minus the two generic
+# spacing entries. Used ONLY by the historical scoring contract
+# (calculate_weighted_score_detailed(legacy_spacing=True)) so a legacy
+# audit reproduces its stored score byte-for-byte. Unknown codes keep
+# falling through to the generic branches in BOTH contracts.
+_LEGACY_OVERRIDE_TABLE = {
+    k: v for k, v in _RULE_CATEGORY_OVERRIDES.items()
+    if k not in ("SPACE_BEFORE", "SPACE_AFTER")
+}
 
-def rule_code_to_category(rule_code: str) -> str:
+# Presentation-only category row attached to historical GET/PDF breakdowns
+# when a completed audit's stored score is confirmed to come from the
+# pre-fix spacing contract. Never produced by rule detection.
+LEGACY_SPACING_CATEGORY = "legacy_spacing"
+LEGACY_SPACING_LABEL = "Legacy spacing adjustment"
+
+
+def rule_code_to_category(rule_code: str, legacy_spacing: bool = False) -> str:
     """Map a backend rule_code (e.g. 'MARGIN_LEFT') to a category key.
 
     Mirrors the frontend categoryForRuleCode() in adapter.ts so both
     sides agree on bucketing. Unknown codes fall through to the default
     bucket, which uses legacy flat weights — preserves test expectations.
+
+    `legacy_spacing=True` reproduces the EXACT pre-fix mapping: the two
+    generic spacing codes fall to the uncategorised fallback bucket (flat
+    15/3 weights, deduction excluded from the breakdown). Every other
+    code maps identically in both contracts, so the difference between
+    a legacy and a current total comes ONLY from SPACE_BEFORE/SPACE_AFTER
+    rows.
     """
     code = (rule_code or "").upper()
-    override = _RULE_CATEGORY_OVERRIDES.get(code)
+    table = _LEGACY_OVERRIDE_TABLE if legacy_spacing else _RULE_CATEGORY_OVERRIDES
+    override = table.get(code)
     if override is not None:
         return override
     if "CITATION" in code or "APA" in code:
@@ -180,6 +212,7 @@ class ScoreResult:
 def calculate_weighted_score_detailed(
     violations: List[LayoutViolation],
     citation_tip_count: int = 0,
+    legacy_spacing: bool = False,
 ) -> ScoreResult:
     """Authoritative scoring — returns total + per-category breakdown.
 
@@ -188,6 +221,12 @@ def calculate_weighted_score_detailed(
         citation_tip_count: Number of AI citation findings (treated as
             MINOR citation_apa violations). Pass 0 when no citation
             findings were confirmed.
+        legacy_spacing: When True, score with the EXACT pre-fix category
+            mapping (SPACE_BEFORE / SPACE_AFTER fall to the hidden
+            uncategorised bucket). Used only to reproduce historical
+            completed audits' stored scores; see
+            select_scoring_contract(). New audits always use the
+            current mapping (False).
 
     Returns:
         ScoreResult with .total (0-100 int), .major_count, .minor_count,
@@ -203,7 +242,7 @@ def calculate_weighted_score_detailed(
     by_category["uncategorised"] = {"major": 0, "minor": 0}
 
     for v in violations:
-        cat = rule_code_to_category(v.rule_code)
+        cat = rule_code_to_category(v.rule_code, legacy_spacing=legacy_spacing)
         if cat not in by_category:
             cat = "uncategorised"
         if v.severity == "MAJOR":
@@ -261,6 +300,122 @@ def calculate_weighted_score(violations: List[LayoutViolation]) -> int:
     use calculate_weighted_score_detailed() to get the breakdown too.
     """
     return calculate_weighted_score_detailed(violations).total
+
+
+# ---------------------------------------------------------------------------
+# Historical scoring-contract selection
+# ---------------------------------------------------------------------------
+#
+# Completed historical audits may have been scored under the pre-fix
+# spacing contract (SPACE_BEFORE / SPACE_AFTER fell into the hidden
+# uncategorised bucket). Their stored `weighted_score` is immutable, so the
+# GET / History / PDF surfaces must reconstruct a breakdown that explains
+# the STORED score, not a freshly recomputed one.
+#
+# The selector scores the persisted findings under BOTH contracts and
+# compares the two totals with the stored score:
+#
+#   if   stored == current:                      consistent, no adjustment
+#   elif stored == legacy (and legacy != current):
+#   -> confirmed legacy_spacing; the presentation-only adjustment row is
+#      exactly current_total - legacy_total, verified to reconcile:
+#      sum(visible current deductions) + adjustment == 100 - stored
+#   else:                                        inconsistent — never labelled
+#      legacy; stored score preserved, safe warning exposed.
+
+# Reader-facing notes. Ordinary language only: no internal rule codes, no
+# "uncategorised bucket", no implementation-version identifiers.
+_CONSISTENT_NOTE = None
+_LEGACY_SPACING_NOTE = (
+    "This completed audit used an earlier spacing-scoring contract. "
+    "Its original score is preserved, and the Legacy spacing adjustment "
+    "explains the difference in the category breakdown."
+)
+_INCONSISTENT_NOTE = (
+    "This completed audit's stored score cannot be fully reconstructed "
+    "from its saved findings. The original score is preserved."
+)
+
+
+@dataclass(frozen=True)
+class ScoringContractSelection:
+    """Outcome of matching a completed audit's stored score against both
+    scoring contracts.
+
+    Attributes:
+        status: "consistent" | "legacy_spacing" | "inconsistent".
+        adjustment: presentation-only deduction for the
+            "Legacy spacing adjustment" row; 0 unless status is
+            legacy_spacing. Derived ONLY as current_total - legacy_total,
+            never from per-category residuals.
+        note: reader-facing explanation (None when consistent).
+    """
+    status: str
+    adjustment: int = 0
+    note: Optional[str] = None
+
+    @property
+    def legacy_row(self) -> Optional["ScoreBreakdownItem"]:
+        """The presentation-only legacy row, or None."""
+        if self.status != "legacy_spacing" or self.adjustment <= 0:
+            return None
+        return ScoreBreakdownItem(
+            category=LEGACY_SPACING_CATEGORY,
+            label=LEGACY_SPACING_LABEL,
+            major=0,
+            minor=0,
+            deduction=self.adjustment,
+            remaining=max(0, 100 - self.adjustment),
+        )
+
+
+def select_scoring_contract(
+    stored_score: int,
+    current_result: ScoreResult,
+    legacy_result: ScoreResult,
+) -> ScoringContractSelection:
+    """Pick the scoring contract that produced a completed audit's stored
+    score.
+
+    Fixed precedence (the `stored == legacy == current` case resolves to
+    `consistent` — no adjustment row is ever needed for it):
+
+        1. stored == current total            -> consistent
+        2. stored == legacy total             -> legacy_spacing, with the
+           adjustment row derived from current_total - legacy_total
+        3. otherwise                          -> inconsistent
+
+    The adjustment is accepted only when it is positive AND the invariant
+    `sum(current visible deductions) + adjustment == 100 - stored` holds;
+    a broken invariant degrades to `inconsistent` instead of attaching a
+    row that would mislabel the difference.
+
+    NOTE: the invariant uses the base-100 deduction identity of the
+    current scoring engine (total = 100 - capped visible deductions -
+    hidden uncategorised deduction). Do not re-derive the base here — the
+    two `ScoreResult` totals are the authoritative inputs and the 100 base
+    comes from the same engine that produced both.
+    """
+    if stored_score == current_result.total:
+        return ScoringContractSelection(status="consistent", note=_CONSISTENT_NOTE)
+
+    if stored_score == legacy_result.total:
+        adjustment = current_result.total - legacy_result.total
+        visible = sum(b.deduction for b in current_result.breakdown)
+        invariant_ok = adjustment > 0 and visible + adjustment == 100 - stored_score
+        if invariant_ok:
+            return ScoringContractSelection(
+                status="legacy_spacing",
+                adjustment=adjustment,
+                note=_LEGACY_SPACING_NOTE,
+            )
+        # Confirmed legacy total but the presentation invariant broke —
+        # never attach a row that would explain only part of the gap.
+        return ScoringContractSelection(
+            status="inconsistent", note=_INCONSISTENT_NOTE
+        )
+
+    return ScoringContractSelection(status="inconsistent", note=_INCONSISTENT_NOTE)
 
 
 def grade_for(score: int) -> Dict[str, str]:

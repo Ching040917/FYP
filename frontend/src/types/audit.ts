@@ -21,13 +21,18 @@ export type AuditCategory =
   | 'citation_apa'
 
 /**
- * Score-breakdown category. The 7 known categories plus a presentation-only
- * `'unknown'` bucket for backend categories the UI doesn't recognise yet.
- * Kept separate from AuditCategory so layout errors (always mapped to a known
- * category) never take the unknown bucket, and so the closed AuditCategory
- * union in scoring.ts stays intact.
+ * Score-breakdown category. The 7 known categories plus two presentation-only
+ * buckets:
+ *  - `'unknown'`       backend categories the UI doesn't recognise yet.
+ *  - `'legacy_spacing'` the presentation-only "Legacy spacing adjustment"
+ *    row attached to historical audits that completed under an earlier
+ *    spacing-scoring contract. It explains the stored score; it is not a
+ *    real layout category and never maps to a finding.
+ * Kept separate from AuditCategory so layout errors (always mapped to a
+ * known category) never take a presentation bucket, and so the closed
+ * AuditCategory union stays intact.
  */
-export type ScoreCategory = AuditCategory | 'unknown'
+export type ScoreCategory = AuditCategory | 'unknown' | 'legacy_spacing'
 
 export interface LayoutError {
   id: string
@@ -68,6 +73,15 @@ export type AiReviewStatus =
 
 /** Provider path that actually executed the AI-assisted review. */
 export type AiProvider = 'LOCAL_OLLAMA' | 'UNKNOWN'
+/**
+ * Historical scoring-contract reconciliation status (normalised domain form).
+ * Present only for completed audits on the GET surface; absent/unknown on
+ * payloads that predate the field, so it stays optional everywhere.
+ */
+export type ScoreConsistencyStatus =
+  | 'consistent'
+  | 'legacy_spacing'
+  | 'inconsistent'
 
 export interface ScoreBreakdown {
   category: ScoreCategory
@@ -104,4 +118,6 @@ export interface AuditResult {
   /** AI-assisted citation review execution summary; null = not recorded. */
   ai_review_status?: AiReviewStatus | null
   ai_provider?: AiProvider | null
+  /** Historical scoring-contract reconciliation; null/absent = not recorded. */
+  score_consistency?: { status: ScoreConsistencyStatus; note?: string | null } | null
 }

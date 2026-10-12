@@ -21,11 +21,15 @@ from app.schemas.audit import (
     ViolationResponse,
     CitationIssueResponse,
     ScoreBreakdownResponse,
+    ScoreConsistencyResponse,
     DocumentStatsResponse,
     SectionMetadata,
 )
 from app.services.layout_engine import run_static_rules_engine
-from app.services.scoring import calculate_weighted_score, calculate_weighted_score_detailed
+from app.services.scoring import (
+    calculate_weighted_score_detailed,
+    select_scoring_contract,
+)
 from app.services.ai_citation import async_ai_citation_task
 from app.services.document_parser import (
     parse_document,
@@ -347,6 +351,10 @@ async def audit_document(
             sections=[SectionMetadata(**s) for s in section_metadata],
             profile_snapshot=profile_snapshot.to_dict(),
             paragraph_page_mapping=audit.paragraph_page_mapping,
+            score_consistency=ScoreConsistencyResponse(
+                status="consistent",
+                note=None,
+            ),
         )
 
     except HTTPException:
@@ -433,9 +441,44 @@ async def get_audit(audit_id: str, db: Session = Depends(get_db)):
         for v in audit.violations
     ]
     score_result = calculate_weighted_score_detailed(reconstructed)
+    breakdown_items = list(score_result.breakdown)
+    score_consistency = None
+
+    # Historical scoring-contract selection (completed audits only): the
+    # stored score is immutable and may have been produced under the
+    # pre-fix spacing contract, whose deduction hid from the visible
+    # breakdown. Match the stored score against BOTH contracts over the
+    # persisted findings before deciding how to present the breakdown.
+    # Non-completed audits keep the live current-contract computation with
+    # no consistency classification.
+    if audit.status == "completed" and audit.weighted_score is not None:
+        legacy_result = calculate_weighted_score_detailed(
+            reconstructed, legacy_spacing=True
+        )
+        selection = select_scoring_contract(
+            audit.weighted_score, score_result, legacy_result
+        )
+        if selection.status == "legacy_spacing" and selection.legacy_row:
+            breakdown_items.append(selection.legacy_row)
+        elif selection.status == "inconsistent":
+            # Never mislabel an unexplained mismatch as legacy spacing:
+            # no adjustment row, stored score preserved as-is.
+            logger.warning(
+                "Score consistency mismatch audit_id=%s stored=%s "
+                "current=%s legacy=%s",
+                audit.id,
+                audit.weighted_score,
+                score_result.total,
+                legacy_result.total,
+            )
+        score_consistency = ScoreConsistencyResponse(
+            status=selection.status,
+            note=selection.note,
+        )
+
     breakdown_responses = [
         ScoreBreakdownResponse(**b.to_dict())
-        for b in score_result.breakdown
+        for b in breakdown_items
     ]
 
     return AuditResponse(
@@ -482,6 +525,7 @@ async def get_audit(audit_id: str, db: Session = Depends(get_db)):
             else None
         ),
         paragraph_page_mapping=audit.paragraph_page_mapping if isinstance(audit.paragraph_page_mapping, dict) else None,
+        score_consistency=score_consistency,
     )
 
 

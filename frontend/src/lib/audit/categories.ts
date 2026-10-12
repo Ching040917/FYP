@@ -27,6 +27,13 @@ export const CATEGORY_LABELS: Record<AuditCategory, string> = {
   citation_apa: 'APA Citations and References',
 }
 
+/**
+ * Presentation-only label for the "Legacy spacing adjustment" reconciliation
+ * row. It is NOT an AuditCategory (a finding never maps to it); it exists
+ * only on historical score breakdowns to explain the stored score.
+ */
+export const LEGACY_SPACING_CATEGORY_LABEL = 'Legacy spacing adjustment'
+
 export interface SeverityBadge {
   /** Reader-facing label. */
   label: string
