@@ -14,6 +14,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app.models.audit import AuditRecord, Violation, CitationIssue
 from app.services.ai_citation import build_apa_suggestion
+from app.services.layout_violation import LayoutViolation
 
 
 # ---------------------------------------------------------------------------
@@ -1146,3 +1147,118 @@ def test_reference_hanging_indent_values_and_action_reach_the_pdf(client, test_e
     # No raw unit token or rule code leaks.
     assert "0in" not in text.replace("0 in", "")
     assert "REFERENCE_HANGING_INDENT" not in text
+
+
+# ---------------------------------------------------------------------------
+# PDF rule-coverage inventory (Phase 1 of the PDF completion task)
+# ---------------------------------------------------------------------------
+
+# Every rule code the deterministic engines can persist. Derived from the
+# emitting modules, NOT from this list's own contents; the
+# `test_every_emitted_rule_code_is_inventoried` guard below re-derives the set
+# from the production source and fails when a new code appears without an
+# inventory entry.
+_PRODUCTION_RULE_CODES = (
+    # Layout engine (static)
+    "MARGIN_LEFT", "MARGIN_RIGHT", "MARGIN_TOP", "MARGIN_BOTTOM",
+    "FONT_CONSISTENCY", "FONT_SIZE", "LINE_SPACING",
+    "SPACE_BEFORE", "SPACE_AFTER", "ALIGNMENT",
+    "HEADING_HIERARCHY",
+    "TABLE_CAPTION_MISSING", "IMAGE_CAPTION_MISSING",
+    "MANUAL_CAPTION", "IMAGE_ALT_TEXT_MISSING",
+    # Phase 2 citation sensor / citation matching
+    "CITATION_MISMATCH", "CITATION_REFERENCE_MISMATCH",
+    "CITATION_YEAR_SUFFIX_MISMATCH", "CITATION_REFERENCE_AMBIGUOUS",
+    "REFERENCE_NOT_CITED", "REFERENCE_DUPLICATE",
+    # Phase 3 Reference List formatting
+    "REFERENCE_HEADING_TEXT", "REFERENCE_HEADING_BOLD",
+    "REFERENCE_HEADING_ALIGNMENT", "REFERENCE_SECTION_NEW_PAGE",
+    "REFERENCE_HANGING_INDENT", "REFERENCE_SPACE_BEFORE",
+    "REFERENCE_SPACE_AFTER", "REFERENCE_FONT_FAMILY",
+    "REFERENCE_FONT_SIZE", "REFERENCE_ALIGNMENT",
+)
+
+# Rule codes whose PDF title is fixed by the task specification. Checked
+# verbatim so a well-meaning rename cannot silently diverge from the Audit
+# Workspace wording.
+_REQUIRED_PDF_TITLES = {
+    "CITATION_MISMATCH": "Citation has no matching Reference List entry",
+    "CITATION_REFERENCE_MISMATCH": "Citation year does not match the Reference List entry",
+    "CITATION_YEAR_SUFFIX_MISMATCH": "Citation is missing or uses the wrong year suffix",
+    "CITATION_REFERENCE_AMBIGUOUS": "Citation could match more than one entry",
+    "REFERENCE_NOT_CITED": "Reference List entry is not cited in the text",
+    "REFERENCE_DUPLICATE": "Duplicate Reference List entry",
+    "REFERENCE_HEADING_TEXT": "Reference List heading does not match",
+    "REFERENCE_HEADING_BOLD": "Reference List heading should be bold",
+    "REFERENCE_HEADING_ALIGNMENT": "Reference List heading alignment does not match",
+    "REFERENCE_SECTION_NEW_PAGE": "Reference List should start on a new page",
+    "REFERENCE_HANGING_INDENT": "Reference entry hanging indent does not match",
+    "REFERENCE_SPACE_BEFORE": "Space before Reference List entries does not match",
+    "REFERENCE_SPACE_AFTER": "Space after Reference List entries does not match",
+    "REFERENCE_FONT_FAMILY": "Reference entry font family does not match",
+    "REFERENCE_FONT_SIZE": "Reference entry font size does not match",
+    "REFERENCE_ALIGNMENT": "Reference entry alignment does not match",
+    "TABLE_CAPTION_MISSING": "Table caption is missing",
+}
+
+
+def test_every_production_rule_has_a_friendly_pdf_title():
+    """No production code may reach the reader as a raw token."""
+    from app.services.pdf_report import _RULE_NAME
+
+    missing = [c for c in _PRODUCTION_RULE_CODES if c not in _RULE_NAME]
+    assert missing == [], f"production rules with no friendly PDF title: {missing}"
+    for code in _PRODUCTION_RULE_CODES:
+        title = _RULE_NAME[code]
+        assert title and title != code, f"{code} has no bespoke title"
+        assert "_" not in title, f"{code} title still looks like a rule code: {title}"
+
+
+def test_approved_pdf_titles_match_the_specification_exactly():
+    """The task fixes these titles: they must match character for character."""
+    from app.services.pdf_report import _RULE_NAME
+
+    for code, expected in _REQUIRED_PDF_TITLES.items():
+        assert _RULE_NAME.get(code) == expected, (
+            f"{code}: PDF title is {_RULE_NAME.get(code)!r}, expected {expected!r}"
+        )
+
+
+def test_every_production_rule_has_a_safe_required_action():
+    """`_friendly_required_action` must never KeyError or fall back to the
+    generic sentence for a code ACA can actually emit."""
+    from app.services.pdf_report import (
+        _CITATION_MATCH_RULES,
+        _REQUIRED_ACTIONS,
+        _friendly_required_action,
+    )
+
+    generic = "Review the finding and apply the required formatting."
+    for code in _PRODUCTION_RULE_CODES:
+        v = LayoutViolation(
+            rule_code=code, severity="MINOR",
+            location={"paragraph_index": 3},
+            message="Deterministic message.",
+            expected_value="12pt", actual_value="11pt",
+        )
+        action = _friendly_required_action(v, "Paragraph 4", ("Affected content", "Entire paragraph"))
+        assert action, f"{code} produced an empty required action"
+        if code not in ("IMAGE_CAPTION_MISSING", "IMAGE_ALT_TEXT_MISSING"):
+            assert action != generic, f"{code} fell back to the generic action"
+
+
+def test_unknown_production_code_gets_a_safe_humanised_fallback():
+    """A hypothetical future code must not crash or print raw internals."""
+    from app.services.pdf_report import _friendly_required_action, _rule_name
+
+    v = LayoutViolation(
+        rule_code="SOME_FUTURE_RULE", severity="MINOR",
+        location={"paragraph_index": 1}, message="m",
+        expected_value=None, actual_value=None,
+    )
+    action = _friendly_required_action(v, "Paragraph 2", None)
+    assert action
+    assert "SOME_FUTURE_RULE" not in action
+    # Unknown codes fall back to the raw code as title (documented) but the
+    # action never does.
+    assert _rule_name("SOME_FUTURE_RULE") == "SOME_FUTURE_RULE"

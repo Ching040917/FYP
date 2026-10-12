@@ -380,15 +380,32 @@ _LOCATION_KEYS = (
 )
 
 
+# The authoritative role the classifier assigns to the Reference List
+# heading. The heading usually carries no `heading_level` (it is styled as a
+# heading but not by a Heading N style), so role is the only reliable signal
+# for the "Heading “References”" wording in Phase 6.
+_REFERENCE_HEADING_ROLE = "REFERENCES_HEADING"
+
+
 def _heading_text_for_paragraph(paragraph_index, document_blocks):
-    """Return heading text for a paragraph index when it is a heading, else None."""
+    """Return heading text for a paragraph index when it is a heading, else None.
+
+    A numbered heading (`heading_level` 1–6) and the Reference List heading
+    (identified by its classified `role`) both count: the References heading
+    is a heading to the reader even though Word stores it as body text.
+    """
     if paragraph_index is None or not isinstance(document_blocks, list):
         return None
     for block in document_blocks:
         if block.get("index") == paragraph_index:
             level = block.get("heading_level")
+            role = block.get("role")
             text = (block.get("text") or "").strip()
-            if isinstance(level, int) and 1 <= level <= 6 and text:
+            is_heading = (
+                (isinstance(level, int) and 1 <= level <= 6)
+                or role == _REFERENCE_HEADING_ROLE
+            )
+            if is_heading and text:
                 # Normalize whitespace, truncate to 60 chars for display.
                 txt = re.sub(r"\s+", " ", text).strip()
                 if len(txt) > 60:
@@ -432,6 +449,22 @@ def friendly_location_text(location, document_blocks=None) -> str:
             return f'Heading “{heading}”'
         return f"Paragraph {para_idx + 1}"
     return "Entire document"
+
+
+def occurrence_label(location) -> str:
+    """Reader-facing occurrence count for a consolidated finding.
+
+    Empty unless the finding genuinely repeats — a single hit says nothing,
+    matching `occurrenceLabel` in frontend/src/lib/friendly-finding.ts. The
+    count must never be dropped from the PDF: a consolidated hanging-indent
+    finding that affects five entries is five corrections, not one.
+    """
+    if not isinstance(location, dict):
+        return ""
+    n = location.get("occurrences")
+    if isinstance(n, bool) or not isinstance(n, int) or n <= 1:
+        return ""
+    return f"{n} occurrences"
 
 
 def _sanitize_mapping_for_pdf(raw, rendered_pages=None):
@@ -919,6 +952,19 @@ def _group_panel(gid, members, rule_code, exp_val, action, audit=None) -> Table:
             rows.append(("Original document page", "Unavailable"))
     rows.append(("Affected Locations", _location_summary(members, blocks)))
     # If no compact but unavailable, already added. Ensure page line exists.
+    # A consolidated finding carries `occurrences` per member; the panel must
+    # not lose the additional occurrences from its summary.
+    total_occurrences = sum(
+        n for n in (
+            (v.location or {}).get("occurrences") for v in members
+        )
+        if isinstance(n, int) and not isinstance(n, bool)
+    )
+    if total_occurrences > len(members):
+        rows.append((
+            "Occurrences",
+            f"{total_occurrences} affected locations across {len(members)} grouped finding(s)",
+        ))
     rows.append(("Required Action", action))
     return _panel(f"{gid} — {_rule_name(rule_code)}", f"Minor · {len(members)} finding(s)", rows)
 
@@ -939,6 +985,12 @@ def _appendix_table(entries, audit=None) -> Table:
     for f_idx, v in entries:
         # Friendly location without Run; include page when available
         friendly_loc = friendly_location_text(v.location, getattr(audit, "document_blocks", None) if audit else None)
+        # A consolidated finding keeps its truthful occurrence count — the
+        # register is the authoritative one-row area, so the count cannot be
+        # lost here even though only the primary location is shown.
+        occ = occurrence_label(v.location)
+        if occ:
+            friendly_loc = f"{friendly_loc}<br/>({occ})"
         # For appendix, combine page and location in same cell for compactness
         if audit and hasattr(audit, "paragraph_page_mapping"):
             mapping = _sanitize_mapping_for_pdf(
