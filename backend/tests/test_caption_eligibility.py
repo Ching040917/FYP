@@ -318,3 +318,138 @@ def test_classifier_roles_match_caption_policy():
     assert roles[1] == "SCHOLARLY_TABLE"
     # The Caption rule exempts non-scholarly roles.
     assert roles[0] != "SCHOLARLY_TABLE"
+
+
+# ---------------------------------------------------------------------------
+# TABLE_CAPTION_MISSING — persisted boundary anchors (evidence for page
+# resolution). Anchors are EVIDENCE ONLY: never the finding identity, never
+# rendered, never labelled "Paragraph N".
+# ---------------------------------------------------------------------------
+
+def _table_missing_locations(viols):
+    return [v.location for v in viols if v.rule_code == "TABLE_CAPTION_MISSING"]
+
+
+def _scholarly_uncaptioned_doc():
+    """One uncaptioned scholarly table surrounded by prose paragraphs."""
+    doc = _base_doc()
+    doc.add_paragraph("1. Introduction", style="Heading 1")
+    doc.add_paragraph("The results, as shown in Table 1, are conclusive.")
+    t = doc.add_table(rows=3, cols=3)
+    for r in range(3):
+        for c in range(3):
+            t.rows[r].cells[c].text = f"r{r}c{c}"
+    doc.add_paragraph("Discussion text that is long enough to be prose here.")
+    return doc
+
+
+def test_table_caption_missing_persists_both_boundary_anchors():
+    doc = _scholarly_uncaptioned_doc()
+    locs = _table_missing_locations(run_static_rules_engine(_bytes(doc)))
+    assert len(locs) == 1
+    loc = locs[0]
+    # Identity unchanged.
+    assert loc["table_index"] == 0
+    # Both anchors present as paragraph indexes (evidence).
+    assert "previous_anchor_paragraph_index" in loc
+    assert "next_anchor_paragraph_index" in loc
+    assert isinstance(loc["previous_anchor_paragraph_index"], int)
+    assert isinstance(loc["next_anchor_paragraph_index"], int)
+    assert loc["previous_anchor_paragraph_index"] != loc["next_anchor_paragraph_index"]
+
+
+def test_table_caption_missing_anchors_never_use_paragraph_index_key():
+    """Anchors must not masquerade as the finding's own paragraph_index."""
+    doc = _scholarly_uncaptioned_doc()
+    locs = _table_missing_locations(run_static_rules_engine(_bytes(doc)))
+    assert "paragraph_index" not in locs[0]
+
+
+def test_consecutive_tables_do_not_share_anchor_pair():
+    """Paragraph A · Table 1 · Table 2 · Paragraph B — each table gets only
+    the anchor on its OWN side; the other side is None (a sibling table is a
+    structural boundary, never skipped)."""
+    doc = _base_doc()
+    doc.add_paragraph("1. Introduction", style="Heading 1")
+    doc.add_paragraph("The results in Table 1 and Table 2 are conclusive enough.")
+    t1 = doc.add_table(rows=2, cols=2)
+    t1.rows[0].cells[0].text = "a"
+    t1.rows[0].cells[1].text = "b"
+    t2 = doc.add_table(rows=2, cols=2)
+    t2.rows[0].cells[0].text = "c"
+    t2.rows[0].cells[1].text = "d"
+    doc.add_paragraph("Discussion text that is long enough to be prose here.")
+
+    viols = run_static_rules_engine(_bytes(doc))
+    locs = _table_missing_locations(viols)
+    by_index = {loc["table_index"]: loc for loc in locs}
+    assert set(by_index) == {0, 1}
+
+    t0 = by_index[0]
+    t1loc = by_index[1]
+    # Table 0: previous anchor exists, next is None (boundary = Table 1).
+    assert isinstance(t0["previous_anchor_paragraph_index"], int)
+    assert t0["next_anchor_paragraph_index"] is None
+    # Table 1: previous is None (boundary = Table 0), next anchor exists.
+    assert t1loc["previous_anchor_paragraph_index"] is None
+    assert isinstance(t1loc["next_anchor_paragraph_index"], int)
+    # Never a shared anchor pair.
+    assert t0["previous_anchor_paragraph_index"] != t1loc["next_anchor_paragraph_index"]
+
+    # The shared boundary leaves both tables unresolved (strict same-page rule).
+    from app.services.table_page_resolution import resolve_table_page
+    pages = {t0["previous_anchor_paragraph_index"]: 1, t1loc["next_anchor_paragraph_index"]: 1}
+    assert resolve_table_page(t0, lambda i: pages.get(i)) is None
+    assert resolve_table_page(t1loc, lambda i: pages.get(i)) is None
+
+
+def test_table_at_document_start_has_no_previous_anchor():
+    doc = _base_doc()
+    t = doc.add_table(rows=2, cols=2)
+    t.rows[0].cells[0].text = "a"
+    t.rows[0].cells[1].text = "b"
+    doc.add_paragraph("The results, as shown in Table 1, are conclusive.")
+    locs = _table_missing_locations(run_static_rules_engine(_bytes(doc)))
+    if locs:  # role gating may exempt this shape; assert the anchor rule when present
+        assert locs[0]["previous_anchor_paragraph_index"] is None
+
+
+def test_transparent_markers_are_skipped_when_walking_anchors():
+    """A bookmark between the table and its paragraph must not hide the anchor."""
+    from app.services.layout_engine import _table_anchor_paragraph_index
+
+    doc = _base_doc()
+    p = doc.add_paragraph("The results, as shown in Table 1, are conclusive.")
+    t = doc.add_table(rows=2, cols=2)
+    t.rows[0].cells[0].text = "a"
+    t.rows[0].cells[1].text = "b"
+    # Insert a bookmark marker immediately before the table (transparent).
+    from docx.oxml import OxmlElement
+    bookmark = OxmlElement("w:bookmarkStart")
+    bookmark.set(qn("w:id"), "99")
+    bookmark.set(qn("w:name"), "mark99")
+    t._tbl.addprevious(bookmark)
+
+    prev = _table_anchor_paragraph_index(doc, t._tbl, "previous")
+    # The bookmark is skipped and the real preceding paragraph is the anchor.
+    assert prev is not None
+    assert doc.paragraphs[prev].text.startswith("The results")
+
+
+def test_anchor_walk_stops_at_section_boundary():
+    """A section-closing paragraph is a boundary, not an anchor."""
+    from app.services.layout_engine import _table_anchor_paragraph_index
+
+    doc = _base_doc()
+    # A paragraph that closes a section (carries w:pPr/w:sectPr).
+    closing = doc.add_paragraph("End of section one.")
+    pPr = closing._p.get_or_add_pPr()
+    sectPr = OxmlElement("w:sectPr")
+    pPr.append(sectPr)
+    t = doc.add_table(rows=2, cols=2)
+    t.rows[0].cells[0].text = "a"
+    t.rows[0].cells[1].text = "b"
+
+    prev = _table_anchor_paragraph_index(doc, t._tbl, "previous")
+    # The section-closing paragraph must NOT become an anchor.
+    assert prev is None

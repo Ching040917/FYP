@@ -946,6 +946,88 @@ def _adjacent_caption_status(element, label_re, seq_label, style_names, paragrap
     return status, caption_index
 
 
+# Transparent, non-content OOXML markers that never constitute an anchor but
+# also must not stop the walk — the nearest real <w:p> is still sought past
+# them. Everything else that is not a supported <w:p> is a hard boundary.
+_ANCHOR_TRANSPARENT_TAGS = frozenset({
+    "bookmarkStart",
+    "bookmarkEnd",
+    "proofErr",
+    "commentRangeStart",
+    "commentRangeEnd",
+})
+
+
+def _is_section_boundary_paragraph(p_elem) -> bool:
+    """True when this <w:p> closes a section (w:pPr/w:sectPr).
+
+    Section breaks in OOXML are not sibling elements — they are properties of
+    the paragraph that ENDS a section. A section-closing paragraph is a hard
+    boundary for anchor purposes: an anchor must not cross a section. Detection
+    mirrors extract_sections (document_parser.py) so both agree on boundaries.
+    """
+    from docx.oxml.ns import qn
+
+    pPr = p_elem.find(qn("w:pPr"))
+    if pPr is None:
+        return False
+    return pPr.find(qn("w:sectPr")) is not None
+
+
+def _table_anchor_paragraph_index(doc: Document, table_element, direction: str) -> Optional[int]:
+    """Nearest supported body paragraph on one side of a table, else None.
+
+    Walks previous/next SIBLINGS from the table element with these rules:
+
+    - transparent marker nodes (bookmarks, proofing, comment-range) are
+      SKIPPED and the walk continues;
+    - another <w:tbl> is a structural BOUNDARY -> None (never borrow an anchor
+      through an adjacent table, or consecutive tables would share one pair);
+    - a section-closing <w:p> (w:pPr/w:sectPr) is a BOUNDARY -> None;
+    - the first supported <w:p> is the anchor -> its paragraph_index;
+    - the document-body boundary -> None;
+    - table-cell paragraphs are never used (only body-level siblings are
+      visited, so w:tc content is unreachable by construction).
+
+    Returns a zero-based paragraph_index resolved by identity against
+    doc.paragraphs, or None when no safe anchor exists on that side.
+    """
+    from docx.oxml.ns import qn
+
+    # NOTE: each step must advance from the CURRENT sibling. Calling
+    # table_element.getprevious()/getnext() repeatedly would return the same
+    # node forever, so transparent markers would loop indefinitely.
+    if direction == "previous":
+        step = lambda node: node.getprevious()
+    else:
+        step = lambda node: node.getnext()
+
+    sibling = step(table_element)
+    while sibling is not None:
+        tag = sibling.tag
+        # Transparent markers: skip and keep walking.
+        local = tag.rsplit("}", 1)[-1]
+        if local in _ANCHOR_TRANSPARENT_TAGS:
+            sibling = step(sibling)
+            continue
+        # Another table: hard boundary.
+        if tag == qn("w:tbl"):
+            return None
+        # Only a body paragraph can be an anchor.
+        if tag != qn("w:p"):
+            # Any other non-paragraph content (SDT, etc.) is a boundary.
+            return None
+        # A section-closing paragraph is a boundary, not an anchor.
+        if _is_section_boundary_paragraph(sibling):
+            return None
+        # Supported anchor paragraph — resolve by identity.
+        return next(
+            (i for i, p in enumerate(doc.paragraphs) if p._p is sibling),
+            None,
+        )
+    return None
+
+
 def _find_image_context(doc: Document, image_rel) -> tuple:
     """Find (host_paragraph_index, prev_elem, next_elem) for an image.
 
@@ -1094,10 +1176,22 @@ def check_media_captions(
                 actual_value="Manual 'Table N' text without Caption style or SEQ field",
             ))
         else:
+            # Persist the two document-order anchor paragraphs as EVIDENCE for
+            # later page resolution. They are additive, never the finding
+            # identity, and are consumed only by the same-page-strict resolver
+            # (backend table_page_resolution.py / frontend table-page-resolution.ts).
+            # A wrong page is worse than "unavailable", so anchors are recorded
+            # conservatively: another table or a section boundary ends the walk.
+            prev_anchor = _table_anchor_paragraph_index(doc, table._tbl, "previous")
+            next_anchor = _table_anchor_paragraph_index(doc, table._tbl, "next")
             violations.append(LayoutViolation(
                 rule_code="TABLE_CAPTION_MISSING",
                 severity="MINOR",
-                location={"table_index": table_idx},
+                location={
+                    "table_index": table_idx,
+                    "previous_anchor_paragraph_index": prev_anchor,
+                    "next_anchor_paragraph_index": next_anchor,
+                },
                 message=(
                     f"Table {table_idx + 1} has no caption. Add a paragraph "
                     f"above or below it starting with 'Table {table_idx + 1}: ' "

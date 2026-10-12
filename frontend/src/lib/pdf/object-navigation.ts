@@ -17,6 +17,11 @@
  * force Extracted Text. One-shot page commands are owned by the viewer.
  */
 import { normalizeText, type BlockMapping, type PageText } from './paragraph-mapping.ts'
+import {
+  resolveTablePageFromAnchors,
+  resolveTablePageFromSurroundings,
+  hasPersistedAnchors,
+} from './table-page-resolution.ts'
 import type { ObjectMappingResult } from './object-mapping.ts'
 import type { PageGeometry } from './pdf-text-extract.ts'
 import { figurePageForIndex } from './figure-bbox.ts'
@@ -129,9 +134,18 @@ export function mapObjectFromBundle(
     }
     // TABLE_CAPTION_MISSING: caption is absent by definition — visible
     // caption numbering is NEVER authoritative for it (a "Table 3" caption
-    // elsewhere belongs to another table). Map from DOCX object order and
-    // surrounding mapped blocks only.
+    // elsewhere belongs to another table). When the backend persisted the two
+    // document-order anchors, resolve ONLY when both map to the SAME page.
     if (ruleCode === 'TABLE_CAPTION_MISSING') {
+      if (hasPersistedAnchors(location)) {
+        const resolved = resolveTablePageFromAnchors(location, bundle.byIndex)
+        if (resolved.page !== null) {
+          return { targetType: 'table', targetIndex: tableIndex, pageNumber: resolved.page, bbox: null, confidence: 'exact', evidenceMethod: 'anchor-pair', ambiguityReason: null }
+        }
+        return { targetType: 'table', targetIndex: tableIndex, pageNumber: null, bbox: null, confidence: 'unavailable', evidenceMethod: 'anchor-pair', ambiguityReason: resolved.reason }
+      }
+      // Legacy audit without anchors: surrounding-block window under the SAME
+      // strict same-page rule. Never guess a page from an ambiguous window.
       const page = surroundingPage(bundle, captionAnchors(bundle), tableIndex, 0)
       if (page !== null) {
         return { targetType: 'table', targetIndex: tableIndex, pageNumber: page, bbox: null, confidence: 'exact', evidenceMethod: 'surrounding-blocks', ambiguityReason: null }
@@ -230,16 +244,18 @@ export function captionAnchors(bundle: BundleLike): number[] {
 }
 
 /**
- * Page of an UNCAPTIONED table from DOCX object order + surrounding mapped
- * blocks. `missingBefore` = number of uncaptioned tables before it (from the
- * finding set), so the caption bracket follows table order, not caption
- * numbering. Window = mapped blocks strictly between the bracketing caption
- * anchors:
- *   - all window blocks on one page → that page;
- *   - a window spanning a page boundary → anchor to the previous caption's
- *     page (the table directly follows the previous captioned table);
- *   - otherwise (no anchor, no consensus, empty window) → null = unavailable.
- * Never guesses; never borrows another table's caption page.
+ * Page of an UNCAPTIONED table from surrounding mapped block pages — STRICT
+ * same-page rule only (mirrors table-page-resolution.ts legacy path).
+ *
+ * `missingBefore` = number of uncaptioned tables before it (from the finding
+ * set), so the caption bracket follows table order, not caption numbering.
+ * Window = mapped blocks strictly between the bracketing caption anchors.
+ *
+ * A page is returned ONLY when every reliable surrounding block resolves to
+ * ONE page. An empty window, a multi-page window, or one-sided evidence is
+ * unavailable — an ambiguous window is never collapsed to one page (a table
+ * may have flowed past its preceding paragraph; a wrong page is worse than a
+ * truthful "unavailable"). Never borrows another table's caption page.
  */
 export function surroundingPage(
   bundle: BundleLike,
@@ -258,17 +274,7 @@ export function surroundingPage(
       if (page !== null && page !== undefined) windowPages.push(page)
     }
   }
-  if (windowPages.length === 0) return null
-  const unique = new Set(windowPages)
-  if (unique.size === 1) {
-    const [only] = unique
-    return only
-  }
-  if (cLt > 0 && cLt <= m) {
-    const prevPage = bundle.byIndex.get(captions[cLt - 1])?.pageNumber
-    if (prevPage !== null && prevPage !== undefined && unique.has(prevPage)) return prevPage
-  }
-  return null
+  return resolveTablePageFromSurroundings(windowPages).page
 }
 
 // ---------------------------------------------------------------------------
@@ -371,8 +377,15 @@ export function resolveTableNavigations(
       const page = block !== null ? (bundle.byIndex.get(block)?.pageNumber ?? null) : null
       evidence.set(idx, { block, page, method: 'caption', hasIdentity: false })
     } else if (rule === 'TABLE_CAPTION_MISSING') {
-      const page = surroundingPage(bundle, captions, idx, missingBefore.get(idx) ?? 0)
-      evidence.set(idx, { block: null, page, method: 'surrounding-blocks', hasIdentity: false })
+      // Persisted anchors: resolve only when both map to the SAME page.
+      if (hasPersistedAnchors(loc)) {
+        const resolved = resolveTablePageFromAnchors(loc, bundle.byIndex)
+        evidence.set(idx, { block: null, page: resolved.page, method: 'anchor-pair', hasIdentity: false })
+      } else {
+        // Legacy: strict same-page surrounding rule (never an ambiguous window).
+        const page = surroundingPage(bundle, captions, idx, missingBefore.get(idx) ?? 0)
+        evidence.set(idx, { block: null, page, method: 'surrounding-blocks', hasIdentity: false })
+      }
     }
   }
 

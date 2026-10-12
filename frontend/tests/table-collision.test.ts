@@ -95,16 +95,18 @@ function findingsFor(f: ReturnType<typeof collisionFixture>) {
   ]
 }
 
-test('Table 3 resolves ONLY to Page 2; Table 4 resolves ONLY to Page 3', () => {
+test('uncaptioned table with an ambiguous multi-page window is unavailable (strict)', () => {
   const f = collisionFixture()
   const nav = resolveTableNavigations('audit-collision', findingsFor(f), f)
 
+  // The uncaptioned table's surrounding window spans pages 2 and 3, so the
+  // strict same-page rule reports no page — never a collapsed guess.
   const t3 = nav.get(f.missingIdx)!
-  assert.equal(t3.mode, 'rendered')
-  assert.equal(t3.pageNumber, 2)
-  assert.equal(t3.label, `Page 2 · Table ${f.missingIdx + 1}`)
-  assert.equal(t3.chipLabel, `Table ${f.missingIdx + 1} · Page 2`)
+  assert.equal(t3.mode, 'stable')
+  assert.equal(t3.pageNumber, null)
+  assert.equal(t3.label, `Table ${f.missingIdx + 1} · Page unavailable`)
 
+  // The appendix table resolves from its persisted caption paragraph identity.
   const t4 = nav.get(f.targetIdx)!
   assert.equal(t4.mode, 'rendered')
   assert.equal(t4.pageNumber, 3)
@@ -125,8 +127,10 @@ test('both mappings use DIFFERENT evidence identities; no shared evidence block'
   // paragraph identity — never the same evidence
   assert.equal(nav.get(f.missingIdx)!.evidenceMethod, 'surrounding-blocks')
   assert.equal(nav.get(f.targetIdx)!.evidenceMethod, 'caption-identity')
-  // distinct physical objects: pages differ
-  assert.notEqual(nav.get(f.missingIdx)!.pageNumber, nav.get(f.targetIdx)!.pageNumber)
+  // The appendix table's identity page is known; the ambiguous uncaptioned
+  // table stays unavailable rather than borrowing that same object.
+  assert.equal(nav.get(f.missingIdx)!.pageNumber, null)
+  assert.equal(nav.get(f.targetIdx)!.pageNumber, 3)
 })
 
 test('repeated visible caption number never overrides table_index', () => {
@@ -200,12 +204,13 @@ test('surroundingPage: single-page window consensus and empty-window unavailabil
   assert.equal(surroundingPage(f, anchors, 0, 0), null)
 })
 
-test('surroundingPage: boundary-crossing window anchors to the previous caption page', () => {
+test('surroundingPage: boundary-crossing window stays unavailable (strict same-page)', () => {
   const f = collisionFixture()
   const anchors = captionAnchors(f)
-  // table 2 (uncaptioned): window (2, 7) spans pages 2 and 3; previous
-  // caption (block 2) is on page 2 → page 2
-  assert.equal(surroundingPage(f, anchors, f.missingIdx, 0), 2)
+  // table 2 (uncaptioned): window (2, 7) spans pages 2 and 3. Under the strict
+  // same-page rule an ambiguous window never collapses to the previous
+  // caption's page — it is unavailable.
+  assert.equal(surroundingPage(f, anchors, f.missingIdx, 0), null)
 })
 
 test('surroundingPage: unanchored boundary window returns unavailable', () => {
@@ -278,7 +283,7 @@ test('batch with missing bundle or no findings returns empty (stable)', () => {
   assert.equal(resolveTableNavigations('audit-x', findingsFor(f), null).size, 0)
 })
 
-test('uncaptioned table with two uncaptioned predecessors still maps by document order', () => {
+test('uncaptioned tables in an ambiguous window stay unavailable (never share a page)', () => {
   // 5 tables; tables 1 and 2 uncaptioned; captions: t0, t3, t4
   const blocks = [
     { index: 0, text: 'Table 1: First' }, // t0, p1
@@ -303,17 +308,16 @@ test('uncaptioned table with two uncaptioned predecessors still maps by document
     { id: 'e', ruleCode: 'MANUAL_CAPTION', location: { table_index: 4, paragraph_index: 5 } },
   ]
   const nav = resolveTableNavigations('audit-multi', findings, bundle)
-  // captions anchors = [0, 3, 5]; t1: cLt = 1-0 = 1 → window (0,3) → p1,p2 blocks
-  // → {1,2}; prev caption p1 ∈ set → page 1
-  assert.equal(nav.get(1)!.pageNumber, 1)
-  // t2: cLt = 2-1 = 1 → window (0,3) → same → page 1 (both uncaptioned tables
-  // sit between caption 1 and caption 2, anchored to the previous caption page)
-  assert.equal(nav.get(2)!.pageNumber, 1)
+  // captions anchors = [0, 3, 5]; both uncaptioned tables share window (0,3)
+  // → blocks 1 (p1) and 2 (p2) → multi-page → unavailable. Neither may be
+  // collapsed onto the previous caption page, and they must not share a page.
+  assert.equal(nav.get(1)!.pageNumber, null)
+  assert.equal(nav.get(2)!.pageNumber, null)
   assert.equal(nav.get(3)!.pageNumber, 2)
   assert.equal(nav.get(4)!.pageNumber, 3)
-  // every table has a distinct page result, no shared evidence
-  const pagesUsed = new Set([0, 1, 2, 3, 4].map((i) => nav.get(i)!.pageNumber))
-  assert.equal(pagesUsed.size, 3)
+  // captioned tables keep distinct known pages
+  const known = new Set([nav.get(0)!.pageNumber, nav.get(3)!.pageNumber, nav.get(4)!.pageNumber])
+  assert.equal(known.size, 3)
 })
 
 test('API-shaped violations (snake_case) resolve identically through the batch', () => {
@@ -325,7 +329,9 @@ test('API-shaped violations (snake_case) resolve identically through the batch',
     violation('MANUAL_CAPTION', { table_index: f.targetIdx, paragraph_index: 7 }, 'd'),
   ]
   const nav = resolveTableNavigations('audit-api', apiFindings, f)
-  assert.equal(nav.get(f.missingIdx)!.pageNumber, 2)
+  // The uncaptioned table's window is multi-page → unavailable under the
+  // strict rule; the caption-identity table still resolves.
+  assert.equal(nav.get(f.missingIdx)!.pageNumber, null)
   assert.equal(nav.get(f.targetIdx)!.pageNumber, 3)
 })
 
@@ -357,14 +363,15 @@ test('SEQ captions (caption style, hidden number) anchor the uncaptioned table o
   // Figure captions and prose checklist items are NOT table anchors.
   assert.deepEqual(captionAnchors(bundle), [4, 6])
 
-  // Table 3 (index 2, uncaptioned) sits between captions 4/6 → Page 1.
+  // Table 3 (index 2, uncaptioned): its surrounding window (6, ∞) spans pages
+  // 1 and 2 → multi-page → unavailable under the strict same-page rule. The
+  // SEQ anchors still bracket it correctly; the ambiguity is truthful.
   const nav = resolveTableNavigations('audit-seq', [
     violation('TABLE_CAPTION_MISSING', { table_index: 2 }, 'c'),
   ], bundle)
   const t3 = nav.get(2)!
-  assert.equal(t3.mode, 'rendered')
-  assert.equal(t3.pageNumber, 1)
-  assert.equal(t3.label, 'Page 1 · Table 3')
-  assert.equal(t3.chipLabel, 'Table 3 · Page 1')
+  assert.equal(t3.mode, 'stable')
+  assert.equal(t3.pageNumber, null)
+  assert.equal(t3.label, 'Table 3 · Page unavailable')
   assert.equal(t3.evidenceMethod, 'surrounding-blocks')
 })

@@ -198,3 +198,63 @@ test('object navigation never emits a fake page when evidence is absent', () => 
   assert.equal(d.mode, 'stable')
   assert.equal(d.pageNumber, null)
 })
+
+// ---------------------------------------------------------------------------
+// TABLE_CAPTION_MISSING — persisted anchor-pair evidence (strict same-page)
+// ---------------------------------------------------------------------------
+
+test('anchor pair on the SAME page resolves the table page', () => {
+  const b = bundle()
+  // bundle(): blocks 0 and 1 are both on page 1
+  const f = finding('TABLE_CAPTION_MISSING', {
+    table_index: 0,
+    previous_anchor_paragraph_index: 0,
+    next_anchor_paragraph_index: 1,
+  })
+  const m = mapObjectFromBundle(f, b)!
+  assert.equal(m.pageNumber, 1)
+  assert.equal(m.evidenceMethod, 'anchor-pair')
+  const d = resolveObjectNavigation(m)
+  assert.equal(d.label, 'Page 1 · Table 1')
+})
+
+test('anchor pair on DIFFERENT pages is unavailable (never a span guess)', () => {
+  const b = bundle()
+  // block 0 = page 1, block 2 = page 2
+  const f = finding('TABLE_CAPTION_MISSING', {
+    table_index: 0,
+    previous_anchor_paragraph_index: 0,
+    next_anchor_paragraph_index: 2,
+  })
+  const m = mapObjectFromBundle(f, b)!
+  assert.equal(m.pageNumber, null)
+  assert.equal(m.confidence, 'unavailable')
+  assert.equal(m.evidenceMethod, 'anchor-pair')
+  const d = resolveObjectNavigation(m)
+  assert.equal(d.mode, 'stable')
+  assert.equal(d.label, 'Table 1 · Page unavailable')
+})
+
+test('a single persisted anchor is never enough to resolve a page', () => {
+  const b = bundle()
+  const f = finding('TABLE_CAPTION_MISSING', {
+    table_index: 0,
+    previous_anchor_paragraph_index: 0,
+    next_anchor_paragraph_index: null,
+  })
+  const m = mapObjectFromBundle(f, b)!
+  assert.equal(m.pageNumber, null)
+  assert.equal(m.evidenceMethod, 'anchor-pair')
+})
+
+test('persisted anchors never leak into the user-facing label', () => {
+  const b = bundle()
+  const f = finding('TABLE_CAPTION_MISSING', {
+    table_index: 0,
+    previous_anchor_paragraph_index: 0,
+    next_anchor_paragraph_index: 1,
+  })
+  const d = resolveObjectNavigation(mapObjectFromBundle(f, b)!)
+  assert.ok(!d.label!.includes('anchor'))
+  assert.ok(!d.label!.includes('Paragraph'))
+})

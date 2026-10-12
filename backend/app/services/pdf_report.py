@@ -33,6 +33,7 @@ from reportlab.platypus import (
 
 from app.services.layout_violation import LayoutViolation
 from app.services.scoring import calculate_weighted_score_detailed
+from app.services.table_page_resolution import resolve_table_page
 
 # Built-in CID font — renders any Unicode text (incl. Chinese captions)
 # without shipping font files. Latin text keeps the Helvetica look.
@@ -543,6 +544,19 @@ def page_label_for_location(location, mapping, document_blocks=None, section_met
     # Table / Figure: page from paragraph_index if present
     para_idx = location.get("paragraph_index")
     if location.get("table_index") is not None or location.get("image_index") is not None:
+        # TABLE_CAPTION_MISSING carries no paragraph_index; its page is resolved
+        # from its same-page boundary anchors (one rule shared with the frontend).
+        # Any other case (or unmapped anchors) keeps the historical fallbacks.
+        if location.get("table_index") is not None:
+            anchor_page = resolve_table_page(
+                location,
+                lambda idx: _page_for_paragraph(idx, mapping, rendered_pages),
+                rendered_pages,
+            )
+            if anchor_page is not None:
+                return ("Original document page", str(anchor_page))
+            # No anchor evidence: fall back to a legacy paragraph_index when a
+            # historical finding happens to carry one, else "Unavailable".
         page = _page_for_paragraph(para_idx, mapping, rendered_pages)
         if page is not None:
             return ("Original document page", str(page))
