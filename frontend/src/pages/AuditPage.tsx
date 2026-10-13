@@ -44,6 +44,7 @@ import {
   friendlyRuleTitle,
   occurrenceLabel,
 } from '../lib/friendly-finding'
+import { isLocalAiCitationEligible } from '../lib/local-ai-citation-eligibility.ts'
 import { presentationFor } from '../lib/audit/finding-presentation'
 import { interruptionMessage } from '../lib/audit/interrupted-audit'
 import { formatAuditDateTime, auditDateTimeAttr } from '../lib/format-date'
@@ -1800,15 +1801,17 @@ function splitGuidanceSuggestion(suggestion: string | null): { correction: strin
 
 /**
  * Local AI Citation Guidance — rendered ONLY for a finding already eligible
- * under the existing Local AI contract.
+ * under the strict Local AI contract (see local-ai-citation-eligibility.ts,
+ * mirrored with the backend helper).
  *
- * Eligibility is unchanged and never widened: an in-text citation whose
- * author is absent from every Reference List entry (CITATION_MISMATCH with
- * an integer paragraph index). Every other rule — fonts, alignment, line
- * spacing, paragraph spacing, margins, headings, Reference List formatting,
- * year/suffix mismatch, ambiguity, uncited/duplicate entries — is
- * deterministic only, so the whole section is hidden rather than
- * explaining that AI is available somewhere else.
+ * Eligibility: paragraph-scoped CITATION_MISMATCH with a real non-negative
+ * integer paragraph index, MAJOR/MINOR severity, and a non-empty citation
+ * snippet. Missing-References root findings, document-level findings,
+ * malformed indexes, empty snippets, REVIEW/unknown severities,
+ * Reference-entry targets and every other rule are deterministic only, so
+ * the whole section is hidden rather than explaining that AI is available
+ * somewhere else. Persisted historical rows for now-ineligible findings
+ * stay stored but are never exposed through this section.
  */
 function CitationSection({
   audit,
@@ -1828,10 +1831,7 @@ function CitationSection({
   // index plus the exact deterministic message — never display order or
   // text search. Same-paragraph findings therefore stay distinct.
   const selectedPara = getParagraphIndex(selectedViolation)
-  const isCitationSelected =
-    selectedViolation !== null &&
-    selectedViolation.rule_code === 'CITATION_MISMATCH' &&
-    selectedPara !== null
+  const isCitationSelected = isLocalAiCitationEligible(selectedViolation)
   // Not an eligible Local AI finding: render nothing at all — no section, no
   // heading, and no "AI is available for citations elsewhere" explanation.
   if (!isCitationSelected) return null
@@ -1857,7 +1857,7 @@ function CitationSection({
         <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[13px] leading-[19px] text-muted-foreground">
           <span className="inline-flex items-center gap-1.5">
             <MapPin className="h-3.5 w-3.5" aria-hidden="true" />
-            Paragraph {selectedPara + 1}
+            Paragraph {(selectedPara ?? 0) + 1}
           </span>
           <span className="inline-flex items-center gap-1.5">
             <ShieldAlert className="h-3.5 w-3.5 text-ai-assisted" aria-hidden="true" />

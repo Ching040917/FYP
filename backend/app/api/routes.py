@@ -31,6 +31,7 @@ from app.services.scoring import (
     select_scoring_contract,
 )
 from app.services.ai_citation import async_ai_citation_task
+from app.services.ai_citation_eligibility import is_local_ai_citation_eligible
 from app.services.document_parser import (
     parse_document,
     extract_paragraphs,
@@ -283,31 +284,32 @@ async def audit_document(
         ]
 
         # ---- Deterministic-first AI citation guidance (Build 7F) ----
-        # Collect only confirmed CITATION_MISMATCH findings from the
-        # deterministic sensor. AI provides correction guidance only —
+        # Collect only eligible paragraph-scoped CITATION_MISMATCH findings
+        # via the strict helper. AI provides correction guidance only —
         # it never adds, removes, or reclassifies findings.
         # A request-local finding_key (UUID) is attached to each finding
         # so the provider can uniquely identify every item — even when
         # multiple findings share the same paragraph_index.
         citation_findings = []
         for v in layout_violations:
-            if v.rule_code == "CITATION_MISMATCH":
-                paragraph_index = v.location.get("paragraph_index") if v.location else None
-                # Document-wide findings (no References section) carry no
-                # paragraph identity: AI guidance is per-citation and a
-                # per-paragraph row cannot be written for them.
-                if not isinstance(paragraph_index, int):
-                    continue
-                citation_findings.append({
-                    "finding_key": str(uuid.uuid4()),
-                    "paragraph_index": paragraph_index,
-                    "rule_code": v.rule_code,
-                    "severity": v.severity,
-                    "snippet": v.actual_value or "",
-                    "message": v.message,
-                    "expected_value": v.expected_value,
-                    "actual_value": v.actual_value,
-                })
+            # Strict gate: document-level root findings (missing References
+            # section), malformed indexes, empty snippets, REVIEW/unknown
+            # severities, Reference-entry targets and unsupported codes are
+            # never sent to the provider. Consolidated findings
+            # (occurrences > 1) stay eligible as one guidance unit.
+            if not is_local_ai_citation_eligible(v):
+                continue
+            paragraph_index = v.location.get("paragraph_index")
+            citation_findings.append({
+                "finding_key": str(uuid.uuid4()),
+                "paragraph_index": paragraph_index,
+                "rule_code": v.rule_code,
+                "severity": v.severity,
+                "snippet": v.actual_value or "",
+                "message": v.message,
+                "expected_value": v.expected_value,
+                "actual_value": v.actual_value,
+            })
 
         ai_result = await async_ai_citation_task(
             audit_id=audit.id,

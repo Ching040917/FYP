@@ -2,14 +2,16 @@
  * Local AI Citation Guidance — eligibility gate.
  *
  * The guidance section exists ONLY for a finding that is already eligible
- * under the existing Local AI contract: an in-text citation whose author is
- * absent from every Reference List entry (CITATION_MISMATCH with an integer
- * paragraph index). Everything else — fonts, alignment, line spacing,
+ * under the strict Local AI contract (see local-ai-citation-eligibility.ts,
+ * mirrored with the backend helper): paragraph-scoped CITATION_MISMATCH
+ * with a real non-negative integer paragraph index, MAJOR/MINOR severity,
+ * and a non-empty citation snippet. Everything else — fonts, alignment, line spacing,
  * paragraph spacing, margins, headings, Reference List formatting, year and
  * suffix mismatches, ambiguity, uncited and duplicate entries — renders no
  * section at all, and no "AI is available elsewhere" explanation.
  *
  * This suite pins the SOURCE gate so a future edit cannot re-widen it.
+ * The gate must use the shared helper — no duplicated inline predicates.
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -34,9 +36,12 @@ const rendered = SECTION
   .replace(/\/\*[\s\S]*?\*\//g, '')
   .replace(/(^|[^:])\/\/[^\n]*/g, '$1')
 
-test('eligibility is exactly CITATION_MISMATCH with a real paragraph index', () => {
-  assert.match(rendered, /selectedViolation\.rule_code === 'CITATION_MISMATCH'/)
-  assert.match(rendered, /selectedPara !== null/)
+test('eligibility uses the shared strict helper (no inline code-only gate)', () => {
+  assert.match(PAGE, /isLocalAiCitationEligible/)
+  assert.match(rendered, /isLocalAiCitationEligible\(selectedViolation\)/)
+  assert.match(rendered, /selectedPara !== null|getParagraphIndex\(selectedViolation\)/)
+  // The strict predicate lives in the helper module, not inline here.
+  assert.doesNotMatch(rendered, /selectedViolation\.rule_code === 'CITATION_MISMATCH'/)
 })
 
 test('an ineligible finding renders no section at all', () => {
