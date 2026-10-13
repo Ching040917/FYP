@@ -304,6 +304,87 @@ export function AuditPage() {
   }
 
   /**
+   * Overlay resolution for paragraph findings (citation / reference /
+   * formatting families) — shared by selection, mapping-ready
+   * re-resolution, and rendered-mode re-entry. Idempotent: resolving the
+   * same finding twice yields the same overlay state. Object findings are
+   * excluded by the caller (their overlays resolve through object paths).
+   */
+  const applyOverlay = useCallback((violation: Violation) => {
+    const findingLike = {
+      id: violation.id,
+      ruleCode: violation.rule_code,
+      message: violation.message,
+      location: violation.location,
+    }
+    // Citation and formatting overlays are mutually exclusive; the latest
+    // selection replaces the previous one.
+    setObjectStatus(null)
+    clearFigureOutline()
+    clearMarginStatus()
+    const evidenceKind = evidenceFamily(violation.rule_code)
+    if (evidenceKind === 'formatting') {
+      clearCitationHighlight()
+      const fmt = resolveFormattingHighlight(findingLike, mappingBundle)
+      setFormattingEvidence(fmt.kind !== 'none' && fmt.pageRects.length > 0 ? { kind: fmt.kind, pageRects: fmt.pageRects } : null)
+      setFormattingSpacingSide(fmt.spacingSide)
+      setFormattingLabel(fmt.label)
+      setFormattingMessage(fmt.message)
+    } else if (evidenceKind === 'reference') {
+      // Reference findings: paragraph envelope ONLY. Entry/heading text
+      // never enters the citation span matcher (see paragraph-evidence.ts).
+      // The envelope reuses the paragraph channel; the label names the rule.
+      clearCitationHighlight()
+      const pe = resolveParagraphEvidence(findingLike, mappingBundle)
+      setFormattingEvidence(pe.kind !== 'none' && pe.pageRects.length > 0 ? { kind: 'paragraph', pageRects: pe.pageRects } : null)
+      setFormattingSpacingSide(null)
+      setFormattingLabel(pe.label)
+      setFormattingMessage(pe.message)
+    } else if (evidenceKind === 'citation') {
+      clearFormattingHighlight()
+      // Exact citation span first; an ambiguous or unavailable span falls
+      // back to the real paragraph envelope; both unavailable keeps
+      // Rendered Pages active with a truthful message. Document-level root
+      // findings receive no overlay by contract.
+      const hl = resolveCitationHighlight(
+        { ...findingLike, actualValue: violation.actual_value },
+        mappingBundle,
+      )
+      if (hl.rects && hl.rects.length > 0) {
+        setCitationRects(hl.rects)
+        setCitationLabel(hl.label)
+        setHighlightMessage(hl.message)
+      } else {
+        const pe = resolveParagraphEvidence(findingLike, mappingBundle)
+        if (pe.kind !== 'none' && pe.pageRects.length > 0) {
+          setCitationRects(null)
+          setCitationLabel(null)
+          setHighlightMessage(null)
+          setFormattingEvidence({ kind: 'paragraph', pageRects: pe.pageRects })
+          setFormattingSpacingSide(null)
+          setFormattingLabel(pe.label)
+          setFormattingMessage(pe.message)
+        } else {
+          setCitationRects(null)
+          setCitationLabel(null)
+          setHighlightMessage(hl.message ?? pe.message)
+        }
+      }
+    } else {
+      clearFormattingHighlight()
+      // Unrelated rules keep the previous behavior: no overlay resolver
+      // applies; any stale highlight is cleared.
+      const hl = resolveCitationHighlight(
+        { ...findingLike, actualValue: violation.actual_value },
+        mappingBundle,
+      )
+      setCitationRects(hl.rects)
+      setCitationLabel(hl.label)
+      setHighlightMessage(hl.message)
+    }
+  }, [mappingBundle, clearCitationHighlight, clearFormattingHighlight, clearFigureOutline, clearMarginStatus])
+
+  /**
    * Exact Figure outline (Build 8F): resolve the authoritative image_index
    * against the operator-list geometry. Rendered ONLY when identity is
    * reliable AND page/order agree AND the geometry is finite — otherwise the
@@ -385,6 +466,8 @@ export function AuditPage() {
   // The fallback banner is only truthful while Extracted Text is active:
   // any switch to Rendered Pages (manual or via a mapped finding) hides it.
   // It reappears only after a new genuine unavailable navigation result.
+  // Overlay reconstruction on rendered re-entry belongs to the derivation
+  // effect below (single writer).
   useEffect(() => {
     if (previewMode === 'rendered') setNavNotice(null)
     if (previewMode === 'text') {
@@ -437,7 +520,8 @@ export function AuditPage() {
   }, [renderedPdf?.bytes, gatedAuditId, clearCitationHighlight, clearFormattingHighlight, clearObjectStatus, clearFigureOutline, clearMarginStatus])
 
   // Execute (or fail) the retained navigation request when the mapping
-  // settles — never before.
+  // settles — never before. Overlay resolution on arrival belongs to the
+  // derivation effect below (single writer).
   useEffect(() => {
     if (mappingStatus === 'ready' && mappingBundle) {
       pendingNavRef.current?.onMappingReady(mappingBundle.byIndex, selectedId, emitNav)
@@ -851,73 +935,44 @@ export function AuditPage() {
       }
       return
     }
-    // Citation and formatting overlays are mutually exclusive; the latest
-    // selection replaces the previous one.
-    setObjectStatus(null)
-    clearFigureOutline()
-    clearMarginStatus()
-    const evidenceKind = evidenceFamily(violation.rule_code)
-    if (evidenceKind === 'formatting') {
-      clearCitationHighlight()
-      const fmt = resolveFormattingHighlight(findingLike, mappingBundle)
-      setFormattingEvidence(fmt.kind !== 'none' && fmt.pageRects.length > 0 ? { kind: fmt.kind, pageRects: fmt.pageRects } : null)
-      setFormattingSpacingSide(fmt.spacingSide)
-      setFormattingLabel(fmt.label)
-      setFormattingMessage(fmt.message)
-    } else if (evidenceKind === 'reference') {
-      // Reference findings: paragraph envelope ONLY. Entry/heading text
-      // never enters the citation span matcher (see paragraph-evidence.ts).
-      // The envelope reuses the paragraph channel; the label names the rule.
-      clearCitationHighlight()
-      const pe = resolveParagraphEvidence(findingLike, mappingBundle)
-      setFormattingEvidence(pe.kind !== 'none' && pe.pageRects.length > 0 ? { kind: 'paragraph', pageRects: pe.pageRects } : null)
-      setFormattingSpacingSide(null)
-      setFormattingLabel(pe.label)
-      setFormattingMessage(pe.message)
-    } else if (evidenceKind === 'citation') {
-      clearFormattingHighlight()
-      // Exact citation span first; an ambiguous or unavailable span falls
-      // back to the real paragraph envelope; both unavailable keeps
-      // Rendered Pages active with a truthful message. Document-level root
-      // findings receive no overlay by contract.
-      const hl = resolveCitationHighlight(
-        { ...findingLike, actualValue: violation.actual_value },
-        mappingBundle,
-      )
-      if (hl.rects && hl.rects.length > 0) {
-        setCitationRects(hl.rects)
-        setCitationLabel(hl.label)
-        setHighlightMessage(hl.message)
-      } else {
-        const pe = resolveParagraphEvidence(findingLike, mappingBundle)
-        if (pe.kind !== 'none' && pe.pageRects.length > 0) {
-          setCitationRects(null)
-          setCitationLabel(null)
-          setHighlightMessage(null)
-          setFormattingEvidence({ kind: 'paragraph', pageRects: pe.pageRects })
-          setFormattingSpacingSide(null)
-          setFormattingLabel(pe.label)
-          setFormattingMessage(pe.message)
-        } else {
-          setCitationRects(null)
-          setCitationLabel(null)
-          setHighlightMessage(hl.message ?? pe.message)
-        }
-      }
-    } else {
-      clearFormattingHighlight()
-      // Unrelated rules keep the previous behavior: no overlay resolver
-      // applies; any stale highlight is cleared.
-      const hl = resolveCitationHighlight(
-        { ...findingLike, actualValue: violation.actual_value },
-        mappingBundle,
-      )
-      setCitationRects(hl.rects)
-      setCitationLabel(hl.label)
-      setHighlightMessage(hl.message)
-    }
+    // Paragraph-evidence overlays follow through the single derivation
+    // effect below (keyed on selection + mapping generation) — never
+    // resolved imperatively here, so a stale selection can never paint.
     pendingNavRef.current?.select(violation, mappingBundle?.byIndex, emitNav)
   }
+
+  // Overlay derivation — the SINGLE writer of paragraph-evidence overlay
+  // state (citation spans, paragraph envelopes, truthful messages).
+  // Selection identity, mapping readiness, and preview mode are the only
+  // inputs: a selection change clears stale overlays first; waiting states
+  // (mapping/page-text loading) write nothing final and re-run when their
+  // dependency arrives; zoom and fit changes never clear (normalized
+  // geometry reprojection is automatic). A resolution generation counter
+  // guards against stale asynchronous results overwriting newer ones.
+  const overlaySelRef = useRef<string | null>(null)
+  const overlayGenRef = useRef(0)
+  useEffect(() => {
+    const sel = audit?.violations.find((v) => v.id === selectedId) ?? null
+    const paragraphSel = sel && classifyFindingTarget(sel) !== 'object' ? sel : null
+    if (previewMode !== 'rendered' || !paragraphSel) {
+      if (overlaySelRef.current !== null) {
+        overlaySelRef.current = null
+        clearCitationHighlight()
+        clearFormattingHighlight()
+      }
+      return
+    }
+    if (overlaySelRef.current !== paragraphSel.id) {
+      overlaySelRef.current = paragraphSel.id
+      clearCitationHighlight()
+      clearFormattingHighlight()
+    }
+    // waiting_for_mapping / waiting_for_page_text: transient, never cached.
+    if (!mappingBundle || mappingStatus !== 'ready') return
+    if (mappingBundle.pages.length === 0) return
+    overlayGenRef.current += 1
+    applyOverlay(paragraphSel)
+  }, [audit, selectedId, previewMode, mappingBundle, mappingStatus, applyOverlay, clearCitationHighlight, clearFormattingHighlight])
 
   // Reset detail scroll to top when the selected finding changes — no focus
   // theft; the user's keyboard cursor stays exactly where it was.
