@@ -24,7 +24,7 @@ import {
   type TextItemLike,
 } from './paragraph-mapping.ts'
 import { measurePdfText, type MeasureText } from './pdf-measure.ts'
-import { matchCitationOnPage, type CitationRect } from './citation-highlight.ts'
+import { matchCitationOnPage, CITATION_SPAN_CODES, type CitationRect } from './citation-highlight.ts'
 import { friendlyParagraphLocation } from './finding-navigation.ts'
 import { friendlyRuleTitle } from '../friendly-finding.ts'
 
@@ -78,10 +78,18 @@ export type EvidenceBundle = {
   blocks?: BlockLike[]
 }
 
-/** Overlay family for a rule: citation, formatting, or none. */
-export function evidenceFamily(ruleCode: string | null | undefined): 'citation' | 'formatting' | 'none' {
-  if (ruleCode === 'CITATION_MISMATCH') return 'citation'
+/**
+ * Overlay family for a rule: citation (exact span tier), formatting
+ * (run/paragraph tier), reference (paragraph-envelope tier only), or none.
+ *
+ * Span-tier lock: only CITATION_SPAN_CODES may attempt an exact span.
+ * Every REFERENCE_* code resolves to a paragraph envelope via
+ * paragraph-evidence.ts — long entry text never enters the span matcher.
+ */
+export function evidenceFamily(ruleCode: string | null | undefined): 'citation' | 'formatting' | 'reference' | 'none' {
+  if (ruleCode && CITATION_SPAN_CODES.has(ruleCode)) return 'citation'
   if (ruleCode && FORMATTING_RULES.has(ruleCode)) return 'formatting'
+  if (ruleCode && ruleCode.startsWith('REFERENCE_')) return 'reference'
   return 'none'
 }
 

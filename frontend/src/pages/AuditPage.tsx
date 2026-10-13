@@ -22,6 +22,7 @@ import {
 } from '../lib/pdf/finding-navigation.ts'
 import { resolveCitationHighlight, type CitationRect } from '../lib/pdf/citation-highlight.ts'
 import { resolveFormattingHighlight, evidenceFamily } from '../lib/pdf/formatting-highlight.ts'
+import { resolveParagraphEvidence } from '../lib/pdf/paragraph-evidence.ts'
 import {
   OBJECT_RULES,
   resolveObjectSelection,
@@ -855,17 +856,58 @@ export function AuditPage() {
     setObjectStatus(null)
     clearFigureOutline()
     clearMarginStatus()
-    if (evidenceFamily(violation.rule_code) === 'formatting') {
+    const evidenceKind = evidenceFamily(violation.rule_code)
+    if (evidenceKind === 'formatting') {
       clearCitationHighlight()
       const fmt = resolveFormattingHighlight(findingLike, mappingBundle)
       setFormattingEvidence(fmt.kind !== 'none' && fmt.pageRects.length > 0 ? { kind: fmt.kind, pageRects: fmt.pageRects } : null)
       setFormattingSpacingSide(fmt.spacingSide)
       setFormattingLabel(fmt.label)
       setFormattingMessage(fmt.message)
+    } else if (evidenceKind === 'reference') {
+      // Reference findings: paragraph envelope ONLY. Entry/heading text
+      // never enters the citation span matcher (see paragraph-evidence.ts).
+      // The envelope reuses the paragraph channel; the label names the rule.
+      clearCitationHighlight()
+      const pe = resolveParagraphEvidence(findingLike, mappingBundle)
+      setFormattingEvidence(pe.kind !== 'none' && pe.pageRects.length > 0 ? { kind: 'paragraph', pageRects: pe.pageRects } : null)
+      setFormattingSpacingSide(null)
+      setFormattingLabel(pe.label)
+      setFormattingMessage(pe.message)
+    } else if (evidenceKind === 'citation') {
+      clearFormattingHighlight()
+      // Exact citation span first; an ambiguous or unavailable span falls
+      // back to the real paragraph envelope; both unavailable keeps
+      // Rendered Pages active with a truthful message. Document-level root
+      // findings receive no overlay by contract.
+      const hl = resolveCitationHighlight(
+        { ...findingLike, actualValue: violation.actual_value },
+        mappingBundle,
+      )
+      if (hl.rects && hl.rects.length > 0) {
+        setCitationRects(hl.rects)
+        setCitationLabel(hl.label)
+        setHighlightMessage(hl.message)
+      } else {
+        const pe = resolveParagraphEvidence(findingLike, mappingBundle)
+        if (pe.kind !== 'none' && pe.pageRects.length > 0) {
+          setCitationRects(null)
+          setCitationLabel(null)
+          setHighlightMessage(null)
+          setFormattingEvidence({ kind: 'paragraph', pageRects: pe.pageRects })
+          setFormattingSpacingSide(null)
+          setFormattingLabel(pe.label)
+          setFormattingMessage(pe.message)
+        } else {
+          setCitationRects(null)
+          setCitationLabel(null)
+          setHighlightMessage(hl.message ?? pe.message)
+        }
+      }
     } else {
       clearFormattingHighlight()
-      // Exact citation highlight: resolves (or clears) from the deterministic
-      // finding's own fields; failure keeps Rendered Pages active.
+      // Unrelated rules keep the previous behavior: no overlay resolver
+      // applies; any stale highlight is cleared.
       const hl = resolveCitationHighlight(
         { ...findingLike, actualValue: violation.actual_value },
         mappingBundle,

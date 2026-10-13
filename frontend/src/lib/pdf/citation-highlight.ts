@@ -41,6 +41,30 @@ export interface CitationHighlightResult {
 export const HIGHLIGHT_UNAVAILABLE_MESSAGE =
   'Citation text could not be highlighted exactly. Review the selected evidence in Finding Details.'
 
+/**
+ * Span-tier allowlist (locked): ONLY these four in-text citation codes may
+ * attempt an exact citation-span overlay, and only with a source-faithful
+ * snippet matched exactly once on the mapped page. Every REFERENCE_* code
+ * (entries, headings, formatting) resolves to a paragraph envelope via
+ * paragraph-evidence.ts instead — long entry text must never enter the
+ * span matcher.
+ */
+export const CITATION_SPAN_CODES: ReadonlySet<string> = new Set([
+  'CITATION_MISMATCH',
+  'CITATION_REFERENCE_MISMATCH',
+  'CITATION_YEAR_SUFFIX_MISMATCH',
+  'CITATION_REFERENCE_AMBIGUOUS',
+])
+
+/**
+ * Document-level root findings (`missing_references_section === true`) are
+ * explicitly denied an overlay: their paragraph_index anchors the first
+ * citation for navigation context, but highlighting it would dishonestly
+ * present one paragraph as evidence for a document-wide cause.
+ */
+export const DOCUMENT_ROOT_NO_OVERLAY_MESSAGE =
+  'This finding covers the whole document: add a References section. No single paragraph is highlighted as evidence.'
+
 // Matches the deterministic sensor's message format:
 //   Citation 'Garcia (2018)' was found in text, ...
 const CITATION_IN_MESSAGE = /^citation '(.+?) \((\d{4}[a-z]?)\)'/i
@@ -129,8 +153,12 @@ export function resolveCitationHighlight(
   finding: { id: string; ruleCode?: string | null; message?: string | null; actualValue?: string | null; location?: Record<string, unknown> | null },
   bundle: { byIndex: Map<number, BlockMapping>; pages: PageText[]; blocks?: BlockLike[] } | null | undefined,
 ): CitationHighlightResult {
-  if (!bundle || finding.ruleCode !== 'CITATION_MISMATCH') {
+  if (!bundle || !CITATION_SPAN_CODES.has(finding.ruleCode ?? '')) {
     return { rects: null, label: null, message: null }
+  }
+  // Root denial FIRST (see CITATION_SPAN_CODES contract above).
+  if ((finding.location ?? {}).missing_references_section === true) {
+    return { rects: null, label: null, message: DOCUMENT_ROOT_NO_OVERLAY_MESSAGE }
   }
   const paraIndex = getParagraphIndex(finding.location)
   if (paraIndex === null) return { rects: null, label: null, message: null }
