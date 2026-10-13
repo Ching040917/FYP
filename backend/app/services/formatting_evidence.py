@@ -181,16 +181,43 @@ def _style_chain_indents(paragraph_obj: Any):
 def _has_numbering(paragraph_obj: Any) -> bool:
     """True when the paragraph's own <w:pPr> carries <w:numPr>.
 
-    Note: this is the same direct check the existing `is_list_item` flag in
-    document_parser performs. Numbering applied purely through a style is
-    NOT detected by either — a known, pre-existing limitation that is
-    preserved rather than silently changed here.
+    Direct-only primitive. Style-inherited numbering is detected by
+    `style_chain_has_numbering`; the auto-detect path in
+    `resolve_indentation` consults both so a list-styled paragraph is
+    never misreported with a fabricated zero.
     """
     try:
         pPr = paragraph_obj._p.find(qn("w:pPr"))
     except Exception:
         return False
     return pPr is not None and pPr.find(qn("w:numPr")) is not None
+
+
+def style_chain_has_numbering(paragraph_obj: Any) -> bool:
+    """True when numbering is inherited through the paragraph style chain.
+
+    Walks `style` → `base_style` looking for a style-level `<w:numPr>`
+    (e.g. the built-in `List Number` style). Style names alone are never
+    consulted — only persisted OOXML evidence counts. Cycle-safe.
+    """
+    seen = set()
+    try:
+        current = paragraph_obj.style if paragraph_obj is not None else None
+    except Exception:
+        return False
+    while current is not None and getattr(current, "style_id", None) not in seen:
+        seen.add(getattr(current, "style_id", None))
+        try:
+            pPr = current.element.pPr
+        except Exception:
+            break
+        if pPr is not None and pPr.find(qn("w:numPr")) is not None:
+            return True
+        try:
+            current = current.base_style
+        except Exception:
+            break
+    return False
 
 
 def _document_default_indents(paragraph_obj: Any):
@@ -255,7 +282,8 @@ def resolve_indentation(
         direct → paragraph_style → style_chain
         → document_default (w:docDefaults/w:pPrDefault, when declared)
         → effective_default (Word's built-in zero)
-    Numbering: when a paragraph carries ``w:numPr`` and states no
+    Numbering: when a paragraph carries ``w:numPr`` — directly on its own
+    ``<w:pPr>`` or inherited through its style chain — and states no
     indentation of its own, its effective indent comes from the list
     definition, which this module does not read. It is reported as
     ``numbering`` with no asserted value so a later rule declines to
@@ -288,7 +316,11 @@ def resolve_indentation(
     (``numbering``), and a document whose styles part cannot be read
     stays ``unresolved`` — an unsupported source is never guessed at.
     """
-    numbered = _has_numbering(paragraph_obj) if is_numbered is None else bool(is_numbered)
+    numbered = (
+        _has_numbering(paragraph_obj) or style_chain_has_numbering(paragraph_obj)
+        if is_numbered is None
+        else bool(is_numbered)
+    )
 
     # 1. Direct paragraph formatting.
     direct_left = direct_first = None
@@ -298,6 +330,11 @@ def resolve_indentation(
         direct_first = _to_inches(fmt.first_line_indent)
     except Exception:
         direct_left = direct_first = None
+    # Direct values win over numbering: a paragraph that states both
+    # indentation halves directly is judged on those values even when a
+    # list definition also applies. Otherwise numbering may own an
+    # unstated half and the evidence stays numbering-flagged.
+    direct_complete = direct_left is not None and direct_first is not None
 
     left, first = direct_left, direct_first
     source = SOURCE_DIRECT
@@ -353,7 +390,7 @@ def resolve_indentation(
                 first_line_indent_in=None if first is None else first,
                 hanging_indent_in=None,
                 source=SOURCE_UNRESOLVED,
-                is_numbered=numbered,
+                is_numbered=numbered and not direct_complete,
             )
         doc_applied = False
         if left is None and doc_left is not None:
@@ -418,7 +455,7 @@ def resolve_indentation(
         first_line_indent_in=first,
         hanging_indent_in=hanging,
         source=source,
-        is_numbered=numbered,
+        is_numbered=numbered and not direct_complete,
     )
 
 def resolve_paragraph_format(paragraph_obj: Any) -> ParagraphFormatEvidence:

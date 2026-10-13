@@ -73,6 +73,7 @@ from docx.oxml.ns import qn
 
 from app.services.document_parser import get_heading_level, extract_paragraphs
 from app.services.citation_sensor import _find_references_start
+from app.services.formatting_evidence import style_chain_has_numbering
 from app.services.reference_section import (
     is_reference_heading_text,
     is_references_span_terminator,
@@ -167,16 +168,12 @@ def _has_o_math(p_elem) -> bool:
 
 
 def _style_chain_has_numbering(paragraph_obj) -> bool:
-    """Numbering inherited through the style chain (list styles)."""
-    seen = set()
-    current = paragraph_obj.style if paragraph_obj is not None else None
-    while current is not None and getattr(current, "style_id", None) not in seen:
-        seen.add(current.style_id)
-        pPr = current.element.pPr
-        if pPr is not None and pPr.find(qn("w:numPr")) is not None:
-            return True
-        current = current.base_style
-    return False
+    """Numbering inherited through the style chain (list styles).
+
+    Single owner lives in formatting_evidence (span-termination and
+    indentation-evidence contracts share it).
+    """
+    return style_chain_has_numbering(paragraph_obj)
 
 
 def _visible_text(para: Dict) -> str:
