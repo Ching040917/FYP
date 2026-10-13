@@ -31,6 +31,8 @@ import re
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
+from app.services.document_parser import get_heading_level
+
 # Accepted heading aliases. Frozen set — the exact pre-existing vocabulary.
 REFERENCE_HEADING_ALIASES = frozenset({
     "references",
@@ -55,6 +57,51 @@ NUMERIC_SECTION_PREFIX = re.compile(r"^\d+(?:\.\d+)*\.?\s+")
 # An Appendix heading terminates the reference block. Identical to the
 # sensor's boundary rule, which decides where the bibliography stops.
 APPENDIX_HEADER_PATTERN = re.compile(r"^appendix\b", re.IGNORECASE)
+
+# A rubric heading terminates the reference block, exactly as the role
+# classifier already treats it (single owner moved here so the sensor and
+# Phase 3 bounds agree with roles instead of drifting past rubric content).
+_RUBRIC_HEADING_RE = re.compile(r"\brubric", re.IGNORECASE)
+
+# Explicit structural headings terminate the References span. Only Heading
+# 1/2/3 count: bold/centred/short Normal paragraphs, list paragraphs, and
+# text that merely looks like a heading never terminate the span.
+_TERMINATING_HEADING_LEVELS = frozenset({1, 2, 3})
+
+
+def is_rubric_heading_text(text: Optional[str], style_name: Optional[str]) -> bool:
+    """True when a paragraph is a rubric heading (heading style + rubric text).
+
+    Mirrors the role classifier's rubric rule so both consumers share one
+    definition. Plain-text "Rubric..." lines and non-rubric headings return
+    False.
+    """
+    if get_heading_level(style_name) is None:
+        return False
+    return bool(_RUBRIC_HEADING_RE.search(text or ""))
+
+
+def is_references_span_terminator(text: Optional[str], style_name: Optional[str] = None) -> bool:
+    """True when a paragraph after the References heading ends the span.
+
+    Structural evidence only, first match wins in document order:
+      1. Appendix heading text (any style — preserved behavior);
+      2. rubric heading (heading style + rubric text — role parity);
+      3. explicit Heading 1/2/3 paragraph (new section started).
+    Empty paragraphs never terminate (they are separators). Punctuation,
+    author/year parsing, DOI/URL presence, and citation-key parsing never
+    terminate the span.
+    """
+    stripped = (text or "").strip()
+    if not stripped:
+        return False
+    if APPENDIX_HEADER_PATTERN.match(stripped):
+        return True
+    if get_heading_level(style_name) is None:
+        return False
+    if _RUBRIC_HEADING_RE.search(stripped):
+        return True
+    return get_heading_level(style_name) in _TERMINATING_HEADING_LEVELS
 
 # Whitespace-tolerant alias match.
 #
@@ -140,9 +187,11 @@ def reference_section_bounds(
 ) -> Optional[ReferenceSectionBounds]:
     """Resolve the Reference List span, or None when no heading is found.
 
-    The span starts AT the heading and ends at the first Appendix heading,
-    mirroring the boundary logic both consumers already used. No entry is
-    invented and no paragraph is reordered.
+    The span starts AT the heading and ends at the first structural
+    terminator after it (Appendix heading, rubric heading, or explicit
+    Heading 1/2/3 — see is_references_span_terminator), mirroring the
+    boundary logic the role classifier uses. No entry is invented and no
+    paragraph is reordered.
     """
     start = find_reference_heading_index(paragraphs)
     if start is None:
@@ -163,7 +212,7 @@ def reference_section_bounds(
         if idx is None or idx <= start:
             continue
         text = (para.get("text") or "").strip()
-        if is_appendix_heading_text(text):
+        if is_references_span_terminator(text, para.get("style_name")):
             end_index = idx
             break
         if not text:

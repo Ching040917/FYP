@@ -73,7 +73,11 @@ from docx.oxml.ns import qn
 
 from app.services.document_parser import get_heading_level, extract_paragraphs
 from app.services.citation_sensor import _find_references_start
-from app.services.reference_section import is_reference_heading_text
+from app.services.reference_section import (
+    is_reference_heading_text,
+    is_references_span_terminator,
+    is_rubric_heading_text,
+)
 
 # ---------------------------------------------------------------------------
 # Role enums (plain strings — no DB/API schema dependency)
@@ -119,8 +123,7 @@ _REFERENCES_HEADERS = frozenset({"references", "bibliography", "works cited", "r
 
 _NUMERIC_SECTION_PREFIX = re.compile(r"^\d+(?:\.\d+)*\.?\s+")
 
-# Rubric headings terminate the reference span (back-matter region).
-_RUBRIC_HEADING_RE = re.compile(r"\brubric", re.IGNORECASE)
+_NUMERIC_SECTION_PREFIX = re.compile(r"^\d+(?:\.\d+)*\.?\s+")
 
 # Header keywords that make a small cover table recognisably administrative
 # (cover info / assignment detail / assessment). Evaluated ONLY inside the
@@ -244,9 +247,8 @@ def _is_appendix_heading(para: Dict, text: str) -> bool:
 
 
 def _is_rubric_heading(para: Dict) -> bool:
-    style = (para.get("style_name") or "").lower()
-    text = para.get("text") or ""
-    return get_heading_level(para.get("style_name")) is not None and bool(_RUBRIC_HEADING_RE.search(text))
+    # Single owner lives in reference_section (span-termination contract).
+    return is_rubric_heading_text(para.get("text"), para.get("style_name"))
 
 
 def _references_span_of(paragraphs: List[Dict], ref_start: Optional[int]):
@@ -254,9 +256,11 @@ def _references_span_of(paragraphs: List[Dict], ref_start: Optional[int]):
         return None
     end = len(paragraphs)
     for para in paragraphs[ref_start:]:
-        text = (para.get("text") or "").strip()
-        if re.match(r"^appendix\b", text, re.IGNORECASE) or _is_rubric_heading(para):
-            end = para["index"]
+        idx = para.get("index")
+        if idx is None or idx <= ref_start:
+            continue
+        if is_references_span_terminator(para.get("text"), para.get("style_name")):
+            end = idx
             break
     return range(ref_start, end)
 
