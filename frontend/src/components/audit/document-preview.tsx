@@ -20,7 +20,12 @@ import * as React from 'react'
 import type { ReactNode } from 'react'
 import { AlertOctagon, AlertTriangle, Check, FileText, Info, Loader2, ScrollText } from 'lucide-react'
 import { cn } from '../../lib/utils'
-import { evidenceSummary } from '../../lib/audit/evidence-summary.ts'
+import { evidencePage, evidencePrecision, evidenceTargetLabel, compactEvidenceText, compactPrecisionLabel, evidenceSummary } from '../../lib/audit/evidence-summary.ts'
+import { friendlyRuleTitle } from '../../lib/friendly-finding'
+import {
+  CompactDisclosure,
+  DisclosureRows,
+} from './compact-disclosure.tsx'
 import type { DocumentBlock, Violation } from '../../types/api'
 import type { ViolationSeverity } from '../../types/audit'
 import { severityBadge } from '../../lib/audit/categories'
@@ -208,26 +213,104 @@ export function DocumentPreview({
     marginStatus,
     marginChipLabel,
   })
-  // The inline chip keeps one line: the visible text ellipsises, while the DOM
-  // text (and therefore the accessible name) stays complete; `title` exposes
-  // the full value on hover. Nothing is truncated for assistive technology.
+  // Selected evidence uses the shared compact disclosure: one visual line
+  // prioritizing page + paragraph/object location and evidence precision,
+  // with the complete evidence context one explicit Evidence-details press
+  // away. The compact bar never repeats the Finding title (visible in
+  // Finding Details) and never carries the full target text. The DOM text
+  // stays complete (truncation is visual only); no `title` tooltip is the
+  // sole access path.
+  const selectedEvidenceViolation = selectedViolationId
+    ? (violations.find((vi) => vi.id === selectedViolationId) ?? null)
+    : null
+  const selectedEvidenceParagraph =
+    selectedEvidenceViolation !== null ? getParagraphIndex(selectedEvidenceViolation) : null
+  const selectedEvidencePage = evidencePage({
+    citationRects,
+    formattingPageRects: formattingEvidence?.pageRects ?? null,
+    figurePage: figureOutline?.rect.page ?? null,
+    marginStartPage: marginMarker?.startPage ?? null,
+  })
+  const selectedEvidenceObject =
+    selectedEvidenceParagraph === null ? (objectStatus?.label ?? null) : null
+  const selectedEvidenceTarget = evidenceTargetLabel({
+    citationRects,
+    formattingEvidence,
+    referenceEntry:
+      selectedEvidenceViolation !== null &&
+      selectedEvidenceViolation.rule_code.startsWith('REFERENCE') &&
+      !selectedEvidenceViolation.rule_code.includes('HEADING'),
+    headingEntry:
+      selectedEvidenceViolation !== null &&
+      selectedEvidenceViolation.rule_code.includes('HEADING'),
+    paragraphIndex: selectedEvidenceParagraph,
+    figureLabel: figureOutline?.label ?? null,
+    objectLabel: selectedEvidenceObject ?? objectStatus?.label ?? null,
+    marginLabel: marginChipLabel ?? marginStatus?.label ?? null,
+  })
+  const selectedEvidencePrecision = evidencePrecision({
+    citationRects,
+    citationLabel,
+    highlightMessage,
+    formattingEvidence,
+    formattingLabel,
+    formattingMessage,
+    objectStatus,
+    figureOutline,
+    figureMessage,
+    marginStatus,
+    marginChipLabel,
+  })
+  const selectedEvidenceMessage = (
+    highlightMessage
+    ?? formattingMessage
+    ?? figureMessage
+    ?? objectStatus?.message
+    ?? marginStatus?.message
+    ?? null
+  )
+  const selectedEvidenceLocation = [
+    selectedEvidencePage != null ? `Page ${selectedEvidencePage}` : null,
+    selectedEvidenceParagraph != null
+      ? `Paragraph ${selectedEvidenceParagraph + 1}`
+      : selectedEvidenceObject,
+  ].filter((part): part is string => part !== null).join(' · ') || 'Location unavailable'
   const evidenceChip = evidence ? (
-    <span
-      data-testid="preview-evidence-chip"
-      title={evidence.text}
-      className="flex min-w-[140px] max-w-[420px] shrink flex-1 items-center gap-1.5 rounded-full border border-border bg-card px-2.5 py-1 text-[11px] leading-[16px] text-foreground"
+    <CompactDisclosure
+      className="min-w-[140px] max-w-[420px] flex-1 basis-[140px] text-[11px] leading-[16px]"
+      icon={(
+        <Info
+          className={cn(
+            'h-3.5 w-3.5 shrink-0',
+            evidence.tone === 'destructive' && 'text-destructive',
+            evidence.tone === 'warning' && 'text-warning',
+            evidence.tone === 'muted' && 'text-muted-foreground',
+          )}
+          aria-hidden="true"
+        />
+      )}
+      summary={compactEvidenceText({
+        paragraphIndex: selectedEvidenceParagraph,
+        page: selectedEvidencePage,
+        objectLabel: selectedEvidenceObject,
+        precision: compactPrecisionLabel(selectedEvidencePrecision),
+      })}
+      detailsLabel="Evidence details"
+      panelLabel="Evidence details"
+      testId="preview-evidence-disclosure"
     >
-      <Info
-        className={cn(
-          'h-3.5 w-3.5 shrink-0',
-          evidence.tone === 'destructive' && 'text-destructive',
-          evidence.tone === 'warning' && 'text-warning',
-          evidence.tone === 'muted' && 'text-muted-foreground',
-        )}
-        aria-hidden="true"
+      <DisclosureRows
+        rows={([
+          ['Finding', selectedEvidenceViolation
+            ? (friendlyRuleTitle(selectedEvidenceViolation.rule_code) ?? selectedEvidenceViolation.rule_code)
+            : 'No finding selected'],
+          ['Location', selectedEvidenceLocation],
+          ['Evidence target', selectedEvidenceTarget ?? '—'],
+          ['Evidence precision', selectedEvidencePrecision],
+          ...(selectedEvidenceMessage ? [['Availability', selectedEvidenceMessage] as [string, string]] : []),
+        ] as Array<[string, string]>)}
       />
-      <span className="min-w-0 truncate">{evidence.text}</span>
-    </span>
+    </CompactDisclosure>
   ) : null
 
   const header = (

@@ -386,13 +386,13 @@ test.describe('workspace vertical space @vertical-space', () => {
     ).toBeLessThanOrEqual(v!.regionClientHeight)
   })
 
-  test('selected evidence is an inline chip in the preview heading, never its own row', async ({ page }, testInfo) => {
+  test('selected evidence is an inline disclosure in the preview heading, never its own row', async ({ page }, testInfo) => {
     annotate(testInfo, {
       id: 'VS-EVIDENCE-CHIP',
-      objective: 'The selected-evidence summary sits inside the Document Preview heading as one compact, single-line chip: no full-width evidence row above the page, no extra toolbar row, and the full summary stays available as the accessible value and tooltip.',
+      objective: 'The selected-evidence summary sits inside the Document Preview heading as one compact, single-line disclosure: no full-width evidence row above the page, no extra toolbar row, and the full evidence context stays available through an explicit Details control (never a tooltip alone).',
       precondition: 'Completed synthetic audit at 1366x768 with a finding selected.',
-      steps: ['Open at 1366x768', 'Assert chip is inside the heading', 'Assert one-line height', 'Assert no dedicated row between toolbar and page'],
-      expected: 'Chip inside <header>, height <= 26px, gap between the page toolbar and the rendering viewport equals the container gap, toolbar stays at <= 2 rows.',
+      steps: ['Open at 1366x768', 'Assert disclosure is inside the heading', 'Assert one-line height', 'Assert Details control visible', 'Assert no dedicated row between toolbar and page'],
+      expected: 'Disclosure inside <header>, height <= 26px, Details button visible with aria-expanded="false", gap between the page toolbar and the rendering viewport equals the container gap, toolbar stays at <= 2 rows.',
       severity: 'high',
     })
     await openCompletedAudit(page, 1366, 768)
@@ -404,7 +404,7 @@ test.describe('workspace vertical space @vertical-space', () => {
     await firstFinding.click()
     // Three preview instances are mounted (mobile/tablet/xl); scope to the
     // visible desktop panel so the locator resolves to one element.
-    const chip = page.locator('#ws-panel-preview [data-testid="preview-evidence-chip"]')
+    const chip = page.locator('#ws-panel-preview [data-testid="preview-evidence-disclosure"]')
     await expect(chip).toBeVisible()
 
     const info = await page.evaluate(() => {
@@ -412,16 +412,19 @@ test.describe('workspace vertical space @vertical-space', () => {
       const header = scope?.querySelector('header')
       // Scope to the visible panel: the mobile/tablet instances are hidden and
       // their chip has a zero-size box.
-      const chipEl = scope?.querySelector('[data-testid="preview-evidence-chip"]') ?? null
+      const chipEl = scope?.querySelector('[data-testid="preview-evidence-disclosure"]') ?? null
       const region = scope?.querySelector<HTMLElement>(
         'div[aria-label="Rendered document preview"].overflow-auto',
       )
       const root = region?.parentElement
       const toolbar = root?.children[0]
+      const detailsButton = chipEl?.querySelector('button[aria-haspopup="dialog"]') ?? null
       return {
         insideHeading: !!header && !!chipEl && header.contains(chipEl),
         chipHeight: Math.round(chipEl?.getBoundingClientRect().height ?? 0),
-        chipTitle: chipEl?.getAttribute('title') ?? null,
+        detailsVisible: !!detailsButton && (detailsButton.getBoundingClientRect().width > 0),
+        detailsLabel: (detailsButton?.textContent ?? '').trim(),
+        detailsExpanded: detailsButton?.getAttribute('aria-expanded') ?? null,
         chipText: (chipEl?.textContent ?? '').trim(),
         chipWidth: Math.round(chipEl?.getBoundingClientRect().width ?? 0),
         gapToolbarToRegion:
@@ -434,8 +437,9 @@ test.describe('workspace vertical space @vertical-space', () => {
 
     expect(info.insideHeading, 'the evidence summary must live in the preview heading').toBe(true)
     expect(info.chipHeight, 'one compact line, never a 38px row').toBeLessThanOrEqual(26)
-    expect(info.chipTitle, 'full value must be exposed for hover/AT').toBeTruthy()
-    expect(info.chipTitle, 'the accessible text is the full summary').toBe(info.chipText)
+    expect(info.detailsVisible, 'the Details control must stay visible').toBe(true)
+    expect(info.detailsLabel, 'the explicit control reads Evidence details').toBe('Evidence details')
+    expect(info.detailsExpanded, 'the disclosure starts collapsed').toBe('false')
     expect(info.chipText.length).toBeGreaterThan(0)
     expect(info.chipWidth, 'the chip stays on the heading line').toBeGreaterThan(100)
     expect(

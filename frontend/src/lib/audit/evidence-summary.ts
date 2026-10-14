@@ -99,3 +99,119 @@ export function evidenceSummary(input: EvidenceSummaryInput): EvidenceSummary | 
   if (!text) return null
   return { text, tone: entries[0].tone }
 }
+
+/**
+ * Evidence precision for the Selected-evidence details view — coarse,
+ * truthful, and derived from the same inputs as `evidenceSummary`:
+ *
+ * - exact citation evidence: exact highlight rects exist;
+ * - paragraph evidence: a formatting highlight exists (run or paragraph);
+ * - page-only evidence: an object/figure/margin selection with no
+ *   text-level highlight;
+ * - visual region unavailable: message-only fallback, no highlight at all.
+ */
+export type EvidencePrecision =
+  | 'Exact citation evidence'
+  | 'Paragraph evidence'
+  | 'Page-only evidence'
+  | 'Visual region unavailable'
+
+export function evidencePrecision(input: EvidenceSummaryInput): EvidencePrecision {
+  if (input.citationRects && input.citationRects.length > 0) return 'Exact citation evidence'
+  if (input.formattingEvidence) return 'Paragraph evidence'
+  if (
+    input.figureOutline ||
+    (input.objectStatus && (input.objectStatus.label || input.objectStatus.message)) ||
+    input.marginChipLabel ||
+    (input.marginStatus && (input.marginStatus.label || input.marginStatus.message))
+  ) {
+    return 'Page-only evidence'
+  }
+  return 'Visual region unavailable'
+}
+
+/** First known physical page across the highlight sources, if any. */export function evidencePage(input: {
+  citationRects?: readonly { page: number }[] | null
+  formattingPageRects?: readonly { page: number }[] | null
+  figurePage?: number | null
+  marginStartPage?: number | null
+}): number | null {
+  if (input.citationRects && input.citationRects.length > 0) return input.citationRects[0].page
+  if (input.formattingPageRects && input.formattingPageRects.length > 0) {
+    return input.formattingPageRects[0].page
+  }
+  if (input.figurePage != null) return input.figurePage
+  if (input.marginStartPage != null) return input.marginStartPage
+  return null
+}
+
+export interface EvidenceTargetLabelInput {
+  citationRects?: readonly unknown[] | null
+  formattingEvidence?: unknown
+  /** True when the selected finding is a Reference List rule. */
+  referenceEntry?: boolean
+  /** True when the selected finding targets the Reference heading. */
+  headingEntry?: boolean
+  /** Zero-based paragraph identity; rendered one-based. */
+  paragraphIndex?: number | null
+  figureLabel?: string | null
+  objectLabel?: string | null
+  marginLabel?: string | null
+}
+
+/**
+ * Short evidence-target label for the details view — a location-like name
+ * such as `Citation occurrence`, `Reference entry`, `References heading`,
+ * `Paragraph 1` or `Table 1`. Never the complete Finding title and never
+ * a full entry excerpt; those already have their own rows. Falls back to
+ * the short object/margin label when one applies, else '—'.
+ */
+export function evidenceTargetLabel(input: EvidenceTargetLabelInput): string {
+  if (input.citationRects && input.citationRects.length > 0) return 'Citation occurrence'
+  if (input.formattingEvidence) {
+    if (input.headingEntry) return 'References heading'
+    if (input.referenceEntry) return 'Reference entry'
+    if (input.paragraphIndex != null) return `Paragraph ${input.paragraphIndex + 1}`
+    return 'Paragraph'
+  }
+  const label = input.figureLabel ?? input.objectLabel ?? input.marginLabel ?? null
+  return label ?? '—'
+}
+
+export interface CompactEvidenceParts {
+  /** Zero-based paragraph identity; rendered one-based. */
+  paragraphIndex: number | null
+  page: number | null
+  /** Object-level location (Table/Figure/margin) when no paragraph applies. */
+  objectLabel?: string | null
+  /** Short evidence precision for the compact bar (see `compactPrecisionLabel`). */
+  precision: string
+}
+
+/**
+ * Compact one-line Selected-evidence text: lead plus physical page,
+ * paragraph/object location and evidence precision — never the Finding
+ * title (already visible in Finding Details) and never the full target
+ * text (available in the details view). Only the compact presentation is
+ * built here; stored text is untouched.
+ */
+export function compactEvidenceText(parts: CompactEvidenceParts): string {
+  const slots: string[] = ['Evidence']
+  if (parts.page != null) slots.push(`Page ${parts.page}`)
+  if (parts.paragraphIndex != null) {
+    slots.push(`Paragraph ${parts.paragraphIndex + 1}`)
+  } else if (parts.objectLabel) {
+    slots.push(parts.objectLabel)
+  }
+  if (parts.precision) slots.push(parts.precision)
+  return slots.join(' · ')
+}
+
+/**
+ * Short precision wording for the compact bar. The details view keeps the
+ * full `EvidencePrecision` label; the bar shortens only the exact-citation
+ * form to match the compact examples.
+ */
+export function compactPrecisionLabel(precision: EvidencePrecision): string {
+  return precision === 'Exact citation evidence' ? 'Citation evidence' : precision
+}

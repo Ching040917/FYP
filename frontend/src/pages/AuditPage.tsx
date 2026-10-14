@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback, useMemo, useRef, type ReactNode, type
 import { useParams, useNavigate } from 'react-router-dom'
 import { api, downloadBlob } from '../services/api'
 import { useToast } from '../hooks/useToast'
-import { CheckCircle2, ChevronDown, Download, Filter, Info, Loader2, MapPin, Maximize, PauseCircle, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Quote, ShieldAlert, Shrink, X, XCircle } from 'lucide-react'
+import { CheckCircle2, ChevronDown, Download, Filter, Info, Loader2, MapPin, Maximize, PauseCircle, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Quote, ShieldAlert, Shrink, SlidersHorizontal, X, XCircle } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Badge } from '../components/ui/badge'
 import { ConfirmDialog } from '../components/ui/confirm-dialog'
@@ -66,8 +66,14 @@ import type { AuditCategory, LayoutError } from '../types/audit'
 import {
   ALL_ENABLED_CHECKS_PASSED,
   ENABLED_CHECKS_CAUTION,
+  compactProfileSummary,
+  profileDetailSections,
   profileDisclosure,
 } from '../lib/audit/enabled-checks-wording'
+import {
+  CompactDisclosure,
+  DisclosureSections,
+} from '../components/audit/compact-disclosure.tsx'
 import { isScoreAvailable } from '../lib/score-display'
 import {
   initialPanelSession,
@@ -1184,9 +1190,18 @@ export function AuditPage() {
                   </span>
                 )}
                 {audit.status === 'completed' && profileDisclosure(audit.profile_snapshot) && (
-                  <span className="inline-flex items-center gap-1">
-                    {profileDisclosure(audit.profile_snapshot)}
-                  </span>
+                  <CompactDisclosure
+                    className="min-w-0 flex-1 basis-44 text-[13px] text-muted-foreground"
+                    icon={<SlidersHorizontal className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />}
+                    summary={compactProfileSummary(audit.profile_snapshot)}
+                    detailsLabel="Profile details"
+                    panelLabel="Profile details"
+                    testId="profile-summary-disclosure"
+                  >
+                    <DisclosureSections
+                      sections={profileDetailSections(audit.profile_snapshot)}
+                    />
+                  </CompactDisclosure>
                 )}
                 <div className="ml-auto flex flex-wrap items-center gap-2">
                   {/* Category overview trigger — compact, never expanded by default.
