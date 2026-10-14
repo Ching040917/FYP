@@ -224,6 +224,41 @@ def parse_document(file_bytes: bytes) -> Document:
     return Document(io.BytesIO(file_bytes))
 
 
+def iter_visible_runs(paragraph_obj: Any):
+    """Yield live Run objects for every visible run in document order.
+
+    Canonical run traversal (single owner): direct ``w:r`` children of the
+    paragraph plus ``w:r`` descendants of direct ``w:hyperlink`` children.
+    Each physical OOXML run is yielded exactly once. Membership mirrors
+    ``Paragraph.runs`` (all ``w:r`` elements, including whitespace-only and
+    field-instruction runs — visibility filtering stays with the callers
+    exactly as before), extended into hyperlinks. Relationship IDs,
+    hyperlink targets, and bookmark targets are never exposed as text.
+    Supported direct paragraph-child shapes: ``w:r`` and ``w:hyperlink``;
+    anything else is ignored. Read-only: the source document is never
+    mutated. Falls back to ``paragraph_obj.runs`` when the underlying XML
+    is unavailable (test doubles).
+    """
+    try:
+        from docx.oxml.ns import qn
+        from docx.text.run import Run
+
+        p_element = paragraph_obj._p
+    except Exception:
+        yield from getattr(paragraph_obj, "runs", ())
+        return
+    try:
+        for child in p_element.iterchildren():
+            tag = child.tag.split("}")[-1] if isinstance(child.tag, str) else ""
+            if tag == "r":
+                yield Run(child, paragraph_obj)
+            elif tag == "hyperlink":
+                for run_element in child.findall(qn("w:r")):
+                    yield Run(run_element, paragraph_obj)
+    except Exception:
+        yield from getattr(paragraph_obj, "runs", ())
+
+
 def extract_paragraphs(doc: Document) -> List[Dict[str, Any]]:
     """Extract paragraph-level formatting info.
 
@@ -245,7 +280,7 @@ def extract_paragraphs(doc: Document) -> List[Dict[str, Any]]:
     paragraphs = []
     for idx, para in enumerate(doc.paragraphs):
         runs_info = []
-        for run_idx, run in enumerate(para.runs):
+        for run_idx, run in enumerate(iter_visible_runs(para)):
             size, size_source = resolve_effective_size(run, para, styles_element)
             family, family_source = resolve_effective_family(run, para, styles_element)
             runs_info.append({

@@ -500,7 +500,7 @@ def resolve_paragraph_format(paragraph_obj: Any) -> ParagraphFormatEvidence:
     families: Dict[str, int] = {}
     sizes: Dict[str, int] = {}
     if styles_element is not None:
-        for run in getattr(paragraph_obj, "runs", ()):
+        for run in _visible_runs(paragraph_obj):
             try:
                 size, size_source = resolve_effective_size(run, paragraph_obj, styles_element)
                 family, family_source = resolve_effective_family(
@@ -552,6 +552,21 @@ _ALIASMENT_TOKENS = {
     "JUSTIFY_HI": "justify",
     "JUSTIFY_LOW": "justify",
 }
+
+
+def _visible_runs(paragraph_obj: Any):
+    """Live runs via the canonical visible-run iterator when possible.
+
+    Falls back to ``paragraph_obj.runs`` for test doubles without
+    underlying XML. Production paragraphs always take the iterator path,
+    so hyperlink-contained runs participate exactly like ordinary runs.
+    """
+    try:
+        from app.services.document_parser import iter_visible_runs
+
+        yield from iter_visible_runs(paragraph_obj)
+    except Exception:
+        yield from getattr(paragraph_obj, "runs", ())
 
 
 def _alignment_token(value: Any) -> Optional[str]:
@@ -691,7 +706,7 @@ def resolve_bold(paragraph_obj: Any) -> BoldEvidence:
     """
     inherited = _paragraph_style_bold(paragraph_obj)
     values: Dict[bool, int] = {}
-    for run in getattr(paragraph_obj, "runs", ()):
+    for run in _visible_runs(paragraph_obj):
         try:
             if not (run.text or "").strip():
                 continue
