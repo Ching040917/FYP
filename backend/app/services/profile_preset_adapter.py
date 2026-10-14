@@ -123,6 +123,10 @@ class EffectiveProfileConfig:
         self.REFERENCES_FONT_SIZE_PT = snapshot.references_font_size_pt
         self.REFERENCES_CHECK_ALIGNMENT = snapshot.references_check_alignment
         self.REFERENCES_ALIGNMENT = snapshot.references_alignment
+        # Reference List alphabetical-order review (v4 snapshot field). The
+        # rule compares only when this check is on; a disabled check never
+        # looks at any entry.
+        self.REFERENCES_CHECK_REFERENCE_ORDER = snapshot.references_check_reference_order
         # Preserved rule: the snapshot already resolved "was this enforced
         # before this feature?" — an explicit toggle, else a stored value.
         self.REFERENCES_CHECK_LINE_SPACING = snapshot.references_check_line_spacing

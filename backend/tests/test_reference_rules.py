@@ -1323,11 +1323,13 @@ def test_v3_snapshot_carries_every_reference_key_and_legacy_ones_do_not():
         SNAPSHOT_SCHEMA_VERSION,
         _REFERENCES_GROUP_KEYS_LEGACY,
         _REFERENCES_GROUP_KEYS_V3,
+        _REFERENCES_GROUP_KEYS_V4,
     )
 
-    assert SNAPSHOT_SCHEMA_VERSION == 3
+    assert SNAPSHOT_SCHEMA_VERSION == 4
     group = _snapshot(ReferencesSettings()).to_dict()["references"]
-    assert tuple(group) == _REFERENCES_GROUP_KEYS_V3
+    assert tuple(group) == _REFERENCES_GROUP_KEYS_V4
+    assert tuple(_REFERENCES_GROUP_KEYS_V3) == _REFERENCES_GROUP_KEYS_V4[:-1]
     assert set(_REFERENCES_GROUP_KEYS_LEGACY) < set(_REFERENCES_GROUP_KEYS_V3)
 
 

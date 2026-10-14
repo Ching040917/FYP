@@ -163,6 +163,7 @@ class ReferencesSettings:
     font_size_pt: Optional[float] = None
     check_alignment: bool = False
     alignment: Optional[str] = None
+    check_reference_order: bool = False
 
 
 # The heading words a profile may require. A fixed vocabulary, never free
@@ -381,6 +382,7 @@ class DocumentFormattingProfile:
             ("check_font_family", False),
             ("check_font_size", False),
             ("check_alignment", False),
+            ("check_reference_order", False),
         ):
             raw = getattr(r, field_name)
             if allow_none and raw is None:

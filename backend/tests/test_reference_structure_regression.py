@@ -3,7 +3,9 @@
 This branch adds evidence extraction only. These tests exist to prove that
 fact: the shared heading helper must be observationally identical to the two
 implementations it replaced, and no consumer may gain a new rule code, a new
-severity, a new profile key or a new snapshot version.
+severity, a new profile key or a new snapshot version — except the single
+author-only REFERENCE_ORDER review and its Snapshot v4 toggle, which are
+pinned explicitly below.
 """
 
 import re
@@ -32,7 +34,8 @@ KNOWN_RULE_CODES = {
 }
 
 # The ten Reference List FORMATTING codes added by Phase 3. Nothing outside
-# this set may ever be added to the PDF/scoring vocabulary.
+# this set — except the single author-only REFERENCE_ORDER review — may ever
+# be added to the PDF/scoring vocabulary.
 REFERENCE_FORMAT_CODES = {
     "REFERENCE_HEADING_TEXT", "REFERENCE_HEADING_BOLD",
     "REFERENCE_HEADING_ALIGNMENT", "REFERENCE_SECTION_NEW_PAGE",
@@ -40,6 +43,11 @@ REFERENCE_FORMAT_CODES = {
     "REFERENCE_SPACE_AFTER", "REFERENCE_FONT_FAMILY",
     "REFERENCE_FONT_SIZE", "REFERENCE_ALIGNMENT",
 }
+
+# The one semantic Reference List code added by the alphabetical-order
+# review: adjacent author-identity comparison only. DOI/URL codes remain
+# absent by design.
+REFERENCE_ORDER_CODES = {"REFERENCE_ORDER"}
 
 
 # --- 1/2/3: citation matching, missing section, duplicates ------------------
@@ -142,6 +150,8 @@ def test_scoring_knows_the_reference_formatting_codes():
     # Codes that were never part of this feature still do not exist.
     for code in ("REFERENCE_ENTRY_STRUCTURE", "REFERENCE_DOI_FORMAT"):
         assert rule_code_to_category(code) == "citation_apa"
+    # The author-only order review scores with the semantic Reference rules.
+    assert rule_code_to_category("REFERENCE_ORDER") == "citation_apa"
 
 
 # --- 6: role classification unchanged --------------------------------------
@@ -174,10 +184,11 @@ def test_role_classification_of_reference_documents_is_unchanged():
 
 
 def test_snapshot_version_carries_the_reference_list_rules():
-    # Phase 3 extended the nested references group, so the current version
-    # is 3 and every earlier version stays loadable.
-    assert SNAPSHOT_SCHEMA_VERSION == 3
-    assert tuple(SUPPORTED_SNAPSHOT_SCHEMA_VERSIONS) == (1, 2, 3)
+    # Phase 3 extended the nested references group, and the order review
+    # appends exactly one toggle (Snapshot v4); every earlier version stays
+    # loadable.
+    assert SNAPSHOT_SCHEMA_VERSION == 4
+    assert tuple(SUPPORTED_SNAPSHOT_SCHEMA_VERSIONS) == (1, 2, 3, 4)
 
 
 def test_phase_2_citation_matching_keys_are_untouched():

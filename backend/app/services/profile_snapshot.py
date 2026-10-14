@@ -37,9 +37,12 @@ from app.services.profile_schema import (
 #  v3 extends the NESTED references group with the Reference List formatting
 #  rules. The top-level key order is unchanged; the nested references group is
 #  version-gated below, so v1 and v2 snapshots keep verifying byte-for-byte.
+#  v4 appends ONE key to the nested references group: the Reference List
+#  alphabetical-order toggle. v1, v2 and v3 snapshots keep verifying
+#  byte-for-byte.
 #  v1 snapshots stay loadable: their canonical key order is frozen below so
 #  their stored SHA-256 keeps verifying byte-for-byte.
-SNAPSHOT_SCHEMA_VERSION = 3
+SNAPSHOT_SCHEMA_VERSION = 4
 
 # Frozen v1 canonical key order — NEVER edit. v1 snapshots are fingerprinted
 # over exactly these keys; changing the tuple invalidates stored fingerprints
@@ -52,9 +55,9 @@ _CANONICAL_ORDER_V1 = (
 )
 
 # Canonical key order for deterministic serialization (byte-stable).
-# v2 appends citation_matching immediately before the fingerprint; v3 keeps
-# the same TOP-LEVEL order and changes only the nested references group, so
-# this tuple is intentionally identical for v2 and v3.
+# v2 appends citation_matching immediately before the fingerprint; v3 and v4
+# keep the same TOP-LEVEL order and change only the nested references group,
+# so this tuple is intentionally identical for v2, v3 and v4.
 _CANONICAL_ORDER = (
     "schema_version", "profile_id", "profile_name", "profile_version",
     "profile_source", "description", "citation_style", "institution_specific",
@@ -78,13 +81,19 @@ _REFERENCES_GROUP_KEYS_V3: Tuple[str, ...] = (
     "check_alignment", "alignment",
 )
 
+# Nested `references` keys of a v4 snapshot: the v3 keys in order plus the
+# single alphabetical-order toggle. v4 is a superset of v3, never a reorder.
+_REFERENCES_GROUP_KEYS_V4: Tuple[str, ...] = _REFERENCES_GROUP_KEYS_V3 + (
+    "check_reference_order",
+)
+
 # Nested `references` keys of a v1/v2 snapshot — frozen. A stored historical
 # snapshot must serialize to the exact bytes that produced its fingerprint,
-# so it never gains the v3 Reference List keys.
+# so it never gains the v3/v4 Reference List keys.
 _REFERENCES_GROUP_KEYS_LEGACY: Tuple[str, ...] = ("line_spacing", "hanging_indent_in")
 
 # Snapshot schema versions this build can load (older first).
-SUPPORTED_SNAPSHOT_SCHEMA_VERSIONS = (1, 2, SNAPSHOT_SCHEMA_VERSION)
+SUPPORTED_SNAPSHOT_SCHEMA_VERSIONS = (1, 2, 3, SNAPSHOT_SCHEMA_VERSION)
 
 
 def _references_group_keys(version: Any) -> Tuple[str, ...]:
@@ -93,7 +102,9 @@ def _references_group_keys(version: Any) -> Tuple[str, ...]:
         version_int = int(version)
     except (TypeError, ValueError):
         return _REFERENCES_GROUP_KEYS_LEGACY
-    return _REFERENCES_GROUP_KEYS_V3 if version_int >= 3 else _REFERENCES_GROUP_KEYS_LEGACY
+    if version_int >= 4:
+        return _REFERENCES_GROUP_KEYS_V4
+    return _REFERENCES_GROUP_KEYS_V3 if version_int == 3 else _REFERENCES_GROUP_KEYS_LEGACY
 
 
 def _canonical_order_for(version: Any) -> Tuple[str, ...]:
@@ -182,6 +193,9 @@ class EffectiveProfileSnapshot:
     references_font_size_pt: Optional[float] = None
     references_check_alignment: bool = False
     references_alignment: Optional[str] = None
+    # Reference List alphabetical-order review (v4+). Author identities only;
+    # years, suffixes and coauthor tails are never compared.
+    references_check_reference_order: bool = False
 
     caption_space_before_pt: Optional[float] = None
     caption_space_after_pt: Optional[float] = None
@@ -305,6 +319,7 @@ class EffectiveProfileSnapshot:
             "font_size_pt": self.references_font_size_pt,
             "check_alignment": self.references_check_alignment,
             "alignment": self.references_alignment,
+            "check_reference_order": self.references_check_reference_order,
         }
         return {k: full[k] for k in _references_group_keys(version)}
 
@@ -387,6 +402,7 @@ class EffectiveProfileSnapshot:
             references_font_size_pt=self.references_font_size_pt,
             references_check_alignment=self.references_check_alignment,
             references_alignment=self.references_alignment,
+            references_check_reference_order=self.references_check_reference_order,
             caption_space_before_pt=self.caption_space_before_pt,
             caption_space_after_pt=self.caption_space_after_pt,
             list_space_after_pt=self.list_space_after_pt,
@@ -597,6 +613,7 @@ def resolve_snapshot(
         references_font_size_pt=refs.font_size_pt,
         references_check_alignment=bool(refs.check_alignment),
         references_alignment=refs.alignment,
+        references_check_reference_order=bool(refs.check_reference_order),
 
         caption_space_before_pt=profile.captions.space_before_pt,
         caption_space_after_pt=profile.captions.space_after_pt,
@@ -699,12 +716,13 @@ def snapshot_from_dict(data: Dict[str, Any]) -> EffectiveProfileSnapshot:
             ])
         cm_values[f"citation_{name}"] = raw
 
-    # Reference List rule fields (v3+). Defaults come from the snapshot
-    # dataclass, so a v3 payload missing a key completes to the documented
-    # "off" state; a v1/v2 payload can never carry them at all.
+    # Reference List rule fields (v3+; v4 adds the alphabetical-order
+    # toggle). Defaults come from the snapshot dataclass, so an older
+    # payload missing a key completes to the documented "off" state; a
+    # v1/v2 payload can never carry them at all.
     ref_defaults = EffectiveProfileSnapshot()
     ref_values: Dict[str, Any] = {}
-    for key in _REFERENCES_GROUP_KEYS_V3:
+    for key in _REFERENCES_GROUP_KEYS_V4:
         attr = "references_" + key
         raw = refs.get(key, getattr(ref_defaults, attr))
         if isinstance(getattr(ref_defaults, attr), bool):

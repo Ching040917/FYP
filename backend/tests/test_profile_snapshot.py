@@ -470,8 +470,8 @@ def test_v1_payload_carrying_v2_group_rejected():
 def test_v3_snapshot_round_trips_with_reference_rules():
     snap = resolve_snapshot(get_builtin_profile(APA_PROFILE_ID))
     d = snap.to_dict()
-    assert SNAPSHOT_SCHEMA_VERSION == 3
-    assert d["schema_version"] == 3
+    assert SNAPSHOT_SCHEMA_VERSION == 4
+    assert d["schema_version"] == 4
     assert list(d)[-2:] == ["citation_matching", "fingerprint"]
     assert d["citation_matching"]["check_references_are_cited"] is False
     assert d["references"]["check_hanging_indent"] is True
@@ -509,7 +509,7 @@ def test_v2_citation_toggle_type_rejected():
 
 def test_future_schema_version_rejected():
     d = resolve_snapshot(get_builtin_profile(APA_PROFILE_ID)).to_dict()
-    d["schema_version"] = 4
+    d["schema_version"] = 5
     with pytest.raises(ProfileValidationError) as exc:
         snapshot_from_dict(d)
     assert any(path == "schema_version" for path, _ in exc.value.errors)

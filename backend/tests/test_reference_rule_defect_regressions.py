@@ -781,7 +781,7 @@ def test_d4_snapshot_v3_round_trip_preserves_toggle_and_value():
     profile.references.check_hanging_indent = True
     profile.references.hanging_indent_in = 0.75
     snapshot = resolve_snapshot(profile)
-    assert snapshot.to_dict()["schema_version"] == 3
+    assert snapshot.to_dict()["schema_version"] == 4
     assert snapshot.references_check_hanging_indent is True
     assert snapshot.references_hanging_indent_in == pytest.approx(0.75)
     restored = snapshot_from_dict(snapshot.to_dict())
