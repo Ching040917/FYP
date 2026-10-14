@@ -122,7 +122,13 @@ function toLayoutError(v: Violation): LayoutError {
     // Card preview line: the rule's own evidence span when it has one,
     // otherwise the plain-language explanation.
     evidencePreview: pres.evidence ?? undefined,
-    comparison: comparisonText(v.actual_value, v.expected_value),
+    comparison: v.rule_code === 'REFERENCE_DOI_FORMAT'
+      ? v.actual_value != null && v.expected_value != null
+        ? `${v.actual_value} → ${v.expected_value}`
+        : v.actual_value != null
+          ? `Current: ${v.actual_value}`
+          : v.expected_value != null ? `Required: ${v.expected_value}` : null
+      : comparisonText(v.actual_value, v.expected_value),
     occurrences: occurrenceLabel(v.location),
   }
 }

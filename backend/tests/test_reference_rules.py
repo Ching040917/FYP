@@ -1318,17 +1318,19 @@ def test_snapshot_rules_receive_their_own_toggle_and_value():
     assert config.REFERENCES_FONT_SIZE_PT == 12.0
 
 
-def test_v3_snapshot_carries_every_reference_key_and_legacy_ones_do_not():
+def test_current_snapshot_carries_every_reference_key_and_legacy_ones_do_not():
     from app.services.profile_snapshot import (
         SNAPSHOT_SCHEMA_VERSION,
         _REFERENCES_GROUP_KEYS_LEGACY,
         _REFERENCES_GROUP_KEYS_V3,
         _REFERENCES_GROUP_KEYS_V4,
+        _REFERENCES_GROUP_KEYS_V5,
     )
 
-    assert SNAPSHOT_SCHEMA_VERSION == 4
+    assert SNAPSHOT_SCHEMA_VERSION == 5
     group = _snapshot(ReferencesSettings()).to_dict()["references"]
-    assert tuple(group) == _REFERENCES_GROUP_KEYS_V4
+    assert tuple(group) == _REFERENCES_GROUP_KEYS_V5
+    assert _REFERENCES_GROUP_KEYS_V5 == _REFERENCES_GROUP_KEYS_V4 + ("check_doi_format",)
     assert tuple(_REFERENCES_GROUP_KEYS_V3) == _REFERENCES_GROUP_KEYS_V4[:-1]
     assert set(_REFERENCES_GROUP_KEYS_LEGACY) < set(_REFERENCES_GROUP_KEYS_V3)
 

@@ -226,6 +226,8 @@ export interface ProfileSnapshotReferences {
   check_alignment?: boolean
   alignment?: string | null
   check_reference_order?: boolean
+  /** Absent in historical snapshots; read as off. */
+  check_doi_format?: boolean
 }
 
 /** Structured paragraph block from GET /api/audit/{id}/document-blocks — mirrors backend extract_document_blocks. */

@@ -5,7 +5,7 @@
  * trip), default Off, built-in read-only notice, Profile Summary
  * Enabled/Not-checked wording, disclosure wording, adapter category,
  * friendly title/action, entry-preview presentation, Guided Fixes and
- * Local AI ineligibility, and no DOI/URL controls.
+ * Local AI ineligibility.
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -32,10 +32,6 @@ import type { Violation } from '../src/types/api'
 /** The editor page source — the DOM contract its controls must keep. */
 const PROFILE_EDITOR = readFileSync(
   resolve(dirname(fileURLToPath(import.meta.url)), '../src/pages/ProfileEditor.tsx'),
-  'utf8',
-)
-const EDITOR_STORE = readFileSync(
-  resolve(dirname(fileURLToPath(import.meta.url)), '../src/lib/custom-profile-store/editor.ts'),
   'utf8',
 )
 
@@ -163,20 +159,4 @@ test('guided fixes remain unavailable for the order rule', () => {
 
 test('local AI remains ineligible for the order rule', () => {
   assert.equal(isLocalAiCitationEligible(orderViolation() as never), false)
-})
-
-// ---------------------------------------------------------------------------
-// Scope integrity: no DOI/URL controls
-// ---------------------------------------------------------------------------
-
-test('no DOI or URL controls appear in the editor or store', () => {
-  for (const [name, source] of [
-    ['ProfileEditor', PROFILE_EDITOR],
-    ['editor-store', EDITOR_STORE],
-  ] as const) {
-    assert.ok(!/check_doi|check_url|doi_format|url_format/i.test(source), `${name} mentions DOI/URL controls`)
-  }
-  const payload = blankProfilePayload('id-6', 'Custom')
-  const keys = Object.keys(payload.references as Record<string, unknown>)
-  assert.ok(!keys.some((k) => /doi|url/i.test(k)))
 })

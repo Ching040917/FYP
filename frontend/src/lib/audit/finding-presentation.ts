@@ -103,6 +103,15 @@ export function presentationFor(v: {
 }): RulePresentation {
   const code = v.rule_code
 
+  if (code === 'REFERENCE_DOI_FORMAT') {
+    return {
+      issue: friendlyFindingMessage(code, v.message, v.expected_value, v.actual_value, v.location),
+      expected: v.expected_value,
+      actual: v.actual_value,
+      requiredAction: friendlyRequiredAction(code, v.expected_value, v.actual_value, v.location) ?? undefined,
+    }
+  }
+
   if (FORMATTING_RULES[code]) {
     return {
       issue: friendlyFindingMessage(code, v.message, v.expected_value, v.actual_value, v.location),

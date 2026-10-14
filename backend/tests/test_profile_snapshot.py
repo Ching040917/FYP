@@ -467,14 +467,15 @@ def test_v1_payload_carrying_v2_group_rejected():
     assert any(path == "citation_matching" for path, _ in exc.value.errors)
 
 
-def test_v3_snapshot_round_trips_with_reference_rules():
+def test_current_snapshot_round_trips_with_reference_rules():
     snap = resolve_snapshot(get_builtin_profile(APA_PROFILE_ID))
     d = snap.to_dict()
-    assert SNAPSHOT_SCHEMA_VERSION == 4
-    assert d["schema_version"] == 4
+    assert SNAPSHOT_SCHEMA_VERSION == 5
+    assert d["schema_version"] == 5
     assert list(d)[-2:] == ["citation_matching", "fingerprint"]
     assert d["citation_matching"]["check_references_are_cited"] is False
     assert d["references"]["check_hanging_indent"] is True
+    assert d["references"]["check_doi_format"] is False
     restored = snapshot_from_dict(json.loads(json.dumps(d)))
     assert restored == snap
 
@@ -509,7 +510,7 @@ def test_v2_citation_toggle_type_rejected():
 
 def test_future_schema_version_rejected():
     d = resolve_snapshot(get_builtin_profile(APA_PROFILE_ID)).to_dict()
-    d["schema_version"] = 5
+    d["schema_version"] = SNAPSHOT_SCHEMA_VERSION + 1
     with pytest.raises(ProfileValidationError) as exc:
         snapshot_from_dict(d)
     assert any(path == "schema_version" for path, _ in exc.value.errors)
@@ -549,3 +550,95 @@ def test_adapter_exposes_citation_toggles_from_snapshot_only():
     assert cfg.CITATION_CHECK_DUPLICATE_REFERENCES is True
     assert cfg.CITATION_FLAG_AMBIGUOUS_MATCHES is True
     assert cfg.CITATION_ALLOW_PERSONAL_COMMUNICATION is True
+
+
+# Historical positive controls recorded before v5, never computed from new code.
+@pytest.mark.parametrize(
+    ("version", "fingerprint"),
+    [
+        (1, "5b0fa2570973d2c54503d24471b273a2a047beafc7cd9ee6d66aefc4f006b504"),
+        (2, "792b27292194ef13746b70ece966d10f05a7615c2fb776975ba3c2aff2f2340e"),
+        (3, "83dd87c091afcce7ea8565e63a5164a637c6886af4d87eb61604dbc857dc760f"),
+        (4, "ef7dd393581eacbcad8f86053062545dacb72766eba9af4586a375a3fa21d639"),
+    ],
+)
+def test_pre_doi_snapshot_fingerprints_remain_frozen(version, fingerprint):
+    snapshot = EffectiveProfileSnapshot(
+        schema_version=version,
+        profile_id="doi-freeze",
+        profile_name="DOI freeze",
+        profile_source="custom",
+        references_line_spacing=2.0,
+        references_hanging_indent_in=0.5,
+        references_check_reference_order=True,
+    ).with_fingerprint()
+    assert snapshot.fingerprint == fingerprint
+    payload = json.loads(json.dumps(snapshot.to_dict()))
+    assert "check_doi_format" not in payload["references"]
+    restored = snapshot_from_dict(payload)
+    assert restored.fingerprint == fingerprint
+    assert restored.verify_fingerprint()
+    assert restored.references_check_doi_format is False
+    assert restored.to_dict() == payload
+
+
+@pytest.mark.parametrize("version", [1, 2, 3, 4])
+@pytest.mark.parametrize("value", [False, True])
+def test_historical_snapshot_rejects_injected_doi_field(version, value):
+    payload = EffectiveProfileSnapshot(schema_version=version).with_fingerprint().to_dict()
+    payload["references"]["check_doi_format"] = value
+    with pytest.raises(ProfileValidationError) as exc:
+        snapshot_from_dict(payload)
+    assert ("references.check_doi_format", "unknown field") in exc.value.errors
+
+
+@pytest.mark.parametrize("value", [None, "true", "false", 0, 1, 0.0, 1.0, [], {}])
+def test_v5_snapshot_doi_toggle_rejects_non_boolean(value):
+    payload = resolve_snapshot(new_custom_profile("DOI strict snapshot")).to_dict()
+    payload["references"]["check_doi_format"] = value
+    with pytest.raises(ProfileValidationError) as exc:
+        snapshot_from_dict(payload)
+    assert ("references.check_doi_format", "must be true or false") in exc.value.errors
+
+
+def test_v5_doi_toggle_round_trip_copy_and_fingerprint_sensitivity():
+    profile = new_custom_profile("DOI snapshot")
+    disabled = resolve_snapshot(profile)
+    profile.references.check_doi_format = True
+    enabled = resolve_snapshot(profile)
+    assert disabled.schema_version == enabled.schema_version == 5
+    assert disabled.fingerprint != enabled.fingerprint
+    assert enabled.fingerprint == resolve_snapshot(profile).fingerprint
+    for snapshot, value in ((disabled, False), (enabled, True)):
+        assert snapshot.references_check_doi_format is value
+        assert snapshot.with_fingerprint().references_check_doi_format is value
+        payload = json.loads(json.dumps(snapshot.to_dict()))
+        assert payload["references"]["check_doi_format"] is value
+        rebuilt = snapshot_from_dict(payload)
+        assert rebuilt == snapshot
+        assert rebuilt.verify_fingerprint()
+    # Missing current-version keys use the documented Off default, but must
+    # still verify against the fully reconstructed false snapshot.
+    missing = disabled.to_dict()
+    del missing["references"]["check_doi_format"]
+    restored = snapshot_from_dict(missing)
+    assert restored.references_check_doi_format is False
+    assert restored.fingerprint == disabled.fingerprint
+
+
+def test_v5_doi_toggle_tampering_cannot_reuse_the_disabled_fingerprint():
+    payload = resolve_snapshot(new_custom_profile("DOI tamper")).to_dict()
+    payload["references"]["check_doi_format"] = True
+    with pytest.raises(ProfileValidationError) as exc:
+        snapshot_from_dict(payload)
+    assert any(path == "fingerprint" for path, _ in exc.value.errors)
+
+
+@pytest.mark.parametrize("version", [1, 2, 3, 4, 5])
+def test_snapshot_rejects_unconfigured_doi_format_and_url_fields(version):
+    for name in ("doi_format", "doi_url", "url"):
+        payload = EffectiveProfileSnapshot(schema_version=version).with_fingerprint().to_dict()
+        payload["references"][name] = "https://doi.org/<doi>"
+        with pytest.raises(ProfileValidationError) as exc:
+            snapshot_from_dict(payload)
+        assert (f"references.{name}", "unknown field") in exc.value.errors

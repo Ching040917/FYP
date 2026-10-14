@@ -45,12 +45,14 @@ from app.services.formatting_evidence import (
     resolve_paragraph_format,
 )
 from app.services.layout_violation import LayoutViolation
+from app.services.reference_doi import classify_visible_doi
 from app.services.reference_order import run_reference_order
 from app.services.reference_section import (
     PAGE_START_MAPPED_SAME_PAGE,
     REFERENCE_HEADING_ALIASES,
     classify_reference_page_start,
     normalise_reference_heading,
+    reference_entry_pairs,
     reference_section_bounds,
 )
 
@@ -458,6 +460,30 @@ def _check_entry_alignment(entry_objects, config, consolidator: _Consolidator) -
 # ---------------------------------------------------------------------------
 
 
+def _check_doi_format(entry_pairs, config) -> List[LayoutViolation]:
+    """Only definite legacy visible presentations violate the selected profile."""
+    if not _flag(config, "REFERENCES_CHECK_DOI_FORMAT"):
+        return []
+    findings = []
+    for index, text in entry_pairs:
+        evidence = classify_visible_doi(text)
+        if evidence.state != "legacy-form":
+            continue
+        start, end = evidence.spans[0]
+        excerpt = text[start:end]
+        if len(excerpt) > 160:
+            excerpt = excerpt[:159] + "…"
+        findings.append(LayoutViolation(
+            rule_code="REFERENCE_DOI_FORMAT",
+            severity="MINOR",
+            location={"paragraph_index": index},
+            actual_value=excerpt,
+            expected_value="https://doi.org/<doi>",
+            message="The visible DOI presentation does not match the selected profile's required format: https://doi.org/<doi>. ACA checks presentation only, not registration or resolution.",
+        ))
+    return findings
+
+
 def run_reference_rules(
     doc,
     paragraphs: Sequence[Dict[str, Any]],
@@ -515,4 +541,6 @@ def run_reference_rules(
     # Runs only when its own toggle is on; every other Reference finding is
     # untouched and the entry list handed to other rules is never reordered.
     violations.extend(run_reference_order(doc, paragraphs, config))
+    if _flag(config, "REFERENCES_CHECK_DOI_FORMAT"):
+        violations.extend(_check_doi_format(reference_entry_pairs(paragraphs), config))
     return violations

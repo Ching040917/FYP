@@ -397,3 +397,39 @@ def test_new_custom_profile_copy_carries_citation_toggles():
     assert copy.citation_matching.check_references_are_cited is True
     assert copy.citation_matching.allow_personal_communication is False
     assert copy.citation_matching is not base.citation_matching
+
+
+@pytest.mark.parametrize("value", [None, "true", "false", 0, 1, 0.0, 1.0, [], {}])
+def test_reference_doi_toggle_requires_a_strict_boolean(value):
+    profile = new_custom_profile("DOI strict profile")
+    profile.references.check_doi_format = value
+    assert ("references.check_doi_format", "must be true or false") in profile.validate()
+    with pytest.raises(ProfileValidationError) as exc:
+        profile_from_dict(profile.to_dict())
+    assert ("references.check_doi_format", "must be true or false") in exc.value.errors
+
+
+def test_reference_doi_toggle_missing_defaults_off_and_builtins_remain_off():
+    for profile_id in (SUC_PROFILE_ID, APA_PROFILE_ID):
+        original = get_builtin_profile(profile_id)
+        assert original.references.check_doi_format is False
+        payload = original.to_dict()
+        del payload["references"]["check_doi_format"]
+        assert profile_from_dict(payload).references.check_doi_format is False
+        copy = new_custom_profile("DOI copy", base=original)
+        copy.references.check_doi_format = True
+        assert get_builtin_profile(profile_id).references.check_doi_format is False
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_reference_doi_toggle_survives_profile_json_and_independent_copy(enabled):
+    profile = new_custom_profile("DOI round trip")
+    profile.references.check_doi_format = enabled
+    restored = profile_from_dict(json.loads(json.dumps(profile.to_dict())))
+    assert restored.references.check_doi_format is enabled
+    copy = new_custom_profile("DOI copied", base=restored)
+    assert copy.references.check_doi_format is enabled
+    assert copy.references is not restored.references
+    reference_keys = profile.to_dict()["references"]
+    assert {key for key in reference_keys if "doi" in key} == {"check_doi_format"}
+    assert not any("url" in key for key in reference_keys)

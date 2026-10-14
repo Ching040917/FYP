@@ -774,14 +774,14 @@ def test_d4_disabled_check_emits_nothing():
     ) == []
 
 
-def test_d4_snapshot_v3_round_trip_preserves_toggle_and_value():
+def test_d4_current_snapshot_round_trip_preserves_toggle_and_value():
     from app.services.profile_snapshot import snapshot_from_dict
 
     profile = new_custom_profile("Snapshot Probe", base=get_builtin_profile(SUC_PROFILE_ID))
     profile.references.check_hanging_indent = True
     profile.references.hanging_indent_in = 0.75
     snapshot = resolve_snapshot(profile)
-    assert snapshot.to_dict()["schema_version"] == 4
+    assert snapshot.to_dict()["schema_version"] == 5
     assert snapshot.references_check_hanging_indent is True
     assert snapshot.references_hanging_indent_in == pytest.approx(0.75)
     restored = snapshot_from_dict(snapshot.to_dict())

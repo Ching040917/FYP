@@ -203,6 +203,11 @@ _REQUIRED_ACTIONS = {
         "Move this Reference List entry to the correct alphabetical position "
         "according to the selected profile."
     ),
+    "REFERENCE_DOI_FORMAT": (
+        "Replace the visible DOI text with the configured canonical format. "
+        "Verify the DOI independently because ACA checks presentation only and "
+        "does not confirm registration or resolution."
+    ),
 }
 
 
@@ -260,6 +265,7 @@ _REFERENCE_FORMAT_RULES = frozenset({
     "REFERENCE_HANGING_INDENT", "REFERENCE_SPACE_BEFORE",
     "REFERENCE_SPACE_AFTER", "REFERENCE_FONT_FAMILY",
     "REFERENCE_FONT_SIZE", "REFERENCE_ALIGNMENT",
+    "REFERENCE_DOI_FORMAT",
 })
 
 # Reader-facing severity labels. Mirrors `severityBadge` in
@@ -340,6 +346,7 @@ _RULE_NAME = {
     "REFERENCE_FONT_FAMILY": "Reference entry font family does not match",
     "REFERENCE_FONT_SIZE": "Reference entry font size does not match",
     "REFERENCE_ALIGNMENT": "Reference entry alignment does not match",
+    "REFERENCE_DOI_FORMAT": "Reference DOI format does not match",
 }
 
 
@@ -951,8 +958,9 @@ def _group_panel(gid, members, rule_code, exp_val, action, audit=None) -> Table:
     compact_pages, unavailable = _pages_summary_for_group(members, audit)
     rows = [
         ("Issue", _student_clean(members[0].message) or ""),
-        ("Required", _student_clean(exp_val) or "—"),
-        ("Observed", " · ".join(_student_clean(n) for n in names) or "—"),
+        ("Required", (exp_val if rule_code == "REFERENCE_DOI_FORMAT" else _student_clean(exp_val)) or "—"),
+        ("Observed", " · ".join(names if rule_code == "REFERENCE_DOI_FORMAT" else
+                                (_student_clean(n) for n in names)) or "—"),
     ]
     # Page handling for grouped findings per contract.
     if compact_pages:
@@ -1042,8 +1050,10 @@ def _appendix_table(entries, audit=None) -> Table:
                font="Helvetica-Bold" if v.severity == "MAJOR" else "Helvetica"),
             _rule_cell(v),
             _p(friendly_loc, size=8),
-            _p(_student_clean(v.actual_value or ""), size=8),
-            _p(_student_clean(v.expected_value or ""), size=8),
+            _p((v.actual_value or "") if v.rule_code == "REFERENCE_DOI_FORMAT"
+               else _student_clean(v.actual_value or ""), size=8),
+            _p((v.expected_value or "") if v.rule_code == "REFERENCE_DOI_FORMAT"
+               else _student_clean(v.expected_value or ""), size=8),
         ])
     table = Table(rows, colWidths=[14 * mm, 20 * mm, 55 * mm, 62 * mm, 58 * mm, 58 * mm],
                   repeatRows=1)
@@ -1144,6 +1154,11 @@ def _references_disclosure_line(refs) -> str:
         parts.append(f"{refs['alignment']}-aligned entries")
     if refs.get("check_reference_order"):
         parts.append("alphabetical order")
+    if refs.get("check_doi_format") is True:
+        parts.append(
+            "The selected profile requires the visible DOI format https://doi.org/<doi>; "
+            "presentation only, not registration or resolution."
+        )
     if not parts:
         return "References: Not checked"
     return "References: " + ", ".join(parts)

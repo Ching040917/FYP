@@ -2739,6 +2739,24 @@ export function ProfileEditor() {
                             Checks adjacent Reference List entries when both author identities can be determined reliably. Ambiguous or unsupported entries are skipped.
                           </p>
                         </div>
+
+                        {/* Visible DOI presentation */}
+                        <div className="rounded-md border border-border p-3">
+                          <label htmlFor="references-check-doi-format" className="flex items-start gap-2">
+                            <input
+                              id="references-check-doi-format"
+                              type="checkbox"
+                              className="mt-0.5 h-4 w-4 accent-primary"
+                              checked={referenceModel.doiFormatEnabled}
+                              aria-describedby="references-check-doi-format-hint"
+                              onChange={(e) => updateReferences((u) => ({ ...u, doiFormatEnabled: e.target.checked }))}
+                            />
+                            <span className="text-sm text-foreground">Check Reference DOI format</span>
+                          </label>
+                          <p id="references-check-doi-format-hint" className="mt-1 text-xs leading-[16px] text-muted-foreground">
+                            Checks clear visible legacy DOI presentations in Reference entries. ACA checks presentation only and does not verify registration or resolution.
+                          </p>
+                        </div>
                       </div>
                     </details>
 

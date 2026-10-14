@@ -99,6 +99,7 @@ _RULE_CATEGORY_OVERRIDES: Dict[str, str] = {
     # comparison, not entry formatting, so it scores with the other
     # semantic Reference rules instead of a formatting bucket.
     "REFERENCE_ORDER": "citation_apa",
+    "REFERENCE_DOI_FORMAT": "citation_apa",
 }
 
 # Exact pre-fix override table: the current table minus the two generic

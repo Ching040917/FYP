@@ -1,11 +1,10 @@
-"""Snapshot v4 (Reference-order toggle) + scoring/category/PDF contracts.
+"""Reference-order snapshot compatibility and toggle contracts.
 
-Proves the v4 schema carries exactly one new key, v1–v3 stay frozen and
-verifiable, fingerprints behave, the toggle validates and defaults off,
-the ORDER rule scores as MINOR citation_apa with existing weights, and the
-PDF copy matches the approved wording. No DOI/URL fields anywhere.
+The v4 wire shape remains frozen after v5 adds the independent DOI toggle.
+Historical snapshots never acquire newer Reference fields.
 """
 
+from dataclasses import replace
 import pytest
 
 from app.services.profile_registry import (
@@ -63,9 +62,9 @@ def test_profile_dict_round_trip_carries_the_toggle():
 # --- versions frozen --------------------------------------------------------
 
 
-def test_current_version_is_4_and_supported_versions_extend():
-    assert SNAPSHOT_SCHEMA_VERSION == 4
-    assert tuple(SUPPORTED_SNAPSHOT_SCHEMA_VERSIONS) == (1, 2, 3, 4)
+def test_current_version_is_5_and_supported_versions_extend():
+    assert SNAPSHOT_SCHEMA_VERSION == 5
+    assert tuple(SUPPORTED_SNAPSHOT_SCHEMA_VERSIONS) == (1, 2, 3, 4, 5)
 
 
 def test_v1_and_v2_groups_stay_two_keys():
@@ -84,7 +83,7 @@ def test_v1_and_v2_groups_stay_two_keys():
 
 def test_v3_group_has_no_order_key():
     snap = resolve_snapshot(_custom(True))
-    assert snap.schema_version == 4
+    assert snap.schema_version == 5
     as_v3 = EffectiveProfileSnapshot(
         **{**snap.__dict__, "schema_version": 3, "fingerprint": ""},
     ).with_fingerprint()
@@ -92,10 +91,8 @@ def test_v3_group_has_no_order_key():
 
 
 def test_v3_payload_with_order_key_is_rejected():
-    snap = resolve_snapshot(_custom(False)).to_dict()
-    snap["schema_version"] = 3
+    snap = EffectiveProfileSnapshot(schema_version=3).with_fingerprint().to_dict()
     snap["references"]["check_reference_order"] = False
-    snap.pop("fingerprint", None)
     probe = dict(snap)
     # Re-fingerprint as v3 is impossible with the extra key: load must fail.
     with pytest.raises(ProfileValidationError):
@@ -107,7 +104,7 @@ def test_v3_payload_with_order_key_is_rejected():
 
 def test_v4_false_and_true_round_trip():
     for order in (False, True):
-        snap = resolve_snapshot(_custom(order))
+        snap = replace(resolve_snapshot(_custom(order)), schema_version=4, fingerprint="").with_fingerprint()
         assert snap.schema_version == 4
         assert snap.references_check_reference_order is order
         rebuilt = snapshot_from_dict(snap.to_dict())
@@ -127,10 +124,7 @@ def test_v4_fingerprints_deterministic_and_toggle_sensitive():
 
 def test_older_snapshots_treat_the_missing_toggle_as_false():
     snap = resolve_snapshot(_custom(False))
-    payload = snap.to_dict()
-    payload["schema_version"] = 3
-    del payload["references"]["check_reference_order"]
-    # Re-sign the trimmed payload as v3.
+    # Serialize a real v3 shape rather than mutating a current-version payload.
     trimmed = EffectiveProfileSnapshot(
         **{**snap.__dict__, "schema_version": 3, "fingerprint": ""},
     ).with_fingerprint()
@@ -139,9 +133,9 @@ def test_older_snapshots_treat_the_missing_toggle_as_false():
     assert rebuilt.references_check_reference_order is False
 
 
-def test_no_doi_or_url_snapshot_fields():
-    snap = resolve_snapshot(_custom(True)).to_dict()
-    blob = repr(snap).lower()
-    assert "doi" not in blob
-    assert "url" not in blob
-    assert "http" not in blob
+def test_v4_snapshot_has_order_but_no_later_reference_fields():
+    snap = replace(resolve_snapshot(_custom(True)), schema_version=4, fingerprint="").with_fingerprint()
+    payload = snap.to_dict()
+    assert payload["references"]["check_reference_order"] is True
+    assert "check_doi_format" not in payload["references"]
+    assert "url" not in repr(payload).lower()

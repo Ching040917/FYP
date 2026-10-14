@@ -44,7 +44,10 @@ export function referencesDisclosure(
 ): string {
   if (!refs) return 'References: Not checked'
   const parts = referenceCheckParts(refs)
-  return parts.length > 0 ? `References: ${parts.join(', ')}` : 'References: Not checked'
+  const requirements = parts.length > 0 ? `References: ${parts.join(', ')}` : 'References: Not checked'
+  return refs.check_doi_format === true
+    ? `${requirements}. The selected profile requires the visible DOI format https://doi.org/<doi>; presentation only, not registration or resolution.`
+    : requirements
 }
 
 /**
@@ -96,6 +99,7 @@ export function referenceCheckParts(
   }
   if (refs.check_alignment && refs.alignment) parts.push(`${refs.alignment}-aligned entries`)
   if (refs.check_reference_order === true) parts.push('alphabetical order')
+  if (refs.check_doi_format === true) parts.push('Reference DOI format')
   return parts
 }
 
@@ -184,6 +188,7 @@ export function referenceUncheckedParts(
   if (!(refs?.check_font_size && refs?.font_size_pt != null)) off.push('Reference font size')
   if (!(refs?.check_alignment && refs?.alignment)) off.push('Reference entry alignment')
   if (refs?.check_reference_order !== true) off.push('Alphabetical order')
+  if (refs?.check_doi_format !== true) off.push('Reference DOI format: Not checked')
   return off
 }
 

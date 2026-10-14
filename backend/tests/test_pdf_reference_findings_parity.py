@@ -634,3 +634,76 @@ def test_export_does_not_rerun_or_change_the_audit(client, owner_audit):
     after = client.get(f"/api/audit/{owner_audit}").json()
     assert before["violations"] == after["violations"]
     assert before.get("weighted_score") == after.get("weighted_score")
+
+
+def test_doi_pdf_preserves_raw_case_and_unit_like_suffixes(client, test_engine):
+    """Grouped panels and register retain persisted DOI spelling verbatim."""
+    import uuid
+    from sqlalchemy.orm import sessionmaker
+    from app.models.audit import AuditRecord, Violation
+    from app.services.profile_snapshot import EffectiveProfileSnapshot
+
+    current_values = (
+        "doi: 10.1234/AbC12pt",
+        "doi: 10.1234/abc12pt",
+        "HTTP://dx.doi.org/10.1234/AbC12in",
+        "DOI: 10.1234/numPr",
+    )
+    canonical = "https://doi.org/<doi>"
+    action = (
+        "Replace the visible DOI text with the configured canonical format. "
+        "Verify the DOI independently because ACA checks presentation only and "
+        "does not confirm registration or resolution."
+    )
+    snapshot = EffectiveProfileSnapshot(
+        profile_id="doi-pdf-parity", profile_name="DOI PDF parity",
+        profile_source="custom", references_check_doi_format=True,
+    ).with_fingerprint()
+    audit_id = str(uuid.uuid4())
+    Session = sessionmaker(bind=test_engine)
+    with Session() as session:
+        session.add(AuditRecord(
+            id=audit_id, filename="doi-parity.docx", file_size=100,
+            weighted_score=92, deploy_mode="LOCAL", status="completed",
+            profile_snapshot=snapshot.to_dict(),
+        ))
+        for index, current in enumerate(current_values):
+            session.add(Violation(
+                id=str(uuid.uuid4()), audit_id=audit_id,
+                rule_code="REFERENCE_DOI_FORMAT", severity="MINOR",
+                location={"paragraph_index": index + 1},
+                message=(
+                    "The visible DOI presentation does not match the selected "
+                    "profile's required format: https://doi.org/<doi>. "
+                    "ACA checks presentation only, not registration or resolution."
+                ),
+                actual_value=current, expected_value=canonical,
+            ))
+        session.commit()
+
+    before = client.get(f"/api/audit/{audit_id}").json()
+    response = client.get(f"/api/audit/{audit_id}/export-pdf")
+    assert response.status_code == 200
+    text = _pdf_text(response.content)
+    panels, register = text.split("Appendix — Findings Register", 1)
+    for current in current_values:
+        assert current in panels
+        assert register.count(current) == 1
+    assert canonical in panels
+    assert register.count(canonical) == len(current_values)
+    assert action in panels
+    assert "Reference DOI format does not match" in panels
+    assert all(
+        "Reference DOI format does not match" in row[2]
+        for row in _register_rows(text)
+    )
+    assert len(_register_rows(text)) == len(current_values)
+    assert (
+        "The selected profile requires the visible DOI format https://doi.org/<doi>; "
+        "presentation only, not registration or resolution."
+    ) in text
+    for altered in ("AbC12 pt", "abc12 pt", "AbC12 in", "list formatting"):
+        assert altered not in text
+    for markup in ("<a", "</a>", "href=", "target=", "rel=", "title=", "class=", "&lt;", "&gt;"):
+        assert markup not in text
+    assert client.get(f"/api/audit/{audit_id}").json()["violations"] == before["violations"]

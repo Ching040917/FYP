@@ -206,6 +206,7 @@ test('references: every check round-trips through the UI model', () => {
     check_alignment: true,
     alignment: 'left',
     check_reference_order: false,
+    check_doi_format: false,
   }
   assert.deepEqual(referencesFromUiModel(referencesToUiModel(stored)), stored)
 })

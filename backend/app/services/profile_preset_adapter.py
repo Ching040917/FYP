@@ -127,6 +127,7 @@ class EffectiveProfileConfig:
         # rule compares only when this check is on; a disabled check never
         # looks at any entry.
         self.REFERENCES_CHECK_REFERENCE_ORDER = snapshot.references_check_reference_order
+        self.REFERENCES_CHECK_DOI_FORMAT = snapshot.references_check_doi_format
         # Preserved rule: the snapshot already resolved "was this enforced
         # before this feature?" — an explicit toggle, else a stored value.
         self.REFERENCES_CHECK_LINE_SPACING = snapshot.references_check_line_spacing

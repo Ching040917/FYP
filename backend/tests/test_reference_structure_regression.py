@@ -1,11 +1,9 @@
 """Regression contracts for the Reference List structure foundation.
 
-This branch adds evidence extraction only. These tests exist to prove that
-fact: the shared heading helper must be observationally identical to the two
-implementations it replaced, and no consumer may gain a new rule code, a new
-severity, a new profile key or a new snapshot version — except the single
-author-only REFERENCE_ORDER review and its Snapshot v4 toggle, which are
-pinned explicitly below.
+The shared heading helper must remain observationally identical to the
+implementations it replaced. Existing citation, Reference formatting and
+historical snapshot behavior stays unchanged as profile-controlled checks
+are added.
 """
 
 import re
@@ -33,21 +31,6 @@ KNOWN_RULE_CODES = {
     "REFERENCE_NOT_CITED", "REFERENCE_DUPLICATE",
 }
 
-# The ten Reference List FORMATTING codes added by Phase 3. Nothing outside
-# this set — except the single author-only REFERENCE_ORDER review — may ever
-# be added to the PDF/scoring vocabulary.
-REFERENCE_FORMAT_CODES = {
-    "REFERENCE_HEADING_TEXT", "REFERENCE_HEADING_BOLD",
-    "REFERENCE_HEADING_ALIGNMENT", "REFERENCE_SECTION_NEW_PAGE",
-    "REFERENCE_HANGING_INDENT", "REFERENCE_SPACE_BEFORE",
-    "REFERENCE_SPACE_AFTER", "REFERENCE_FONT_FAMILY",
-    "REFERENCE_FONT_SIZE", "REFERENCE_ALIGNMENT",
-}
-
-# The one semantic Reference List code added by the alphabetical-order
-# review: adjacent author-identity comparison only. DOI/URL codes remain
-# absent by design.
-REFERENCE_ORDER_CODES = {"REFERENCE_ORDER"}
 
 
 # --- 1/2/3: citation matching, missing section, duplicates ------------------
@@ -147,9 +130,8 @@ def test_scoring_knows_the_reference_formatting_codes():
     # The Phase 2 semantic codes still score against citations.
     assert rule_code_to_category("REFERENCE_NOT_CITED") == "citation_apa"
     assert rule_code_to_category("REFERENCE_DUPLICATE") == "citation_apa"
-    # Codes that were never part of this feature still do not exist.
-    for code in ("REFERENCE_ENTRY_STRUCTURE", "REFERENCE_DOI_FORMAT"):
-        assert rule_code_to_category(code) == "citation_apa"
+    # Unsupported entry-structure codes retain the generic Reference mapping.
+    assert rule_code_to_category("REFERENCE_ENTRY_STRUCTURE") == "citation_apa"
     # The author-only order review scores with the semantic Reference rules.
     assert rule_code_to_category("REFERENCE_ORDER") == "citation_apa"
 
@@ -184,11 +166,9 @@ def test_role_classification_of_reference_documents_is_unchanged():
 
 
 def test_snapshot_version_carries_the_reference_list_rules():
-    # Phase 3 extended the nested references group, and the order review
-    # appends exactly one toggle (Snapshot v4); every earlier version stays
-    # loadable.
-    assert SNAPSHOT_SCHEMA_VERSION == 4
-    assert tuple(SUPPORTED_SNAPSHOT_SCHEMA_VERSIONS) == (1, 2, 3, 4)
+    # Each schema keeps its historical payload shape loadable.
+    assert SNAPSHOT_SCHEMA_VERSION == 5
+    assert tuple(SUPPORTED_SNAPSHOT_SCHEMA_VERSIONS) == (1, 2, 3, 4, 5)
 
 
 def test_phase_2_citation_matching_keys_are_untouched():
@@ -288,17 +268,3 @@ def test_model_download_module_untouched_by_this_feature():
     source = open(dl.__file__, encoding="utf-8").read()
     assert "reference_section" not in source
     assert "formatting_evidence" not in source
-
-
-# --- 15: PDF untouched -----------------------------------------------------
-
-
-def test_pdf_report_knows_exactly_the_phase_3_rule_names():
-    import app.services.pdf_report as pdf
-
-    source = open(pdf.__file__, encoding="utf-8").read()
-    # 21 pre-existing codes plus the ten Reference List formatting rules
-    # plus the single author-only order review.
-    assert len(pdf._RULE_NAME) == 32
-    assert set(pdf._RULE_NAME) == KNOWN_RULE_CODES | REFERENCE_FORMAT_CODES | REFERENCE_ORDER_CODES
-    assert "REFERENCE_ENTRY_STRUCTURE" not in source

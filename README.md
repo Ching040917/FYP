@@ -42,6 +42,20 @@ After an audit, ACA shows what it found and why:
 
 ![Academic Compliance Auditor workspace showing findings, rendered-page evidence, expected and actual values, and PDF export.](docs/images/aca-audit-workspace.png)
 
+### Optional Reference DOI presentation check
+
+Custom Profiles can enable **Check Reference DOI format**; it is Off by default
+and Built-in Profiles remain unchanged. When enabled, the selected profile requires
+the visible format `https://doi.org/<doi>`. ACA reports only definite legacy
+presentations such as `doi:` or `http://doi.org/`, once per affected Reference entry.
+
+This offline check uses an ACA-supported conservative lexical subset, not complete
+DOI syntax or APA 7 validation. Canonical, absent, ambiguous, unsupported and
+multiple-candidate text stays silent; hidden hyperlink targets are ignored.
+ACA does not verify DOI registration or resolution, require a DOI, rewrite the
+document, or offer an automatic correction. Current values retain source spelling.
+
+
 ## Optional Features
 
 Two optional components extend ACA, but neither is required:

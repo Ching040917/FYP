@@ -164,6 +164,7 @@ class ReferencesSettings:
     check_alignment: bool = False
     alignment: Optional[str] = None
     check_reference_order: bool = False
+    check_doi_format: bool = False
 
 
 # The heading words a profile may require. A fixed vocabulary, never free
@@ -383,6 +384,7 @@ class DocumentFormattingProfile:
             ("check_font_size", False),
             ("check_alignment", False),
             ("check_reference_order", False),
+            ("check_doi_format", False),
         ):
             raw = getattr(r, field_name)
             if allow_none and raw is None:

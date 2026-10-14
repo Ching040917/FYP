@@ -235,6 +235,7 @@ export function blankProfilePayload(
       check_alignment: false,
       alignment: null,
       check_reference_order: false,
+      check_doi_format: false,
     },
     captions: {
       space_before_pt: null,
@@ -490,6 +491,8 @@ export interface ReferencesUiModel {
   alignment: AlignmentValue | ''
   /** Alphabetical-order review: adjacent author identities only. */
   referenceOrderEnabled: boolean
+  /** Visible DOI presentation only; no registration or resolution check. */
+  doiFormatEnabled: boolean
 }
 
 /** Captions section UI (Build 5). Space before/after are independent. */
@@ -765,6 +768,7 @@ export function referencesToUiModel(references: ReferencesGroup): ReferencesUiMo
     alignmentEnabled: references.check_alignment === true,
     alignment: asAlignment(references.alignment),
     referenceOrderEnabled: references.check_reference_order === true,
+    doiFormatEnabled: references.check_doi_format === true,
   }
 }
 
@@ -801,6 +805,7 @@ export function referencesFromUiModel(ui: ReferencesUiModel): ReferencesGroup {
     check_alignment: ui.alignmentEnabled,
     alignment: ui.alignmentEnabled ? ui.alignment || null : null,
     check_reference_order: ui.referenceOrderEnabled,
+    check_doi_format: ui.doiFormatEnabled,
   }
 }
 
@@ -1234,6 +1239,11 @@ export function summarizeProfile(payload: Record<string, unknown>): ProfileSumma
     refsRaw.check_reference_order === true
       ? 'Reference List alphabetical order'
       : 'Reference List alphabetical order: Not checked',
+  )
+  lines.push(
+    refsRaw.check_doi_format === true
+      ? 'Reference DOI format'
+      : 'Reference DOI format: Not checked',
   )
 
   // Captions (Build 5)

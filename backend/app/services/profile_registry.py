@@ -351,6 +351,11 @@ def _key_requirements_summary(profile: DocumentFormattingProfile) -> List[str]:
         ref_lines.append(f"{refs.alignment}-aligned reference entries")
     if refs.check_reference_order:
         ref_lines.append("alphabetical Reference List order")
+    if refs.check_doi_format:
+        ref_lines.append(
+            "The selected profile requires the visible DOI format https://doi.org/<doi>; "
+            "presentation only, not registration or resolution."
+        )
     for item in ref_lines:
         lines.append(item)
 

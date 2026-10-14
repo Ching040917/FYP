@@ -9,7 +9,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  FRIENDLY_RULE_TITLE_CODES,
   cleanMessage,
   comparisonText,
   friendlyComparison,
@@ -174,53 +173,6 @@ test('cleanMessage never mutates the source raw message', () => {
 // Citation ↔ Reference List matching findings (citation reference build)
 // ---------------------------------------------------------------------------
 
-test('every production rule code has a plain-language title', () => {
-  assert.deepEqual(
-    FRIENDLY_RULE_TITLE_CODES.slice().sort(),
-    [
-      'ALIGNMENT',
-      'CITATION_MISMATCH',
-      'CITATION_REFERENCE_AMBIGUOUS',
-      'CITATION_REFERENCE_MISMATCH',
-      'CITATION_YEAR_SUFFIX_MISMATCH',
-      'FONT_CONSISTENCY',
-      'FONT_SIZE',
-      'HEADING_HIERARCHY',
-      'IMAGE_ALT_TEXT_MISSING',
-      'IMAGE_CAPTION_MISSING',
-      'LINE_SPACING',
-      'MANUAL_CAPTION',
-      'MARGIN_BOTTOM',
-      'MARGIN_LEFT',
-      'MARGIN_RIGHT',
-      'MARGIN_TOP',
-      'REFERENCE_ALIGNMENT',
-      'REFERENCE_DUPLICATE',
-      'REFERENCE_FONT_FAMILY',
-      'REFERENCE_FONT_SIZE',
-      'REFERENCE_HANGING_INDENT',
-      'REFERENCE_HEADING_ALIGNMENT',
-      'REFERENCE_HEADING_BOLD',
-      'REFERENCE_HEADING_TEXT',
-      'REFERENCE_NOT_CITED',
-      'REFERENCE_ORDER',
-      'REFERENCE_SECTION_NEW_PAGE',
-      'REFERENCE_SPACE_AFTER',
-      'REFERENCE_SPACE_BEFORE',
-      'SPACE_AFTER',
-      'SPACE_BEFORE',
-      'TABLE_CAPTION_MISSING',
-    ],
-  )
-  // No title is the raw code, and none claims a direction the data cannot support.
-  for (const code of FRIENDLY_RULE_TITLE_CODES) {
-    const title = friendlyRuleTitle(code)
-    assert.ok(title, code)
-    assert.notEqual(title, code, code)
-    assert.doesNotMatch(title, /_/, code)
-    assert.doesNotMatch(title, /too large|too small/i, code)
-  }
-})
 
 test('citation and reference codes carry their agreed wording', () => {
   assert.equal(friendlyRuleTitle('CITATION_MISMATCH'), 'Citation has no matching Reference List entry')

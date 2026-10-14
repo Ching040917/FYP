@@ -73,6 +73,7 @@ const FRIENDLY_RULE_TITLES: Record<string, string> = {
   REFERENCE_FONT_SIZE: 'Reference entry font size does not match',
   REFERENCE_ALIGNMENT: 'Reference entry alignment does not match',
   REFERENCE_ORDER: 'Reference List is not in alphabetical order',
+  REFERENCE_DOI_FORMAT: 'Reference DOI format does not match',
 }
 
 /**
@@ -95,6 +96,7 @@ const REFERENCE_REQUIRED_ACTIONS: Record<string, string> = {
   REFERENCE_FONT_SIZE: 'Set every Reference List entry to the required font size.',
   REFERENCE_ALIGNMENT: 'Align the Reference List entries as required.',
   REFERENCE_ORDER: 'Move this Reference List entry to the correct alphabetical position according to the selected profile.',
+  REFERENCE_DOI_FORMAT: 'Replace the visible DOI text with the configured canonical format. Verify the DOI independently because ACA checks presentation only and does not confirm registration or resolution.',
 }
 
 /** Every rule code with a bespoke student-facing title (contract tests). */
@@ -151,6 +153,9 @@ export function friendlyFindingMessage(
   location: Record<string, unknown> | null = null,
 ): string {
   const code = (ruleCode ?? '').toUpperCase()
+  if (code === 'REFERENCE_DOI_FORMAT') {
+    return 'The visible DOI presentation does not match the selected profile’s required format: https://doi.org/<doi>. ACA checks presentation only, not registration or resolution.'
+  }
   const exp = friendlyValue(expected)
   const act = friendlyValue(actual)
   const label = objectLabel(location)
@@ -256,6 +261,7 @@ export function friendlyRequiredAction(
   location: Record<string, unknown> | null = null,
 ): string | null {
   const code = (ruleCode ?? '').toUpperCase()
+  if (code === 'REFERENCE_DOI_FORMAT') return REFERENCE_REQUIRED_ACTIONS[code]
   const exp = friendlyValue(expected)
   const act = friendlyValue(actual)
   const label = objectLabel(location)

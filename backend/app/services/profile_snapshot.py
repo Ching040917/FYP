@@ -42,7 +42,7 @@ from app.services.profile_schema import (
 #  byte-for-byte.
 #  v1 snapshots stay loadable: their canonical key order is frozen below so
 #  their stored SHA-256 keeps verifying byte-for-byte.
-SNAPSHOT_SCHEMA_VERSION = 4
+SNAPSHOT_SCHEMA_VERSION = 5
 
 # Frozen v1 canonical key order — NEVER edit. v1 snapshots are fingerprinted
 # over exactly these keys; changing the tuple invalidates stored fingerprints
@@ -87,13 +87,18 @@ _REFERENCES_GROUP_KEYS_V4: Tuple[str, ...] = _REFERENCES_GROUP_KEYS_V3 + (
     "check_reference_order",
 )
 
+# v5 appends only the visible DOI presentation toggle; older tuples are frozen.
+_REFERENCES_GROUP_KEYS_V5: Tuple[str, ...] = _REFERENCES_GROUP_KEYS_V4 + (
+    "check_doi_format",
+)
+
 # Nested `references` keys of a v1/v2 snapshot — frozen. A stored historical
 # snapshot must serialize to the exact bytes that produced its fingerprint,
 # so it never gains the v3/v4 Reference List keys.
 _REFERENCES_GROUP_KEYS_LEGACY: Tuple[str, ...] = ("line_spacing", "hanging_indent_in")
 
 # Snapshot schema versions this build can load (older first).
-SUPPORTED_SNAPSHOT_SCHEMA_VERSIONS = (1, 2, 3, SNAPSHOT_SCHEMA_VERSION)
+SUPPORTED_SNAPSHOT_SCHEMA_VERSIONS = (1, 2, 3, 4, SNAPSHOT_SCHEMA_VERSION)
 
 
 def _references_group_keys(version: Any) -> Tuple[str, ...]:
@@ -102,6 +107,8 @@ def _references_group_keys(version: Any) -> Tuple[str, ...]:
         version_int = int(version)
     except (TypeError, ValueError):
         return _REFERENCES_GROUP_KEYS_LEGACY
+    if version_int == 5:
+        return _REFERENCES_GROUP_KEYS_V5
     if version_int >= 4:
         return _REFERENCES_GROUP_KEYS_V4
     return _REFERENCES_GROUP_KEYS_V3 if version_int == 3 else _REFERENCES_GROUP_KEYS_LEGACY
@@ -196,6 +203,7 @@ class EffectiveProfileSnapshot:
     # Reference List alphabetical-order review (v4+). Author identities only;
     # years, suffixes and coauthor tails are never compared.
     references_check_reference_order: bool = False
+    references_check_doi_format: bool = False
 
     caption_space_before_pt: Optional[float] = None
     caption_space_after_pt: Optional[float] = None
@@ -320,6 +328,7 @@ class EffectiveProfileSnapshot:
             "check_alignment": self.references_check_alignment,
             "alignment": self.references_alignment,
             "check_reference_order": self.references_check_reference_order,
+            "check_doi_format": self.references_check_doi_format,
         }
         return {k: full[k] for k in _references_group_keys(version)}
 
@@ -403,6 +412,7 @@ class EffectiveProfileSnapshot:
             references_check_alignment=self.references_check_alignment,
             references_alignment=self.references_alignment,
             references_check_reference_order=self.references_check_reference_order,
+            references_check_doi_format=self.references_check_doi_format,
             caption_space_before_pt=self.caption_space_before_pt,
             caption_space_after_pt=self.caption_space_after_pt,
             list_space_after_pt=self.list_space_after_pt,
@@ -614,6 +624,7 @@ def resolve_snapshot(
         references_check_alignment=bool(refs.check_alignment),
         references_alignment=refs.alignment,
         references_check_reference_order=bool(refs.check_reference_order),
+        references_check_doi_format=refs.check_doi_format,
 
         caption_space_before_pt=profile.captions.space_before_pt,
         caption_space_after_pt=profile.captions.space_after_pt,
@@ -722,7 +733,7 @@ def snapshot_from_dict(data: Dict[str, Any]) -> EffectiveProfileSnapshot:
     # v1/v2 payload can never carry them at all.
     ref_defaults = EffectiveProfileSnapshot()
     ref_values: Dict[str, Any] = {}
-    for key in _REFERENCES_GROUP_KEYS_V4:
+    for key in _REFERENCES_GROUP_KEYS_V5:
         attr = "references_" + key
         raw = refs.get(key, getattr(ref_defaults, attr))
         if isinstance(getattr(ref_defaults, attr), bool):

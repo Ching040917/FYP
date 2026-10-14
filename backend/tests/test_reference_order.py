@@ -590,7 +590,7 @@ def test_api_end_to_end_with_order_enabled(client):
     assert finding["severity"] == "MINOR"
     assert finding["location"]["paragraph_index"] == 2 + 1  # body + heading precede entries
     snapshot = payload["profile_snapshot"]
-    assert snapshot["schema_version"] == 4
+    assert snapshot["schema_version"] == 5
     assert snapshot["references"]["check_reference_order"] is True
 
     audit_id = payload["audit_id"]

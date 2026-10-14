@@ -152,3 +152,37 @@ test.describe('custom profile citation controls @citation', () => {
     await evidenceShot(page, `profile-editor-citation-toggles-${testInfo.project.name}.png`)
   })
 })
+
+test('Reference DOI toggle persists through save and reload', async ({ page }, testInfo) => {
+  await page.route('**/*', async (route) => {
+    const url = new URL(route.request().url())
+    if (url.hostname === '127.0.0.1' || url.hostname === 'localhost') {
+      await route.continue()
+    } else {
+      await route.abort()
+    }
+  })
+  await page.goto('/profiles/custom')
+  const builtins = page.getByRole('group', { name: 'Built-in profiles', exact: true })
+  await expect(builtins).toBeVisible()
+  await expect(builtins.getByRole('checkbox')).toHaveCount(0)
+  await expect(builtins.getByRole('button', { name: 'Edit', exact: true })).toHaveCount(0)
+  await page.getByRole('button', { name: 'Copy SUC Academic Report', exact: true }).click()
+  const name = 'Reference DOI toggle smoke'
+  await page.locator('#profile-name').fill(name)
+  const references = page.locator('details').filter({
+    has: page.locator('summary').filter({ hasText: /^Reference List$/ }),
+  })
+  await references.locator('summary').click()
+  const toggle = page.getByRole('checkbox', { name: 'Check Reference DOI format', exact: true })
+  await expect(toggle).not.toBeChecked()
+  await toggle.check()
+  await page.getByRole('button', { name: /Save custom profile/i }).click()
+  await expect(page.getByText(/Profile saved|Saved/i).first()).toBeVisible()
+  await page.reload()
+  const saved = page.locator('li').filter({ hasText: name })
+  await saved.getByRole('button', { name: 'Edit', exact: true }).click()
+  await references.locator('summary').click()
+  await expect(toggle).toBeChecked()
+  await evidenceShot(page, `reference-doi-toggle-${testInfo.project.name}.png`)
+})
