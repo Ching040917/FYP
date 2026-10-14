@@ -8,7 +8,7 @@ Returns BOTH the integer total AND a per-category breakdown so the frontend
 no longer needs to re-derive scoring client-side (kills adapter.ts residual).
 """
 from dataclasses import dataclass, field
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional
 
 from app.services.layout_violation import LayoutViolation
 

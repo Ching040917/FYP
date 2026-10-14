@@ -19,7 +19,7 @@ Font pair semantics:
     rejected. Heading inheritance uses the selected valid body pair and
     never introduces fixed 16/14/12 pt sizes.
 """
-from typing import Optional, Tuple
+from typing import Optional
 
 from app.config import PresetConfig
 from app.services.profile_snapshot import EffectiveProfileSnapshot

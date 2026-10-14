@@ -1,7 +1,7 @@
 from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Query, Response, Form, Body
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
-from typing import List, Any, Optional
+from typing import List, Optional
 import hashlib
 import io
 import json
@@ -13,7 +13,7 @@ from datetime import datetime
 
 from app.database import get_db
 from app.config import settings
-from app.models.audit import AuditRecord, Violation, CitationIssue
+from app.models.audit import AuditRecord, Violation
 from app.schemas.audit import (
     AuditSubmitResponse,
     AuditResponse,

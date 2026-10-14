@@ -29,11 +29,6 @@ export const MAX_SELECTED = 20
 
 export const CORRECTED_FALLBACK_FILENAME = 'ACA_corrected.docx'
 
-/** Stable, user-facing copy for the Beta surface. */
-export const BETA_WARNING =
-  'Beta feature. ACA creates a corrected copy and never changes your original document. Review the corrected copy before submission.'
-export const BETA_SCOPE =
-  'Only selected supported formatting issues are considered. Some findings require manual correction.'
 /** Concise dialog introduction (replaces the two longer Beta paragraphs). */
 export const GF_INTRO =
   'Guided Fixes creates a corrected copy and never changes your original document. Select supported formatting issues, review the proposed changes, then upload the original DOCX.'
@@ -113,11 +108,6 @@ export function dedupeSelection(ids: readonly string[]): string[] {
     }
   }
   return out
-}
-
-/** True when the current selection already contains this id. */
-export function isGuidedSelected(current: readonly string[], id: string): boolean {
-  return current.includes(id)
 }
 
 /**

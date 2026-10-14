@@ -1,7 +1,5 @@
 from docx import Document
-from docx.shared import Pt, Inches, Cm
 from docx.enum.text import WD_ALIGN_PARAGRAPH
-from docx.enum.table import WD_TABLE_ALIGNMENT
 from docx.enum.style import WD_STYLE_TYPE
 from typing import List, Dict, Any, Optional
 import io

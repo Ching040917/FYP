@@ -1,7 +1,6 @@
 from typing import List, Dict, Any, Optional
 import re
 from docx import Document
-from docx.shared import Pt, Inches
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
 from app.services.document_parser import (
