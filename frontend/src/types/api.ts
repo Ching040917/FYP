@@ -194,9 +194,10 @@ export interface ProfileSnapshot {
     bottom_in: number | null
   }
   /**
-   * Reference List rules carried by snapshot schema v3. Older audits (v1/v2)
+   * Reference List rules carried by snapshot schema v4. Older audits (v1/v2)
    * return only `line_spacing` / `hanging_indent_in`; every toggle is then
    * absent and the disclosure falls back to what those snapshots enforced.
+   * v3 snapshots additionally lack `check_reference_order` (read as off).
    */
   references?: ProfileSnapshotReferences
 }
@@ -224,6 +225,7 @@ export interface ProfileSnapshotReferences {
   font_size_pt?: number | null
   check_alignment?: boolean
   alignment?: string | null
+  check_reference_order?: boolean
 }
 
 /** Structured paragraph block from GET /api/audit/{id}/document-blocks — mirrors backend extract_document_blocks. */

@@ -95,6 +95,10 @@ _RULE_CATEGORY_OVERRIDES: Dict[str, str] = {
     # Fonts.
     "REFERENCE_FONT_FAMILY": "font_consistency",
     "REFERENCE_FONT_SIZE": "font_size",
+    # Reference List alphabetical-order review: an author-identity
+    # comparison, not entry formatting, so it scores with the other
+    # semantic Reference rules instead of a formatting bucket.
+    "REFERENCE_ORDER": "citation_apa",
 }
 
 # Exact pre-fix override table: the current table minus the two generic

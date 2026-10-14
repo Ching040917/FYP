@@ -54,6 +54,7 @@ const PRODUCTION_CODES = [
   'CITATION_REFERENCE_AMBIGUOUS',
   'REFERENCE_NOT_CITED',
   'REFERENCE_DUPLICATE',
+  'REFERENCE_ORDER',
   'REFERENCE_HEADING_TEXT',
   'REFERENCE_HEADING_BOLD',
   'REFERENCE_HEADING_ALIGNMENT',
@@ -70,7 +71,7 @@ const PRODUCTION_CODES = [
 // Title map completeness
 // ---------------------------------------------------------------------------
 
-test('every one of the 31 production codes has a title, and no others do', () => {
+test('every one of the 32 production codes has a title, and no others do', () => {
   assert.deepEqual([...FRIENDLY_RULE_TITLE_CODES].sort(), [...PRODUCTION_CODES].sort())
 })
 

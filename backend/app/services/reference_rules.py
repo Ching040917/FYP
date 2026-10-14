@@ -45,6 +45,7 @@ from app.services.formatting_evidence import (
     resolve_paragraph_format,
 )
 from app.services.layout_violation import LayoutViolation
+from app.services.reference_order import run_reference_order
 from app.services.reference_section import (
     PAGE_START_MAPPED_SAME_PAGE,
     REFERENCE_HEADING_ALIASES,
@@ -510,4 +511,8 @@ def run_reference_rules(
     _check_fonts(entry_objects, config, consolidator)
     _check_entry_alignment(entry_objects, config, consolidator)
     violations.extend(consolidator.violations())
+    # Reference List alphabetical-order review (author identities only).
+    # Runs only when its own toggle is on; every other Reference finding is
+    # untouched and the entry list handed to other rules is never reordered.
+    violations.extend(run_reference_order(doc, paragraphs, config))
     return violations

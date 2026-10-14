@@ -99,5 +99,6 @@ export function referencesDisclosure(
     parts.push(`${refs.font_size_pt} pt`)
   }
   if (refs.check_alignment && refs.alignment) parts.push(`${refs.alignment}-aligned entries`)
+  if (refs.check_reference_order === true) parts.push('alphabetical order')
   return parts.length > 0 ? `References: ${parts.join(', ')}` : 'References: Not checked'
 }

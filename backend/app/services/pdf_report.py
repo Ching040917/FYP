@@ -199,6 +199,10 @@ _REQUIRED_ACTIONS = {
     "REFERENCE_FONT_FAMILY": "Set every Reference List entry to the required font family.",
     "REFERENCE_FONT_SIZE": "Set every Reference List entry to the required font size.",
     "REFERENCE_ALIGNMENT": "Align the Reference List entries as required.",
+    "REFERENCE_ORDER": (
+        "Move this Reference List entry to the correct alphabetical position "
+        "according to the selected profile."
+    ),
 }
 
 
@@ -235,14 +239,16 @@ def _reference_format_action_safe(rule_code, expected_value) -> str:
     )
 
 
-# Deterministic citation/reference matching rules: fixed Required Action copy
-# (never a formatting instruction, never AI-generated).
+# Deterministic citation/reference rules: fixed Required Action copy
+# (never a formatting instruction, never AI-generated). The alphabetical
+# order review is author-identity only and equally deterministic.
 _CITATION_MATCH_RULES = frozenset({
     "CITATION_REFERENCE_MISMATCH",
     "CITATION_YEAR_SUFFIX_MISMATCH",
     "CITATION_REFERENCE_AMBIGUOUS",
     "REFERENCE_NOT_CITED",
     "REFERENCE_DUPLICATE",
+    "REFERENCE_ORDER",
 })
 
 # Reference List FORMATTING rules (Phase 3). Manual corrections only, with
@@ -295,6 +301,7 @@ _PROP_NAME = {
     "CITATION_REFERENCE_AMBIGUOUS": "citation match",
     "REFERENCE_NOT_CITED": "in-text citation",
     "REFERENCE_DUPLICATE": "Reference List entry",
+    "REFERENCE_ORDER": "Reference List entry",
 }
 
 # Plain-language rule titles. Mirrored verbatim from
@@ -322,6 +329,7 @@ _RULE_NAME = {
     "CITATION_REFERENCE_AMBIGUOUS": "Citation could match more than one entry",
     "REFERENCE_NOT_CITED": "Reference List entry is not cited in the text",
     "REFERENCE_DUPLICATE": "Duplicate Reference List entry",
+    "REFERENCE_ORDER": "Reference List is not in alphabetical order",
     "REFERENCE_HEADING_TEXT": "Reference List heading does not match",
     "REFERENCE_HEADING_BOLD": "Reference List heading should be bold",
     "REFERENCE_HEADING_ALIGNMENT": "Reference List heading alignment does not match",
@@ -1134,6 +1142,8 @@ def _references_disclosure_line(refs) -> str:
         parts.append(f"{refs['font_size_pt']:g} pt")
     if refs.get("check_alignment") and refs.get("alignment"):
         parts.append(f"{refs['alignment']}-aligned entries")
+    if refs.get("check_reference_order"):
+        parts.append("alphabetical order")
     if not parts:
         return "References: Not checked"
     return "References: " + ", ".join(parts)

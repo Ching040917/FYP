@@ -2721,6 +2721,24 @@ export function ProfileEditor() {
                             </p>
                           )}
                         </div>
+
+                        {/* Alphabetical order */}
+                        <div className="rounded-md border border-border p-3">
+                          <label htmlFor="references-check-reference-order" className="flex items-start gap-2">
+                            <input
+                              id="references-check-reference-order"
+                              type="checkbox"
+                              className="mt-0.5 h-4 w-4 accent-primary"
+                              checked={referenceModel.referenceOrderEnabled}
+                              aria-describedby="references-check-reference-order-hint"
+                              onChange={(e) => updateReferences((u) => ({ ...u, referenceOrderEnabled: e.target.checked }))}
+                            />
+                            <span className="text-sm text-foreground">Check Reference List alphabetical order</span>
+                          </label>
+                          <p id="references-check-reference-order-hint" className="mt-1 text-xs leading-[16px] text-muted-foreground">
+                            Checks adjacent Reference List entries when both author identities can be determined reliably. Ambiguous or unsupported entries are skipped.
+                          </p>
+                        </div>
                       </div>
                     </details>
 

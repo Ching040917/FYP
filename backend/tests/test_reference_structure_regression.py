@@ -297,7 +297,8 @@ def test_pdf_report_knows_exactly_the_phase_3_rule_names():
     import app.services.pdf_report as pdf
 
     source = open(pdf.__file__, encoding="utf-8").read()
-    # 21 pre-existing codes plus the ten Reference List formatting rules.
-    assert len(pdf._RULE_NAME) == 31
-    assert set(pdf._RULE_NAME) == KNOWN_RULE_CODES | REFERENCE_FORMAT_CODES
+    # 21 pre-existing codes plus the ten Reference List formatting rules
+    # plus the single author-only order review.
+    assert len(pdf._RULE_NAME) == 32
+    assert set(pdf._RULE_NAME) == KNOWN_RULE_CODES | REFERENCE_FORMAT_CODES | REFERENCE_ORDER_CODES
     assert "REFERENCE_ENTRY_STRUCTURE" not in source

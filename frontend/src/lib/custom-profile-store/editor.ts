@@ -234,6 +234,7 @@ export function blankProfilePayload(
       font_size_pt: null,
       check_alignment: false,
       alignment: null,
+      check_reference_order: false,
     },
     captions: {
       space_before_pt: null,
@@ -487,6 +488,8 @@ export interface ReferencesUiModel {
   fontSize: string
   alignmentEnabled: boolean
   alignment: AlignmentValue | ''
+  /** Alphabetical-order review: adjacent author identities only. */
+  referenceOrderEnabled: boolean
 }
 
 /** Captions section UI (Build 5). Space before/after are independent. */
@@ -761,6 +764,7 @@ export function referencesToUiModel(references: ReferencesGroup): ReferencesUiMo
     fontSize: numStr(references.font_size_pt),
     alignmentEnabled: references.check_alignment === true,
     alignment: asAlignment(references.alignment),
+    referenceOrderEnabled: references.check_reference_order === true,
   }
 }
 
@@ -796,6 +800,7 @@ export function referencesFromUiModel(ui: ReferencesUiModel): ReferencesGroup {
     font_size_pt: ui.fontSizeEnabled ? parseNum(ui.fontSize) : null,
     check_alignment: ui.alignmentEnabled,
     alignment: ui.alignmentEnabled ? ui.alignment || null : null,
+    check_reference_order: ui.referenceOrderEnabled,
   }
 }
 
@@ -1222,6 +1227,14 @@ export function summarizeProfile(payload: Record<string, unknown>): ProfileSumma
   // Reference List — the editor draft and the audit report must describe the
   // same requirements in the same words, so both use this one helper.
   lines.push(referencesDisclosure((payload.references ?? null) as ProfileSnapshotReferences | null))
+  // Alphabetical-order review has its own disclosure line so the off state
+  // is explicit rather than silently absent.
+  const refsRaw = (payload.references ?? {}) as Record<string, unknown>
+  lines.push(
+    refsRaw.check_reference_order === true
+      ? 'Reference List alphabetical order'
+      : 'Reference List alphabetical order: Not checked',
+  )
 
   // Captions (Build 5)
   const captions = captionsToUiModel((payload.captions ?? {}) as CaptionGroup)

@@ -72,6 +72,7 @@ const FRIENDLY_RULE_TITLES: Record<string, string> = {
   REFERENCE_FONT_FAMILY: 'Reference entry font family does not match',
   REFERENCE_FONT_SIZE: 'Reference entry font size does not match',
   REFERENCE_ALIGNMENT: 'Reference entry alignment does not match',
+  REFERENCE_ORDER: 'Reference List is not in alphabetical order',
 }
 
 /**
@@ -93,6 +94,7 @@ const REFERENCE_REQUIRED_ACTIONS: Record<string, string> = {
   REFERENCE_FONT_FAMILY: 'Set every Reference List entry to the required font family.',
   REFERENCE_FONT_SIZE: 'Set every Reference List entry to the required font size.',
   REFERENCE_ALIGNMENT: 'Align the Reference List entries as required.',
+  REFERENCE_ORDER: 'Move this Reference List entry to the correct alphabetical position according to the selected profile.',
 }
 
 /** Every rule code with a bespoke student-facing title (contract tests). */

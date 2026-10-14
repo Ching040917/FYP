@@ -1176,6 +1176,8 @@ _PRODUCTION_RULE_CODES = (
     "REFERENCE_HANGING_INDENT", "REFERENCE_SPACE_BEFORE",
     "REFERENCE_SPACE_AFTER", "REFERENCE_FONT_FAMILY",
     "REFERENCE_FONT_SIZE", "REFERENCE_ALIGNMENT",
+    # Author-only alphabetical-order review
+    "REFERENCE_ORDER",
 )
 
 # Rule codes whose PDF title is fixed by the task specification. Checked
@@ -1198,6 +1200,7 @@ _REQUIRED_PDF_TITLES = {
     "REFERENCE_FONT_FAMILY": "Reference entry font family does not match",
     "REFERENCE_FONT_SIZE": "Reference entry font size does not match",
     "REFERENCE_ALIGNMENT": "Reference entry alignment does not match",
+    "REFERENCE_ORDER": "Reference List is not in alphabetical order",
     "TABLE_CAPTION_MISSING": "Table caption is missing",
 }
 

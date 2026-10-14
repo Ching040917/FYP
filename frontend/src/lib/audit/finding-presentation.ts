@@ -71,6 +71,7 @@ const CITATION_EVIDENCE_RULES: Record<string, true> = {
 const REFERENCE_SIDE_RULES: Record<string, true> = {
   REFERENCE_NOT_CITED: true,
   REFERENCE_DUPLICATE: true,
+  REFERENCE_ORDER: true,
 }
 
 /**

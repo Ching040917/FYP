@@ -349,6 +349,8 @@ def _key_requirements_summary(profile: DocumentFormattingProfile) -> List[str]:
         ref_lines.append(f"{refs.font_size_pt:g} pt for references")
     if refs.check_alignment and refs.alignment:
         ref_lines.append(f"{refs.alignment}-aligned reference entries")
+    if refs.check_reference_order:
+        ref_lines.append("alphabetical Reference List order")
     for item in ref_lines:
         lines.append(item)
 

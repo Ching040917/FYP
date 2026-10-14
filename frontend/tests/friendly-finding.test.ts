@@ -203,6 +203,7 @@ test('every production rule code has a plain-language title', () => {
       'REFERENCE_HEADING_BOLD',
       'REFERENCE_HEADING_TEXT',
       'REFERENCE_NOT_CITED',
+      'REFERENCE_ORDER',
       'REFERENCE_SECTION_NEW_PAGE',
       'REFERENCE_SPACE_AFTER',
       'REFERENCE_SPACE_BEFORE',
@@ -234,6 +235,7 @@ test('citation and reference codes carry their agreed wording', () => {
   assert.equal(friendlyRuleTitle('CITATION_REFERENCE_AMBIGUOUS'), 'Citation could match more than one entry')
   assert.equal(friendlyRuleTitle('REFERENCE_NOT_CITED'), 'Reference List entry is not cited in the text')
   assert.equal(friendlyRuleTitle('REFERENCE_DUPLICATE'), 'Duplicate Reference List entry')
+  assert.equal(friendlyRuleTitle('REFERENCE_ORDER'), 'Reference List is not in alphabetical order')
   // Unknown codes have no bespoke title (caller falls back to humanization).
   assert.equal(friendlyRuleTitle('SOME_FUTURE_RULE'), null)
   assert.equal(friendlyRuleTitle(null), null)
