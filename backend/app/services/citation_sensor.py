@@ -28,12 +28,16 @@ from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 from docx import Document
 
 from app.services.citation_matching import (
+    CitationKey,
     CitationMatchingRules,
     CitationRef,
     RULE_CITATION_MISMATCH,
     build_reference_index,
+    has_institution_keyword,
     make_key,
     match,
+    normalise_institutional_author,
+    split_year_token,
 )
 
 from app.services.reference_section import (
@@ -139,6 +143,86 @@ _PC_AUTHOR_CHAIN = re.compile(
 
 _CHAIN_SPLIT = re.compile(r"\s+(?:&|and)\s+|\s+[Ee]t\s+[Aa][Ll]\.")
 
+# Personal multi-author chains keep existing behavior exactly and are never
+# reinterpreted as institutions: exactly two surnames joined by &/and, or a
+# surname with et al.
+_PERSONAL_MULTI_RE = re.compile(
+    r"[A-Z][A-Za-zÀ-ſ'\-]+(?:\s+(?:&|and)\s+[A-Z][A-Za-zÀ-ſ'\-]+|\s+[Ee]t\s+[Aa][Ll]\.)+"
+)
+
+# Bounded author-resolution context ends at these clause boundaries. There
+# is no sentence segmenter in this pipeline; the terminator set is local to
+# institutional resolution and never reused for detection.
+_CLAUSE_END_RE = re.compile(r"[.!?…;\n:]")
+
+# Capitalized token for left extension (same alphabet as the detectors).
+_CAP_TOKEN_RE = re.compile(r"[A-Z][A-Za-zÀ-ſ'\-]*$")
+
+# Lowercase connectors allowed inside an institutional run only when
+# flanked by capitalized tokens on both sides.
+_RUN_CONNECTORS = frozenset({"and", "&", "of", "for", "the"})
+
+
+def author_resolution_context(paragraph_text: str, chain_start: int) -> str:
+    """Bounded paragraph slice immediately before a detected author chain.
+
+    Starts after the last clause terminator before `chain_start` (or at the
+    paragraph start) and ends exactly at `chain_start`. Used only for
+    institutional candidate resolution — never for spans, locations, or
+    evidence.
+    """
+    before = (paragraph_text or "")[:max(0, chain_start)]
+    cuts = [m.end() for m in _CLAUSE_END_RE.finditer(before)]
+    start = cuts[-1] if cuts else 0
+    return before[start:]
+
+
+def extend_institutional_run(context: str, chain: str) -> Tuple[str, int]:
+    """Extend a detected chain leftwards over institutional author tokens.
+
+    Returns (run_display, run_start): the full run display and its
+    character offset inside `context` (== len(context) when unextended).
+    Personal multi-author chains ("Smith and Lee", "Smith et al.") always
+    return (chain, len(context)). Extension walks whole
+    whitespace-separated tokens: capitalized tokens are accepted; lowercase
+    tokens only as flanked connectors. The walk stops at the first token
+    that qualifies neither, so ordinary preceding prose is never absorbed.
+    """
+    end = len(context)
+    if _PERSONAL_MULTI_RE.fullmatch(chain or ""):
+        return chain, end
+    # Token offsets within context (whitespace gaps preserved verbatim).
+    spans = [(m.group(0), m.start()) for m in re.finditer(r"\S+", context)]
+    if not spans:
+        return chain, end
+    accepted_start = end
+    i = len(spans) - 1
+    while i >= 0:
+        tok, pos = spans[i]
+        if _CAP_TOKEN_RE.match(tok):
+            accepted_start = pos
+            i -= 1
+            continue
+        if (
+            tok in _RUN_CONNECTORS
+            and i > 0
+            and _CAP_TOKEN_RE.match(spans[i - 1][0])
+        ):
+            # Connector needs a capitalized left flank too; the right flank
+            # is guaranteed by construction (everything accepted so far is
+            # capitalized, ending at the chain start).
+            accepted_start = pos
+            i -= 1
+            continue
+        break
+    if accepted_start >= end:
+        return chain, end
+    run_display = (context[accepted_start:].strip() + " " + chain).strip()
+    # A run that adds nothing meaningful keeps the original chain.
+    if len(run_display.split()) < 2:
+        return chain, end
+    return run_display, accepted_start
+
 
 def _is_references_header(text: str) -> bool:
     """True when a paragraph is a References/Bibliography section header.
@@ -226,7 +310,19 @@ def _parse_parenthetical_items(
         parsed.append((item, m.group(1), m.group(2)))
 
     if not parsed:
+        # Institutional fallback (additive): a multi-word author phrase the
+        # strict item grammar cannot parse, e.g. "Institutional Standards
+        # Board, 2021". The container was already detected, so no new span
+        # is claimed; the segment resolves only against an exact
+        # same-year institutional candidate later, otherwise it stays
+        # dropped exactly as before.
+        if len(segments) == 1:
+            return _institutional_parenthetical_items(
+                segments[0], whole_match, paragraph_index,
+            )
         return []
+
+    single = len(parsed) == 1 and len(segments) == 1
 
     single = len(parsed) == 1 and len(segments) == 1
     return [
@@ -237,6 +333,57 @@ def _parse_parenthetical_items(
             snippet=whole_match if single else item_text,
         )
         for item_text, surname, year in parsed
+    ]
+
+
+def _institutional_parenthetical_items(
+    segment: str,
+    whole_match: str,
+    paragraph_index: Optional[int],
+) -> List[CitationRef]:
+    """Candidate institutional citation inside one parenthetical container.
+
+    Strict shape only: `<Phrase>, <year>` with a bare year token, a
+    2–6 token author phrase of capitalized words and flanked connectors,
+    no digits, no sentence punctuation. The snippet is the whole container
+    (verbatim). Resolution against the Reference index happens later; an
+    unmatched phrase is dropped exactly as an unparsable segment was.
+    """
+    item = (segment or "").strip()
+    if "," not in item:
+        return []
+    author_part, year_part = item.rsplit(",", 1)
+    author_part = author_part.strip()
+    year_part = year_part.strip()
+    if not re.fullmatch(r"(\d{4}[a-z]?|n\.d\.)", year_part):
+        return []
+    tokens = author_part.split()
+    if not (2 <= len(tokens) <= 6):
+        return []
+    if re.search(r"\d", author_part):
+        return []
+    if re.search(r"[.!?;:]", author_part):
+        return []
+    if not _CAP_TOKEN_RE.match(tokens[0]):
+        return []
+    if not _CAP_TOKEN_RE.match(tokens[-1]):
+        return []
+    for i, tok in enumerate(tokens):
+        if _CAP_TOKEN_RE.match(tok):
+            continue
+        if tok in _RUN_CONNECTORS and i > 0 and _CAP_TOKEN_RE.match(tokens[i - 1]):
+            # Final token is capitalized by the check above, so the right
+            # flank holds whenever iteration reaches the last position.
+            continue
+        return []
+    return [
+        CitationRef(
+            author_display=author_part,
+            key=make_key(tokens[-1], year_part),
+            paragraph_index=paragraph_index,
+            snippet=whole_match,
+            institutional_phrase=author_part,
+        )
     ]
 
 
@@ -322,14 +469,90 @@ def scan_citations(
         primary = _primary_surname(chain)
         if primary.casefold() in _STOPWORD_CHAIN_STARTS:
             continue
+        context = author_resolution_context(text, m.start(1))
+        run_display, run_start = extend_institutional_run(context, chain)
+        # Extension takes effect only with a generic organization noun in
+        # the run: capitalized ordinary prose ("Later Smith") keeps the
+        # existing final-token behavior, while candidate proof later
+        # decides matching. Without this gate every capitalized word
+        # before a citation would rewrite its identity.
+        if run_start < len(context) and has_institution_keyword(run_display):
+            phrase = run_display
+        else:
+            phrase = ""
         scan.citations.append(CitationRef(
             author_display=chain,
             key=make_key(primary, year),
             paragraph_index=paragraph_index,
             snippet=whole_match,
+            context=context,
+            institutional_phrase=phrase,
         ))
 
     return scan
+
+
+def resolve_institutional_citations(
+    citations: Sequence[CitationRef],
+    paragraph_texts: Optional[Dict[int, str]],
+    index: Any,
+) -> List[CitationRef]:
+    """Resolve candidate institutional authors against the Reference index.
+
+    Pure function (no I/O). For citations carrying an institutional phrase,
+    the full normalized phrase becomes the author key — personal surname
+    keys can never collide with it because they contain no spaces:
+      - exact same-year institutional candidate → full institutional
+        identity (display, key, verbatim reconstructed snippet);
+      - narrative phrase without a candidate → multi-token fallback key
+        (mismatch keeps the full source-faithful text, never a personal
+        surname match);
+      - parenthetical phrase without a candidate → dropped, exactly as an
+        unparsable segment was before (silence preserved).
+    Citations without a phrase, and calls without paragraph texts or an
+    index, pass through byte-identically.
+    """
+    if paragraph_texts is None or index is None:
+        return list(citations)
+    resolved: List[CitationRef] = []
+    for cite in citations:
+        phrase = cite.institutional_phrase or ""
+        if not phrase:
+            resolved.append(cite)
+            continue
+        display = phrase.strip()
+        norm = normalise_institutional_author(display)
+        year_key = cite.key.year_key
+        suffix = cite.key.suffix
+        candidates = [
+            e for e in getattr(index, "entries", [])
+            if e.key.year_key == year_key and " " in e.key.author_key
+        ]
+        exact = [
+            e for e in candidates
+            if e.key.author_key == norm and e.key.suffix == suffix
+        ]
+        if cite.context:
+            # Narrative: recompute the run from the stored context so the
+            # snippet reconstruction is a verbatim source slice.
+            run_display, run_start = extend_institutional_run(cite.context, cite.author_display)
+            if run_display.strip() != display:
+                resolved.append(cite)
+                continue
+            snippet = cite.context[run_start:] + cite.snippet
+        else:
+            # Parenthetical: the whole container is already the verbatim
+            # span; without a candidate the prior silence is preserved.
+            if not exact:
+                continue
+            snippet = cite.snippet
+        resolved.append(CitationRef(
+            author_display=display,
+            key=CitationKey(norm, year_key, suffix),
+            paragraph_index=cite.paragraph_index,
+            snippet=snippet,
+        ))
+    return resolved
 
 
 def _first_citation_paragraph(citations: List[CitationRef]) -> Optional[int]:
@@ -413,4 +636,6 @@ def run_citation_sensor(
         return [_missing_section_violation(len(citations), _first_citation_paragraph(citations))]
 
     index = build_reference_index(reference_entry_paragraphs(paragraphs))
+    paragraph_texts = {para.get("index"): (para.get("text") or "") for para in paragraphs}
+    citations = resolve_institutional_citations(citations, paragraph_texts, index)
     return match(citations, index, rules)

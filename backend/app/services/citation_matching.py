@@ -4,6 +4,8 @@ Pure functions only: no I/O, no AI, no fuzzy matching, no similarity
 thresholds. Every comparison is exact tuple equality over normalized keys:
 
     author_key = NFC(surname) with curly apostrophes straightened, casefolded
+    author_key = full NFC institutional phrase (same normalization) for
+                 institutional entries — never a final-token alias
     year_key   = 4-digit year, or "n.d."
     suffix     = single lowercase a-z or ""
     base_key   = (author_key, year_key)
@@ -16,6 +18,8 @@ Contract:
   - `2024a` ≠ `2024` ≠ `2024b`;
   - an entry is keyable only when it starts with a surname followed by `,`
     or `.` and carries a `(YYYY[x]|n.d.)` token in its first 200 characters;
+    institutional entries key on a bounded 2–6 token author phrase with a
+    generic organization noun instead (never a final-token alias);
   - unkeyable entries produce no findings in either direction;
   - DOI/URL text never becomes a matching key and never blocks entry keying;
   - ambiguity is reported as severity REVIEW (never scored), never guessed.
@@ -70,6 +74,25 @@ _SURNAME_RE = re.compile(r"[A-Z][A-Za-zÀ-ſ'\-]+")
 # a bullet ("1. Smith, J." / "- Smith, J.").
 _ENTRY_PREFIX_RE = re.compile(r"^(?:\d+(?:\.\d+)*\.?\s+|[•\-*]\s+)")
 _ENTRY_HEAD_RE = re.compile(r"^([A-Z][A-Za-zÀ-ſ'\-]+)\s*[,.]")
+
+# Institutional author form (additive — the personal path above always runs
+# first and is unchanged). A bounded multi-token author phrase before the
+# year: 2–6 tokens, no personal comma/initial structure, no digits, no
+# sentence punctuation, at least one generic organization noun. Never matches
+# single tokens (those keep existing behavior) and never absorbs leading
+# articles (title-like text stays unkeyable).
+_INSTITUTION_KEYWORDS = frozenset({
+    "association", "associations", "board", "bureau", "committee",
+    "council", "department", "agencies", "agency", "authority",
+    "foundation", "institute", "institution", "ministry", "office",
+    "organisation", "organisations", "organization", "organizations",
+    "society",
+})
+_INSTITUTION_CONNECTORS = frozenset({"and", "&", "of", "for", "the"})
+_INSTITUTION_ARTICLES = frozenset({"a", "an", "the"})
+_INSTITUTION_MIN_TOKENS = 2
+_INSTITUTION_MAX_TOKENS = 6
+_INSTITUTION_TOKEN_RE = re.compile(r"[A-Z][A-Za-zÀ-ſ'\-]*$")
 
 # Year token: a parenthesized 4-digit year with optional suffix letter, or n.d.
 _ENTRY_YEAR_RE = re.compile(r"\((\d{4}[a-z]?|n\.d\.)\)", re.IGNORECASE)
@@ -145,6 +168,77 @@ def make_key(author: str, year_token: str) -> CitationKey:
     )
 
 
+def normalise_institutional_author(phrase: str) -> str:
+    """NFC + case-fold a full institutional author phrase.
+
+    Whitespace is collapsed to single spaces and trailing separators are
+    stripped. Internal structure (connectors, hyphens, apostrophes) is
+    preserved so the phrase key can never collide with a single-token
+    personal surname key.
+    """
+    text = unicodedata.normalize("NFC", phrase or "")
+    text = text.replace("\u2019", "'").replace("\u2018", "'")
+    text = " ".join(text.strip().rstrip(",.;").split())
+    return text.casefold()
+
+
+def has_institution_keyword(phrase: str) -> bool:
+    """True when a phrase contains a generic organization noun.
+
+    Whole-token, case-insensitive match against the same keyword set the
+    Reference classifier uses — substrings never count ("keyboard" is not
+    "board"). Shared single owner for both sides of the contract.
+    """
+    return any(tok.casefold() in _INSTITUTION_KEYWORDS for tok in (phrase or "").split())
+
+
+def parse_institutional_author(head: str) -> Optional[str]:
+    """Return the full institutional author phrase, or None.
+
+    `head` is entry text with numbering/bullet prefix already stripped.
+    Conservative by construction: personal comma/initial structure is
+    rejected (the personal path owns it), single tokens are rejected
+    (existing behavior owns them), leading articles are rejected
+    (title-like text stays unkeyable), and at least one generic
+    organization noun is required. Returns the phrase as written.
+    """
+    # Candidate head: up to the first period or open paren (the author
+    # phase of the entry, before the year).
+    m = re.match(r"^([^().;!?]+?)\s*(\.|[(])", head)
+    if not m:
+        return None
+    phrase = m.group(1).strip()
+    if "," in phrase:
+        return None
+    if re.search(r"\d", phrase):
+        return None
+    tokens = phrase.split()
+    if not (_INSTITUTION_MIN_TOKENS <= len(tokens) <= _INSTITUTION_MAX_TOKENS):
+        return None
+    if tokens[0].casefold() in _INSTITUTION_ARTICLES:
+        return None
+    if not _INSTITUTION_TOKEN_RE.match(tokens[0]):
+        return None
+    if not _INSTITUTION_TOKEN_RE.match(tokens[-1]):
+        return None
+    lowered = [t.casefold() for t in tokens]
+    for i, tok in enumerate(tokens):
+        if _INSTITUTION_TOKEN_RE.match(tok):
+            continue
+        # Lowercase interior tokens are allowed only as flanked connectors.
+        if tok not in _INSTITUTION_CONNECTORS:
+            return None
+        if i == 0 or i == len(tokens) - 1:
+            return None
+        if not _INSTITUTION_TOKEN_RE.match(tokens[i - 1]):
+            return None
+        if not _INSTITUTION_TOKEN_RE.match(tokens[i + 1]):
+            return None
+    if not any(t in _INSTITUTION_KEYWORDS for t in lowered):
+        return None
+    return phrase
+
+
 # ---------------------------------------------------------------------------
 # In-text citation records (produced by the scanner)
 # ---------------------------------------------------------------------------
@@ -156,11 +250,17 @@ class CitationRef:
     `author_display` is what the user sees: the full chain for narrative
     citations ("Taylor & Green"), the primary surname for parenthetical ones.
     `snippet` is the exact source span — never rewritten.
+    `context` is the bounded paragraph slice immediately before the detected
+    author chain (no sentence-boundary crossing); `institutional_phrase` is
+    the candidate institutional interpretation, empty when none applies.
+    Both default empty so previously constructed citations behave identically.
     """
     author_display: str
     key: CitationKey
     paragraph_index: Optional[int]
     snippet: str
+    context: str = ""
+    institutional_phrase: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -218,10 +318,30 @@ def parse_reference_entry(
 
     head = _ENTRY_PREFIX_RE.sub("", raw, count=1)
     head_match = _ENTRY_HEAD_RE.match(head)
-    if not head_match:
-        return None
-    author_display = head_match.group(1)
+    if head_match:
+        author_display = head_match.group(1)
+        window = raw[:_ENTRY_YEAR_WINDOW]
+        year_match = _ENTRY_YEAR_RE.search(window)
+        if not year_match:
+            return None
+        year_token = year_match.group(1)
+        year_key, suffix = split_year_token(year_token)
 
+        return ReferenceEntry(
+            key=CitationKey(normalise_surname(author_display), year_key, suffix),
+            author_display=author_display,
+            year_display=year_key if year_key == "n.d." else f"{year_key}{suffix}",
+            paragraph_index=paragraph_index,
+            text=raw,
+        )
+
+    # Institutional author form (additive): a bounded multi-token phrase
+    # such as "Institutional Standards Board". The complete normalized
+    # phrase becomes the author key — never a final-token alias — so it
+    # cannot collide with a personal surname key.
+    institution = parse_institutional_author(head)
+    if institution is None:
+        return None
     window = raw[:_ENTRY_YEAR_WINDOW]
     year_match = _ENTRY_YEAR_RE.search(window)
     if not year_match:
@@ -230,8 +350,8 @@ def parse_reference_entry(
     year_key, suffix = split_year_token(year_token)
 
     return ReferenceEntry(
-        key=CitationKey(normalise_surname(author_display), year_key, suffix),
-        author_display=author_display,
+        key=CitationKey(normalise_institutional_author(institution), year_key, suffix),
+        author_display=institution,
         year_display=year_key if year_key == "n.d." else f"{year_key}{suffix}",
         paragraph_index=paragraph_index,
         text=raw,
