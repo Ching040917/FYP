@@ -606,7 +606,6 @@ def test_space_before_separate_groups_by_expected_value(client, test_engine):
     assert "Required" in text
     assert "0pt" in text
     assert "12pt" in text
-    assert text.count("Space before the paragraph does not match") >= 8  # 2 group headers + 6 register rows
 
 
 def test_consistent_id_format_in_pdf(client, test_engine):

@@ -132,15 +132,14 @@ def test_exact_child_termination_in_code():
 
 
 def test_real_audit_db_untouched():
-    # real audit.db path must not be used by launcher
-    assert pathlib.Path("backend/audit.db").exists() or True
+    # Static source guard only: inspect the launcher database path literals.
     text = pathlib.Path("app/launcher_support.py").read_text()
     assert "audit.db" in text
     assert "backend/audit.db" not in text
 
 
-def test_no_python_node_required():
-    # launcher uses only stdlib + webbrowser + subprocess + ctypes
+def test_launcher_source_mentions_ctypes():
+    # Static source guard only: ctypes is mentioned in the launcher sources.
     text = pathlib.Path("frozen_main.py").read_text() + pathlib.Path("app/launcher_support.py").read_text()
     assert "ctypes" in text
 
@@ -206,10 +205,9 @@ def test_forced_launcher_termination_kills_backend_concept():
 
 
 def test_unrelated_processes_not_in_job():
-    # Only exact child proc.pid is assigned (import + one call)
+    # Static source guard only: assignment uses the exact child PID expression.
     text = pathlib.Path("frozen_main.py").read_text()
     assert "assign_process_to_job(job, proc.pid" in text
-    assert "Ollama" not in text or True
 
 
 def test_stale_instance_recovery_uses_validation():
@@ -225,12 +223,6 @@ def test_bundle_directory_no_mutable_writes():
     assert "LOCALAPPDATA" in text
     # no direct writes to executable dir
     assert "audit.db" in text
-
-
-def test_restricted_path_still_works_concept():
-    # launcher uses only stdlib + webbrowser, no python/node on PATH
-    text = pathlib.Path("frozen_main.py").read_text() + pathlib.Path("app/launcher_support.py").read_text()
-    assert "ctypes" in text
 
 
 def test_running_instance_immutable_and_url_derivation():
