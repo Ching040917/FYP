@@ -5,7 +5,7 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { PendingNav, clampPage, hasParagraphIdentity } from '../src/lib/pdf/pending-navigation.ts'
+import { PendingNav, PageCommandConsumer, clampPage, hasParagraphIdentity } from '../src/lib/pdf/pending-navigation.ts'
 import type { NavCommand } from '../src/lib/pdf/pending-navigation.ts'
 import type { BlockMapping } from '../src/lib/pdf/paragraph-mapping.ts'
 
@@ -197,4 +197,74 @@ test('non-paragraph finding never emits navigation', () => {
   nav.select(finding('s1', { section_index: 0 }), byIndex, emit)
   nav.select(finding('m1', { margin: 'left' }), byIndex, emit)
   assert.deepEqual(commands, [{ kind: 'none' }, { kind: 'none' }, { kind: 'none' }])
+})
+
+test('structural selection cancels pending body navigation before delayed success or failure', () => {
+  for (const story_type of ['header', 'footer', 'either']) {
+    const nav = new PendingNav()
+    const { commands, emit } = recorder()
+    const structural = finding('story', {
+      structural_story: true,
+      section_index: 0,
+      story_type,
+      story_variant: 'default',
+      evidence_state: 'unresolved',
+      paragraph_index: 3,
+    })
+    nav.select(finding('body', { paragraph_index: 3 }), null, emit)
+    nav.select(structural, null, emit)
+    assert.equal(hasParagraphIdentity(structural), false)
+    assert.equal(nav['pending'], null)
+    assert.deepEqual(commands, [
+      { kind: 'locating', findingId: 'body' },
+      { kind: 'preserve' },
+    ])
+    // Even a delayed callback carrying the OLD selected id must stay inert.
+    nav.onMappingReady(new Map([[3, mapping(3, 8, 'exact', 1)]]), 'body', emit)
+    nav.onMappingFailed('body', emit)
+    assert.equal(commands.length, 2, 'late body evidence must not navigate or switch to text')
+  }
+})
+
+test('structural selection clears outstanding page commands without moving the current view', () => {
+  for (const mode of ['rendered', 'text'] as const) {
+    const nav = new PendingNav()
+    const consumer = new PageCommandConsumer()
+    let currentPage = 5
+    let previewMode: 'rendered' | 'text' = mode
+    let command: { page: number; seq: number } | null = { page: 2, seq: 1 }
+    let seq = 1
+    let locatingId: string | null = 'body'
+    let notice: string | null = 'Locating finding…'
+    const emit = (c: NavCommand) => {
+      if (c.kind === 'preserve') {
+        command = null
+        locatingId = null
+        notice = null
+      } else if (c.kind === 'navigate') {
+        command = { page: c.page, seq: ++seq }
+        previewMode = 'rendered'
+      } else if (c.kind === 'text') {
+        previewMode = 'text'
+      }
+    }
+    nav.select(finding('story', {
+      structural_story: true,
+      section_index: 1,
+      story_type: 'footer',
+      story_variant: 'default',
+      evidence_state: 'empty',
+    }), null, emit)
+    const structuralPage = consumer.consume(command, 10)
+    if (structuralPage !== null) currentPage = structuralPage
+    assert.equal(command, null)
+    assert.equal(locatingId, null)
+    assert.equal(notice, null)
+    assert.equal(currentPage, 5)
+    assert.equal(previewMode, mode)
+
+    nav.select(finding('next-body', { paragraph_index: 2 }), new Map([[2, mapping(2, 7, 'exact', 1)]]), emit)
+    assert.equal(consumer.consume(command, 10), 7)
+    assert.equal(previewMode, 'rendered')
+  }
 })

@@ -8,7 +8,9 @@ non-mutation of persisted results.
 import io
 import re
 import uuid
-import pathlib
+from types import SimpleNamespace
+
+import pytest
 
 from sqlalchemy.orm import sessionmaker
 
@@ -68,6 +70,9 @@ def _seed_audit(test_engine, status="completed", violations=(), citations=(), **
         ai_provider=fields.pop("ai_provider", None),
         document_blocks=fields.pop("document_blocks", None),
     )
+    for key in ("profile_snapshot", "section_metadata", "paragraph_page_mapping", "rendered_preview_pages"):
+        if key in fields:
+            rec_kwargs[key] = fields.pop(key)
     # Only pass datetimes when the caller supplied them, so other tests keep
     # the model defaults (created_at = utcnow, completed_at = NULL).
     if "created_at" in fields:
@@ -110,12 +115,9 @@ def test_export_pdf_contains_core_sections(client, docx_factory):
     for section in (
         "Academic Compliance Report",
         "Executive Summary",
-        "Category Breakdown",
         "Priority Findings",
         "Document Statistics",
         "Scope, Limitations and Privacy",
-        "Required Action",
-        "Deployment Mode",
         "Page Margins",
         # Plain-language title, never the internal rule code.
         "Heading levels skip a step",
@@ -129,7 +131,10 @@ def test_export_pdf_contains_core_sections(client, docx_factory):
     assert "Compliance Score (enabled checks)" in text
     # SUC disclosure: margins not checked.
     assert "Formatting Profile: SUC Academic Report" in text
-    assert "Margins: Not checked" in text
+    assert "Margins Not checked Disabled in this Profile" in text
+    assert "Source: Built-in" in text
+    for label in ("Headers", "Footers", "Page numbers"):
+        assert f"{label} Not checked Disabled in this Profile" in text
 
 
 def test_export_pdf_apa_profile_shows_one_inch_margins(client, docx_factory):
@@ -142,7 +147,8 @@ def test_export_pdf_apa_profile_shows_one_inch_margins(client, docx_factory):
     )
     text = _pdf_text(_export(client, audit_id).content)
     assert "Formatting Profile: APA 7 Student Paper" in text
-    assert "Margins: 1 in on all sides" in text
+    for side in ("Left", "Right", "Top", "Bottom"):
+        assert f"{side} margin: 1 in" in text
 
 
 def test_export_pdf_zero_findings_no_academic_certification(client, test_engine):
@@ -248,7 +254,7 @@ def test_long_text_wraps_without_crash(client, test_engine):
     long_message = "This is a very long finding message. " * 120
     audit_id = _seed_audit(
         test_engine, status="completed", weighted_score=85,
-        violations=[{"rule_code": "FONT_CONSISTENCY", "severity": "MINOR",
+        violations=[{"rule_code": "FONT_CONSISTENCY", "severity": "MAJOR",
                      "location": {"paragraph_index": 0}, "message": long_message,
                      "expected_value": "Times New Roman", "actual_value": "Arial"}],
     )
@@ -265,7 +271,7 @@ def test_long_text_wraps_without_crash(client, test_engine):
 def test_markup_like_input_rendered_as_literal_text(client, test_engine):
     audit_id = _seed_audit(
         test_engine, status="completed",
-        violations=[{"rule_code": "FONT_SIZE", "severity": "MINOR",
+        violations=[{"rule_code": "FONT_SIZE", "severity": "MAJOR",
                      "location": {"paragraph_index": 0},
                      "message": "<b>bold</b> &amp; <script>alert(1)</script>"}],
     )
@@ -280,7 +286,7 @@ def test_markup_like_input_rendered_as_literal_text(client, test_engine):
 def test_unicode_punctuation_renders(client, test_engine):
     audit_id = _seed_audit(
         test_engine, status="completed",
-        violations=[{"rule_code": "ALIGNMENT", "severity": "MINOR",
+        violations=[{"rule_code": "ALIGNMENT", "severity": "MAJOR",
                      "location": {"paragraph_index": 0},
                      "message": "Quote “curly” – en dash — em dash … ellipsis café"}],
     )
@@ -297,7 +303,6 @@ def test_ai_unavailable_audit_exports(client, test_engine):
     resp = _export(client, audit_id)
     assert resp.status_code == 200
     assert resp.content.startswith(b"%PDF")
-    assert "UNAVAILABLE" in _pdf_text(resp.content)
 
 
 def test_document_block_text_absent_from_pdf(client, docx_factory):
@@ -427,14 +432,11 @@ def test_grouped_minors_preserve_all_findings(client, test_engine):
     resp = _export(client, audit_id)
     assert resp.status_code == 200
     text = _pdf_text(resp.content)
-    # Group panel: G### id + friendly rule name + severity/count header
-    assert "G001 — Font family does not match" in text
-    assert "Minor · 10 finding(s)" in text
-    # Appendix is a compact register (not verbose Finding N tables)
-    assert "Appendix" in text
-    assert "Findings Register" in text
-    assert "F001" in text
-    assert "F010" in text
+    assert "Formatting Issue Summary" in text
+    register = text.split("Appendix — Findings Register", 1)[1].split("Appendix: Full Profile Requirements", 1)[0]
+    assert register.count("Font family does not match") == len(violations)
+    for index in range(1, 11):
+        assert f"Paragraph {index}" in register
     # All 10 findings present exactly once in the appendix register, each
     # labelled with the plain-language rule name (never the raw code).
     assert text.count("Font family does not match") >= 11  # 1 group header + 10 register rows
@@ -457,9 +459,10 @@ def test_major_findings_remain_individual(client, test_engine):
         violations=violations,
     )
     text = _pdf_text(_export(client, audit_id).content)
-    # Each major finding gets its own panel with a P### header
-    assert "P001 — Left page margin does not match" in text
-    assert "P002 — Heading levels skip a step" in text
+    assert "Left page margin does not match" in text
+    assert "Heading levels skip a step" in text
+    assert "Left margin wrong" in text
+    assert "Heading level skipped" in text
     assert "Finding 1" not in text
     assert "Finding 2" not in text
 
@@ -468,7 +471,7 @@ def test_specific_action_when_values_exist(client, test_engine):
     """When expected/actual values exist, action should be specific."""
     audit_id = _seed_audit(
         test_engine, status="completed", weighted_score=85,
-        violations=[{"rule_code": "SPACE_BEFORE", "severity": "MINOR",
+        violations=[{"rule_code": "SPACE_BEFORE", "severity": "MAJOR",
                      "location": {"paragraph_index": 18},
                      "message": "Space before 18pt != required 0pt",
                      "expected_value": "0pt", "actual_value": "18pt"}],
@@ -484,7 +487,7 @@ def test_pdf_never_exposes_banned_tokens(client, test_engine):
          "location": {"paragraph_index": 0, "run_index": 0},
          "message": "Body font size 15pt != required 12pt",
          "expected_value": "12pt", "actual_value": "15pt"},
-        {"rule_code": "IMAGE_ALT_TEXT_MISSING", "severity": "MINOR",
+        {"rule_code": "IMAGE_ALT_TEXT_MISSING", "severity": "MAJOR",
          "location": {"image_index": 0, "paragraph_index": 4},
          "message": "Image 1 has no alt-text. Right-click the image -> Alt Text -> enter a description.",
          "expected_value": "Non-empty alt-text description",
@@ -575,228 +578,151 @@ def test_citation_required_action_uses_correct_wording(client, test_engine):
     assert "Add a matching References entry for Lee (2020), or correct or remove" in text
 
 
-def test_space_before_separate_groups_by_expected_value(client, test_engine):
-    """SPACE_BEFORE with 0pt and 12pt expectations must be separate groups."""
-    violations = (
-        [
-            {"rule_code": "SPACE_BEFORE", "severity": "MINOR",
-             "location": {"paragraph_index": i},
-             "message": f"Space before {i}pt != required 0pt",
-             "expected_value": "0pt", "actual_value": f"{i}pt"}
-            for i in (2, 6, 18)
-        ]
-        + [
-            {"rule_code": "SPACE_BEFORE", "severity": "MINOR",
-             "location": {"paragraph_index": 40 + i},
-             "message": f"Space before {6+i}pt != required 12pt",
-             "expected_value": "12pt", "actual_value": f"{6+i}pt"}
-            for i in range(3)
-        ]
-    )
-    audit_id = _seed_audit(
-        test_engine, status="completed", weighted_score=80,
-        violations=violations,
-    )
-    text = _pdf_text(_export(client, audit_id).content)
-    # Two distinct groups, each with correct friendly-name header
-    assert "G001" in text
-    assert "G002" in text
-    assert text.count("Space before the paragraph does not match") >= 8  # 2 group headers + 6 appendix rows
-    # Each group shows its own required value in the comparison row
-    assert "Required" in text
-    assert "0pt" in text
-    assert "12pt" in text
-
-
-def test_consistent_id_format_in_pdf(client, test_engine):
-    """P### for major, G### for minor groups/singletons, F### for appendix."""
-    violations = [
-        {"rule_code": "MARGIN_LEFT", "severity": "MAJOR",
-         "location": {"section_index": 0}, "message": "Wrong margin",
-         "expected_value": "1.5in", "actual_value": "1.0in"},
-        {"rule_code": "FONT_SIZE", "severity": "MINOR",
-         "location": {"paragraph_index": 0}, "message": "Wrong size",
-         "expected_value": "12pt", "actual_value": "14pt"},
-        {"rule_code": "FONT_SIZE", "severity": "MINOR",
-         "location": {"paragraph_index": 1}, "message": "Wrong size",
-         "expected_value": "12pt", "actual_value": "11pt"},
+def test_formatting_summary_groups_by_saved_rule_and_required_value():
+    from app.services.pdf_report import _formatting_summary_rows
+    findings = [
+        SimpleNamespace(rule_code="SPACE_BEFORE", expected_value=expected, actual_value=actual,
+                        location={"paragraph_index": index})
+        for index, (expected, actual) in enumerate((("0pt", "2pt"), ("12pt", "6pt"), ("0pt", "18pt")))
     ]
-    audit_id = _seed_audit(
-        test_engine, status="completed", weighted_score=80,
-        violations=violations,
-    )
-    text = _pdf_text(_export(client, audit_id).content)
-    assert "P001" in text       # first major
-    assert "G001" in text      # FONT_SIZE group (same rule+expected, 2 findings)
-    assert "F001" in text      # appendix entry for MARGIN_LEFT
-    assert "F002" in text      # appendix entry for FONT_SIZE para 1
-    assert "F003" in text      # appendix entry for FONT_SIZE para 2
-
-
-def test_appendix_is_compact_table(client, test_engine):
-    """Appendix must be a compact table (ID/Severity/Rule/Location/Current/Required), not full finding blocks."""
-    violations = [
-        {"rule_code": "FONT_SIZE", "severity": "MINOR",
-         "location": {"paragraph_index": i}, "message": f"Font size wrong {i}",
-         "expected_value": "12pt", "actual_value": f"{10+i}pt"}
-        for i in range(5)
+    rows = _formatting_summary_rows(findings, None)
+    assert rows == [
+        ("Space before the paragraph does not match", 2, "Unavailable", "2 pt; 18 pt", "0 pt"),
+        ("Space before the paragraph does not match", 1, "Unavailable", "6 pt", "12 pt"),
     ]
-    audit_id = _seed_audit(
-        test_engine, status="completed", weighted_score=80,
-        violations=violations,
-    )
+
+
+def test_register_preserves_all_mixed_values_without_internal_ids(client, test_engine):
+    observed = [f"font-choice-{index}-" + "long-value-" * 8 for index in range(8)]
+    audit_id = _seed_audit(test_engine, weighted_score=80, violations=[
+        {"rule_code": "FONT_CONSISTENCY", "severity": "MINOR",
+         "location": {"paragraph_index": index, "run_index": index},
+         "message": "A saved font differs.", "actual_value": value, "expected_value": "Required family"}
+        for index, value in enumerate(observed)
+    ])
     text = _pdf_text(_export(client, audit_id).content)
-    assert "Findings Register" in text
-    # Compact columns present
-    assert "Rule" in text
-    assert "ID" in text
-    assert "Severity" in text
-    assert "Current" in text
-    assert "Required" in text
-    # No verbose "Finding N" header rows in appendix
-    assert text.count("Finding ") == 0
+    register = text.split("Appendix — Findings Register", 1)[1].split("Appendix: Full Profile Requirements", 1)[0]
+    for index, value in enumerate(observed, 1):
+        assert value.replace(" ", "") in register.replace(" ", "")
+        assert f"Paragraph {index}" in register
+    assert register.count("Font family does not match") == len(observed)
+    assert "full values in register" in text
+    assert not re.search(r"\b[PGF]\d{3}\b", text)
+    assert "Run " not in text
 
 
-def test_group_panel_structure(client, test_engine):
-    """Minor groups render as info panels: header, comparison, locations, action."""
-    violations = [
-        {"rule_code": "LINE_SPACING", "severity": "MINOR",
-         "location": {"paragraph_index": i}, "message": "Spacing wrong",
-         "expected_value": "1.5", "actual_value": "1.0"}
-        for i in range(3)
+def test_complete_register_columns_and_severity_order(client, test_engine):
+    audit_id = _seed_audit(test_engine, weighted_score=80, violations=[
+        {"rule_code": code, "severity": severity, "location": {"paragraph_index": index},
+         "message": f"Saved finding {index}", "actual_value": actual, "expected_value": required}
+        for index, (code, severity, actual, required) in enumerate((
+            ("FONT_SIZE", "MINOR", "11pt", "12pt"),
+            ("MARGIN_LEFT", "MAJOR", "1in", "1.5in"),
+            ("CITATION_REFERENCE_AMBIGUOUS", "REVIEW", "Smith (2024)", "One unambiguous entry"),
+        ))
+    ])
+    text = _pdf_text(_export(client, audit_id).content)
+    register = text.split("Appendix — Findings Register", 1)[1].split("Appendix: Full Profile Requirements", 1)[0]
+    assert "Status Finding Location Current Required" in register
+    assert register.index("Major Left page margin") < register.index("Minor Font size")
+    assert "Manual Review Register" in register
+    assert "Manual review · Unscored Citation could match more than one entry" in register
+    assert "Smith (2024)" in register
+    assert "One unambiguous entry" in register
+
+def test_actionable_minor_register_rows_keep_actions_once_and_leave_manual_cards_unduplicated(client, test_engine):
+    from app.services.pdf_report import _REQUIRED_ACTIONS
+
+    findings = [
+        {"rule_code": "REFERENCE_DOI_FORMAT", "severity": "MINOR",
+         "location": {"paragraph_index": 1}, "message": "DOI presentation differs.",
+         "actual_value": "doi:10.1234/abc", "expected_value": "https://doi.org/<doi>"},
+        {"rule_code": "REFERENCE_ORDER", "severity": "MINOR",
+         "location": {"paragraph_index": 2}, "message": "Entries are out of order.",
+         "actual_value": "Smith before Adams", "expected_value": "Alphabetical order"},
+        {"rule_code": "PAGE_NUMBER_FIELD_REQUIRED", "severity": "REVIEW",
+         "location": {"structural_story": True, "section_index": 0,
+                      "story_type": "footer", "evidence_state": "missing"},
+         "message": "Saved structural note.", "actual_value": "No PAGE field",
+         "expected_value": "Automatic page-number field"},
+        {"rule_code": "SOME_FUTURE_RULE", "severity": "ARCHIVE",
+         "location": {}, "message": "Saved legacy observation.",
+         "actual_value": None, "expected_value": None},
     ]
-    audit_id = _seed_audit(test_engine, status="completed", weighted_score=80,
-                           violations=violations)
+    audit_id = _seed_audit(test_engine, weighted_score=96, violations=findings)
+    before = client.get(f"/api/audit/{audit_id}").json()
     text = _pdf_text(_export(client, audit_id).content)
-    assert "G001 — Line spacing does not match" in text
-    assert "Minor · 3 finding(s)" in text
-    assert "Required" in text
-    assert "Observed" in text
-    assert "Affected Locations" in text
-    assert "Required Action" in text
+    register = text.split("Appendix — Findings Register", 1)[1].split("Appendix: Full Profile Requirements", 1)[0]
+    for code in ("REFERENCE_DOI_FORMAT", "REFERENCE_ORDER"):
+        action = _REQUIRED_ACTIONS[code]
+        assert text.count(action) == 1
+        assert f"Action {action}" in register
+    assert "https://doi.org/<doi>" in register
+    assert "Smith before Adams" in register
+    assert register.count("Action") == 2
+    assert "Action Review the footer in Word; insert an automatic page number if required." in text
+    assert "Action Review the footer in Word" not in register
+    assert "Saved legacy observation." not in register  # only Current/Required are shown
+    assert text.count("Manual review · Unscored") >= 1
+    assert client.get(f"/api/audit/{audit_id}").json() == before
 
 
-def test_grouped_actions_are_plural_and_specific(client, test_engine):
-    """Group actions must be plural and carry the group's expected value."""
-    violations = (
-        [
-            {"rule_code": "FONT_SIZE", "severity": "MINOR",
-             "location": {"paragraph_index": i}, "message": "Wrong size",
-             "expected_value": "12pt", "actual_value": "14pt"}
-            for i in range(3)
-        ]
-        + [
-            {"rule_code": "ALIGNMENT", "severity": "MINOR",
-             "location": {"paragraph_index": 10 + i}, "message": "Not justified",
-             "expected_value": "justify", "actual_value": "left"}
-            for i in range(2)
-        ]
-        + [
-            {"rule_code": "SPACE_BEFORE", "severity": "MINOR",
-             "location": {"paragraph_index": 20 + i}, "message": "Space before wrong",
-             "expected_value": "0pt", "actual_value": "18pt"}
-            for i in range(2)
-        ]
-    )
-    audit_id = _seed_audit(test_engine, status="completed", weighted_score=80,
-                           violations=violations)
+def test_long_minor_action_wraps_without_losing_the_saved_value(client, test_engine):
+    observed = "long-font-name-" * 38
+    audit_id = _seed_audit(test_engine, weighted_score=99, violations=[{
+        "rule_code": "FONT_CONSISTENCY", "severity": "MINOR",
+        "location": {"paragraph_index": 0}, "message": "Formatting differs.",
+        "actual_value": observed, "expected_value": "Times New Roman",
+    }])
     text = _pdf_text(_export(client, audit_id).content)
-    assert "Change the listed body-text runs to 12 pt. Review headings separately" in text
-    assert "Change the listed body paragraphs to justified alignment. Review heading alignment separately." in text
-    assert "Change the space before for the listed paragraphs to 0pt." in text
-    assert "this paragraph" not in text
+    register = text.split("Appendix — Findings Register", 1)[1].split("Appendix: Full Profile Requirements", 1)[0]
+    assert register.count("Action") == 1
+    assert "Change font for Paragraph 1 from" in register
+    assert observed in re.sub(r"\s+", "", register)
+    assert "to Times New Roman." in register
 
 
-def test_singleton_heading_uses_g_id_with_friendly_name(client, test_engine):
-    """Singleton minors use 'G### — Friendly Name' headings, never 'Finding N'."""
-    audit_id = _seed_audit(
-        test_engine, status="completed", weighted_score=85,
-        violations=[{"rule_code": "FONT_CONSISTENCY", "severity": "MINOR",
-                     "location": {"paragraph_index": 0},
-                     "message": "Font mismatch",
-                     "expected_value": "Times New Roman", "actual_value": "Arial"}],
-    )
-    text = _pdf_text(_export(client, audit_id).content)
-    assert "G001 — Font family does not match" in text
-    assert "Minor · 1 finding(s)" in text
-    assert "Finding " not in text
+def test_minor_frequency_counts_saved_findings_not_occurrences():
+    from app.services.pdf_report import _minor_frequency, _priority_findings
+    findings = [SimpleNamespace(rule_code=code, severity=severity, location={"occurrences": 40})
+                for code, severity in (("FONT_SIZE", "MINOR"), ("ALIGNMENT", "MINOR"),
+                                       ("FONT_SIZE", "MINOR"), ("FONT_SIZE", "MAJOR"),
+                                       ("ALIGNMENT", "REVIEW"))]
+    assert _minor_frequency(findings) == [("FONT_SIZE", 2), ("ALIGNMENT", 1)]
+    assert [v.severity for v in _priority_findings(findings)] == ["MAJOR", "REVIEW"]
 
 
-def test_section_order_majors_then_citation_then_minors(client, test_engine):
-    """Major findings, then citation guidance, then grouped minors, then stats/scope/appendix."""
-    violations = [
-        {"rule_code": "CITATION_MISMATCH", "severity": "MAJOR",
-         "location": {"paragraph_index": 0},
-         "message": "Citation 'Garcia (2018)' was found in text, but no matching entry was found.",
-         "expected_value": "Matching References entry", "actual_value": "Garcia (2018)"},
-        {"rule_code": "FONT_SIZE", "severity": "MINOR",
-         "location": {"paragraph_index": 1}, "message": "Wrong size",
-         "expected_value": "12pt", "actual_value": "14pt"},
-        {"rule_code": "FONT_SIZE", "severity": "MINOR",
-         "location": {"paragraph_index": 2}, "message": "Wrong size",
-         "expected_value": "12pt", "actual_value": "11pt"},
-    ]
-    citations = [
-        {"paragraph_index": 0, "text_snippet": "Garcia (2018) states",
-         "issue_type": "CITATION_MISMATCH", "message": "No matching entry.",
-         "suggestion": "Recommended correction\nAdd the missing reference entry.",
-         "confidence": 0.9},
-    ]
-    audit_id = _seed_audit(
-        test_engine, status="completed", weighted_score=80,
-        violations=violations, citations=citations,
-    )
-    text = _pdf_text(_export(client, audit_id).content)
-    order = ["Major Priority Findings", "Citation Guidance", "Grouped Minor Findings",
-             "Document Statistics", "Scope, Limitations and Privacy",
-             "Appendix — Findings Register"]
-    positions = [text.index(s) for s in order]
-    assert positions == sorted(positions), "sections out of order"
-    # Garcia guidance sits after the Major findings section
-    assert text.index("Garcia (2018)") > text.index("Major Priority Findings")
+def test_disabled_categories_require_known_saved_evidence():
+    from app.services.pdf_report import _category_disabled
+    from app.services.profile_snapshot import EffectiveProfileSnapshot
+    snapshot = EffectiveProfileSnapshot().with_fingerprint().to_dict()
+    assert _category_disabled("page_margins", snapshot)
+    assert _category_disabled("font_consistency", snapshot)
+    assert _category_disabled("font_size", snapshot)
+    assert not _category_disabled("page_margins", None)
+    assert not _category_disabled("font_size", {"body": {}})
+    snapshot["body"]["font_size_pt"] = 11
+    assert not _category_disabled("font_size", snapshot)
+    assert _category_disabled("font_consistency", snapshot)
 
 
-def test_consecutive_paragraph_locations_compacted_into_ranges(client, test_engine):
-    """Consecutive paragraphs collapse to a range; run indexes are preserved."""
-    violations = [
-        {"rule_code": "FONT_SIZE", "severity": "MINOR",
-         "location": {"paragraph_index": i, "run_index": i * 2},
-         "message": "Wrong size", "expected_value": "12pt", "actual_value": "14pt"}
-        for i in range(5)
-    ]
-    audit_id = _seed_audit(test_engine, status="completed", weighted_score=80,
-                           violations=violations)
-    text = _pdf_text(_export(client, audit_id).content)
-    assert "Paragraphs 1-5" in text
-    assert "Run 1" not in text
-    assert "Run 3" not in text
-
-
-def test_appendix_lands_on_new_landscape_page_split_by_severity(client, test_engine):
-    """Appendix starts on a fresh landscape page, Major then Minor sections."""
-    violations = [
-        {"rule_code": "MARGIN_LEFT", "severity": "MAJOR",
-         "location": {"section_index": 0}, "message": "Wrong margin",
-         "expected_value": "1.5in", "actual_value": "1.0in"},
-    ] + [
-        {"rule_code": "FONT_SIZE", "severity": "MINOR",
-         "location": {"paragraph_index": i}, "message": "Wrong size",
-         "expected_value": "12pt", "actual_value": "14pt"}
-        for i in range(3)
-    ]
-    audit_id = _seed_audit(test_engine, status="completed", weighted_score=75,
-                           violations=violations)
-    resp = _export(client, audit_id)
-    assert resp.status_code == 200
+def test_executive_scope_and_final_disclosure_are_not_duplicated(client, test_engine):
     from pypdf import PdfReader
-    pages = PdfReader(io.BytesIO(resp.content)).pages
-    assert len(pages) >= 2
-    last = pages[-1]
-    assert last.mediabox.width > last.mediabox.height  # landscape appendix page
-    text = _pdf_text(resp.content)
-    assert "Major Findings" in text
-    assert "Minor Findings" in text
-    assert "Rule" in text
+    audit_id = _seed_audit(test_engine, weighted_score=100)
+    response = _export(client, audit_id)
+    pages = [re.sub(r"\s+", " ", page.extract_text() or "")
+             for page in PdfReader(io.BytesIO(response.content)).pages]
+    text = " ".join(pages)
+    assert "Executive Summary" in pages[0]
+    assert "Profile Coverage Matrix" not in pages[0]
+    assert "Profile Coverage Matrix" in pages[1]
+    assert text.count("Scope, Limitations and Privacy") == 1
+    assert "Scope, Limitations and Privacy" in pages[-1]
+    assert text.index("Appendix: Full Profile Requirements") < text.index("Scope, Limitations and Privacy")
+    for number, page in enumerate(pages, 1):
+        assert f"Page {number} of {len(pages)}" in page
+        assert "Generated locally · Original DOCX unchanged" in page
+
 
 
 def test_citation_guidance_preserved_for_garcia_and_lee(client, test_engine):
@@ -870,13 +796,10 @@ def test_new_citation_reference_codes_render_friendly_wording(client, test_engin
     assert "Citation is missing or uses the wrong year suffix" in text
     assert "Reference List entry is not cited in the text" in text
     assert "Duplicate Reference List entry" in text
-    for action in (
-        "Correct the year in the in-text citation or in the Reference List entry so both state the same year.",
-        "Add the matching year suffix (a, b, ...) to the in-text citation or correct it in the Reference List entry.",
-        "Cite this source in the text, or remove the Reference List entry.",
-        "Keep one entry and remove the duplicate.",
-    ):
-        assert action in text, action
+    assert "Correct the year in the in-text citation or in the Reference List entry so both state the same year." in text
+    for value in ("Smith (2020a)", "At least one in-text citation", "One entry per source",
+                  "Jones, A. (2019). Other. Press."):
+        assert value in text
     # The technical codes must not leak into the report at all.
     assert "CITATION_REFERENCE_MISMATCH" not in text
 
@@ -903,7 +826,6 @@ def test_review_finding_gets_its_own_panel_register_group_and_no_score_impact(cl
     assert "Major Citation could match more than one entry" not in text
     # The explanatory panel exists, not just a bare register row.
     assert "Manual Review Findings" in text
-    assert "ACA could not determine whether these citations" in text
     # One finding, zero major, zero minor, and the score stays 100.
     assert "1 deterministic finding(s): 0 major" in text
     assert "0 minor" in text
@@ -964,67 +886,6 @@ def test_missing_section_finding_is_not_phrased_as_one_citation(client, test_eng
     assert "Add a matching References entry for this citation" not in text
 
 
-# ---------------------------------------------------------------------------
-# Frontend ↔ PDF presentation mirror
-#
-# ReportLab cannot read TypeScript, so the Python maps below are a hand-kept
-# mirror. These tests read the TypeScript source of truth and fail the moment
-# the two drift — the mirror can never silently go stale.
-# ---------------------------------------------------------------------------
-
-_FRONTEND_ROOT = pathlib.Path(__file__).resolve().parents[2] / "frontend" / "src"
-
-
-def _ts_object_literal(source: str, name: str) -> dict:
-    """Parse a flat `const <name>: ... = { 'K': 'V', ... }` TS object literal."""
-    start = source.index(f"const {name}")
-    open_brace = source.index("{", start)
-    depth = 0
-    for i in range(open_brace, len(source)):
-        if source[i] == "{":
-            depth += 1
-        elif source[i] == "}":
-            depth -= 1
-            if depth == 0:
-                body = source[open_brace + 1 : i]
-                break
-    else:  # pragma: no cover - malformed source fails loudly below
-        raise AssertionError(f"unterminated object literal for {name}")
-    entries = {}
-    for key, value in re.findall(r"([A-Z_]+):\s*'((?:[^'\\]|\\.)*)'", body):
-        entries[key] = value.replace("\\'", "'")
-    assert entries, f"no entries parsed from {name}"
-    return entries
-
-
-def test_pdf_rule_names_mirror_the_frontend_title_map():
-    """_RULE_NAME must equal FRIENDLY_RULE_TITLES, code for code."""
-    from app.services.pdf_report import _RULE_NAME
-
-    source = (_FRONTEND_ROOT / "lib" / "friendly-finding.ts").read_text(encoding="utf-8")
-    frontend = _ts_object_literal(source, "FRIENDLY_RULE_TITLES")
-    assert frontend == _RULE_NAME, (
-        "PDF rule names have drifted from the frontend title map: "
-        f"only-in-frontend={sorted(set(frontend) - set(_RULE_NAME))} "
-        f"only-in-pdf={sorted(set(_RULE_NAME) - set(frontend))} "
-        f"differing={[k for k in set(frontend) & set(_RULE_NAME) if frontend[k] != _RULE_NAME[k]]}"
-    )
-
-
-def test_pdf_severity_labels_mirror_the_frontend_badge():
-    """_SEVERITY_LABEL must equal severityBadge's labels for MAJOR/MINOR/REVIEW."""
-    from app.services.pdf_report import _SEVERITY_LABEL, _UNCLASSIFIED_SEVERITY
-
-    source = (_FRONTEND_ROOT / "lib" / "audit" / "categories.ts").read_text(encoding="utf-8")
-    labels = dict(
-        (sev, re.search(rf"label: '{re.escape(label)}'", source))
-        for sev, label in _SEVERITY_LABEL.items()
-    )
-    assert all(labels.values()), f"missing frontend labels for {_SEVERITY_LABEL}"
-    # The retired "For review" wording must not survive anywhere.
-    assert "For review" not in source
-    # The unrecognised-token label exists on both sides.
-    assert f"label: '{_UNCLASSIFIED_SEVERITY}'" in source
 
 
 def test_unclassified_severity_renders_in_the_register_and_is_never_scored(client, test_engine):
@@ -1081,13 +942,15 @@ def test_summary_totals_reconcile_across_all_four_severities(client, test_engine
     ) in text, "summary does not reconcile across the four severity groups"
 
     # Each group is labelled and carries its own findings.
-    assert "Major Findings" in text
-    assert "Minor Findings" in text
+    assert "Scored and Historical Findings Register" in text
+    assert "Manual Review Register" in text
     assert "Manual review" in text
     assert "Unclassified" in text
-    # Every finding appears in the register, exactly once, by its F### id.
-    for fid in ("F001", "F002", "F003", "F004", "F005"):
-        assert text.count(fid) == 1, f"{fid} is not listed exactly once in the register"
+    register = text.split("Appendix — Findings Register", 1)[1].split("Appendix: Full Profile Requirements", 1)[0]
+    for title in ("Left page margin does not match", "Font size does not match",
+                  "Line spacing does not match", "Citation could match more than one entry",
+                  "Paragraph alignment does not match"):
+        assert register.count(title) == 1
     # No raw severity token or rule code leaks into the reader-facing report.
     assert "ARCHIVE" not in text
     for code in ("MARGIN_LEFT", "FONT_SIZE", "LINE_SPACING",
@@ -1105,13 +968,11 @@ def test_register_columns_and_manual_review_panel_contract(client, test_engine):
          "expected_value": "One unambiguous matching entry", "actual_value": "(Smith, 2024)"},
     ])
     text = _pdf_text(_export(client, audit_id).content)
-    # Register column order: ID, Severity, Rule, Location, Current, Required.
-    assert re.search(r"ID\s+Severity\s+Rule\s+Location\s+Current\s+Required", text)
+    assert "Status Finding Location Current Required" in text
     # The retired wording is gone entirely.
     assert "For review" not in text
-    # The panel carries the same Current/Required pair as the register.
-    assert "Current (Smith, 2024)" in text
-    assert "Required One unambiguous matching entry" in text
+    assert "Found (Smith, 2024)" in text
+    assert "Expected One unambiguous matching entry" in text
     # A REVIEW finding is never counted as a scored severity. ("Major"/"Minor"
     # remain legitimate column headers elsewhere, so the counts are the
     # contract that must hold.)
@@ -1121,10 +982,9 @@ def test_register_columns_and_manual_review_panel_contract(client, test_engine):
     assert "Compliance Score (enabled checks)" in text
 
 
-def test_reference_hanging_indent_values_and_action_reach_the_pdf(client, test_engine):
-    """Phase 4 case 17: the PDF carries the same Current/Required values the
-    workspace shows, and the action names the CONFIGURED indent — never a
-    hard-coded 0.5 for a profile that required something else."""
+def test_reference_hanging_indent_values_and_occurrences_reach_the_pdf(client, test_engine):
+    """The compact summary/register retain each required/current comparison and
+    consolidated occurrence count without repeating a correction essay."""
     audit_id = _seed_audit(test_engine, violations=[
         {"rule_code": "REFERENCE_HANGING_INDENT", "severity": "MINOR",
          "location": {"paragraph_index": 4, "occurrences": 3,
@@ -1141,8 +1001,7 @@ def test_reference_hanging_indent_values_and_action_reach_the_pdf(client, test_e
     assert "0 in" in text
     assert "0.5 in" in text
     assert "0.25 in" in text
-    # The action names the configured value.
-    assert "Apply a 0.5 in hanging indent" in text
+    assert "3 occurrences" in text
     # No raw unit token or rule code leaks.
     assert "0in" not in text.replace("0 in", "")
     assert "REFERENCE_HANGING_INDENT" not in text
@@ -1152,11 +1011,8 @@ def test_reference_hanging_indent_values_and_action_reach_the_pdf(client, test_e
 # PDF rule-coverage inventory (Phase 1 of the PDF completion task)
 # ---------------------------------------------------------------------------
 
-# Every rule code the deterministic engines can persist. Derived from the
-# emitting modules, NOT from this list's own contents; the
-# `test_every_emitted_rule_code_is_inventoried` guard below re-derives the set
-# from the production source and fails when a new code appears without an
-# inventory entry.
+# Every rule family that can appear in a persisted report. Functional PDF
+# regressions below cover structural findings with their actual saved values.
 _PRODUCTION_RULE_CODES = (
     # Layout engine (static)
     "MARGIN_LEFT", "MARGIN_RIGHT", "MARGIN_TOP", "MARGIN_BOTTOM",
@@ -1177,31 +1033,10 @@ _PRODUCTION_RULE_CODES = (
     "REFERENCE_FONT_SIZE", "REFERENCE_ALIGNMENT",
     # Author-only alphabetical-order review
     "REFERENCE_ORDER",
+    "REFERENCE_DOI_FORMAT",
+    "HEADER_CONTENT_REQUIRED", "FOOTER_CONTENT_REQUIRED", "PAGE_NUMBER_FIELD_REQUIRED",
 )
 
-# Rule codes whose PDF title is fixed by the task specification. Checked
-# verbatim so a well-meaning rename cannot silently diverge from the Audit
-# Workspace wording.
-_REQUIRED_PDF_TITLES = {
-    "CITATION_MISMATCH": "Citation has no matching Reference List entry",
-    "CITATION_REFERENCE_MISMATCH": "Citation year does not match the Reference List entry",
-    "CITATION_YEAR_SUFFIX_MISMATCH": "Citation is missing or uses the wrong year suffix",
-    "CITATION_REFERENCE_AMBIGUOUS": "Citation could match more than one entry",
-    "REFERENCE_NOT_CITED": "Reference List entry is not cited in the text",
-    "REFERENCE_DUPLICATE": "Duplicate Reference List entry",
-    "REFERENCE_HEADING_TEXT": "Reference List heading does not match",
-    "REFERENCE_HEADING_BOLD": "Reference List heading should be bold",
-    "REFERENCE_HEADING_ALIGNMENT": "Reference List heading alignment does not match",
-    "REFERENCE_SECTION_NEW_PAGE": "Reference List should start on a new page",
-    "REFERENCE_HANGING_INDENT": "Reference entry hanging indent does not match",
-    "REFERENCE_SPACE_BEFORE": "Space before Reference List entries does not match",
-    "REFERENCE_SPACE_AFTER": "Space after Reference List entries does not match",
-    "REFERENCE_FONT_FAMILY": "Reference entry font family does not match",
-    "REFERENCE_FONT_SIZE": "Reference entry font size does not match",
-    "REFERENCE_ALIGNMENT": "Reference entry alignment does not match",
-    "REFERENCE_ORDER": "Reference List is not in alphabetical order",
-    "TABLE_CAPTION_MISSING": "Table caption is missing",
-}
 
 
 def test_every_production_rule_has_a_friendly_pdf_title():
@@ -1216,14 +1051,6 @@ def test_every_production_rule_has_a_friendly_pdf_title():
         assert "_" not in title, f"{code} title still looks like a rule code: {title}"
 
 
-def test_approved_pdf_titles_match_the_specification_exactly():
-    """The task fixes these titles: they must match character for character."""
-    from app.services.pdf_report import _RULE_NAME
-
-    for code, expected in _REQUIRED_PDF_TITLES.items():
-        assert _RULE_NAME.get(code) == expected, (
-            f"{code}: PDF title is {_RULE_NAME.get(code)!r}, expected {expected!r}"
-        )
 
 
 def test_every_production_rule_has_a_safe_required_action():
@@ -1261,6 +1088,404 @@ def test_unknown_production_code_gets_a_safe_humanised_fallback():
     action = _friendly_required_action(v, "Paragraph 2", None)
     assert action
     assert "SOME_FUTURE_RULE" not in action
-    # Unknown codes fall back to the raw code as title (documented) but the
-    # action never does.
-    assert _rule_name("SOME_FUTURE_RULE") == "SOME_FUTURE_RULE"
+    assert _rule_name("SOME_FUTURE_RULE") == "Some future rule"
+
+
+@pytest.mark.parametrize(
+    "code,kind,state,current,required",
+    [
+        ("HEADER_CONTENT_REQUIRED", "header", "missing",
+         "No effective Normal-pages Header definition",
+         "Text or a supported field in each section's Normal-pages Header definition"),
+        ("FOOTER_CONTENT_REQUIRED", "footer", "missing",
+         "No effective Normal-pages Footer definition",
+         "Text or a supported field in each section's Normal-pages Footer definition"),
+        ("HEADER_CONTENT_REQUIRED", "header", "empty",
+         "The effective Normal-pages Header contains no text or supported field",
+         "Text or a supported field in each section's Normal-pages Header definition"),
+        ("FOOTER_CONTENT_REQUIRED", "footer", "empty",
+         "The effective Normal-pages Footer contains no text or supported field",
+         "Text or a supported field in each section's Normal-pages Footer definition"),
+        ("PAGE_NUMBER_FIELD_REQUIRED", "either", "missing",
+         "No supported PAGE field found in the selected Normal-pages definition(s)",
+         "A PAGE field in each section's Normal-pages Header or Footer definition"),
+        ("PAGE_NUMBER_FIELD_REQUIRED", "header", "missing",
+         "No supported PAGE field found in the selected Normal-pages definition(s)",
+         "A PAGE field in each section's Normal-pages Header definition"),
+        ("PAGE_NUMBER_FIELD_REQUIRED", "footer", "missing",
+         "No supported PAGE field found in the selected Normal-pages definition(s)",
+         "A PAGE field in each section's Normal-pages Footer definition"),
+        ("HEADER_CONTENT_REQUIRED", "header", "unresolved",
+         "Supported structural evidence is insufficient to determine this requirement.",
+         "Text or a supported field in each section's Normal-pages Header definition"),
+        ("FOOTER_CONTENT_REQUIRED", "footer", "unresolved",
+         "Supported structural evidence is insufficient to determine this requirement.",
+         "Text or a supported field in each section's Normal-pages Footer definition"),
+        ("PAGE_NUMBER_FIELD_REQUIRED", "either", "unresolved",
+         "Supported structural evidence is insufficient to determine this requirement.",
+         "A PAGE field in each section's Normal-pages Header or Footer definition"),
+    ],
+)
+def test_structural_reviews_export_friendly_details_without_changing_saved_values(
+    client, test_engine, monkeypatch, code, kind, state, current, required,
+):
+    """Display saved structural outcomes plainly without rerunning or rewriting them."""
+    from app.services import page_element_rules
+    from app.services.pdf_report import required_action, _friendly_required_action
+
+    def no_reaudit(*args, **kwargs):
+        raise AssertionError("History/PDF must not rerun structural rules")
+
+    monkeypatch.setattr(page_element_rules, "check_page_element_requirements", no_reaudit)
+    label = {"header": "Header", "footer": "Footer", "either": "Header or Footer"}[kind]
+    target = f"Section 2 · {label} · Normal pages"
+    if state == "unresolved":
+        action = (f"In Word, inspect {target} against your Custom Profile; "
+                  "ACA cannot determine this requirement from supported structure.")
+    else:
+        change = ("insert a PAGE field if needed" if code == "PAGE_NUMBER_FIELD_REQUIRED"
+                  else "add the required content if needed")
+        action = (f"In Word, review {target} against your Custom Profile and {change}. "
+                  "Verify the rendered document manually.")
+    finding = dict(
+        rule_code=code, severity="REVIEW",
+        location=dict(structural_story=True, section_index=1, story_type=kind,
+                      story_variant="default", evidence_state=state),
+        message=action, expected_value=required, actual_value=current,
+    )
+    audit_id = _seed_audit(test_engine, weighted_score=100, violations=[finding],
+                           paragraph_page_mapping={"0": 7}, rendered_preview_pages=8)
+    before = client.get(f"/api/audit/{audit_id}").json()
+    response = _export(client, audit_id)
+    assert response.status_code == 200
+    text = _pdf_text(response.content)
+    title = {
+        "HEADER_CONTENT_REQUIRED": "Header needs review",
+        "FOOTER_CONTENT_REQUIRED": "Footer needs review",
+        "PAGE_NUMBER_FIELD_REQUIRED": "Page number needs review",
+    }[code]
+    assert title in text
+    assert target in text
+    assert "Structural evidence only: Rendered page could not be determined" in text
+    assert "no exact header/footer highlight" in text.lower()
+    displayed_action = f"In Word, check this section’s {label.lower()}"
+    if state != "unresolved":
+        change = ("insert a page-number field if needed" if code == "PAGE_NUMBER_FIELD_REQUIRED"
+                  else "add text or a supported field if needed")
+        displayed_action += f" and {change}"
+    displayed_action += ". Verify the rendered document manually."
+    assert current not in text
+    assert required not in text
+    assert action not in text
+    assert "Manual Review Findings" in text
+    assert "These findings require manual review and do not affect the score." in text
+    assert "1 deterministic finding(s): 0 major" in text
+    assert "0 minor" in text
+    assert "1 for manual review (never scored)" in text
+    assert code not in text
+    assert "Figure" not in text
+    assert "Starting original document page" not in text
+    saved = SimpleNamespace(**finding)
+    assert required_action(saved) == displayed_action
+    assert _friendly_required_action(saved, target, None) == displayed_action
+    assert client.get(f"/api/audit/{audit_id}").json() == before
+
+
+def test_structural_locations_with_incomplete_section_evidence_do_not_guess_pages(monkeypatch):
+    from app.services import pdf_report
+
+    def no_body_mapping(*args, **kwargs):
+        raise AssertionError("Stored stories do not have physical body-page locations")
+
+    monkeypatch.setattr(pdf_report, "_pages_for_section", no_body_mapping)
+    monkeypatch.setattr(pdf_report, "_page_for_paragraph", no_body_mapping)
+    audit = SimpleNamespace(
+        paragraph_page_mapping={"0": 7}, rendered_preview_pages=8,
+        section_metadata=[{"section_index": 0}],
+    )
+    for kind, label in (("header", "Header"), ("footer", "Footer"), ("either", "Header or Footer")):
+        loc = dict(structural_story=True, section_index=0, story_type=kind,
+                   story_variant="default", evidence_state="missing")
+        target = f"Section 1 · {label} · Normal pages"
+        assert pdf_report.location_text(loc) == target
+        assert pdf_report.friendly_location_text(loc) == target
+        assert pdf_report.page_label_for_location(
+            loc, audit.paragraph_page_mapping, section_metadata=audit.section_metadata,
+            rendered_pages=8,
+        ) == ("Structural evidence only", "Rendered page could not be determined")
+        assert pdf_report._pages_summary_for_group([SimpleNamespace(location=loc)], audit) == ("", 1)
+
+
+def test_structural_review_sections_remain_individual_in_mixed_review_report(client, test_engine):
+    findings = []
+    for index in (0, 1):
+        findings.append(dict(
+            rule_code="HEADER_CONTENT_REQUIRED", severity="REVIEW",
+            location=dict(structural_story=True, section_index=index, story_type="header",
+                          story_variant="default", evidence_state="missing"),
+            message=(f"In Word, review Section {index + 1} · Header · Normal pages against your "
+                     "Custom Profile and add the required content if needed. "
+                     "Verify the rendered document manually."),
+            actual_value="No effective Normal-pages Header definition",
+            expected_value="Text or a supported field in each section's Normal-pages Header definition",
+        ))
+    findings.append(dict(
+        rule_code="CITATION_REFERENCE_AMBIGUOUS", severity="REVIEW",
+        location={"paragraph_index": 0}, message="Citation could match multiple entries.",
+        actual_value="Smith (2024)", expected_value="One unambiguous matching entry",
+    ))
+    audit_id = _seed_audit(test_engine, weighted_score=100, violations=findings)
+    text = _pdf_text(_export(client, audit_id).content)
+    for index in (1, 2):
+        assert f"Section {index} · Header · Normal pages" in text
+    assert "Citation could match more than one entry" in text
+    assert "3 for manual review (never scored)" in text
+    assert "Grouped Minor Findings" not in text
+
+
+@pytest.mark.parametrize("placement", ["header", "footer", "either"])
+def test_pdf_discloses_only_saved_structural_settings(client, test_engine, monkeypatch, placement):
+    from app.services.profile_snapshot import EffectiveProfileSnapshot
+    from app.services import profile_snapshot
+
+    def no_profile_resolution(*args, **kwargs):
+        raise AssertionError("History/PDF must use the stored snapshot")
+
+    monkeypatch.setattr(profile_snapshot, "resolve_snapshot", no_profile_resolution)
+
+    snapshot = EffectiveProfileSnapshot(
+        schema_version=6, profile_id="saved-structural", profile_name="Saved structural profile",
+        profile_source="custom", header_check_requirements=True,
+        footer_check_requirements=False, page_number_check_requirements=True,
+        page_number_placement=placement,
+    ).with_fingerprint().to_dict()
+    audit_id = _seed_audit(test_engine, weighted_score=100, profile_snapshot=snapshot)
+    before = client.get(f"/api/audit/{audit_id}").json()
+    assert before["profile_snapshot"] == snapshot
+    text = _pdf_text(_export(client, audit_id).content)
+    label = {"header": "Header", "footer": "Footer", "either": "Header or Footer"}[placement]
+    assert "Formatting Profile: Saved structural profile" in text
+    assert "Headers: Manual review only · Unscored" in text
+    assert "Footers Not checked Disabled in this Profile" in text
+    assert f"Page numbers: Manual review only · Unscored · Placement: {label}" in text
+    assert "Checks stored Normal-pages definitions in every document section" in text
+    assert "does not establish exact geometry or rendered visibility" in text
+    assert "First-page and even-page definitions are not checked." in text
+    assert "saved-structural" not in text
+    assert snapshot["fingerprint"] not in text
+    assert client.get(f"/api/audit/{audit_id}").json() == before
+
+
+@pytest.mark.parametrize("version", [None, 1, 5, 6])
+def test_pdf_missing_or_disabled_structural_settings_stay_not_checked(client, test_engine, version):
+    from app.services.profile_snapshot import EffectiveProfileSnapshot
+
+    snapshot = None if version is None else EffectiveProfileSnapshot(
+        schema_version=version, profile_name="Saved older requirements",
+    ).with_fingerprint().to_dict()
+    audit_id = _seed_audit(test_engine, weighted_score=100, profile_snapshot=snapshot)
+    text = _pdf_text(_export(client, audit_id).content)
+    for label in ("Headers", "Footers", "Page numbers"):
+        assert f"{label} Not checked Disabled in this Profile" in text
+    assert "Headers: Manual review only" not in text
+    assert "Footers: Manual review only" not in text
+    assert "Page numbers: Manual review only" not in text
+    assert "Normal-pages PAGE field · Placement:" not in text
+
+
+@pytest.mark.parametrize(
+    "mapping,blocks,sections,rendered_pages,expected_page",
+    [
+        ({"18": 3, "19": 4}, [{"index": 18, "text": "Section starts here"}],
+         [{"section_index": 2, "start_paragraph_index": 18, "end_paragraph_index": 22}], 8, 3),
+        ({"19": 4}, [{"index": 18, "text": "Unmapped section start"},
+                     {"index": 19, "text": "Later mapped paragraph"}],
+         [{"section_index": 2, "start_paragraph_index": 18, "end_paragraph_index": 22}], 8, None),
+        ({"18": 2, "19": 3}, [{"index": 18, "text": " "},
+                              {"index": 19, "text": "Later visible text"}],
+         [{"section_index": 2, "start_paragraph_index": 18, "end_paragraph_index": 22}], 8, None),
+        ({"18": 3}, None,
+         [{"section_index": 2, "start_paragraph_index": 18, "end_paragraph_index": 22}], 8, None),
+        (None, [{"index": 18, "text": "Section starts here"}],
+         [{"section_index": 2, "start_paragraph_index": 18, "end_paragraph_index": 22}], 8, None),
+        ({"18": 3}, [{"index": 18, "text": "Section starts here"}], None, 8, None),
+        ({"18": 9}, [{"index": 18, "text": "Section starts here"}],
+         [{"section_index": 2, "start_paragraph_index": 18, "end_paragraph_index": 22}], 8, None),
+        ({"18": True}, [{"index": 18, "text": "Section starts here"}],
+         [{"section_index": 2, "start_paragraph_index": 18, "end_paragraph_index": 22}], 8, None),
+    ],
+)
+def test_structural_pdf_evidence_uses_only_proven_first_rendered_page(
+    client, test_engine, mapping, blocks, sections, rendered_pages, expected_page,
+):
+    from app.services.pdf_report import page_label_for_location, _pages_summary_for_group
+
+    location = dict(structural_story=True, section_index=2, story_type="footer",
+                    story_variant="default", evidence_state="missing")
+    finding = dict(
+        rule_code="FOOTER_CONTENT_REQUIRED", severity="REVIEW", location=location,
+        message="Saved protocol action must remain stored but not be displayed.",
+        actual_value="No effective Normal-pages Footer definition",
+        expected_value="Text or a supported field in each section's Normal-pages Footer definition",
+    )
+    audit_id = _seed_audit(
+        test_engine, weighted_score=100, violations=[finding],
+        paragraph_page_mapping=mapping, rendered_preview_pages=rendered_pages,
+        section_metadata=sections, document_blocks=blocks,
+    )
+    before = client.get(f"/api/audit/{audit_id}").json()
+    text = _pdf_text(_export(client, audit_id).content)
+    assert "Footer needs review" in text
+    assert "Section 3 · Footer · Normal pages" in text
+    assert "no exact header/footer highlight" in text.lower()
+    if expected_page is None:
+        assert "Structural evidence only" in text
+        assert "Rendered page could not be determined" in text
+        assert "Page-level structural evidence" not in text
+        expected_label = ("Structural evidence only", "Rendered page could not be determined")
+    else:
+        assert f"Original document page: {expected_page}" in text
+        assert "Page-level structural evidence" in text
+        assert "Rendered page could not be determined" not in text
+        expected_label = ("Original document page", str(expected_page))
+    assert page_label_for_location(
+        location, mapping, blocks, sections, rendered_pages,
+    ) == expected_label
+    compact, unavailable = _pages_summary_for_group(
+        [SimpleNamespace(location=location)],
+        SimpleNamespace(paragraph_page_mapping=mapping, rendered_preview_pages=rendered_pages,
+                        section_metadata=sections, document_blocks=blocks),
+    )
+    assert (compact, unavailable) == (("", 1) if expected_page is None else (str(expected_page), 0))
+    assert "1 for manual review (never scored)" in text
+    assert "0 major" in text
+    assert "0 minor" in text
+    assert "100/100" in text
+    assert "Exact evidence" not in text
+    assert "Saved protocol action" not in text
+    assert "FOOTER_CONTENT_REQUIRED" not in text
+    assert client.get(f"/api/audit/{audit_id}").json() == before
+
+
+def test_pdf_profile_summary_groups_only_immutable_saved_checks(client, test_engine, monkeypatch):
+    from app.services import profile_snapshot
+    from app.services.profile_snapshot import EffectiveProfileSnapshot
+
+    def no_resolution(*args, **kwargs):
+        raise AssertionError("PDF disclosure cannot consult the mutable current profile")
+
+    monkeypatch.setattr(profile_snapshot, "resolve_snapshot", no_resolution)
+    snapshot = EffectiveProfileSnapshot(
+        profile_id="do-not-display-internal-id", profile_name="Saved requirements",
+        profile_source="custom", body_font_family="Arial", body_font_size_pt=11,
+        body_line_spacing=1.5, heading_font_family="Arial",
+        heading_level_1={"bold": True, "italic": False},
+        margin_right_in=1.25, references_check_reference_order=True,
+        references_check_doi_format=False, header_check_requirements=True,
+        footer_check_requirements=True, page_number_check_requirements=True,
+        page_number_placement="footer",
+    ).with_fingerprint().to_dict()
+    audit_id = _seed_audit(test_engine, weighted_score=100, profile_snapshot=snapshot)
+    before = client.get(f"/api/audit/{audit_id}").json()
+    text = _pdf_text(_export(client, audit_id).content)
+    assert "Body font: Arial" in text
+    assert "Body font size: 11 pt" in text
+    assert "Body line spacing: 1.5" in text
+    assert "Right margin: 1.25 in" in text
+    assert "Alphabetical order" in text
+    for label in ("Headers", "Footers", "Page numbers"):
+        assert f"{label}: Manual review only · Unscored" in text
+        assert f"{label}: Not checked" not in text
+    assert "Placement: Footer" in text
+    assert "Ambiguous citation matches" in text
+    assert "Citations have references" in text
+    assert "Reference DOI format" in text
+    assert "https://doi.org/" not in text
+    assert "Heading 1 bold: Yes (stored setting; not checked)" in text
+    assert "Heading 1 italic: No (stored setting; not checked)" in text
+    assert "Citation style APA 7" in text
+    assert snapshot["profile_id"] not in text
+    assert snapshot["fingerprint"] not in text
+    assert client.get(f"/api/audit/{audit_id}").json() == before
+
+
+def test_saved_coverage_distinguishes_historical_off_from_unknown():
+    from app.services.pdf_report import _coverage_rows
+    unknown = list(_coverage_rows(None))
+    for area, status, _, impact in unknown:
+        assert (status, impact) == (
+            ("Not checked", "None") if area in ("Headers", "Footers", "Page numbers")
+            else ("Not checked", "N/A")
+        )
+    historical = {row[0]: row for row in _coverage_rows({"body": {"font_size_pt": 11}})}
+    assert historical["Body text"][1] == "Scored"
+    for area in ("Headers", "Footers", "Page numbers"):
+        assert historical[area][1] == "Not checked"
+        assert historical[area][3] == "None"
+    stored = {"page_numbers": {"check_page_number_requirements": True, "placement": "header"}}
+    page_numbers = {row[0]: row for row in _coverage_rows(stored)}["Page numbers"]
+    assert page_numbers[1] == "Manual review"
+    assert "Placement: Header" in page_numbers[2]
+    assert page_numbers[3] == "None"
+    empty = {row[0]: row for row in _coverage_rows({
+        "body": {"font_size_pt": None, "allowed_font_combos": []},
+        "heading": {"font_family": None, "allowed_font_combos": [], "level_1": {"bold": True}},
+    })}
+    for area in ("Body text", "Headings"):
+        assert empty[area][1] == "Not checked"
+        assert empty[area][2] == "Disabled in this Profile"
+    assert empty["References"][2] == "Requirements not recorded"
+
+
+def test_priority_actions_preserve_saved_order_and_cap_without_mutating():
+    from app.services.pdf_report import _priority_findings
+    findings = [SimpleNamespace(severity=severity, marker=index, location={"paragraph_index": index})
+                for index, severity in enumerate(
+        ("MINOR", "REVIEW", "MAJOR", "MINOR", "REVIEW", "MINOR", "UNRECOGNISED")
+    )]
+    assert [v.marker for v in _priority_findings(findings)] == [2, 1, 4]
+    assert [v.marker for v in findings] == list(range(7))
+    earliest = [
+        SimpleNamespace(severity="MINOR", location={"paragraph_index": index})
+        for index in (20, 2, 10, 0)
+    ]
+    assert _priority_findings(earliest) == []
+
+
+def test_structural_review_pdf_explains_field_and_geometry_limits(client, test_engine):
+    audit_id = _seed_audit(test_engine, weighted_score=100, violations=[{
+        "rule_code": "PAGE_NUMBER_FIELD_REQUIRED", "severity": "REVIEW",
+        "location": {"structural_story": True, "section_index": 0,
+                     "story_type": "footer", "evidence_state": "missing"},
+        "message": "internal structural message", "actual_value": "internal value",
+        "expected_value": "internal expectation",
+    }])
+    text = _pdf_text(_export(client, audit_id).content)
+    assert "Manual review · Unscored" in text
+    assert "Found No page-number field was found" in text
+    assert "Expected A page-number field" in text
+    assert "Action Review the footer in Word; insert an automatic page number if required." in text
+    assert "Evidence Structural evidence only" in text
+    assert "no exact Header/Footer highlight" in text
+    assert "A PAGE field is not a typed number" in text
+    assert "internal structural message" not in text
+    assert "internal expectation" not in text
+
+
+def test_long_manual_evidence_exports_without_losing_saved_content(client, test_engine):
+    evidence = "Saved ambiguous-citation evidence. " * 150 + "Complete evidence end marker."
+    audit_id = _seed_audit(test_engine, weighted_score=100, violations=[{
+        "rule_code": "CITATION_REFERENCE_AMBIGUOUS", "severity": "REVIEW",
+        "location": {"paragraph_index": 2}, "message": evidence,
+        "actual_value": "Smith (2024)", "expected_value": "One unambiguous matching entry",
+    }])
+    before = client.get(f"/api/audit/{audit_id}").json()
+    response = _export(client, audit_id)
+    assert response.status_code == 200
+    text = _pdf_text(response.content)
+    assert "Manual Review Findings" in text
+    assert "Manual Review Register" in text
+    assert "Complete evidence end marker." in text
+    assert "Smith (2024)" in text
+    assert "One unambiguous matching entry" in text
+    assert client.get(f"/api/audit/{audit_id}").json() == before

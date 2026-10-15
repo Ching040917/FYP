@@ -257,57 +257,28 @@ export function ReadinessCard({
   return (
     <section
       aria-labelledby="readiness-heading"
-      className="rounded-md border border-border bg-card py-4"
+      className="rounded-md border border-border bg-card px-4 py-3"
     >
-      <CardHeader className="pb-3">
+      <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-x-5 gap-y-2 p-0">
         <CardTitle
           id="readiness-heading"
           tabIndex={-1}
-          className="text-base font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded"
+          className="shrink-0 text-sm font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded"
         >
           System readiness
         </CardTitle>
         <div
           role="status"
           aria-live="polite"
-          className="mt-1 space-y-1 text-sm"
+          className="min-w-0 flex-1 text-sm"
         >
-          <p className="font-medium text-foreground">{headline}</p>
-          {supporting && <p className="text-muted-foreground">{supporting}</p>}
-        </div>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        {state === 'error' ? (
-          <div role="alert" className="rounded-md border border-border bg-input/20 px-3 py-2.5 text-sm">
-            <p className="flex items-start gap-1.5 text-muted-foreground">
-              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
-              System readiness could not be checked. You can try again.
-            </p>
-          </div>
-        ) : state === 'checking' ? (
-          <p className="flex items-center gap-2 text-sm text-muted-foreground">
-            <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-            Checking system readiness
+          <p className="flex items-center gap-2 font-medium text-foreground">
+            {state === 'checking' ? <Loader2 className="h-4 w-4 shrink-0 animate-spin" aria-hidden="true" /> : model?.overall === 'ready' ? <CheckCircle2 className="h-4 w-4 shrink-0" aria-hidden="true" /> : <AlertTriangle className="h-4 w-4 shrink-0 text-amber-700" aria-hidden="true" />}
+            {headline}
           </p>
-        ) : (
-          (() => {
-            const m = model
-            if (!m) return null
-            return (
-              <>
-            {m.overall === 'degraded' || m.overall === 'blocked' ? (
-              <p className="text-sm text-muted-foreground">
-                {issueCountSentence(m.overall, m.rows)}
-              </p>
-            ) : null}
-
-            {refreshError && (
-              <p role="status" className="text-xs text-muted-foreground">
-                Could not refresh right now. Showing the previous status.
-              </p>
-            )}
-
-            <div className="mt-4 flex flex-wrap items-center gap-2">
+          {supporting && <p className="mt-0.5 text-xs text-muted-foreground">{supporting}</p>}
+        </div>
+            <div className="flex flex-wrap items-center gap-2">
               {showViewDetails && (
                 <Button
                   type="button"
@@ -348,12 +319,45 @@ export function ReadinessCard({
                 Refresh
               </Button>
             </div>
+      </CardHeader>
+      <CardContent className={expanded || refreshError ? 'space-y-3 px-0 pb-0 pt-3' : 'hidden'}>
+        {state === 'error' ? (
+          <div role="alert" className="rounded-md border border-border bg-input/20 px-3 py-2.5 text-sm">
+            <p className="flex items-start gap-1.5 text-muted-foreground">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+              System readiness could not be checked. You can try again.
+            </p>
+          </div>
+        ) : state === 'checking' ? (
+          <p className="flex items-center gap-2 text-sm text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+            Checking system readiness
+          </p>
+        ) : (
+          (() => {
+            const m = model
+            if (!m) return null
+            return (
+              <>
+            {expanded && (m.overall === 'degraded' || m.overall === 'blocked') ? (
+              <p className="text-sm text-muted-foreground">
+                {issueCountSentence(m.overall, m.rows)}
+              </p>
+            ) : null}
+
+            {refreshError && (
+              <p role="status" className="text-xs text-muted-foreground">
+                Could not refresh right now. Showing the previous status.
+              </p>
+            )}
+
 
             {expanded && (
               <div
                 id={detailsId}
                 className="space-y-2 border-t border-border pt-3"
               >
+                {supporting && <p className="text-sm text-muted-foreground">{supporting}</p>}
                 {m.rows.map((row) => (
                   <ReadinessRow
                     key={row.id}

@@ -3,6 +3,8 @@ import assert from 'node:assert/strict'
 import { api } from '../src/services/api.ts'
 import {
   blankProfilePayload,
+  copyProfilePayload,
+  profilePayloadSnapshot,
   createMemoryStoreAdapter,
   generateProfileId,
   loadEnvelope,
@@ -22,6 +24,7 @@ import {
   validateAndFreezeSubmission,
 } from '../src/lib/upload-selector.ts'
 import type { FormattingProfile } from '../src/types/api.ts'
+import { profileDetailSections, selectedProfileSummary } from '../src/lib/audit/enabled-checks-wording.ts'
 
 // ---------------------------------------------------------------------------
 // Helpers & fixtures
@@ -422,4 +425,77 @@ test('localStorage unavailable path still resolves built-ins (degraded mode)', (
   assert.ok(opts.some((o) => o.kind === 'builtin'))
   const r = resolveUploadSelection(BUILTINS, [], null, false, true)
   assert.equal(r.selectedValue, `builtin:${SUC_ID}`)
+})
+
+test('canonical built-in summaries stay read-only and expose every disabled Page Element', () => {
+  for (const builtin of BUILTINS) {
+    const payload = {
+      ...blankProfilePayload(builtin.profile_id, builtin.profile_name),
+      profile_source: 'built_in',
+      profile_version: builtin.profile_version,
+      body: { font_family: 'Arial', font_size_pt: 11, line_spacing: 2, alignment: null },
+      heading: { inherit_body_font: true, font_family: null, font_size_pt: null },
+    }
+    const before = structuredClone(payload)
+    const option = buildSelectorOptions(BUILTINS, [], { [builtin.profile_id]: payload })
+      .find((option) => option.underlyingId === builtin.profile_id)!
+    const rows = selectedProfileSummary(option.snapshot!)
+    const unchecked = rows.find((row) => row.heading === 'Not checked')!.items!
+    for (const label of ['Headers', 'Footers', 'Page numbers']) {
+      assert.ok(unchecked.some((item) => item.label === label && item.value === 'Not checked'))
+    }
+    assert.match(JSON.stringify(profileDetailSections(option.snapshot!)[0]), /Built-in · Read-only/)
+    assert.equal(option.snapshot!.heading!.font_family, 'Arial')
+    assert.equal(option.snapshot!.heading!.font_size_pt, 11)
+    assert.deepEqual(payload, before)
+    assert.deepEqual(option.keyRequirements, builtin.key_requirements)
+    const copy = copyProfilePayload(payload, 'new-custom-profile', 'Editable copy')
+    copy.headers = { check_header_requirements: true }
+    assert.equal(copy.profile_source, 'custom')
+    assert.deepEqual(payload, before, 'editing a copy never changes canonical built-in data')
+  }
+})
+
+test('old custom payload summaries leave absent page groups off without mutating or inventing controls', () => {
+  const payload = blankProfilePayload('old-custom', 'Old custom')
+  delete payload.headers
+  delete payload.footers
+  delete payload.page_numbers
+  const before = structuredClone(payload)
+  const option = buildSelectorOptions([], [makeProfile({ payload })])[0]
+  const off = selectedProfileSummary(option.snapshot!).find((row) => row.heading === 'Not checked')!.items!
+  for (const label of ['Headers', 'Footers', 'Page numbers']) assert.ok(off.some((item) => item.label === label && item.value === 'Not checked'))
+  assert.equal(option.snapshot!.headers, undefined)
+  assert.deepEqual(payload, before)
+})
+
+test('presentation projection resolves citation dependencies but never overwrites stored switches', () => {
+  const payload = {
+    ...blankProfilePayload('dependencies', 'Dependencies'),
+    citation_matching: {
+      check_citations_have_references: false,
+      check_author_year_consistency: true,
+      check_year_suffixes: true,
+      check_duplicate_references: true,
+    },
+  }
+  const snapshot = profilePayloadSnapshot(payload)
+  assert.equal(snapshot.citation_matching!.check_author_year_consistency, false)
+  assert.equal(snapshot.citation_matching!.check_year_suffixes, false)
+  assert.equal(snapshot.citation_matching!.check_duplicate_references, true)
+  assert.equal(payload.citation_matching.check_author_year_consistency, true)
+})
+
+test('old current-profile payload uses existing citation defaults while missing page groups stay off', () => {
+  const payload = blankProfilePayload('old-live-profile', 'Old live profile')
+  delete payload.citation_matching
+  delete payload.headers
+  delete payload.footers
+  delete payload.page_numbers
+  const snapshot = profilePayloadSnapshot(payload)
+  assert.equal(snapshot.citation_matching!.check_citations_have_references, true)
+  assert.equal(snapshot.citation_matching!.flag_ambiguous_matches, true)
+  assert.equal(snapshot.headers, undefined)
+  assert.equal(snapshot.footers, undefined)
+  assert.equal(snapshot.page_numbers, undefined)
 })

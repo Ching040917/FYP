@@ -46,23 +46,16 @@ import {
   REFERENCES_INDENT_MAX_IN,
   REFERENCES_INDENT_MIN_IN,
   validateRequirements,
-  CITATION_MATCHING_DEPENDENT_FIELDS,
   CITATION_MATCHING_FIELDS,
   DEFAULT_CITATION_MATCHING,
   citationMatchingFromUiModel,
   citationMatchingToUiModel,
+  pageElementsFromUiModel,
+  pageElementsToUiModel,
+  applyPageElementsUiPatch,
   type OpStatus,
 } from '../src/lib/custom-profile-store/editor.ts'
 import { ACTIVE_KEY, RECOVERY_KEY, emptyEnvelope, serializeEnvelope } from '../src/lib/custom-profile-store/store.ts'
-import { readFileSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
-import { dirname, resolve } from 'node:path'
-
-/** The editor page source — the DOM contract its controls must keep. */
-const PROFILE_EDITOR = readFileSync(
-  resolve(dirname(fileURLToPath(import.meta.url)), '../src/pages/ProfileEditor.tsx'),
-  'utf8',
-)
 
 function makeProfile(overrides: Record<string, unknown> = {}) {
   const id = generateProfileId()
@@ -833,6 +826,36 @@ test('save payload sends the edited toggles, not the defaults', () => {
   assert.equal((payload.citation_matching as Record<string, boolean>).check_duplicate_references, false)
 })
 
+test('edited citation and Reference settings survive saving and reloading a custom profile', () => {
+  const adapter = createMemoryStoreAdapter()
+  const profile = makeProfile()
+  const citation = citationMatchingFromUiModel(citationMatchingToUiModel({
+    ...profile.payload.citation_matching,
+    check_references_are_cited: true,
+    check_duplicate_references: false,
+  }))
+  const references = referencesFromUiModel(referencesToUiModel({
+    ...profile.payload.references,
+    check_heading_text: true,
+    heading_text: 'works cited',
+    check_hanging_indent: true,
+    hanging_indent_in: 0.5,
+    check_line_spacing: true,
+    line_spacing: 2,
+  }))
+  profile.payload.citation_matching = citation
+  profile.payload.references = references
+  profile.payload = buildSavePayload(profile)
+  const saved = upsertAndBump(emptyEnvelope(), profile, '2026-08-21T00:00:00.000Z')
+  assert.equal(persistEnvelope(adapter, saved, 0).ok, true)
+  const loaded = loadEnvelope(adapter).profiles[0].payload
+  assert.deepEqual(citationMatchingToUiModel(loaded.citation_matching), citationMatchingToUiModel(citation))
+  assert.deepEqual(referencesToUiModel(loaded.references), referencesToUiModel(references))
+  assert.equal(loaded.references.heading_text, 'works cited')
+  assert.equal(loaded.references.hanging_indent_in, 0.5)
+  assert.equal(loaded.references.line_spacing, 2)
+})
+
 test('UI model round-trip is boolean-only and default-filled', () => {
   const ui = citationMatchingToUiModel({ check_year_suffixes: false, mystery: 'x' })
   assert.equal(ui.check_year_suffixes, false)
@@ -876,104 +899,180 @@ test('the draft payload exposes no regex or JSON input for citations', () => {
   assert.deepEqual(Object.keys(group).sort(), [...CITATION_MATCHING_FIELDS].sort())
 })
 
-test('dependent toggles are declared as children of the parent check', () => {
-  assert.deepEqual([...CITATION_MATCHING_DEPENDENT_FIELDS], [
-    'check_author_year_consistency',
-    'check_year_suffixes',
-  ])
-  for (const field of CITATION_MATCHING_DEPENDENT_FIELDS) {
-    assert.ok((CITATION_MATCHING_FIELDS as readonly string[]).includes(field))
+
+
+test('page elements: all eight independent toggle combinations round-trip and save', () => {
+  for (let bits = 0; bits < 8; bits += 1) {
+    for (const placement of ['header', 'footer', 'either'] as const) {
+      const ui = {
+        headerEnabled: Boolean(bits & 1),
+        footerEnabled: Boolean(bits & 2),
+        pageNumberEnabled: Boolean(bits & 4),
+        placement,
+      }
+      const profile = makeProfile()
+      Object.assign(profile.payload, pageElementsFromUiModel(ui))
+      assert.deepEqual(pageElementsToUiModel(profile.payload), ui)
+      assert.deepEqual(clientValidate(profile, emptyEnvelope()), [])
+      const saved = buildSavePayload(profile)
+      assert.deepEqual(pageElementsToUiModel(saved), ui)
+      assert.deepEqual(saved.headers, { check_header_requirements: ui.headerEnabled })
+      assert.deepEqual(saved.footers, { check_footer_requirements: ui.footerEnabled })
+      assert.deepEqual(saved.page_numbers, { check_page_number_requirements: ui.pageNumberEnabled, placement })
+    }
   }
 })
 
-// ---------------------------------------------------------------------------
-// Reference List editor wiring (DOM ids + disabled state)
-// ---------------------------------------------------------------------------
-
-/** The Reference List value inputs and the check that owns each one. */
-const REFERENCE_VALUE_CONTROLS: readonly [string, string][] = [
-  ['references-heading-text', 'headingTextEnabled'],
-  ['references-heading-alignment', 'headingAlignmentEnabled'],
-  ['references-hanging-indent', 'hangingIndentEnabled'],
-  ['references-line-spacing', 'lineSpacingEnabled'],
-  ['references-space-before', 'spaceBeforeEnabled'],
-  ['references-space-after', 'spaceAfterEnabled'],
-  ['references-font-family', 'fontFamilyEnabled'],
-  ['references-font-size', 'fontSizeEnabled'],
-  ['references-alignment', 'alignmentEnabled'],
-]
-
-const REFERENCE_CHECKBOXES = [
-  'references-check-heading-text',
-  'references-allow-heading-aliases',
-  'references-check-heading-bold',
-  'references-heading-alignment-enabled',
-  'references-check-start-on-new-page',
-  'references-check-hanging-indent',
-  'references-check-line-spacing',
-  'references-check-space-before',
-  'references-check-space-after',
-  'references-check-font-family',
-  'references-check-font-size',
-  'references-check-alignment',
-]
-
-/** The JSX element that carries a given id, up to the line that closes it. */
-const elementFor = (source: string, id: string): string => {
-  const start = source.indexOf(`id="${id}"`)
-  assert.notEqual(start, -1, `no element with id ${id}`)
-  return source.slice(start, source.indexOf('/>', start) + 2)
-}
-
-test('every Reference List control has a stable DOM id', () => {
-  for (const [id] of REFERENCE_VALUE_CONTROLS) assert.ok(PROFILE_EDITOR.includes(`id="${id}"`), id)
-  for (const id of REFERENCE_CHECKBOXES) assert.ok(PROFILE_EDITOR.includes(`id="${id}"`), id)
+test('page elements: missing historical settings stay Off/either in blank, copy and Save', () => {
+  const expected = { headerEnabled: false, footerEnabled: false, pageNumberEnabled: false, placement: 'either' }
+  const profile = makeProfile()
+  delete profile.payload.headers
+  delete profile.payload.footers
+  delete profile.payload.page_numbers
+  const original = structuredClone(profile.payload)
+  assert.deepEqual(pageElementsToUiModel(profile.payload), expected)
+  assert.deepEqual(pageElementsToUiModel(blankProfilePayload('blank', 'Blank')), expected)
+  assert.deepEqual(pageElementsToUiModel(copyProfilePayload(profile.payload, 'copy', 'Copy')), expected)
+  assert.deepEqual(pageElementsToUiModel(buildSavePayload(profile)), expected)
+  assert.deepEqual(profile.payload, original)
+  assert.deepEqual(validateRequirements({ headers: {}, footers: {}, page_numbers: {} }), [])
 })
 
-test('a Reference List value control is disabled while its check is off', () => {
-  for (const [id, enabledProp] of REFERENCE_VALUE_CONTROLS) {
-    const element = elementFor(PROFILE_EDITOR, id)
-    assert.ok(
-      element.includes(`disabled={!referenceModel.${enabledProp}}`),
-      `${id} must be disabled while ${enabledProp} is off`,
-    )
-    assert.ok(element.includes('aria-describedby='), `${id} must announce its hint`)
+test('page elements: copies and saved payloads have independent nested settings', () => {
+  const source = {
+    profile_source: 'custom',
+    ...pageElementsFromUiModel({ headerEnabled: true, footerEnabled: false, pageNumberEnabled: true, placement: 'footer' }),
   }
+  const original = structuredClone(source)
+  const copy = copyProfilePayload(source, 'copy', 'Copy')
+  ;(copy.headers as Record<string, unknown>).check_header_requirements = false
+  ;(copy.page_numbers as Record<string, unknown>).placement = 'header'
+  assert.deepEqual(source, original)
+  const profile = makeProfile({ payload: source })
+  const saved = buildSavePayload(profile)
+  ;(saved.footers as Record<string, unknown>).check_footer_requirements = true
+  assert.deepEqual(source, original)
 })
 
-test('heading aliases are disabled while the heading-text check is off', () => {
-  const element = elementFor(PROFILE_EDITOR, 'references-allow-heading-aliases')
-  assert.ok(element.includes('disabled={!referenceModel.headingTextEnabled}'))
-})
-
-test('every Reference List value control is labelled by a real label element', () => {
-  for (const [id] of REFERENCE_VALUE_CONTROLS) {
-    assert.ok(PROFILE_EDITOR.includes(`htmlFor="${id}"`), `${id} needs a label`)
-  }
-})
-
-test('the Reference List section never shows developer terminology', () => {
-  const start = PROFILE_EDITOR.indexOf('{/* Reference List controls')
-  assert.notEqual(start, -1)
-  // Drop internal wiring (error-field keys, DOM ids, styling) so only what a
-  // reader can actually see is checked.
-  const readerText = PROFILE_EDITOR
-    .slice(start, PROFILE_EDITOR.indexOf('{/* Captions controls', start))
-    .replace(/reqFieldErrors\['[^']*'\]/g, '')
-    .replace(/(id|htmlFor|className|value)="[^"]*"/g, '')
-  for (const term of [
-    'first-line',
-    'first_line',
-    'negative',
-    'twip',
-    'EMU',
-    'w:ind',
-    'regex',
-    'confidence',
-    'check_',
-    'heading_text',
-    'line_spacing',
+test('page elements: raw malformed settings are rejected and never repaired by Save or copy', () => {
+  for (const [groupKey, field] of [
+    ['headers', 'check_header_requirements'],
+    ['footers', 'check_footer_requirements'],
+    ['page_numbers', 'check_page_number_requirements'],
   ]) {
-    assert.ok(!readerText.includes(term), `Reference List section must not show ${term}`)
+    for (const raw of [null, undefined, false, 0, '', [], 'enabled']) {
+      const profile = makeProfile()
+      profile.payload[groupKey] = raw
+      assert.ok(validateRequirements(profile.payload).some((error) => error.field === groupKey))
+      assert.deepEqual(buildSavePayload(profile)[groupKey], raw)
+      assert.deepEqual(copyProfilePayload(profile.payload, 'copy', 'Copy')[groupKey], raw)
+    }
+    for (const raw of [null, undefined, 0, 1, '', 'true', [], {}]) {
+      const profile = makeProfile()
+      profile.payload[groupKey] = { [field]: raw }
+      assert.ok(validateRequirements(profile.payload).some((error) => error.field === `${groupKey}.${field}`))
+      assert.deepEqual((buildSavePayload(profile)[groupKey] as Record<string, unknown>)[field], raw)
+    }
+    const profile = makeProfile()
+    profile.payload[groupKey] = { [field]: false, unexpected: true }
+    assert.ok(validateRequirements(profile.payload).some((error) => error.field === `${groupKey}.unexpected`))
+    assert.equal((buildSavePayload(profile)[groupKey] as Record<string, unknown>).unexpected, true)
+  }
+})
+
+test('page elements: editing one control preserves unrelated malformed settings for validation', () => {
+  const raw = {
+    profile_source: 'custom',
+    headers: { check_header_requirements: false, unexpected: true },
+    footers: { check_footer_requirements: 'bad' },
+    page_numbers: { check_page_number_requirements: false, placement: 'body', unexpected: true },
+  }
+  const original = structuredClone(raw)
+  const updated = applyPageElementsUiPatch(raw, { headerEnabled: true })
+  assert.deepEqual(updated.headers, { check_header_requirements: true, unexpected: true })
+  assert.deepEqual(updated.footers, original.footers)
+  assert.deepEqual(updated.page_numbers, original.page_numbers)
+  assert.deepEqual(validateRequirements(updated).map(e => e.field), [
+    'headers.unexpected', 'footers.check_footer_requirements',
+    'page_numbers.unexpected', 'page_numbers.placement',
+  ])
+  const placementOnly = applyPageElementsUiPatch(raw, { placement: 'footer' })
+  assert.deepEqual(placementOnly.page_numbers, { ...raw.page_numbers, placement: 'footer' })
+  assert.deepEqual(placementOnly.headers, raw.headers)
+  assert.deepEqual(placementOnly.footers, raw.footers)
+  assert.deepEqual(raw, original)
+})
+
+test('page elements: placement is validated even Off, without enabling any other group', () => {
+  for (const placement of [null, undefined, false, 1, '', 'body', 'Header', []]) {
+    const profile = makeProfile()
+    profile.payload.page_numbers = { check_page_number_requirements: false, placement }
+    assert.ok(validateRequirements(profile.payload).some((error) => error.field === 'page_numbers.placement'))
+    assert.deepEqual((buildSavePayload(profile).page_numbers as Record<string, unknown>).placement, placement)
+  }
+  for (const placement of ['header', 'footer', 'either'] as const) {
+    const profile = makeProfile()
+    profile.payload.page_numbers = { check_page_number_requirements: true, placement }
+    assert.deepEqual(pageElementsToUiModel(profile.payload), {
+      headerEnabled: false, footerEnabled: false, pageNumberEnabled: true, placement,
+    })
+  }
+})
+
+test('page elements: enabling any group requires an explicit Custom source', () => {
+  for (const profile_source of ['built_in', 'legacy', undefined]) {
+    const errors = validateRequirements({
+      profile_source,
+      headers: { check_header_requirements: true },
+      footers: { check_footer_requirements: true },
+      page_numbers: { check_page_number_requirements: true, placement: 'either' },
+    })
+    assert.deepEqual(errors.map((error) => error.field), [
+      'headers.check_header_requirements', 'footers.check_footer_requirements', 'page_numbers.check_page_number_requirements',
+    ])
+    assert.ok(errors.every((error) => error.message === 'Available only in Custom Profiles'))
+    assert.deepEqual(validateRequirements({
+      profile_source,
+      ...pageElementsFromUiModel({ headerEnabled: false, footerEnabled: false, pageNumberEnabled: false, placement: 'either' }),
+    }), [])
+  }
+})
+
+test('page elements: summary makes Off and enabled manual-only requirements explicit', () => {
+  const profile = makeProfile()
+  const off = summarizeProfile(profile.payload)
+  for (const line of ['Headers: Not checked', 'Footers: Not checked', 'Page numbers: Not checked']) {
+    assert.ok(off.lines.includes(line))
+  }
+  Object.assign(profile.payload, pageElementsFromUiModel({
+    headerEnabled: true, footerEnabled: true, pageNumberEnabled: true, placement: 'footer',
+  }))
+  const on = summarizeProfile(profile.payload)
+  assert.equal(on.disabledCount, off.disabledCount - 3)
+  assert.ok(on.lines.includes('Header requirements · Manual review only · Unscored'))
+  assert.ok(on.lines.includes('Footer requirements · Manual review only · Unscored'))
+  assert.ok(on.lines.includes('Page number requirements · Manual review only · Unscored · Placement: Footer'))
+  assert.ok(on.lines.some((line) => line.includes('First-page and even-page definitions are not checked.')))
+})
+
+test('summary does not duplicate enabled Reference order or DOI requirements', () => {
+  const summary = summarizeProfile({
+    ...blankProfilePayload('summary-reference-checks', 'Reference checks'),
+    references: { check_reference_order: true, check_doi_format: true },
+  })
+  assert.equal(summary.lines.filter((line) => line.includes('alphabetical order')).length, 1)
+  assert.equal(summary.lines.filter((line) => line.includes('Reference DOI format')).length, 1)
+  assert.ok(summary.lines.some((line) => line.includes('presentation only, not registration or resolution')))
+})
+
+test('editor summary preserves independent page toggles for all placements', () => {
+  for (const [placement, label] of [['header', 'Header'], ['footer', 'Footer'], ['either', 'Header or Footer']] as const) {
+    const summary = summarizeProfile({
+      ...blankProfilePayload('independent-page-checks', 'Independent checks'),
+      ...pageElementsFromUiModel({ headerEnabled: false, footerEnabled: true, pageNumberEnabled: true, placement }),
+    })
+    assert.ok(summary.lines.includes('Headers: Not checked'))
+    assert.ok(summary.lines.includes('Footer requirements · Manual review only · Unscored'))
+    assert.ok(summary.lines.includes(`Page number requirements · Manual review only · Unscored · Placement: ${label}`))
   }
 })

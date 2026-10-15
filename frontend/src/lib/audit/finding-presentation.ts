@@ -20,6 +20,7 @@ import {
   isMissingReferenceSection,
   objectLabel,
 } from '../friendly-finding.ts'
+import { isPageElementRule } from './page-elements.ts'
 
 export interface RulePresentation {
   issue: string
@@ -102,6 +103,21 @@ export function presentationFor(v: {
   location: Record<string, unknown> | null
 }): RulePresentation {
   const code = v.rule_code
+  if (isPageElementRule(code)) {
+    const target = code === 'HEADER_CONTENT_REQUIRED' ? 'header'
+      : code === 'FOOTER_CONTENT_REQUIRED' ? 'footer'
+      : v.location?.story_type === 'header' ? 'header'
+      : v.location?.story_type === 'footer' ? 'footer' : 'header or footer'
+    const issue = friendlyFindingMessage(code, v.message, v.expected_value, v.actual_value, v.location)
+    return {
+      issue,
+      expected: code === 'PAGE_NUMBER_FIELD_REQUIRED'
+        ? `A page-number field in this section’s normal-pages ${target}.`
+        : `Text or a supported field in this section’s normal-pages ${target}.`,
+      actual: issue,
+      requiredAction: friendlyRequiredAction(code, v.expected_value, v.actual_value, v.location) ?? undefined,
+    }
+  }
 
   if (code === 'REFERENCE_DOI_FORMAT') {
     return {

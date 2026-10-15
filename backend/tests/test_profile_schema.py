@@ -433,3 +433,109 @@ def test_reference_doi_toggle_survives_profile_json_and_independent_copy(enabled
     reference_keys = profile.to_dict()["references"]
     assert {key for key in reference_keys if "doi" in key} == {"check_doi_format"}
     assert not any("url" in key for key in reference_keys)
+
+
+PAGE_ELEMENT_GROUPS = (
+    ("headers", "check_header_requirements"),
+    ("footers", "check_footer_requirements"),
+    ("page_numbers", "check_page_number_requirements"),
+)
+
+
+@pytest.mark.parametrize("mask", range(8))
+@pytest.mark.parametrize("placement", ["header", "footer", "either"])
+def test_page_element_requirements_roundtrip_independently(mask, placement):
+    profile = new_custom_profile("Structural requirements")
+    for index, (group, toggle) in enumerate(PAGE_ELEMENT_GROUPS):
+        setattr(getattr(profile, group), toggle, bool(mask & (1 << index)))
+    profile.page_numbers.placement = placement
+    restored = profile_from_dict(json.loads(json.dumps(profile.to_dict())))
+    assert restored.validate() == []
+    for index, (group, toggle) in enumerate(PAGE_ELEMENT_GROUPS):
+        assert getattr(getattr(restored, group), toggle) is bool(mask & (1 << index))
+    assert restored.page_numbers.placement == placement
+    keys = list(restored.to_dict())
+    assert keys[keys.index("headers"):keys.index("headers") + 3] == [
+        "headers", "footers", "page_numbers",
+    ]
+
+
+@pytest.mark.parametrize("group,toggle", PAGE_ELEMENT_GROUPS)
+@pytest.mark.parametrize("value", [None, False, 0, "", [], "invalid", 1])
+def test_page_element_groups_reject_non_objects_even_falsy(group, toggle, value):
+    payload = new_custom_profile("Malformed group").to_dict()
+    payload[group] = value
+    with pytest.raises(ProfileValidationError) as exc:
+        profile_from_dict(payload)
+    assert (group, "must be a JSON object") in exc.value.errors
+
+
+@pytest.mark.parametrize("group,toggle", PAGE_ELEMENT_GROUPS)
+@pytest.mark.parametrize("value", [None, 0, 1, 0.0, "true", "false", [], {}])
+def test_page_element_toggles_require_actual_booleans(group, toggle, value):
+    payload = new_custom_profile("Malformed toggle").to_dict()
+    payload[group][toggle] = value
+    with pytest.raises(ProfileValidationError) as exc:
+        profile_from_dict(payload)
+    assert (f"{group}.{toggle}", "must be true or false") in exc.value.errors
+
+
+@pytest.mark.parametrize("group,toggle", PAGE_ELEMENT_GROUPS)
+def test_page_element_groups_reject_unknown_keys(group, toggle):
+    payload = new_custom_profile("Unknown key").to_dict()
+    payload[group]["unexpected"] = False
+    with pytest.raises(ProfileValidationError) as exc:
+        profile_from_dict(payload)
+    assert (f"{group}.unexpected", "unknown field") in exc.value.errors
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+@pytest.mark.parametrize("placement", [None, "", "body", "Header", 0, [], {}])
+def test_page_number_placement_validated_even_when_off(enabled, placement):
+    payload = new_custom_profile("Invalid placement").to_dict()
+    payload["page_numbers"] = {
+        "check_page_number_requirements": enabled, "placement": placement,
+    }
+    with pytest.raises(ProfileValidationError) as exc:
+        profile_from_dict(payload)
+    assert any(path == "page_numbers.placement" for path, _ in exc.value.errors)
+
+
+@pytest.mark.parametrize("profile_id", [APA_PROFILE_ID, SUC_PROFILE_ID])
+def test_page_element_builtin_defaults_and_custom_only_guard(profile_id):
+    original = get_builtin_profile(profile_id)
+    for group, toggle in PAGE_ELEMENT_GROUPS:
+        assert getattr(getattr(original, group), toggle) is False
+        payload = original.to_dict()
+        payload[group][toggle] = True
+        with pytest.raises(ProfileValidationError) as exc:
+            profile_from_dict(payload)
+        assert (f"{group}.{toggle}", "Available only in Custom Profiles") in exc.value.errors
+    assert original.page_numbers.placement == "either"
+
+
+@pytest.mark.parametrize("missing_groups", [True, False])
+def test_old_page_element_settings_default_off(missing_groups):
+    payload = {"profile_id": "old", "profile_name": "Old profile"}
+    if not missing_groups:
+        payload.update({group: {} for group, _ in PAGE_ELEMENT_GROUPS})
+    profile = profile_from_dict(payload)
+    for group, toggle in PAGE_ELEMENT_GROUPS:
+        assert getattr(getattr(profile, group), toggle) is False
+    assert profile.page_numbers.placement == "either"
+
+
+def test_page_element_custom_copy_is_independent():
+    original = new_custom_profile("Original")
+    for group, toggle in PAGE_ELEMENT_GROUPS:
+        setattr(getattr(original, group), toggle, True)
+    original.page_numbers.placement = "header"
+    clone = new_custom_profile("Clone", base=original)
+    for group, toggle in PAGE_ELEMENT_GROUPS:
+        assert getattr(clone, group) is not getattr(original, group)
+        assert getattr(getattr(clone, group), toggle) is True
+        setattr(getattr(clone, group), toggle, False)
+        assert getattr(getattr(original, group), toggle) is True
+    assert clone.page_numbers.placement == "header"
+    clone.page_numbers.placement = "footer"
+    assert original.page_numbers.placement == "header"

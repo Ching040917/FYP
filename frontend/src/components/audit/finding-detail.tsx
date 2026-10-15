@@ -34,6 +34,7 @@ import { ExpectedActualTable } from './expected-actual-table'
 import { presentationFor } from '../../lib/audit/finding-presentation'
 import type { Violation } from '../../types/api'
 import type { ViolationSeverity } from '../../types/audit'
+import { structuralStoryLabel } from '../../lib/audit/page-elements'
 
 /**
  * What the reader should conclude about how this finding was produced.
@@ -96,7 +97,7 @@ export function FindingDetail({
   // One shared friendly location for every surface: the parent's label when
   // it exists, else the honest historical fallback. A bare "Paragraph 65"
   // is never rendered — it disagrees with the on-page number elsewhere.
-  const location = locationLabel ?? documentParagraphLabel(v)
+  const location = structuralStoryLabel(v.location ?? {}) ?? locationLabel ?? documentParagraphLabel(v)
   const pres = presentationFor(v)
   const hasCitationEvidence = pres.evidence != null
   const hasEntryPreview = pres.entryPreview != null

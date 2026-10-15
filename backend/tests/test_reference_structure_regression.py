@@ -167,8 +167,8 @@ def test_role_classification_of_reference_documents_is_unchanged():
 
 def test_snapshot_version_carries_the_reference_list_rules():
     # Each schema keeps its historical payload shape loadable.
-    assert SNAPSHOT_SCHEMA_VERSION == 5
-    assert tuple(SUPPORTED_SNAPSHOT_SCHEMA_VERSIONS) == (1, 2, 3, 4, 5)
+    assert SNAPSHOT_SCHEMA_VERSION == 6
+    assert tuple(SUPPORTED_SNAPSHOT_SCHEMA_VERSIONS) == (1, 2, 3, 4, 5, 6)
 
 
 def test_phase_2_citation_matching_keys_are_untouched():

@@ -4,6 +4,7 @@
  * Every finding is first CLASSIFIED by its location target:
  *   - 'paragraph' — pure paragraph targets (font/size/typography/heading/
  *     citation findings). These may navigate via the paragraph mapping.
+ *   - 'structural' — stored Header/Footer definitions, never physical pages.
  *   - 'object' — table/figure/section/margin targets. These are NEVER
  *     forced through paragraph mapping, even when their location also
  *     carries a paragraph_index (image findings record their host
@@ -14,18 +15,21 @@
  * approximate; a completed unavailable result is the ONLY case that falls
  * back to Extracted Text. Confidence terminology never surfaces.
  */
+import { isPageElementRule, structuralStoryLabel } from '../audit/page-elements.ts'
 import type { BlockMapping, MappingConfidence } from './paragraph-mapping.ts'
 
-export type FindingTargetType = 'paragraph' | 'object' | 'none'
+export type FindingTargetType = 'paragraph' | 'object' | 'structural' | 'none'
 
 export type FindingLike = {
   id: string
+  rule_code?: string
+  ruleCode?: string
   location?: Record<string, unknown> | null
 }
 
 export type NavigationDecision = {
-  /** 'rendered' → switch to Rendered Pages and go to `pageNumber`. */
-  mode: 'rendered' | 'text'
+  /** 'preserve' leaves both the preview mode and current page unchanged. */
+  mode: 'rendered' | 'text' | 'preserve'
   pageNumber: number | null
   /**
    * User-facing location label, or null when the finding keeps its
@@ -41,6 +45,10 @@ export type NavigationDecision = {
 const OBJECT_KEYS = ['table_index', 'image_index', 'section_index'] as const
 
 export function classifyFindingTarget(finding: FindingLike): FindingTargetType {
+  if (
+    finding.location?.structural_story === true ||
+    isPageElementRule(finding.rule_code ?? finding.ruleCode ?? '')
+  ) return 'structural'
   const location = finding.location
   if (!location) return 'none'
   for (const key of OBJECT_KEYS) {
@@ -52,6 +60,7 @@ export function classifyFindingTarget(finding: FindingLike): FindingTargetType {
 }
 
 export function getParagraphIndex(finding: FindingLike): number | null {
+  if (classifyFindingTarget(finding) === 'structural') return null
   const n = finding.location?.paragraph_index
   return typeof n === 'number' && n >= 0 ? n : null
 }
@@ -61,6 +70,14 @@ export function resolveFindingNavigation(
   mappingByIndex: Map<number, BlockMapping> | null | undefined,
 ): NavigationDecision {
   const target = classifyFindingTarget(finding)
+
+  if (target === 'structural') {
+    return {
+      mode: 'preserve',
+      pageNumber: null,
+      locationLabel: structuralStoryLabel(finding.location ?? {}),
+    }
+  }
 
   // Object findings (table/figure/section/margin) are never forced through
   // paragraph mapping — even with a paragraph_index in their location.

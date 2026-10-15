@@ -10,13 +10,14 @@
  */
 
 import * as React from 'react'
+import { createPortal } from 'react-dom'
+import { CheckCircle2, MinusCircle, ClipboardList } from 'lucide-react'
 import {
   Upload,
   FileText,
   X,
   ShieldCheck,
   Loader2,
-  Info,
   RefreshCw,
 } from 'lucide-react'
 import { Button } from '../ui/button'
@@ -63,6 +64,8 @@ import {
 } from '../../lib/custom-profile-store/store.ts'
 import { loadEnvelope } from '../../lib/custom-profile-store/editor.ts'
 import { createBrowserStoreAdapter } from '../../lib/custom-profile-store/localstorage-adapter.ts'
+import { profileDetailSections, selectedProfileSummary } from '../../lib/audit/enabled-checks-wording'
+import { DisclosureSections } from './compact-disclosure'
 
 const MAX_SIZE_MB = 10
 const MAX_SIZE_BYTES = MAX_SIZE_MB * 1024 * 1024
@@ -94,6 +97,8 @@ export function UploadCard({ onResult, onReset, trySampleSignal = 0 }: UploadCar
   const selectedValueRef = React.useRef<string | null>(null)
   const [profilesLoading, setProfilesLoading] = React.useState(true)
   const [profilesError, setProfilesError] = React.useState(false)
+  const [builtinPayloads, setBuiltinPayloads] = React.useState<Record<string, Record<string, unknown>>>({})
+  const [builtinDetailsError, setBuiltinDetailsError] = React.useState<string | null>(null)
   const inputRef = React.useRef<HTMLInputElement>(null)
   const adapterRef = React.useRef<ReturnType<typeof createBrowserStoreAdapter> | null>(null)
   const [envelope, setEnvelope] = React.useState<StoreEnvelope | null>(null)
@@ -474,13 +479,26 @@ export function UploadCard({ onResult, onReset, trySampleSignal = 0 }: UploadCar
   }, [envelope])
 
   const selectorOptions = React.useMemo(() => {
-    return buildSelectorOptions(profiles, confirmedCustomProfiles)
-  }, [profiles, confirmedCustomProfiles])
+    return buildSelectorOptions(profiles, confirmedCustomProfiles, builtinPayloads)
+  }, [profiles, confirmedCustomProfiles, builtinPayloads])
 
   const selectedOption = React.useMemo(() => {
     if (!selectedValue) return null
     return selectorOptions.find((o) => o.value === selectedValue) ?? null
   }, [selectorOptions, selectedValue])
+
+  const selectedBuiltinId = selectedOption?.isBuiltIn ? selectedOption.underlyingId : null
+  React.useEffect(() => {
+    if (!selectedBuiltinId || builtinPayloads[selectedBuiltinId]) return
+    let cancelled = false
+    setBuiltinDetailsError(null)
+    void api.getBuiltinProfilePayload(selectedBuiltinId).then((payload) => {
+      if (!cancelled) setBuiltinPayloads((current) => ({ ...current, [selectedBuiltinId]: payload }))
+    }).catch(() => {
+      if (!cancelled) setBuiltinDetailsError(selectedBuiltinId)
+    })
+    return () => { cancelled = true }
+  }, [selectedBuiltinId, builtinPayloads, profiles])
 
   // Compact profile summary resets when the selection changes.
   const [showFullRequirements, setShowFullRequirements] = React.useState(false)
@@ -488,18 +506,13 @@ export function UploadCard({ onResult, onReset, trySampleSignal = 0 }: UploadCar
     setShowFullRequirements(false)
   }, [selectedValue])
 
-  const compactRequirementRe = /margin|body|line spacing|references|will not be checked/i
-  const compactReqLines = React.useMemo(() => {
-    if (!selectedOption) return []
-    return selectedOption.keyRequirements.filter((r) => compactRequirementRe.test(r))
-  }, [selectedOption])
-  const extraReqLines = React.useMemo(() => {
-    if (!selectedOption) return []
-    return selectedOption.keyRequirements.filter((r) => !compactRequirementRe.test(r))
-  }, [selectedOption])
+  const summaryRows = React.useMemo(() => selectedOption?.snapshot
+    ? selectedProfileSummary(selectedOption.snapshot)
+    : [], [selectedOption])
 
   return (
-    <Card className="border-border bg-card">
+    <div className="grid min-w-0 grid-cols-1 items-start gap-5 md:grid-cols-[11fr_9fr]">
+    <Card className="min-w-0 border-border bg-card">
       <CardHeader className="pb-4">
         <div className="flex items-center justify-between gap-3">
           <div>
@@ -528,7 +541,8 @@ export function UploadCard({ onResult, onReset, trySampleSignal = 0 }: UploadCar
           onDragLeave={() => setIsDragging(false)}
           onDrop={onDrop}
           className={cn(
-            'relative flex min-h-[148px] cursor-pointer flex-col items-center justify-center gap-2 rounded-md border border-dashed px-6 py-8 text-center transition-colors focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2 focus-within:ring-offset-background',
+            'relative flex cursor-pointer items-center justify-center gap-2 rounded-md border border-dashed px-6 text-center transition-colors focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2 focus-within:ring-offset-background',
+            file ? 'min-h-[64px] flex-row py-3' : 'min-h-[148px] flex-col py-8',
             isDragging
               ? 'border-primary bg-primary/5'
               : 'border-border bg-input hover:border-primary/50 hover:bg-input/70',
@@ -541,11 +555,11 @@ export function UploadCard({ onResult, onReset, trySampleSignal = 0 }: UploadCar
             className="sr-only"
             onChange={(e) => selectFile(e.target.files?.[0] ?? null)}
           />
-          <Upload className="h-6 w-6 text-muted-foreground" aria-hidden="true" />
+          <Upload className={cn('shrink-0 text-muted-foreground', file ? 'h-4 w-4' : 'h-6 w-6')} aria-hidden="true" />
           <div className="text-sm font-medium">
-            {isDragging ? 'Drop the file to upload' : 'Drag & drop your .docx here'}
+            {isDragging ? 'Drop the file to upload' : file ? 'Drop a replacement DOCX or click to browse' : 'Drag & drop your .docx here'}
           </div>
-          <div className="text-xs text-muted-foreground">or click to browse</div>
+          {!file && <div className="text-xs text-muted-foreground">or click to browse</div>}
         </label>
 
         <p className="text-[13px] leading-[19px] text-muted-foreground">
@@ -590,10 +604,38 @@ export function UploadCard({ onResult, onReset, trySampleSignal = 0 }: UploadCar
           </div>
         )}
 
-        <div className="rounded-md border border-border bg-input/20 px-3 py-3">
-          <div className="flex items-center justify-between gap-2">
+        <p id="upload-action-help" className="text-xs text-muted-foreground">
+          {!file ? 'Upload a DOCX file to continue.' : 'Your selected profile will be applied to this document.'}
+        </p>
+
+
+        <Button
+          type="button"
+          className="w-full bg-primary text-primary-foreground hover:bg-primary/90"
+          disabled={!file || isUploading || profilesLoading || profilesError || profiles.length === 0}
+          aria-describedby="upload-action-help"
+          onClick={onUpload}
+        >
+          {isUploading ? (
+            <>
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              Auditing…
+            </>
+          ) : (
+            <>
+              <ShieldCheck className="mr-2 h-4 w-4" aria-hidden="true" />
+              Run compliance audit
+            </>
+          )}
+        </Button>
+      </CardContent>
+    </Card>
+    <Card className="min-w-0 border-border bg-card">
+      <CardContent className="p-5">
+        <div>
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <Label htmlFor="profile-select" className="text-sm font-medium">
-              Document requirements
+              Selected profile
             </Label>
             <Link
               to="/profiles/custom"
@@ -603,9 +645,6 @@ export function UploadCard({ onResult, onReset, trySampleSignal = 0 }: UploadCar
               Manage custom profiles
             </Link>
           </div>
-          <p className="mt-0.5 text-xs leading-[16px] text-muted-foreground">
-            Findings are evaluated against the selected document requirements.
-          </p>
 
           {customProfilesWarning && !profilesLoading && !profilesError && (
             <p
@@ -655,7 +694,7 @@ export function UploadCard({ onResult, onReset, trySampleSignal = 0 }: UploadCar
               >
                 <SelectTrigger
                   id="profile-select"
-                  className="w-full"
+                  className="w-full min-w-0 [&>span]:min-w-0 [&>span]:truncate [&>span]:text-left"
                   aria-label="Document requirements profile"
                 >
                   <SelectValue placeholder="Select document requirements" />
@@ -693,87 +732,121 @@ export function UploadCard({ onResult, onReset, trySampleSignal = 0 }: UploadCar
                 return (
                   <div className="space-y-1.5 text-xs leading-[16px] text-muted-foreground">
                     <div className="flex flex-wrap items-center gap-1">
-                      <span className="font-medium text-foreground">{opt.displayName}</span>
-                      <Badge
-                        variant={opt.isBuiltIn ? 'outline' : 'secondary'}
-                        className={
-                          opt.isBuiltIn
-                            ? 'border-border text-muted-foreground'
-                            : 'bg-secondary/10 text-secondary'
-                        }
-                      >
-                        {opt.isBuiltIn ? 'Built-in' : 'Custom'}
-                      </Badge>
+                      <span>Source: {opt.isBuiltIn ? 'Built-in · Read-only' : 'Custom · Independently editable'}</span>
                       {opt.isRecommended && (
                         <Badge variant="outline" className="border-border text-muted-foreground">
-                          Recommended for this institution
+                          Recommended
                         </Badge>
                       )}
                     </div>
 
-                    {compactReqLines.length > 0 && (
-                      <ul className="list-disc space-y-0.5 pl-4">
-                        {compactReqLines.map((req) => (
-                          <li key={req}>{req}</li>
+                    {summaryRows.length > 0 ? (
+                      <dl className="divide-y divide-border rounded-md border border-border bg-background/40 px-2.5">
+                        {summaryRows.map((row) => (
+                          <div key={row.heading} className="py-1.5">
+                            <dt className={cn('flex items-center gap-1.5 font-medium', row.heading.startsWith('Manual') ? 'text-purple-700 dark:text-purple-300' : row.heading === 'Not checked' ? 'text-muted-foreground' : 'text-foreground')}>
+                              {row.heading.startsWith('Manual') ? <ClipboardList className="h-3.5 w-3.5 shrink-0" aria-hidden="true" /> : row.heading === 'Not checked' ? <MinusCircle className="h-3.5 w-3.5 shrink-0" aria-hidden="true" /> : <CheckCircle2 className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />}
+                              {row.heading}
+                            </dt>
+                            <dd className="mt-0.5 break-words">
+                              <p>{row.text}</p>
+                              {row.items && row.items.length > 0 && (
+                                <dl className="mt-1 space-y-1">
+                                  {row.items.map((item) => (
+                                    <div key={item.label} className="flex flex-wrap justify-between gap-x-3 gap-y-0.5">
+                                      <dt className="font-medium">{item.label}</dt>
+                                      <dd className="flex items-center gap-1.5">{item.value === 'Not checked' ? <MinusCircle className="h-3 w-3 shrink-0" aria-hidden="true" /> : item.value === 'Manual review' ? <ClipboardList className="h-3 w-3 shrink-0 text-purple-700 dark:text-purple-300" aria-hidden="true" /> : null}{item.value}</dd>
+                                    </div>
+                                  ))}
+                                </dl>
+                              )}
+                            </dd>
+                          </div>
                         ))}
-                      </ul>
+                      </dl>
+                    ) : (
+                      <p role="status">
+                        {builtinDetailsError === opt.underlyingId
+                          ? 'Profile summary could not be loaded. Listed requirements remain available in Review full requirements.'
+                          : 'Loading profile summary…'}
+                        {builtinDetailsError === opt.underlyingId && (
+                          <Button type="button" variant="ghost" size="sm" className="ml-1 h-7 px-2 text-xs" onClick={() => void loadProfiles()}>
+                            Retry
+                          </Button>
+                        )}
+                      </p>
                     )}
-                    <p className="flex items-center gap-1">
-                      <Info className="h-3 w-3 shrink-0" aria-hidden="true" />
-                      Citation style: {opt.citationStyle}
-                    </p>
 
                     <Button
                       type="button"
                       variant="ghost"
                       size="sm"
                       className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
-                      aria-expanded={showFullRequirements}
-                      aria-controls="profile-full-requirements"
-                      onClick={() => setShowFullRequirements((s) => !s)}
+                      aria-haspopup="dialog"
+                      onClick={() => setShowFullRequirements(true)}
                     >
-                      {showFullRequirements ? 'Hide full requirements' : 'View full requirements'}
+                      Review full requirements
                     </Button>
-                    <div
-                      id="profile-full-requirements"
-                      hidden={!showFullRequirements}
-                      className="space-y-1.5"
-                    >
-                      {opt.description && <p className="break-words">{opt.description}</p>}
-                      {extraReqLines.length > 0 && (
-                        <ul className="list-disc space-y-0.5 pl-4">
-                          {extraReqLines.map((req) => (
-                            <li key={req}>{req}</li>
-                          ))}
-                        </ul>
+                    {showFullRequirements && <RequirementsDialog onClose={() => setShowFullRequirements(false)}>
+                      {opt.snapshot ? (
+                        <DisclosureSections sections={profileDetailSections(opt.snapshot)} />
+                      ) : (
+                        <>
+                          {opt.description && <p className="break-words">{opt.description}</p>}
+                          <ul className="list-disc space-y-0.5 pl-4">
+                            {opt.keyRequirements.map((req) => <li key={req}>{req}</li>)}
+                          </ul>
+                        </>
                       )}
-                    </div>
+                    </RequirementsDialog>}
                   </div>
                 )
               })()}
             </div>
           )}
         </div>
-
-        <Button
-          type="button"
-          className="w-full bg-primary text-primary-foreground hover:bg-primary/90"
-          disabled={!file || isUploading || profilesLoading || profilesError || profiles.length === 0}
-          onClick={onUpload}
-        >
-          {isUploading ? (
-            <>
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              Auditing…
-            </>
-          ) : (
-            <>
-              <ShieldCheck className="mr-2 h-4 w-4" aria-hidden="true" />
-              Run compliance audit
-            </>
-          )}
-        </Button>
       </CardContent>
     </Card>
+    </div>
+  )
+}
+
+function RequirementsDialog({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
+  const panelRef = React.useRef<HTMLDivElement>(null)
+  const closeRef = React.useRef<HTMLButtonElement>(null)
+  const titleId = React.useId()
+  React.useEffect(() => {
+    const trigger = document.activeElement as HTMLElement | null
+    const overflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    closeRef.current?.focus()
+    return () => {
+      document.body.style.overflow = overflow
+      trigger?.focus()
+    }
+  }, [])
+  return createPortal(
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-3 sm:p-6" onClick={onClose}>
+      <div ref={panelRef} role="dialog" aria-modal="true" aria-labelledby={titleId}
+        className="flex max-h-[90dvh] w-full min-w-0 max-w-3xl flex-col overflow-hidden rounded-lg border border-border bg-card text-foreground shadow-xl"
+        onClick={(event) => event.stopPropagation()}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') { event.preventDefault(); onClose(); return }
+          if (event.key !== 'Tab') return
+          const controls = Array.from(panelRef.current?.querySelectorAll<HTMLElement>('button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])') ?? []).filter((element) => element.getClientRects().length > 0)
+          const first = controls[0]
+          const last = controls[controls.length - 1]
+          if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus() }
+          else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus() }
+        }}>
+        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-5 py-4">
+          <h2 id={titleId} className="text-base font-semibold">Full profile requirements</h2>
+          <Button ref={closeRef} type="button" variant="outline" size="sm" onClick={onClose}><X className="mr-1.5 h-4 w-4" aria-hidden="true" />Close</Button>
+        </div>
+        <div className="min-h-0 overflow-y-auto overscroll-contain break-words p-5 text-sm">{children}
+          <section className="mt-4 border-t border-border pt-3"><h3 className="font-semibold">Scope</h3><p className="mt-1 text-muted-foreground">Only enabled deterministic checks contribute to the score. Manual review requirements are unscored. Writing quality, factual accuracy and unsupported formatting requirements are not assessed.</p></section>
+        </div>
+      </div>
+    </div>, document.body,
   )
 }

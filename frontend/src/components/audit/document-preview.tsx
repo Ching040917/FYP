@@ -22,6 +22,8 @@ import { AlertOctagon, AlertTriangle, Check, FileText, Info, Loader2, ScrollText
 import { cn } from '../../lib/utils'
 import { evidencePage, evidencePrecision, evidenceTargetLabel, compactEvidenceText, compactPrecisionLabel, evidenceSummary } from '../../lib/audit/evidence-summary.ts'
 import { friendlyRuleTitle } from '../../lib/friendly-finding'
+import { structuralStoryLabel, STRUCTURAL_PAGE_UNAVAILABLE, STRUCTURAL_HIGHLIGHT_UNAVAILABLE } from '../../lib/audit/page-elements.ts'
+import { classifyFindingTarget, getParagraphIndex } from '../../lib/pdf/finding-navigation.ts'
 import {
   CompactDisclosure,
   DisclosureRows,
@@ -50,6 +52,8 @@ export interface DocumentPreviewProps {
    * preview is the automatic fallback.
    */
   renderedPdf?: RenderedPdfState | null
+  /** Proven first rendered page of the selected section, not a story rectangle. */
+  structuralPage?: number | null
   /** Controlled preview mode (finding navigation switches it). */
   previewMode?: 'rendered' | 'text'
   onPreviewModeChange?: (mode: 'rendered' | 'text') => void
@@ -102,6 +106,7 @@ export function DocumentPreview({
   fitRegion = false,
   active,
   renderedPdf = null,
+  structuralPage = null,
   previewMode,
   onPreviewModeChange,
   pendingPage = null,
@@ -123,6 +128,13 @@ export function DocumentPreview({
 }: DocumentPreviewProps) {
   const containerRef = React.useRef<HTMLDivElement>(null)
   const blockRefs = React.useRef<Map<number, HTMLElement>>(new Map())
+  const selectedEvidenceViolation = selectedViolationId
+    ? (violations.find((vi) => vi.id === selectedViolationId) ?? null)
+    : null
+  const selectedStructuralLocation =
+    selectedEvidenceViolation && classifyFindingTarget(selectedEvidenceViolation) === 'structural'
+      ? selectedEvidenceViolation.location ?? {}
+      : null
 
   // Rendered-preview mode: primary when available, text is the fallback.
   const hasRendered = renderedPdf != null
@@ -201,6 +213,8 @@ export function DocumentPreview({
   // identical to the previous chip set; `null` renders no chip at all, so no
   // empty evidence space is reserved.
   const evidence = evidenceSummary({
+    structuralLocation: selectedStructuralLocation,
+    structuralPage,
     citationRects,
     citationLabel,
     highlightMessage,
@@ -220,20 +234,21 @@ export function DocumentPreview({
   // Finding Details) and never carries the full target text. The DOM text
   // stays complete (truncation is visual only); no `title` tooltip is the
   // sole access path.
-  const selectedEvidenceViolation = selectedViolationId
-    ? (violations.find((vi) => vi.id === selectedViolationId) ?? null)
-    : null
   const selectedEvidenceParagraph =
     selectedEvidenceViolation !== null ? getParagraphIndex(selectedEvidenceViolation) : null
   const selectedEvidencePage = evidencePage({
+    structuralLocation: selectedStructuralLocation,
+    structuralPage,
     citationRects,
     formattingPageRects: formattingEvidence?.pageRects ?? null,
     figurePage: figureOutline?.rect.page ?? null,
     marginStartPage: marginMarker?.startPage ?? null,
   })
-  const selectedEvidenceObject =
-    selectedEvidenceParagraph === null ? (objectStatus?.label ?? null) : null
+  const selectedEvidenceObject = selectedStructuralLocation !== null
+    ? structuralStoryLabel(selectedStructuralLocation)
+    : selectedEvidenceParagraph === null ? (objectStatus?.label ?? null) : null
   const selectedEvidenceTarget = evidenceTargetLabel({
+    structuralLocation: selectedStructuralLocation,
     citationRects,
     formattingEvidence,
     referenceEntry:
@@ -249,6 +264,8 @@ export function DocumentPreview({
     marginLabel: marginChipLabel ?? marginStatus?.label ?? null,
   })
   const selectedEvidencePrecision = evidencePrecision({
+    structuralLocation: selectedStructuralLocation,
+    structuralPage,
     citationRects,
     citationLabel,
     highlightMessage,
@@ -261,14 +278,16 @@ export function DocumentPreview({
     marginStatus,
     marginChipLabel,
   })
-  const selectedEvidenceMessage = (
-    highlightMessage
-    ?? formattingMessage
-    ?? figureMessage
-    ?? objectStatus?.message
-    ?? marginStatus?.message
-    ?? null
-  )
+  const selectedEvidenceMessage = selectedStructuralLocation !== null
+    ? selectedEvidencePage === null ? STRUCTURAL_PAGE_UNAVAILABLE : STRUCTURAL_HIGHLIGHT_UNAVAILABLE
+    : (
+      highlightMessage
+      ?? formattingMessage
+      ?? figureMessage
+      ?? objectStatus?.message
+      ?? marginStatus?.message
+      ?? null
+    )
   const selectedEvidenceLocation = [
     selectedEvidencePage != null ? `Page ${selectedEvidencePage}` : null,
     selectedEvidenceParagraph != null
@@ -290,6 +309,8 @@ export function DocumentPreview({
         />
       )}
       summary={compactEvidenceText({
+        structuralLocation: selectedStructuralLocation,
+        structuralPage,
         paragraphIndex: selectedEvidenceParagraph,
         page: selectedEvidencePage,
         objectLabel: selectedEvidenceObject,
@@ -366,7 +387,7 @@ export function DocumentPreview({
       {header}
 
       {/* Concise navigation explanation (object findings / text fallback). */}
-      {notice && (
+      {selectedStructuralLocation === null && notice && (
         <p
           role="status"
           className="shrink-0 rounded-md border border-border bg-input/20 px-3 py-2 text-xs leading-[18px] text-muted-foreground"
@@ -388,12 +409,13 @@ export function DocumentPreview({
           <RenderedPreview
             pdf={renderedPdf}
             fitRegion={fitRegion}
-            pendingPage={pendingPage}
-            citationRects={citationRects}
-            formattingEvidence={formattingEvidence}
-            formattingSpacingSide={formattingSpacingSide}
-            figureOutline={figureOutline}
-            marginMarker={marginMarker}
+            pendingPage={selectedStructuralLocation === null ||
+              (selectedEvidencePage !== null && pendingPage?.page === selectedEvidencePage) ? pendingPage : null}
+            citationRects={selectedStructuralLocation === null ? citationRects : null}
+            formattingEvidence={selectedStructuralLocation === null ? formattingEvidence : null}
+            formattingSpacingSide={selectedStructuralLocation === null ? formattingSpacingSide : null}
+            figureOutline={selectedStructuralLocation === null ? figureOutline : null}
+            marginMarker={selectedStructuralLocation === null ? marginMarker : null}
           />
         </div>
       )}
@@ -553,12 +575,6 @@ function ModeButton({
 /* ---------------------------------------------------------------------------
  * Helpers
  * --------------------------------------------------------------------------- */
-
-function getParagraphIndex(v: Violation): number | null {
-  const loc = v.location as Record<string, unknown> | null
-  const n = loc?.paragraph_index
-  return typeof n === 'number' && n >= 0 ? n : null
-}
 
 /**
  * Renders block text. Valid document heading levels (1–6) use a labelled

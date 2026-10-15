@@ -280,3 +280,32 @@ test('document-wide missing-References finding shows no citation evidence', () =
   assert.ok(pres.evidence == null)
   assert.equal(pres.requiredAction, 'Add a References section and list every source cited in the text.')
 })
+
+test('structural reviews translate historical values for display without changing stored findings', () => {
+  for (const code of ['HEADER_CONTENT_REQUIRED', 'FOOTER_CONTENT_REQUIRED', 'PAGE_NUMBER_FIELD_REQUIRED']) {
+    for (const state of ['missing', 'empty', 'unresolved']) {
+      const location = { structural_story: true, section_index: 0, story_type: 'header', story_variant: 'default', evidence_state: state }
+      const finding = { ...v(code, 'Historical manual action', 'Historical requirement', 'Historical current value', location), severity: 'REVIEW' }
+      const original = JSON.stringify(finding)
+      const result = presentationFor(finding)
+      const target = code === 'FOOTER_CONTENT_REQUIRED' ? 'footer' : 'header'
+      const current = state === 'unresolved'
+        ? 'ACA could not check this requirement from the supported document content.'
+        : code === 'PAGE_NUMBER_FIELD_REQUIRED'
+          ? 'No page-number field was found in the selected header or footer.'
+          : state === 'empty'
+            ? `The normal-pages ${target} has no text or supported field.`
+            : `No ${target} is defined for normal pages in this section.`
+      assert.equal(result.actual, current)
+      assert.equal(result.issue, current)
+      assert.equal(result.expected, code === 'PAGE_NUMBER_FIELD_REQUIRED'
+        ? `A page-number field in this section’s normal-pages ${target}.`
+        : `Text or a supported field in this section’s normal-pages ${target}.`)
+      assert.equal(result.requiredAction, `In Word, check this section’s ${target}${state === 'unresolved'
+        ? '' : code === 'PAGE_NUMBER_FIELD_REQUIRED'
+          ? ' and insert a page-number field if needed'
+          : ' and add text or a supported field if needed'}. Verify the rendered document manually.`)
+      assert.equal(JSON.stringify(finding), original)
+    }
+  }
+})

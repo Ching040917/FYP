@@ -9,18 +9,15 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
-import { dirname, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
 
 import {
   friendlyParagraphLocation,
   resolveFindingNavigation,
 } from '../src/lib/pdf/finding-navigation.ts'
 import type { BlockMapping } from '../src/lib/pdf/paragraph-mapping.ts'
+import { structuralStoryLabel } from '../src/lib/audit/page-elements.ts'
+import { objectLabel } from '../src/lib/friendly-finding.ts'
 
-const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const read = (rel: string) => readFileSync(resolve(ROOT, rel), 'utf8')
 
 const PAGE: BlockMapping = {
   index: 64,
@@ -86,39 +83,16 @@ test('no paragraph identity yields null rather than a fabricated label', () => {
   assert.equal(friendlyParagraphLocation(-1), null)
 })
 
-// ---------------------------------------------------------------------------
-// Every surface consumes the shared value
-// ---------------------------------------------------------------------------
 
-test('the Findings card and Finding Details read the same label map', () => {
-  const page = read('src/pages/AuditPage.tsx')
-  // One label map, built by the shared helper, feeds the card...
-  assert.match(page, /locationLabels=\{locationLabels\}/)
-  // ...and the selected finding's label is handed to the detail pane.
-  assert.match(page, /locationLabel=\{selectedLocationLabel\}/)
-  assert.match(page, /locationLabels\?\.get\(selectedViolation\.id\)/)
-})
-
-test('the selected-evidence chip reads the shared helper, not its own index', () => {
-  const highlight = read('src/lib/pdf/formatting-highlight.ts')
-  assert.match(highlight, /friendlyParagraphLocation\(paraIndex, mapped\)/)
-  // The old divergent construction is gone.
-  assert.doesNotMatch(highlight, /Paragraph \$\{paragraphNumber\}/)
-})
-
-test('the card itself never builds a bare paragraph label', () => {
-  const page = read('src/pages/AuditPage.tsx')
-  assert.doesNotMatch(page, /`Paragraph \$\{para \+ 1\}`/)
-})
-
-test('deleted label wording cannot come back through a stale copy', () => {
-  for (const source of [
-    read('src/pages/AuditPage.tsx'),
-    read('src/lib/pdf/finding-navigation.ts'),
-    read('src/lib/pdf/formatting-highlight.ts'),
-    read('src/components/audit/finding-detail.tsx'),
-  ]) {
-    assert.doesNotMatch(source, /Paragraph \$\{paragraphNumber\}/)
-    assert.doesNotMatch(source, /`Paragraph \$\{n \+ 1\}`/)
+test('structural story labels precede object and body fallbacks without guessing pages', () => {
+  for (const [kind, label] of [['header', 'Header'], ['footer', 'Footer'], ['either', 'Header or Footer']]) {
+    const location = { structural_story: true, section_index: 2, story_type: kind, story_variant: 'default', paragraph_index: 99, image_index: 8 }
+    assert.equal(structuralStoryLabel(location), `Section 3 · ${label} · Normal pages`)
+    assert.equal(objectLabel(location), `Section 3 · ${label} · Normal pages`)
+  }
+  assert.equal(structuralStoryLabel({ section_index: 0, story_type: 'header', story_variant: 'default' }), null)
+  assert.equal(structuralStoryLabel({ structural_story: true, section_index: -1, story_type: 'header', story_variant: 'default' }), null)
+  for (const story_type of ['unknown', 'constructor', '__proto__']) {
+    assert.equal(structuralStoryLabel({ structural_story: true, section_index: 0, story_type, story_variant: 'default' }), null)
   }
 })

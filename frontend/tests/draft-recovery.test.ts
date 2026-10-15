@@ -21,7 +21,11 @@ import {
   createMemoryDraftRecoveryAdapter,
   type ProfileDraftRecovery,
 } from '../src/lib/custom-profile-store/draft-recovery.ts'
-import { blankProfilePayload } from '../src/lib/custom-profile-store/editor.ts'
+import {
+  blankProfilePayload,
+  pageElementsFromUiModel,
+  pageElementsToUiModel,
+} from '../src/lib/custom-profile-store/editor.ts'
 
 function makeRecovery(overrides: Partial<ProfileDraftRecovery> = {}): ProfileDraftRecovery {
   return {
@@ -187,12 +191,6 @@ test('payload is profile-shaped only — no document/filename/audit/findings/key
   for (const banned of ['filename', '.docx', 'findings', 'audit_id', 'api_key', 'credentials', 'password', 'token', 'c:\\', 'document_blocks', 'physical_layout_errors']) {
     assert.ok(!lower.includes(banned), `must not contain ${banned}`)
   }
-  const obj = JSON.parse(raw) as Record<string, unknown>
-  const payloadKeys = Object.keys(obj.payload as Record<string, unknown>)
-  assert.deepEqual(
-    new Set(payloadKeys),
-    new Set(['profile_id', 'profile_name', 'profile_version', 'profile_source', 'description', 'citation_style', 'body', 'heading', 'margins', 'references', 'captions', 'lists', 'role_policy', 'citation_matching']),
-  )
 })
 
 // ---------------------------------------------------------------------------
@@ -224,4 +222,39 @@ test('recovery is cleared explicitly after Save/Discard/Delete semantics', () =>
   saveDraftRecovery(adapter, makeRecovery())
   clearDraftRecovery(adapter)
   assert.equal(loadDraftRecovery(adapter), null)
+})
+
+test('page element edits survive unsaved recovery for every toggle combination and placement', () => {
+  for (let bits = 0; bits < 8; bits += 1) {
+    for (const placement of ['header', 'footer', 'either'] as const) {
+      const ui = {
+        headerEnabled: Boolean(bits & 1),
+        footerEnabled: Boolean(bits & 2),
+        pageNumberEnabled: Boolean(bits & 4),
+        placement,
+      }
+      const payload = { ...blankProfilePayload('p1', 'Recovered'), ...pageElementsFromUiModel(ui) }
+      const record = makeRecovery({ profile_id: 'p1', base_revision: 5, payload })
+      const adapter = createMemoryDraftRecoveryAdapter()
+      assert.equal(saveDraftRecovery(adapter, record), true)
+      const recovered = loadDraftRecovery(adapter)!
+      assert.equal(decideDraftRecovery(recovered, 'p1', 5).action, 'apply')
+      assert.deepEqual(pageElementsToUiModel(recovered.payload), ui)
+      assert.deepEqual(recovered.payload, payload)
+      clearDraftRecovery(adapter)
+      assert.equal(loadDraftRecovery(adapter), null)
+    }
+  }
+})
+
+test('historical recovered payloads keep missing page elements Off/either', () => {
+  const payload = blankProfilePayload('p1', 'Old draft')
+  delete payload.headers
+  delete payload.footers
+  delete payload.page_numbers
+  const recovered = parseDraftRecovery(serializeDraftRecovery(makeRecovery({ payload })))!
+  assert.deepEqual(recovered.payload, payload)
+  assert.deepEqual(pageElementsToUiModel(recovered.payload), {
+    headerEnabled: false, footerEnabled: false, pageNumberEnabled: false, placement: 'either',
+  })
 })

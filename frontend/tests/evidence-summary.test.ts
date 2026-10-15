@@ -9,7 +9,7 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { evidenceSummary } from '../src/lib/audit/evidence-summary.ts'
+import { compactEvidenceText, compactPrecisionLabel, evidencePage, evidencePrecision, evidenceSummary, evidenceTargetLabel } from '../src/lib/audit/evidence-summary.ts'
 
 test('nothing selected -> null (no reserved evidence space)', () => {
   assert.equal(evidenceSummary({}), null)
@@ -124,4 +124,94 @@ test('the summary only ever repeats the friendly strings it was given', () => {
   const summary = evidenceSummary({ citationRects: [{ page: 2 }], citationLabel: friendly })
   assert.equal(summary?.text, `Selected evidence: ${friendly}`)
   assert.equal(/run_index|paragraph_index|block_index|style_name/.test(summary!.text), false)
+})
+
+test('unmapped structural evidence ignores stale overlays and never guesses a physical page', () => {
+  const stale = {
+    citationRects: [{ page: 12 }],
+    citationLabel: 'Old citation · Page 12',
+    highlightMessage: 'Old extracted paragraph fallback.',
+    formattingEvidence: { kind: 'paragraph', pageRects: [{ page: 8 }] },
+    formattingLabel: 'Old paragraph · Page 8',
+    formattingMessage: 'Old formatting message.',
+    objectStatus: { label: 'Table 3 · Page 6', message: 'Old object message.' },
+    figureOutline: { label: 'Figure 2 · Page 4' },
+    figureMessage: 'Old figure message.',
+    marginStatus: { label: 'Left margin · Pages 1–3', message: 'Old margin message.' },
+    marginChipLabel: 'Left margin · Section 1 · Pages 1–3',
+  }
+  for (const [story_type, label] of [
+    ['header', 'Header'],
+    ['footer', 'Footer'],
+    ['either', 'Header or Footer'],
+  ]) {
+    for (const evidence_state of ['missing', 'empty', 'unresolved']) {
+      const structuralLocation = {
+        structural_story: true,
+        section_index: 1,
+        story_type,
+        story_variant: 'default',
+        evidence_state,
+      }
+      const locationLabel = `Section 2 · ${label} · Normal pages`
+      const text = `Structural evidence only · ${locationLabel} · Rendered page could not be determined`
+      const input = { ...stale, structuralLocation }
+      assert.deepEqual(evidenceSummary(input), { text, tone: 'muted' })
+      assert.equal(evidencePrecision(input), 'Structural evidence only')
+      assert.equal(compactPrecisionLabel(evidencePrecision(input)), 'Structural evidence only')
+      assert.equal(evidencePage({
+        structuralLocation,
+        citationRects: stale.citationRects,
+        formattingPageRects: stale.formattingEvidence.pageRects,
+        figurePage: 4,
+        marginStartPage: 1,
+      }), null)
+      assert.equal(evidenceTargetLabel({
+        ...input,
+        paragraphIndex: 3,
+        figureLabel: 'Figure 2',
+        objectLabel: 'Table 3',
+        marginLabel: 'Left margin',
+      }), locationLabel)
+      assert.equal(compactEvidenceText({
+        structuralLocation,
+        paragraphIndex: 3,
+        page: 12,
+        objectLabel: 'Figure 2',
+        precision: 'Page-only evidence',
+      }), text)
+      assert.doesNotMatch(text, /Page \d|Paragraph|Figure|Table|Page-only|extracted/i)
+    }
+  }
+})
+
+test('incomplete structural identity stays geometry-free instead of inventing a body location', () => {
+  const structuralLocation = { structural_story: true }
+  const input = {
+    structuralLocation,
+    citationRects: [{ page: 9 }],
+    citationLabel: 'Old citation',
+    formattingEvidence: {},
+    objectStatus: { label: 'Figure 1', message: null },
+  }
+  assert.deepEqual(evidenceSummary(input), {
+    text: 'Structural evidence only · Rendered page could not be determined',
+    tone: 'muted',
+  })
+  assert.equal(evidencePrecision(input), 'Structural evidence only')
+  assert.equal(evidencePage(input), null)
+  assert.equal(evidenceTargetLabel(input), 'Stored Header/Footer definition')
+})
+
+test('clearing structural selection restores the existing visual evidence precedence', () => {
+  const input = {
+    structuralLocation: null,
+    citationRects: [{ page: 3 }],
+    citationLabel: 'Citation · Page 3',
+    formattingEvidence: {},
+    objectStatus: { label: 'Table 1', message: null },
+  }
+  assert.equal(evidencePrecision(input), 'Exact evidence')
+  assert.equal(evidencePage(input), 3)
+  assert.equal(evidenceTargetLabel(input), 'Citation occurrence')
 })

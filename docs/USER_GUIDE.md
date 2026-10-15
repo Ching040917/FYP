@@ -30,6 +30,42 @@ Above the upload area, choose one of:
 
 You can create custom profiles with your own font, spacing, margins, and citation settings. Each profile is validated in-app before it can be saved, and your selection is remembered for next time.
 
+### Optional structural reviews
+
+In a Custom Profile, expand **Header**, **Footer**, or **Page numbers** and
+enable its check independently. Each disabled group shows **Not checked**;
+enabled groups show **Enabled · Manual review only (unscored)**. Page numbers
+also offers **Header**, **Footer**, or **Either** placement (default Either).
+Save the profile before selecting it for an audit. Built-in Profiles are
+read-only; copy one to create an independent editable Custom Profile.
+
+These requirements concern stored **Normal-pages** definitions in every
+document section, including inherited definitions. First-page and even-page
+definitions are not checked. Header/Footer content means supported stored
+text or a supported field; page numbering requires a genuine PAGE field,
+not typed digits. Unsupported objects or malformed fields can prevent a
+determination and are reported for review, not as confirmed empty content.
+
+The findings are **Manual review**, never scored. When the section's first
+rendered page can be proven, selecting a finding opens that page and shows
+**Page-level structural evidence**. No exact Header/Footer highlight is
+available, and ACA draws no rectangle. If mapping is unavailable, **Structural
+evidence only** shows **Rendered page could not be determined** without
+changing the current preview page. A page location does not establish
+rendered visibility, field freshness, numbering format or sequence.
+
+The Dashboard separates **Scored checks**, **Manual review only · Unscored**,
+**Not checked**, and **Citation style**. Headers, Footers, and Page numbers
+each show their own status; enabled page numbers also show placement.
+Use **Review full requirements** for the complete grouped inventory in a
+scrollable dialog. Opening it does not expand the Dashboard or move the
+audit-start controls. Escape or **Close** returns focus to its trigger.
+Header, Footer, and Page Number requirements never affect the score.
+
+Inspect and correct these requirements manually in Word; Local AI and
+Guided Fixes do not apply. Existing History entries retain their saved
+requirements and findings even if you later edit the Custom Profile.
+
 ## 5. Run an Audit
 
 Select a profile, add your document, then start the audit. ACA reports progress while it checks your document.
@@ -60,6 +96,26 @@ The preview is a locally generated copy of your document; the original Word file
 ## 8. Export a PDF Report
 
 Use **Export PDF** in the Audit Workspace to save a PDF report containing your findings, locations, and required actions. Export is offline and deterministic — it reads the stored audit only. Audits without a score (interrupted or very old) cannot be exported.
+
+The report starts with score and finding-count cards. **Attention Required**
+shows up to three saved Major findings, then Manual-review findings, in their
+saved order. Minor findings are not assigned an invented priority:
+**Issue Frequency Summary** counts saved Minor findings by issue type.
+These counts are findings, not consolidated occurrence totals.
+
+The next page's **Profile Coverage Matrix** distinguishes scored checks,
+unscored manual requirements, and requirements that were not checked.
+**Formatting Issue Summary** groups saved Minor findings by rule and required
+value, with observed values and proven pages. The complete Findings Registers
+retain each saved finding, its Current and Required values, and its location.
+Full saved requirements appear once in **Appendix: Full Profile Requirements**;
+the report ends with scope, limitations, privacy, and document-safety notes.
+
+Manual-review cards separate the finding, location, expected requirement,
+action, and evidence limitation. A proven section page is not an exact
+Header/Footer highlight, and an automatic PAGE field does not prove final
+rendered numbering. New exports of historical audits use their saved Profile
+Snapshot and findings, not today's edited Profile.
 
 ## 9. Use Audit History
 

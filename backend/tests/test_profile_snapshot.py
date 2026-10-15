@@ -470,9 +470,9 @@ def test_v1_payload_carrying_v2_group_rejected():
 def test_current_snapshot_round_trips_with_reference_rules():
     snap = resolve_snapshot(get_builtin_profile(APA_PROFILE_ID))
     d = snap.to_dict()
-    assert SNAPSHOT_SCHEMA_VERSION == 5
-    assert d["schema_version"] == 5
-    assert list(d)[-2:] == ["citation_matching", "fingerprint"]
+    assert SNAPSHOT_SCHEMA_VERSION == 6
+    assert d["schema_version"] == 6
+    assert list(d)[-4:] == ["headers", "footers", "page_numbers", "fingerprint"]
     assert d["citation_matching"]["check_references_are_cited"] is False
     assert d["references"]["check_hanging_indent"] is True
     assert d["references"]["check_doi_format"] is False
@@ -606,7 +606,7 @@ def test_v5_doi_toggle_round_trip_copy_and_fingerprint_sensitivity():
     disabled = resolve_snapshot(profile)
     profile.references.check_doi_format = True
     enabled = resolve_snapshot(profile)
-    assert disabled.schema_version == enabled.schema_version == 5
+    assert disabled.schema_version == enabled.schema_version == 6
     assert disabled.fingerprint != enabled.fingerprint
     assert enabled.fingerprint == resolve_snapshot(profile).fingerprint
     for snapshot, value in ((disabled, False), (enabled, True)):
@@ -642,3 +642,208 @@ def test_snapshot_rejects_unconfigured_doi_format_and_url_fields(version):
         with pytest.raises(ProfileValidationError) as exc:
             snapshot_from_dict(payload)
         assert (f"references.{name}", "unknown field") in exc.value.errors
+
+
+def test_v5_page_elements_positive_control_remains_frozen():
+    snapshot = EffectiveProfileSnapshot(
+        schema_version=5,
+        profile_id="page-elements-freeze",
+        profile_name="Page elements freeze",
+        profile_source="custom",
+        references_line_spacing=2.0,
+        references_hanging_indent_in=0.5,
+        references_check_reference_order=True,
+        references_check_doi_format=True,
+    ).with_fingerprint()
+    expected = "a8a442e1056028fdc76d52c50506a33feeaad62c13d1ab9e923d1b42f6e8a983"
+    assert snapshot.fingerprint == expected
+    payload = snapshot.to_dict()
+    assert payload["references"]["check_doi_format"] is True
+    assert not {"headers", "footers", "page_numbers"} & payload.keys()
+    restored = snapshot_from_dict(json.loads(json.dumps(payload)))
+    assert restored.to_dict() == payload
+    assert restored.fingerprint == expected
+    assert restored.verify_fingerprint()
+
+
+@pytest.mark.parametrize("version", [1, 2, 3, 4, 5])
+@pytest.mark.parametrize("group,toggle", [
+    ("headers", "check_header_requirements"),
+    ("footers", "check_footer_requirements"),
+    ("page_numbers", "check_page_number_requirements"),
+])
+@pytest.mark.parametrize("value", [False, True])
+def test_historical_snapshot_rejects_structural_group(version, group, toggle, value):
+    payload = EffectiveProfileSnapshot(schema_version=version).with_fingerprint().to_dict()
+    payload[group] = {toggle: value}
+    with pytest.raises(ProfileValidationError) as exc:
+        snapshot_from_dict(payload)
+    assert (group, "unknown field") in exc.value.errors
+
+
+@pytest.mark.parametrize("header", [False, True])
+@pytest.mark.parametrize("footer", [False, True])
+@pytest.mark.parametrize("page_number", [False, True])
+@pytest.mark.parametrize("placement", ["header", "footer", "either"])
+def test_v6_structural_round_trip_and_config_independence(header, footer, page_number, placement):
+    from app.services.profile_preset_adapter import EffectiveProfileConfig
+    profile = new_custom_profile("Structural snapshot")
+    profile.headers.check_header_requirements = header
+    profile.footers.check_footer_requirements = footer
+    profile.page_numbers.check_page_number_requirements = page_number
+    profile.page_numbers.placement = placement
+    snapshot = resolve_snapshot(profile)
+    restored = snapshot_from_dict(json.loads(json.dumps(snapshot.to_dict())))
+    assert restored == snapshot
+    assert restored.verify_fingerprint()
+    assert restored.with_fingerprint() == snapshot
+    config = EffectiveProfileConfig(restored)
+    assert config.HEADER_CHECK_REQUIREMENTS is header
+    assert config.FOOTER_CHECK_REQUIREMENTS is footer
+    assert config.PAGE_NUMBER_CHECK_REQUIREMENTS is page_number
+    assert config.PAGE_NUMBER_PLACEMENT == placement
+    profile.headers.check_header_requirements = not header
+    profile.footers.check_footer_requirements = not footer
+    profile.page_numbers.placement = "footer" if placement == "header" else "header"
+    assert restored.header_check_requirements is header
+    assert restored.footer_check_requirements is footer
+    assert restored.page_number_placement == placement
+
+
+def test_v6_missing_structural_defaults_still_verify_real_fingerprint():
+    snapshot = resolve_snapshot(new_custom_profile("Defaults"))
+    payload = snapshot.to_dict()
+    for group in ("headers", "footers", "page_numbers"):
+        del payload[group]
+    assert snapshot_from_dict(payload) == snapshot
+    payload["fingerprint"] = "0" * 64
+    with pytest.raises(ProfileValidationError) as exc:
+        snapshot_from_dict(payload)
+    assert any(path == "fingerprint" for path, _ in exc.value.errors)
+
+
+@pytest.mark.parametrize("group,toggle", [
+    ("headers", "check_header_requirements"),
+    ("footers", "check_footer_requirements"),
+    ("page_numbers", "check_page_number_requirements"),
+])
+def test_v6_missing_structural_fields_and_tampering(group, toggle):
+    snapshot = resolve_snapshot(new_custom_profile("Structural defaults"))
+    payload = snapshot.to_dict()
+    payload[group] = {}
+    assert snapshot_from_dict(payload) == snapshot
+    payload[group][toggle] = True
+    with pytest.raises(ProfileValidationError) as exc:
+        snapshot_from_dict(payload)
+    assert any(path == "fingerprint" for path, _ in exc.value.errors)
+
+
+@pytest.mark.parametrize("group", ["headers", "footers", "page_numbers"])
+@pytest.mark.parametrize("value", [None, False, 0, "", [], "object"])
+def test_v6_structural_groups_are_strict_objects(group, value):
+    payload = resolve_snapshot(new_custom_profile("Strict groups")).to_dict()
+    payload[group] = value
+    with pytest.raises(ProfileValidationError) as exc:
+        snapshot_from_dict(payload)
+    assert any(path == group for path, _ in exc.value.errors)
+
+
+@pytest.mark.parametrize("group,toggle", [
+    ("headers", "check_header_requirements"),
+    ("footers", "check_footer_requirements"),
+    ("page_numbers", "check_page_number_requirements"),
+])
+@pytest.mark.parametrize("value", [None, "true", "false", 0, 1, [], {}])
+def test_v6_structural_toggles_are_actual_booleans(group, toggle, value):
+    payload = resolve_snapshot(new_custom_profile("Strict toggles")).to_dict()
+    payload[group][toggle] = value
+    with pytest.raises(ProfileValidationError) as exc:
+        snapshot_from_dict(payload)
+    assert any(path == f"{group}.{toggle}" for path, _ in exc.value.errors)
+
+
+@pytest.mark.parametrize("group", ["headers", "footers", "page_numbers"])
+def test_v6_structural_unknown_keys_rejected(group):
+    payload = resolve_snapshot(new_custom_profile("Unknown keys")).to_dict()
+    payload[group]["unknown"] = False
+    with pytest.raises(ProfileValidationError) as exc:
+        snapshot_from_dict(payload)
+    assert (f"{group}.unknown", "unknown field") in exc.value.errors
+
+
+@pytest.mark.parametrize("value", [None, False, 0, [], {}, "", "Header", "body"])
+def test_v6_page_placement_validated_even_when_off(value):
+    payload = resolve_snapshot(new_custom_profile("Placement")).to_dict()
+    payload["page_numbers"]["placement"] = value
+    with pytest.raises(ProfileValidationError) as exc:
+        snapshot_from_dict(payload)
+    assert any(path == "page_numbers.placement" for path, _ in exc.value.errors)
+
+
+def test_v6_off_placement_changes_fingerprint():
+    profile = new_custom_profile("Off placement")
+    either = resolve_snapshot(profile)
+    profile.page_numbers.placement = "header"
+    header = resolve_snapshot(profile)
+    assert header.fingerprint != either.fingerprint
+    payload = either.to_dict()
+    payload["page_numbers"]["placement"] = "header"
+    with pytest.raises(ProfileValidationError) as exc:
+        snapshot_from_dict(payload)
+    assert any(path == "fingerprint" for path, _ in exc.value.errors)
+
+
+@pytest.mark.parametrize("group,toggle", [
+    ("headers", "check_header_requirements"),
+    ("footers", "check_footer_requirements"),
+    ("page_numbers", "check_page_number_requirements"),
+])
+def test_v6_builtin_snapshot_rejects_enabled_structural_setting(group, toggle):
+    payload = resolve_snapshot(get_builtin_profile(APA_PROFILE_ID)).to_dict()
+    payload[group][toggle] = True
+    with pytest.raises(ProfileValidationError) as exc:
+        snapshot_from_dict(payload)
+    assert (f"{group}.{toggle}", "Available only in Custom Profiles") in exc.value.errors
+
+
+@pytest.mark.parametrize("group,toggle", [
+    ("headers", "check_header_requirements"),
+    ("footers", "check_footer_requirements"),
+    ("page_numbers", "check_page_number_requirements"),
+])
+def test_v6_missing_enabled_setting_cannot_bypass_fingerprint(group, toggle):
+    from dataclasses import replace
+    snapshot = EffectiveProfileSnapshot(profile_source="custom")
+    attr = {
+        "headers": "header_check_requirements",
+        "footers": "footer_check_requirements",
+        "page_numbers": "page_number_check_requirements",
+    }[group]
+    enabled = replace(snapshot, **{attr: True}).with_fingerprint()
+    assert enabled.fingerprint != snapshot.with_fingerprint().fingerprint
+    assert getattr(enabled, attr) is True
+    payload = enabled.to_dict()
+    del payload[group][toggle]
+    with pytest.raises(ProfileValidationError) as exc:
+        snapshot_from_dict(payload)
+    assert any(path == "fingerprint" for path, _ in exc.value.errors)
+
+
+@pytest.mark.parametrize("version", [True, False, 1.0, 6.0, "6", 0, 7, None])
+def test_snapshot_supports_only_explicit_integer_versions(version):
+    payload = resolve_snapshot(new_custom_profile("Version")).to_dict()
+    payload["schema_version"] = version
+    with pytest.raises(ProfileValidationError) as exc:
+        snapshot_from_dict(payload)
+    assert any(path == "schema_version" for path, _ in exc.value.errors)
+
+
+@pytest.mark.parametrize("version", [1, 2, 3, 4, 5])
+def test_historical_snapshot_structural_defaults_are_off_without_serializing(version):
+    original = EffectiveProfileSnapshot(schema_version=version).with_fingerprint()
+    restored = snapshot_from_dict(original.to_dict())
+    assert restored.header_check_requirements is False
+    assert restored.footer_check_requirements is False
+    assert restored.page_number_check_requirements is False
+    assert restored.page_number_placement == "either"
+    assert restored.to_dict() == original.to_dict()

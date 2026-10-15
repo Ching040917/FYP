@@ -401,7 +401,7 @@ def test_offline_api_persistence_history_evidence_pdf_and_scores(offline_api, mo
     assert len(findings) == count
     assert submitted["weighted_compliance_score"] == score
     assert submitted["ai_citation_tooltips"] == []
-    assert submitted["profile_snapshot"]["schema_version"] == 5
+    assert submitted["profile_snapshot"]["schema_version"] == 6
     assert submitted["profile_snapshot"]["references"]["check_doi_format"] is enabled
     assert submitted["minor_count"] == count
     category = next(row for row in submitted["score_breakdown"] if row["category"] == "citation_apa")
@@ -441,6 +441,8 @@ def test_offline_api_persistence_history_evidence_pdf_and_scores(offline_api, mo
         assert re.sub(r"\s+", " ", candidate) in text
         assert TITLE in text
         assert ACTION in text
+        assert text.count(ACTION) == 1
+        assert f"Action {ACTION}" in text
         assert "selected profile" in text
     _assert_plain_text(json.dumps(findings) + text)
     if count:

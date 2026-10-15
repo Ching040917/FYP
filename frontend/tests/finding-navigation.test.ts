@@ -8,7 +8,7 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { resolveFindingNavigation, isNavigable } from '../src/lib/pdf/finding-navigation.ts'
+import { classifyFindingTarget, getParagraphIndex, resolveFindingNavigation, isNavigable } from '../src/lib/pdf/finding-navigation.ts'
 import { getMapping, invalidateMapping } from '../src/lib/pdf/mapping-cache.ts'
 import type { BlockMapping } from '../src/lib/pdf/paragraph-mapping.ts'
 
@@ -95,6 +95,57 @@ test('table/image/section findings are never forced through mapping', () => {
     assert.equal(d.pageNumber, null)
     assert.equal(d.locationLabel, null, JSON.stringify(location))
   }
+})
+
+test('stored story findings preserve the view without consulting geometry or body mapping', () => {
+  const byIndex = new Map<number, BlockMapping>()
+  byIndex.get = () => { throw new Error('Structural findings must not read body mappings') }
+  const stories = [
+    ['HEADER_CONTENT_REQUIRED', 'header', 'Header'],
+    ['FOOTER_CONTENT_REQUIRED', 'footer', 'Footer'],
+    ['PAGE_NUMBER_FIELD_REQUIRED', 'either', 'Header or Footer'],
+  ]
+  for (const [rule_code, story_type, label] of stories) {
+    const structural = {
+      id: rule_code,
+      rule_code,
+      location: {
+        structural_story: true,
+        section_index: 2,
+        story_type,
+        story_variant: 'default',
+        evidence_state: 'missing',
+        // A stale mixed location must never override the stored-story identity.
+        paragraph_index: 4,
+        table_index: 0,
+        image_index: 0,
+        page: 9,
+      },
+    }
+    assert.equal(classifyFindingTarget(structural), 'structural')
+    assert.equal(getParagraphIndex(structural), null)
+    for (const mapping of [byIndex, null, undefined]) {
+      assert.deepEqual(resolveFindingNavigation(structural, mapping), {
+        mode: 'preserve',
+        pageNumber: null,
+        locationLabel: `Section 3 · ${label} · Normal pages`,
+      })
+    }
+  }
+})
+
+test('page-element rule codes cannot fall back to stale paragraph or page identity', () => {
+  const structural = {
+    id: 'old-structure',
+    rule_code: 'PAGE_NUMBER_FIELD_REQUIRED',
+    location: { paragraph_index: 0, section_index: 0, page: 4 },
+  }
+  assert.equal(classifyFindingTarget(structural), 'structural')
+  assert.equal(getParagraphIndex(structural), null)
+  assert.deepEqual(
+    resolveFindingNavigation(structural, new Map([[0, mapping(0, 4, 'exact', 1)]])),
+    { mode: 'preserve', pageNumber: null, locationLabel: null },
+  )
 })
 
 test('missing/loading mapping falls back to text without claims', () => {

@@ -93,6 +93,8 @@ import {
   captionsToUiModel,
   listsFromUiModel,
   listsToUiModel,
+  applyPageElementsUiPatch,
+  pageElementsToUiModel,
   summarizeProfile,
   upsertAndBump,
   citationMatchingFromUiModel,
@@ -107,6 +109,7 @@ import {
   type ReferencesUiModel,
   type CaptionUiModel,
   type ListUiModel,
+  type PageElementsUiModel,
   type AlignmentValue,
   type CreationKind,
   type StoreAdapter,
@@ -119,6 +122,7 @@ import {
   type ReferenceHeadingText,
 } from '../lib/custom-profile-store/editor'
 import { createBrowserStoreAdapter } from '../lib/custom-profile-store/localstorage-adapter'
+import { PAGE_ELEMENTS_HELP_TEXT } from '../lib/audit/enabled-checks-wording'
 import { cn } from '../lib/utils'
 
 // Known citation-style terms that may appear in profile names. We only warn;
@@ -146,6 +150,40 @@ const CITATION_INPUT_IDS: Record<CitationMatchingField, string> = {
   flag_ambiguous_matches: 'citation-flag-ambiguous-matches',
   allow_personal_communication: 'citation-allow-personal-communication',
 }
+
+const PAGE_ELEMENT_CONTROLS: {
+  field: 'headerEnabled' | 'footerEnabled' | 'pageNumberEnabled'
+  label: string
+  toggleLabel: string
+  inputId: string
+  errorField: string
+  notChecked: string
+}[] = [
+  {
+    field: 'headerEnabled',
+    label: 'Header',
+    toggleLabel: 'Check Header requirements',
+    inputId: 'headers-check-requirements',
+    errorField: 'headers.check_header_requirements',
+    notChecked: 'Headers: Not checked',
+  },
+  {
+    field: 'footerEnabled',
+    label: 'Footer',
+    toggleLabel: 'Check Footer requirements',
+    inputId: 'footers-check-requirements',
+    errorField: 'footers.check_footer_requirements',
+    notChecked: 'Footers: Not checked',
+  },
+  {
+    field: 'pageNumberEnabled',
+    label: 'Page numbers',
+    toggleLabel: 'Check Page Number requirements',
+    inputId: 'page-numbers-check-requirements',
+    errorField: 'page_numbers.check_page_number_requirements',
+    notChecked: 'Page numbers: Not checked',
+  },
+]
 
 /** The citation-controls rows, in display order (7 switches, no free text). */
 const CITATION_CONTROL_ROWS: {
@@ -744,6 +782,15 @@ export function ProfileEditor() {
     [draft],
   )
 
+  const updatePageElements = React.useCallback((patch: Partial<PageElementsUiModel>) => {
+    setDraft((prev) => prev ? {
+      ...prev,
+      payload: applyPageElementsUiPatch(prev.payload, patch),
+    } : prev)
+    setDirty(true)
+    setOpStatusSafe({ kind: 'idle' })
+  }, [setOpStatusSafe])
+
   // ---------------------------------------------------------------------
   // Save (backend-gated)
   // ---------------------------------------------------------------------
@@ -784,6 +831,10 @@ export function ProfileEditor() {
     'citation_matching.check_duplicate_references': 'citation-check-duplicate-references',
     'citation_matching.flag_ambiguous_matches': 'citation-flag-ambiguous-matches',
     'citation_matching.allow_personal_communication': 'citation-allow-personal-communication',
+    'headers.check_header_requirements': 'headers-check-requirements',
+    'footers.check_footer_requirements': 'footers-check-requirements',
+    'page_numbers.check_page_number_requirements': 'page-numbers-check-requirements',
+    'page_numbers.placement': 'page-numbers-placement',
   }
 
   const focusFirstError = React.useCallback((errors: { field: string; message: string }[]) => {
@@ -791,7 +842,14 @@ export function ProfileEditor() {
     if (!first) return
     const id = FIELD_TO_INPUT_ID[first] ?? 'profile-name'
     const el = document.getElementById(id)
-    if (el) el.focus()
+    if (el) {
+      let parent = el.parentElement
+      while (parent) {
+        if (parent instanceof HTMLDetailsElement) parent.open = true
+        parent = parent.parentElement
+      }
+      el.focus()
+    }
   }, [])
 
   /** Build the final payload from the current UI models (never save partials). */
@@ -1066,6 +1124,8 @@ export function ProfileEditor() {
   const selectedBuiltin = builtins.find((b) => b.profileId === editingId)
   const citationModel = citationUi ?? DEFAULT_CITATION_MATCHING
   const referenceModel = referencesUi ?? EMPTY_REFERENCES_UI
+  // Deriving from the payload keeps create/open/recovery/reset/save paths in sync.
+  const pageElementsModel = pageElementsToUiModel(draft?.payload ?? {})
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -1408,6 +1468,23 @@ export function ProfileEditor() {
                         </Badge>
                       </div>
                     </div>
+                    {PAGE_ELEMENT_CONTROLS.map(({ field, label, notChecked }) => (
+                      <details key={field} className="group rounded-md border border-border">
+                        <summary className="cursor-pointer list-none rounded-md px-3 py-2.5 text-sm font-semibold text-foreground select-none transition-colors hover:bg-input/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background">
+                          <div className="flex items-center justify-between gap-2">
+                            <span>{label}</span>
+                            <span className="text-xs font-normal text-muted-foreground">Not checked</span>
+                          </div>
+                        </summary>
+                        <div className="space-y-2 px-3 pb-3 pt-1">
+                          <p className="text-sm text-muted-foreground">{notChecked}</p>
+                          <p className="text-xs leading-[16px] text-muted-foreground">
+                            Available only in Custom Profiles. Duplicate this profile to change these requirements.
+                          </p>
+                          <p className="text-xs leading-[16px] text-muted-foreground">{PAGE_ELEMENTS_HELP_TEXT}</p>
+                        </div>
+                      </details>
+                    ))}
                     <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
                       <Button
                         type="button"
@@ -2105,6 +2182,70 @@ export function ProfileEditor() {
                         ))}
                       </div>
                     </details>
+
+                    {PAGE_ELEMENT_CONTROLS.map(({ field, label, toggleLabel, inputId, errorField }) => {
+                      const enabled = pageElementsModel[field]
+                      const error = reqFieldErrors[errorField]
+                      return (
+                        <details key={field} className="group mt-4 rounded-md border border-border" open={allExpanded || undefined}>
+                          <summary className="cursor-pointer list-none rounded-md px-3 py-2.5 text-sm font-semibold text-foreground select-none transition-colors hover:bg-input/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background">
+                            <div className="flex items-center justify-between gap-2">
+                              <span>{label}</span>
+                              <span className="ml-auto text-right text-xs font-normal text-muted-foreground">
+                                {enabled ? 'Enabled · Manual review only (unscored)' : 'Not checked'}
+                              </span>
+                              <svg className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-90" aria-hidden="true" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                              </svg>
+                            </div>
+                          </summary>
+                          <div className="space-y-3 px-3 pb-3 pt-1">
+                            <label className="flex min-h-[44px] items-start gap-2 rounded-md border border-border px-3 py-2">
+                              <input
+                                id={inputId}
+                                type="checkbox"
+                                className="mt-0.5 h-4 w-4 accent-primary"
+                                checked={enabled}
+                                aria-describedby={`${inputId}-hint${error ? ` ${inputId}-error` : ''}`}
+                                aria-invalid={Boolean(error)}
+                                onChange={(e) => updatePageElements({ [field]: e.target.checked })}
+                              />
+                              <span className="text-sm text-foreground">{toggleLabel}</span>
+                            </label>
+                            <p id={`${inputId}-hint`} className="text-xs leading-[16px] text-muted-foreground">
+                              {PAGE_ELEMENTS_HELP_TEXT}
+                            </p>
+                            {error && (
+                              <p id={`${inputId}-error`} role="alert" className="text-xs text-destructive">{error}</p>
+                            )}
+                            {field === 'pageNumberEnabled' && enabled && (
+                              <div className="space-y-1">
+                                <label htmlFor="page-numbers-placement" className="block text-sm text-foreground">
+                                  PAGE field placement
+                                </label>
+                                <select
+                                  id="page-numbers-placement"
+                                  value={pageElementsModel.placement}
+                                  onChange={(e) => updatePageElements({ placement: e.target.value as PageElementsUiModel['placement'] })}
+                                  className="w-full max-w-xs rounded-md border border-border bg-white px-3 py-1.5 text-sm focus:border-ring focus:ring-1 focus:ring-ring focus:outline-none"
+                                  aria-describedby={reqFieldErrors['page_numbers.placement'] ? 'page-numbers-placement-error' : undefined}
+                                  aria-invalid={Boolean(reqFieldErrors['page_numbers.placement'])}
+                                >
+                                  <option value="header">Header</option>
+                                  <option value="footer">Footer</option>
+                                  <option value="either">Either</option>
+                                </select>
+                                {reqFieldErrors['page_numbers.placement'] && (
+                                  <p id="page-numbers-placement-error" role="alert" className="text-xs text-destructive">
+                                    {reqFieldErrors['page_numbers.placement']}
+                                  </p>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        </details>
+                      )
+                    })}
                     </div>{/* end requirements wrapper */}
 
                     {/* ------------------------------------------------------------------ */}
@@ -2882,7 +3023,7 @@ export function ProfileEditor() {
                               <li key={i} className="font-mono">{line}</li>
                             ))}
                             <li aria-live="polite" className="font-mono text-muted-foreground">
-                              {summary.disabledCount} requirements will not be checked or included in the score.
+                              Off requirements are not checked. Manual review requirements are unscored.
                             </li>
                           </ul>
                         </div>

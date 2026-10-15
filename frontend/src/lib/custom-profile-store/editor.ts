@@ -10,7 +10,7 @@
  * `backend_confirmed` ONLY after POST /api/formatting-profiles/validate
  * returns a valid normalized payload.
  */
-import type { FormattingProfile, ProfileValidationError } from '../../types/api'
+import type { FormattingProfile, ProfileSnapshot, ProfileValidationError } from '../../types/api'
 import {
   emptyEnvelope,
   generateProfileId,
@@ -22,7 +22,13 @@ import {
   type StoreEnvelope,
   type StoredCustomProfile,
 } from './store.ts'
-import { referencesDisclosure } from '../audit/enabled-checks-wording.ts'
+import {
+  PAGE_ELEMENTS_HELP_TEXT,
+  pageElementCheckParts,
+  pageElementDisclosureLines,
+  referencesDisclosure,
+  type PageElementProfileGroups,
+} from '../audit/enabled-checks-wording.ts'
 import type { ProfileSnapshotReferences } from '../../types/api'
 
 /** The three creation paths the editor exposes (Build 3). */
@@ -165,6 +171,77 @@ export function citationMatchingFromUiModel(
   return out
 }
 
+export interface PageElementsUiModel {
+  headerEnabled: boolean
+  footerEnabled: boolean
+  pageNumberEnabled: boolean
+  placement: 'header' | 'footer' | 'either'
+}
+
+const PAGE_ELEMENT_FIELDS = [
+  ['headers', 'check_header_requirements', 'headerEnabled'],
+  ['footers', 'check_footer_requirements', 'footerEnabled'],
+  ['page_numbers', 'check_page_number_requirements', 'pageNumberEnabled'],
+] as const
+
+function pageElementGroup(value: unknown): Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {}
+}
+
+/** Presentation defaults never replace raw values used by validation or Save. */
+export function pageElementsToUiModel(payload: Record<string, unknown>): PageElementsUiModel {
+  const pageNumbers = pageElementGroup(payload.page_numbers)
+  return {
+    headerEnabled: pageElementGroup(payload.headers).check_header_requirements === true,
+    footerEnabled: pageElementGroup(payload.footers).check_footer_requirements === true,
+    pageNumberEnabled: pageNumbers.check_page_number_requirements === true,
+    placement: pageNumbers.placement === 'header' || pageNumbers.placement === 'footer'
+      ? pageNumbers.placement : 'either',
+  }
+}
+
+export function pageElementsFromUiModel(ui: PageElementsUiModel): Record<string, unknown> {
+  return {
+    headers: { check_header_requirements: ui.headerEnabled },
+    footers: { check_footer_requirements: ui.footerEnabled },
+    page_numbers: {
+      check_page_number_requirements: ui.pageNumberEnabled,
+      placement: ui.placement,
+    },
+  }
+}
+
+/** Change only explicitly edited controls; untouched raw settings still validate. */
+export function applyPageElementsUiPatch(
+  payload: Record<string, unknown>,
+  patch: Partial<PageElementsUiModel>,
+): Record<string, unknown> {
+  const next = { ...payload }
+  for (const [groupKey, field, uiField] of PAGE_ELEMENT_FIELDS) {
+    if (Object.prototype.hasOwnProperty.call(patch, uiField)) {
+      next[groupKey] = { ...pageElementGroup(next[groupKey]), [field]: patch[uiField] }
+    }
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, 'placement')) {
+    next.page_numbers = { ...pageElementGroup(next.page_numbers), placement: patch.placement }
+  }
+  return next
+}
+
+/** Fill only absent settings; malformed supplied evidence must reach validation. */
+function defaultMissingPageElements(payload: Record<string, unknown>): void {
+  for (const [groupKey, field] of PAGE_ELEMENT_FIELDS) {
+    if (!(groupKey in payload)) payload[groupKey] = {}
+    const raw = payload[groupKey]
+    if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) continue
+    const group = raw as Record<string, unknown>
+    if (!(field in group)) group[field] = false
+    if (groupKey === 'page_numbers' && !('placement' in group)) group.placement = 'either'
+  }
+}
+
 /**
  * A safe blank custom profile: every deterministic requirement is null
  * (disabled), custom source, APA 7, and the safe administrative table-caption
@@ -251,6 +328,12 @@ export function blankProfilePayload(
     // Citation ↔ Reference List matching controls. Booleans only — the
     // editor exposes switches, never regex/JSON input.
     citation_matching: { ...DEFAULT_CITATION_MATCHING },
+    ...pageElementsFromUiModel({
+      headerEnabled: false,
+      footerEnabled: false,
+      pageNumberEnabled: false,
+      placement: 'either',
+    }),
   }
 }
 
@@ -273,6 +356,7 @@ export function copyProfilePayload(
   if (!p.citation_matching || typeof p.citation_matching !== 'object') {
     p.citation_matching = { ...DEFAULT_CITATION_MATCHING }
   }
+  defaultMissingPageElements(p)
   return p
 }
 
@@ -294,6 +378,7 @@ export function buildSavePayload(
   payload.citation_matching = citationMatchingFromUiModel(
     citationMatchingToUiModel(payload.citation_matching),
   )
+  defaultMissingPageElements(payload)
   return payload
 }
 
@@ -1129,6 +1214,32 @@ export function validateRequirements(
     }
   }
 
+  // Validate raw structural settings, including disabled groups and unknown keys.
+  for (const [groupKey, field] of PAGE_ELEMENT_FIELDS) {
+    if (!(groupKey in payload)) continue
+    const raw = payload[groupKey]
+    if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+      errors.push({ field: groupKey, message: 'This section is not well formed.' })
+      continue
+    }
+    const group = raw as Record<string, unknown>
+    if (field in group && typeof group[field] !== 'boolean') {
+      errors.push({ field: `${groupKey}.${field}`, message: 'Choose true or false for this check.' })
+    }
+    if (group[field] === true && payload.profile_source !== 'custom') {
+      errors.push({ field: `${groupKey}.${field}`, message: 'Available only in Custom Profiles' })
+    }
+    for (const key of Object.keys(group)) {
+      if (key !== field && !(groupKey === 'page_numbers' && key === 'placement')) {
+        errors.push({ field: `${groupKey}.${key}`, message: 'This field is not recognized.' })
+      }
+    }
+    if (groupKey === 'page_numbers' && 'placement' in group &&
+        group.placement !== 'header' && group.placement !== 'footer' && group.placement !== 'either') {
+      errors.push({ field: 'page_numbers.placement', message: 'Choose Header, Footer or Either.' })
+    }
+  }
+
   // Lists — space after only (Build 5).
   const lists = listsToUiModel((payload.lists ?? {}) as ListGroup)
   const listAfter = lists.spaceAfterEnabled ? parseNum(lists.spaceAfter) : null
@@ -1154,6 +1265,45 @@ export interface ProfileSummary {
 const formatPairs = (pairs: { family: string; size: string }[]): string =>
   pairs.map((p) => `${p.family.trim()}, ${p.size} pt`).join('; ') ||
   'No font selected'
+
+/**
+ * Read-only presentation projection of canonical profile settings. Resolves
+ * heading inheritance and citation dependencies without changing the payload.
+ * Historical report consumers use their stored snapshot directly, never this.
+ */
+export function profilePayloadSnapshot(payload: Record<string, unknown>): ProfileSnapshot {
+  const body = (payload.body ?? {}) as Record<string, unknown>
+  const heading = (payload.heading ?? {}) as Record<string, unknown>
+  const margins = (payload.margins ?? {}) as Record<string, number | null>
+  const matching = citationMatchingToUiModel(payload.citation_matching)
+  const policy = (payload.role_policy ?? {}) as Record<string, unknown>
+  return {
+    ...payload,
+    profile_id: String(payload.profile_id ?? ''),
+    description: String(payload.description ?? ''),
+    citation_style: String(payload.citation_style || CITATION_STYLE),
+    institution_specific: payload.profile_source === 'built_in' && String(payload.profile_id ?? '').startsWith('suc-'),
+    profile_name: String(payload.profile_name || 'Selected profile'),
+    profile_source: String(payload.profile_source || 'custom'),
+    profile_version: Number(payload.profile_version ?? 1),
+    heading: heading.inherit_body_font === true
+      ? { ...heading, font_family: body.font_family, font_size_pt: body.font_size_pt, allowed_font_combos: body.font_family != null && body.font_size_pt != null ? [] : body.allowed_font_combos }
+      : heading,
+    margins: {
+      left_in: margins.margin_left_in ?? null,
+      right_in: margins.margin_right_in ?? null,
+      top_in: margins.margin_top_in ?? null,
+      bottom_in: margins.margin_bottom_in ?? null,
+    },
+    citation_matching: {
+      ...matching,
+      check_author_year_consistency: matching.check_citations_have_references === true && matching.check_author_year_consistency === true,
+      check_year_suffixes: matching.check_citations_have_references === true && matching.check_year_suffixes === true,
+    },
+    role_exemptions: policy.exempt_roles,
+    table_eligibility: policy.table_eligibility,
+  } as ProfileSnapshot
+}
 
 /**
  * Build the plain-English summary shown for the unsaved draft and saved
@@ -1232,19 +1382,15 @@ export function summarizeProfile(payload: Record<string, unknown>): ProfileSumma
   // Reference List — the editor draft and the audit report must describe the
   // same requirements in the same words, so both use this one helper.
   lines.push(referencesDisclosure((payload.references ?? null) as ProfileSnapshotReferences | null))
-  // Alphabetical-order review has its own disclosure line so the off state
-  // is explicit rather than silently absent.
+  // Enabled order and DOI requirements already appear in referencesDisclosure.
+  // Add only their unchecked states; never repeat an enabled requirement.
   const refsRaw = (payload.references ?? {}) as Record<string, unknown>
-  lines.push(
-    refsRaw.check_reference_order === true
-      ? 'Reference List alphabetical order'
-      : 'Reference List alphabetical order: Not checked',
-  )
-  lines.push(
-    refsRaw.check_doi_format === true
-      ? 'Reference DOI format'
-      : 'Reference DOI format: Not checked',
-  )
+  if (refsRaw.check_reference_order !== true) lines.push('Reference List alphabetical order: Not checked')
+  if (refsRaw.check_doi_format !== true) lines.push('Reference DOI format: Not checked')
+
+  const pageElements = payload as PageElementProfileGroups
+  lines.push(...pageElementDisclosureLines(pageElements))
+  if (pageElementCheckParts(pageElements).length > 0) lines.push(PAGE_ELEMENTS_HELP_TEXT)
 
   // Captions (Build 5)
   const captions = captionsToUiModel((payload.captions ?? {}) as CaptionGroup)
@@ -1283,6 +1429,7 @@ export function summarizeProfile(payload: Record<string, unknown>): ProfileSumma
       if (g[key] === null) disabledCount += 1
     }
   }
+  disabledCount += 3 - pageElementCheckParts(pageElements).length
 
   return { lines, disabledCount }
 }

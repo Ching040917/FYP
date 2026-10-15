@@ -18,6 +18,7 @@ import type { BlockMapping } from './paragraph-mapping.ts'
 export type NavCommand =
   | { kind: 'navigate'; page: number }
   | { kind: 'text' }
+  | { kind: 'preserve' }
   | { kind: 'locating'; findingId: string }
   | { kind: 'none' }
 
@@ -26,6 +27,11 @@ export class PendingNav {
 
   /** Handle a finding selection. Emits a command when decidable now. */
   select(finding: FindingLike, mappingByIndex: Map<number, BlockMapping> | null | undefined, emit: (c: NavCommand) => void): void {
+    if (classifyFindingTarget(finding) === 'structural') {
+      this.pending = null
+      emit({ kind: 'preserve' })
+      return
+    }
     // Object findings (table/figure/section/margin) never enter the
     // paragraph pipeline — their view stays stable and nothing is retained.
     if (classifyFindingTarget(finding) !== 'paragraph') {

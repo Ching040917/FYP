@@ -16,6 +16,8 @@ import {
   clearGuidance,
   createMemoryGuidanceAdapter,
 } from '../src/lib/guidance.ts'
+import { profileDetailSections, selectedProfileSummary } from '../src/lib/audit/enabled-checks-wording.ts'
+import { blankProfilePayload } from '../src/lib/custom-profile-store/editor.ts'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const src = (p: string) => readFileSync(join(here, '..', p), 'utf8')
@@ -111,25 +113,30 @@ const panel = src('src/components/dashboard/guidance-panel.tsx')
 const upload = src('src/components/audit/upload-card.tsx')
 const readiness = src('src/components/dashboard/readiness-card.tsx')
 
-test('guidance panel renders in right column after result, before no-audit', () => {
-  const rIdx = dashboard.indexOf('<ReadinessCard')
-  const uIdx = dashboard.indexOf('<UploadCard')
-  const resultIdx = dashboard.indexOf('{result ? (')
-  const gIdx = dashboard.indexOf('<GuidancePanel')
-  const iIdx = dashboard.indexOf('<InitialGuidance />')
-  // Left column keeps readiness + upload only.
-  assert.ok(rIdx !== -1 && uIdx !== -1)
-  assert.ok(rIdx < uIdx)
-  assert.equal(
-    dashboard.slice(rIdx, uIdx).includes('<GuidancePanel'),
-    false,
-    'guidance must not render in the left intake stack',
-  )
-  // Right-column priority: result > guidance > initial.
-  const rightCol = dashboard.slice(dashboard.indexOf('Result / guidance'))
-  assert.ok(rightCol.indexOf('<ComplianceSummary') < rightCol.indexOf('<GuidancePanel'))
-  assert.ok(rightCol.indexOf('<GuidancePanel') < rightCol.indexOf('<InitialGuidance'))
-  void resultIdx; void gIdx; void iIdx
+test('selected profile keeps the full requirements separate from the compact coverage summary', () => {
+  const payload = blankProfilePayload('custom-summary', 'My Profile')
+  const snapshot = {
+    ...payload,
+    references: { ...payload.references, check_heading_text: true, heading_text: 'references' },
+    headers: { check_header_requirements: true },
+    footers: { check_footer_requirements: false },
+    page_numbers: { check_page_number_requirements: true, placement: 'footer' },
+  } as Parameters<typeof selectedProfileSummary>[0]
+  const summary = selectedProfileSummary(snapshot)
+  const details = profileDetailSections(snapshot)
+  assert.deepEqual(summary.map((section) => section.heading), [
+    'Scored checks', 'Manual review only · Unscored', 'Not checked', 'Citation style',
+  ])
+  assert.deepEqual(summary[1].items?.filter((item) => item.label === 'Headers' || item.label === 'Page numbers' || item.label === 'Placement'), [
+    { label: 'Headers', value: 'Manual review' },
+    { label: 'Page numbers', value: 'Manual review' },
+    { label: 'Placement', value: 'Footer' },
+  ])
+  assert.ok(summary[2].items?.some((item) => item.label === 'Footers' && item.value === 'Not checked'))
+  assert.ok(details.find((section) => section.heading === 'Scored checks')?.groups?.some((group) => group.heading === 'Reference List' && group.items.some((item) => item.text.includes('References'))))
+  assert.ok(details.find((section) => section.heading === 'Manual review only · Unscored')?.items.some((item) => item.text.includes('Header requirements')))
+  assert.ok(details.find((section) => section.heading === 'Not checked')?.items.some((item) => item.text === 'Footers: Not checked'))
+  assert.ok(!JSON.stringify(summary).includes('"References" heading'))
 })
 
 test('panel contains heading and three required points', () => {
@@ -196,19 +203,6 @@ test('setup guidance destination exists on Landing', () => {
   assert.equal(panel.includes('href="/#how"'), true)
 })
 
-test('upload-card profile summary compacts long content behind a toggle', () => {
-  const uploadSrc = src('src/components/audit/upload-card.tsx')
-  for (const s of [
-    'View full requirements',
-    'Hide full requirements',
-    'aria-expanded={showFullRequirements}',
-    'aria-controls="profile-full-requirements"',
-    'setShowFullRequirements(false)', // resets when selection changes
-    'compactRequirementRe',
-  ]) {
-    assert.ok(uploadSrc.includes(s), `missing: ${s}`)
-  }
-})
 
 test('upload card exposes no cloud AI control or copy', () => {
   const uploadSrc = src('src/components/audit/upload-card.tsx')

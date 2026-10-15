@@ -10,7 +10,6 @@ import io
 import logging
 import re
 from collections import defaultdict
-from datetime import datetime
 from xml.sax.saxutils import escape as _xml_escape
 
 logger = logging.getLogger("app.services.pdf_report")
@@ -21,6 +20,8 @@ from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import mm
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+from reportlab.pdfgen.canvas import Canvas
+from reportlab.graphics.shapes import Drawing, Circle, Line, Polygon, Rect, String
 from reportlab.platypus import (
     BaseDocTemplate,
     Frame,
@@ -35,27 +36,29 @@ from reportlab.platypus import (
 )
 
 from app.services.layout_violation import LayoutViolation
+from app.services.page_element_rules import PAGE_ELEMENT_RULES, structural_story_label
 from app.services.scoring import (
     calculate_weighted_score_detailed,
     select_scoring_contract,
 )
 from app.services.table_page_resolution import resolve_table_page
+from app.services.structural_page_mapping import section_first_rendered_page
 
 # Built-in CID font — renders any Unicode text (incl. Chinese captions)
 # without shipping font files. Latin text keeps the Helvetica look.
 pdfmetrics.registerFont(UnicodeCIDFont("STSong-Light"))
 
-# Manuscript Review Desk palette (light-first).
-NAVY = colors.HexColor("#1E3A5F")
-INK = colors.HexColor("#1F2328")
-PAPER = colors.HexColor("#F7F7F4")
-GREEN = colors.HexColor("#1F7A4D")
-RED = colors.HexColor("#B3261E")
-MUTED = colors.HexColor("#5B6470")
-LIGHT = colors.HexColor("#E7E4DA")
-_PANEL_BG = colors.HexColor("#F3F1EA")
-_PANEL_ACTION_BG = colors.HexColor("#E9E6DC")
-_PANEL_BORDER = colors.HexColor("#BFBBB0")
+# Restrained semantic colours; meaning is always also expressed in text.
+NAVY = colors.HexColor("#173A63")
+BLUE = colors.HexColor("#2D6CDF")
+INK = colors.HexColor("#243247")
+PAPER = colors.HexColor("#F5F7FA")
+GREEN = colors.HexColor("#2E7D5B")
+AMBER = colors.HexColor("#B7791F")
+RED = colors.HexColor("#B42318")
+PURPLE = colors.HexColor("#6B5CA5")
+MUTED = colors.HexColor("#667085")
+LIGHT = colors.HexColor("#E1E6ED")
 
 _MARGIN = 15 * mm
 _PAGE_W, _PAGE_H = A4
@@ -110,7 +113,7 @@ def _font_for(text: str) -> str:
 def _p(text, size=9.5, font="Helvetica", color=INK, leading=None, **kw):
     """Paragraph with font auto-picked from the text content."""
     safe = _clean(text)
-    name = font if font != "Helvetica" else _font_for(safe)
+    name = "STSong-Light" if _font_for(safe) == "STSong-Light" else font
     style = ParagraphStyle(
         f"auto-{name}-{size}",
         fontName=name,
@@ -118,16 +121,16 @@ def _p(text, size=9.5, font="Helvetica", color=INK, leading=None, **kw):
         leading=leading or size * 1.35,
         textColor=color,
         alignment=kw.get("alignment", 0),
+        keepWithNext=kw.get("keepWithNext", False),
     )
     return Paragraph(safe, style)
 
 
-def _heading(text, size=13):
-    return _p(text, size=size, font="Helvetica-Bold", color=NAVY, leading=size * 1.3)
 
 
 def _section(text, size=11):
-    return _p(text, size=size, font="Helvetica-Bold", color=NAVY, leading=size * 1.3)
+    return _p(text, size=size, font="Helvetica-Bold", color=NAVY,
+              leading=size * 1.3, keepWithNext=True)
 
 
 # ---------------------------------------------------------------------------
@@ -235,13 +238,6 @@ def _reference_format_action(rule_code, expected_value) -> str:
 
 
 
-def _reference_format_action_safe(rule_code, expected_value) -> str:
-    """As `_reference_format_action`, but never KeyError on an unknown code."""
-    if rule_code == "REFERENCE_HANGING_INDENT":
-        return _hanging_indent_action(expected_value)
-    return _REQUIRED_ACTIONS.get(
-        rule_code, "Review the finding and apply the required formatting."
-    )
 
 
 # Deterministic citation/reference rules: fixed Required Action copy
@@ -268,10 +264,8 @@ _REFERENCE_FORMAT_RULES = frozenset({
     "REFERENCE_DOI_FORMAT",
 })
 
-# Reader-facing severity labels. Mirrors `severityBadge` in
-# frontend/src/lib/audit/categories.ts; backend/tests/test_export_pdf.py
-# enforces the match. REVIEW is a manual-review flag: never scored, never
-# counted as major or minor.
+# Reader-facing severities match the audit UI. REVIEW is a manual-review
+# flag: never scored, never counted as major or minor.
 _SEVERITY_LABEL = {
     "MAJOR": "Major",
     "MINOR": "Minor",
@@ -310,9 +304,7 @@ _PROP_NAME = {
     "REFERENCE_ORDER": "Reference List entry",
 }
 
-# Plain-language rule titles. Mirrored verbatim from
-# frontend/src/lib/friendly-finding.ts (FRIENDLY_RULE_TITLES) so the PDF and
-# the web never disagree; backend/tests/test_export_pdf.py enforces the match.
+# Plain-language rule titles shared with the audit UI's presentation contract.
 _RULE_NAME = {
     "FONT_CONSISTENCY": "Font family does not match",
     "FONT_SIZE": "Font size does not match",
@@ -347,16 +339,47 @@ _RULE_NAME = {
     "REFERENCE_FONT_SIZE": "Reference entry font size does not match",
     "REFERENCE_ALIGNMENT": "Reference entry alignment does not match",
     "REFERENCE_DOI_FORMAT": "Reference DOI format does not match",
+    "HEADER_CONTENT_REQUIRED": "Header needs review",
+    "FOOTER_CONTENT_REQUIRED": "Footer needs review",
+    "PAGE_NUMBER_FIELD_REQUIRED": "Page number needs review",
 }
 
 
 def _rule_name(code: str) -> str:
-    return _RULE_NAME.get(code, code)
+    return _RULE_NAME.get(code, str(code).replace("_", " ").strip().capitalize() or "Unclassified finding")
 
 
 def _severity_label(severity: str) -> str:
     """Reader-facing severity label; unknown tokens never print raw."""
     return _SEVERITY_LABEL.get(severity, _UNCLASSIFIED_SEVERITY)
+
+
+def _page_element_display(v):
+    """Friendly display copy derived from the saved outcome, never persisted."""
+    location = v.location or {}
+    kind = {"header": "header", "footer": "footer", "either": "header or footer"}.get(
+        location.get("story_type"), "header or footer",
+    )
+    state = location.get("evidence_state")
+    if state == "unresolved":
+        current = "ACA could not check this requirement from the supported document content."
+    elif v.rule_code == "PAGE_NUMBER_FIELD_REQUIRED":
+        current = "No page-number field was found in the selected header or footer."
+    elif state == "empty":
+        current = f"The normal-pages {kind} has no text or supported field."
+    else:
+        current = f"No {kind} is defined for normal pages in this section."
+    if v.rule_code == "PAGE_NUMBER_FIELD_REQUIRED":
+        required = f"A page-number field in this section’s normal-pages {kind}."
+        change = "insert a page-number field if needed"
+    else:
+        required = f"Text or a supported field in this section’s normal-pages {kind}."
+        change = "add text or a supported field if needed"
+    action = f"In Word, check this section’s {kind}"
+    if state != "unresolved":
+        action += f" and {change}"
+    action += ". Verify the rendered document manually."
+    return current, required, action
 
 
 def _citation_action(v) -> str:
@@ -380,6 +403,8 @@ def _citation_action(v) -> str:
 
 def required_action(v) -> str:
     """Action text for a single violation."""
+    if v.rule_code in PAGE_ELEMENT_RULES:
+        return _page_element_display(v)[2]
     if v.rule_code == "CITATION_MISMATCH":
         return _citation_action(v)
     if v.rule_code in _REFERENCE_FORMAT_RULES:
@@ -441,6 +466,8 @@ def location_text(location) -> str:
     """Compact, human-readable location for ordinary users. Never shows Run."""
     if not location:
         return "—"
+    if location.get("structural_story") is True:
+        return structural_story_label(location)
     # Heading detection requires blocks; without blocks, fall back to paragraph.
     # This simple formatter is used in contexts without block access (e.g.
     # appendix when blocks unavailable). For full page-aware formatting, use
@@ -457,6 +484,8 @@ def friendly_location_text(location, document_blocks=None) -> str:
     """User-facing location without Run, with Heading/Figure wording."""
     if not location:
         return "Entire document"
+    if location.get("structural_story") is True:
+        return structural_story_label(location)
     # Table / Figure take precedence over paragraph.
     if location.get("table_index") is not None:
         return f"Table {location['table_index'] + 1}"
@@ -559,6 +588,13 @@ def page_label_for_location(location, mapping, document_blocks=None, section_met
     """
     if not location:
         return ("Original document page", "Document-wide")
+    if location.get("structural_story") is True:
+        page = section_first_rendered_page(
+            location, section_metadata, mapping, document_blocks, rendered_pages,
+        )
+        if page is not None:
+            return ("Original document page", str(page))
+        return ("Structural evidence only", "Rendered page could not be determined")
     # Document-wide: no paragraph/section/table/image
     if all(location.get(k) is None for k in ("paragraph_index", "section_index", "table_index", "image_index")):
         return ("Original document page", "Document-wide")
@@ -638,6 +674,8 @@ def _affected_text_info(violation, document_blocks):
     - Otherwise → None (omit)
     """
     loc = violation.location or {}
+    if loc.get("structural_story") is True:
+        return None
     # Table/Figure/Section findings are self-contained; no paragraph excerpt.
     if loc.get("table_index") is not None or loc.get("image_index") is not None or loc.get("section_index") is not None:
         return None
@@ -689,6 +727,8 @@ def _friendly_required_action(violation, friendly_loc, affected_info):
       - Heading: "Review Heading “3.2 System Architecture” and change..."
     """
     code = violation.rule_code
+    if code in PAGE_ELEMENT_RULES:
+        return _page_element_display(violation)[2]
     exp = _student_clean(violation.expected_value) if violation.expected_value else None
     act = _student_clean(violation.actual_value) if violation.actual_value else None
 
@@ -769,21 +809,6 @@ def split_apa_suggestion(suggestion: str) -> dict:
     return result
 
 
-# ---------------------------------------------------------------------------
-# ID generators
-# ---------------------------------------------------------------------------
-
-def _p_id(n: int) -> str:
-    return f"P{n:03d}"
-
-
-def _g_id(n: int) -> str:
-    return f"G{n:03d}"
-
-
-def _f_id(n: int) -> str:
-    return f"F{n:03d}"
-
 
 # ---------------------------------------------------------------------------
 # Report assembly
@@ -803,109 +828,161 @@ def _kv_table(rows, label_width=38 * mm):
     return table
 
 
-_GROUP_ACTIONS = {
-    "FONT_SIZE": ("Change the listed body-text runs to 12 pt. Review headings separately "
-                  "according to the configured hierarchy."),
-    "ALIGNMENT": ("Change the listed body paragraphs to justified alignment. "
-                  "Review heading alignment separately."),
-}
 
 
-def _group_action(rule_code, exp_val) -> str:
-    """Plural, group-level Required Action text."""
-    if rule_code in ("SPACE_BEFORE", "SPACE_AFTER") and exp_val:
-        prop = "before" if rule_code == "SPACE_BEFORE" else "after"
-        return f"Change the space {prop} for the listed paragraphs to {exp_val}."
-    return _GROUP_ACTIONS.get(rule_code) or _reference_format_action_safe(rule_code, exp_val)
+def _symbol(kind, color, size=14):
+    """Small vector symbols, independent of platform fonts."""
+    icon = Drawing(size, size)
+    middle = size / 2
+    if kind == "major":
+        icon.add(Polygon([middle, size - 1, size - 1, 1, 1, 1],
+                         strokeColor=color, fillColor=None, strokeWidth=1.2))
+        icon.add(Line(middle, 5, middle, 9, strokeColor=color, strokeWidth=1.3))
+        icon.add(Circle(middle, 3, 0.7, fillColor=color, strokeColor=color))
+    elif kind == "minor":
+        icon.add(Rect(2, 2, size - 4, size - 4, fillColor=None,
+                      strokeColor=color, strokeWidth=1.2))
+        icon.add(Line(5, 5, 9, 9, strokeColor=color, strokeWidth=1.2))
+    else:
+        icon.add(Circle(middle, middle, middle - 1, fillColor=None,
+                        strokeColor=color, strokeWidth=1.2))
+        if kind == "score":
+            icon.add(Line(3, 7, 6, 4, strokeColor=color, strokeWidth=1.3))
+            icon.add(Line(6, 4, 11, 10, strokeColor=color, strokeWidth=1.3))
+        else:
+            icon.add(String(middle - 1, 3, "i", fontName="Helvetica-Bold",
+                            fontSize=10, fillColor=color))
+    return icon
 
 
-def _panel(header_left, header_right, rows) -> Table:
-    """Navy-header info panel: labelled body rows, tinted action row, 1px border."""
-    body_width = _PAGE_W - 2 * _MARGIN
-    data = [[_p(header_left, size=9.5, font="Helvetica-Bold", color=colors.white),
-             _p(header_right, size=8.5, font="Helvetica-Bold", color=colors.white, alignment=2)],
-            *[[_p(k, size=8.5, font="Helvetica-Bold", color=MUTED), _p(v, size=9)]
-              for k, v in rows]]
-    last = len(data) - 1
-    table = Table(data, colWidths=[46 * mm, body_width - 46 * mm])
-    table.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), NAVY),
-        ("BACKGROUND", (0, 1), (-1, last - 1), _PANEL_BG),
-        ("BACKGROUND", (0, last), (-1, last), _PANEL_ACTION_BG),
+def _report_table(headers, rows, widths, size=8.5, accent=NAVY, title=None, padding=5,
+                  action_rows=(), paired_rows=()):
+    """Quiet, splittable tables with repeated labels and wrapped cells."""
+    header_row = 1 if title else 0
+    data = [[_p(title, size=10, font="Helvetica-Bold", color=accent)] + [""] * (len(headers) - 1)] if title else []
+    data.append([_p(label, size=8, font="Helvetica-Bold", color=accent) for label in headers])
+    data.extend([value if isinstance(value, (Paragraph, Table, list)) else _p(value, size=size)
+                 for value in row] for row in rows)
+    table = Table(data, colWidths=[width * mm for width in widths], repeatRows=header_row + 1,
+                  splitInRow=1, hAlign="LEFT")
+    style = [
+        ("BACKGROUND", (0, 0), (-1, header_row), PAPER),
+        ("LINEBELOW", (0, header_row), (-1, header_row), 0.8, accent),
+        ("ROWBACKGROUNDS", (0, header_row + 1), (-1, -1), [colors.white, colors.HexColor("#FAFBFD")]),
+        ("LINEBELOW", (0, header_row + 1), (-1, -1), 0.3, LIGHT),
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("TOPPADDING", (0, 0), (-1, -1), 3.5),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 3.5),
-        ("LINEBELOW", (0, 0), (-1, last - 1), 0.4, colors.HexColor("#D8D5CB")),
-        ("BOX", (0, 0), (-1, -1), 0.6, _PANEL_BORDER),
-    ]))
+        ("TOPPADDING", (0, 0), (-1, -1), padding),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), padding),
+        ("LEFTPADDING", (0, 0), (-1, -1), 6),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+    ]
+    if title:
+        style.append(("SPAN", (0, 0), (-1, 0)))
+    for index in action_rows:
+        row = header_row + 1 + index
+        style.extend([
+            ("SPAN", (1, row), (-1, row)),
+            ("BACKGROUND", (0, row), (-1, row), colors.HexColor("#F1F5FA")),
+        ])
+    # Short comparison/action pairs stay together at page breaks; unusually
+    # long values retain in-row splitting instead of overflowing the page.
+    for index in paired_rows:
+        row = header_row + 1 + index
+        style.append(("NOSPLIT", (0, row - 1), (-1, row)))
+    table.setStyle(TableStyle(style))
     return table
 
 
-def _priority_table(pid, v, audit=None) -> Table:
-    """Individual Major finding panel: P### header, details, specific action."""
-    rows = []
-    # Friendly page + location (never shows Run, never 0/null).
-    mapping = _sanitize_mapping_for_pdf(
-        getattr(audit, "paragraph_page_mapping", None) if audit else None,
-        getattr(audit, "rendered_preview_pages", None) if audit else None,
-    ) if audit else {}
-    blocks = getattr(audit, "document_blocks", None) if audit else None
-    sections = getattr(audit, "section_metadata", None) if audit else None
-    rendered_pages = getattr(audit, "rendered_preview_pages", None) if audit else None
-    page_label, page_value = page_label_for_location(v.location or {}, mapping, blocks, sections, rendered_pages)
-    rows.append((page_label, page_value))
-    friendly_loc = friendly_location_text(v.location, blocks)
-    rows.append(("Location", friendly_loc))
+def _panel(title, status, rows, manual=False):
+    accent = PURPLE if manual else RED
+    data = [
+        [_symbol("review" if manual else "major", accent),
+         _p(title, size=10, font="Helvetica-Bold", color=accent), ""],
+        ["", _p(status, size=8, font="Helvetica-Bold", color=accent), ""],
+    ]
+    data.extend([_p(label, size=8, font="Helvetica-Bold", color=MUTED), "", _p(value, size=9)]
+                for label, value in rows)
+    # Keep every cell a directly splittable flowable. ReportLab's in-row
+    # splitter cannot split nested Tables, even when the nested table wraps.
+    table = Table(data, colWidths=[8 * mm, 21 * mm, 151 * mm],
+                  repeatRows=2, splitInRow=1)
+    style = [
+        ("SPAN", (1, 0), (-1, 0)), ("SPAN", (1, 1), (-1, 1)),
+        ("NOSPLIT", (0, 0), (-1, 1)),
+        ("BACKGROUND", (0, 0), (-1, 0), PAPER),
+        ("BACKGROUND", (1, 1), (-1, 1),
+         colors.HexColor("#F1EEF8") if manual else colors.HexColor("#FCEFED")),
+        ("LINEBEFORE", (0, 0), (0, -1), 2, accent),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+    ]
+    style.extend(("SPAN", (0, index), (1, index)) for index in range(2, len(data)))
+    table.setStyle(TableStyle(style))
+    return table
+
+
+def _finding_location(v, audit=None):
+    blocks = getattr(audit, "document_blocks", None)
+    location = friendly_location_text(v.location, blocks)
+    raw_mapping = getattr(audit, "paragraph_page_mapping", None)
+    mapping = raw_mapping if (v.location or {}).get("structural_story") is True else _sanitize_mapping_for_pdf(
+        raw_mapping, getattr(audit, "rendered_preview_pages", None))
+    label, page = page_label_for_location(
+        v.location or {}, mapping, blocks, getattr(audit, "section_metadata", None),
+        getattr(audit, "rendered_preview_pages", None))
+    if page == "Document-wide":
+        return location
+    return f"{location}\n{label}: {page}"
+
+
+def _display_values(v):
+    if v.rule_code in PAGE_ELEMENT_RULES:
+        return _page_element_display(v)[:2]
+    clean = str if v.rule_code == "REFERENCE_DOI_FORMAT" else _student_clean
+    return clean(v.actual_value or "Not recorded"), clean(v.expected_value or "Not recorded")
+
+
+def _priority_table(v, audit=None):
+    """Evidence-led detail, with no invented location or persisted identifier."""
+    blocks = getattr(audit, "document_blocks", None)
+    current, required = _display_values(v)
+    manual = v.severity == "REVIEW"
+    rows = [("Location", _finding_location(v, audit))]
+    if not manual:
+        rows.append(("Finding", _student_clean(v.message)))
+    action = _friendly_required_action(
+        v, friendly_location_text(v.location, blocks), _affected_text_info(v, blocks))
+    structural = (v.location or {}).get("structural_story") is True
+    if manual and structural:
+        kind = {"header": "header", "footer": "footer", "either": "header or footer"}.get(
+            (v.location or {}).get("story_type"), "header or footer")
+        if (v.location or {}).get("evidence_state") == "unresolved":
+            action = f"Review the {kind} in Word; supported evidence could not verify this requirement."
+        elif v.rule_code == "PAGE_NUMBER_FIELD_REQUIRED":
+            action = f"Review the {kind} in Word; insert an automatic page number if required."
+        else:
+            action = f"Review the {kind} in Word; add the required content if needed."
+    rows.extend([("Found" if manual else "Current", current),
+                 ("Expected" if manual else "Required", required), ("Action", action)])
     affected = _affected_text_info(v, blocks)
     if affected:
         rows.append(affected)
-    rows.append(("Issue", _student_clean(v.message) or ""))
-    if v.actual_value:
-        rows.append(("Current", _student_clean(v.actual_value)))
-    if v.expected_value:
-        rows.append(("Required", _student_clean(v.expected_value)))
-    # Friendly required action without Run.
-    rows.append(("Required Action", _friendly_required_action(v, friendly_loc, affected)))
-    return _panel(f"{pid} — {_rule_name(v.rule_code)}", _severity_label(v.severity), rows)
+    if structural:
+        evidence = ("Page-level structural evidence; no exact Header/Footer highlight."
+                    if "Original document page:" in _finding_location(v, audit) else
+                    "Structural evidence only; no exact Header/Footer highlight.")
+        if v.rule_code == "PAGE_NUMBER_FIELD_REQUIRED":
+            evidence += " A PAGE field is not a typed number; the rendered sequence is not verified."
+        rows.append(("Evidence", evidence))
+    elif manual:
+        rows.append(("Evidence", _student_clean(v.message) or "Saved finding; inspect the original document."))
+    status = "Manual review · Unscored" if manual else "Major · Scored"
+    if structural and (v.location or {}).get("evidence_state") == "unresolved":
+        status += " · Could not verify"
+    return _panel(_rule_name(v.rule_code), status, rows, manual=manual)
 
 
-def _location_summary(violations, document_blocks=None) -> str:
-    """Compact location list: consecutive paragraphs become ranges; no Run."""
-    paras = set()
-    others = []
-    for v in violations:
-        loc = v.location or {}
-        pi = loc.get("paragraph_index")
-        if pi is None:
-            text = friendly_location_text(loc, document_blocks)
-            if text != "—" and text != "Entire document":
-                others.append(text)
-        else:
-            paras.add(pi)
-    parts = []
-    if paras:
-        nums = sorted(paras)
-        spans = []
-        start = prev = nums[0]
-        for n in nums[1:]:
-            if n == prev + 1:
-                prev = n
-            else:
-                spans.append((start, prev))
-                start = prev = n
-        spans.append((start, prev))
-        for a, b in spans:
-            # Check if any paragraph in this span is a heading
-            heading = None
-            if document_blocks and a == b:
-                heading = _heading_text_for_paragraph(a, document_blocks)
-            if heading:
-                parts.append(f'Heading “{heading}”')
-            else:
-                label = f"Paragraph {a + 1}" if a == b else f"Paragraphs {a + 1}-{b + 1}"
-                parts.append(label)
-    parts.extend(sorted(set(others)))
-    return ", ".join(parts) or "—"
 
 
 def _pages_summary_for_group(violations, audit):
@@ -916,10 +993,21 @@ def _pages_summary_for_group(violations, audit):
     )
     rendered_pages = getattr(audit, "rendered_preview_pages", None) if audit else None
     sections = getattr(audit, "section_metadata", None) if audit else None
+    blocks = getattr(audit, "document_blocks", None) if audit else None
     pages = []
     unavailable = 0
     for v in violations:
         loc = v.location or {}
+        if loc.get("structural_story") is True:
+            page = section_first_rendered_page(
+                loc, sections, getattr(audit, "paragraph_page_mapping", None) if audit else None,
+                blocks, rendered_pages,
+            )
+            if page is None:
+                unavailable += 1
+            else:
+                pages.append(page)
+            continue
         pi = loc.get("paragraph_index")
         si = loc.get("section_index")
         if pi is not None:
@@ -951,270 +1039,530 @@ def _pages_summary_for_group(violations, audit):
     return compact, unavailable
 
 
-def _group_panel(gid, members, rule_code, exp_val, action, audit=None) -> Table:
-    """Info panel for a grouped minor finding: header, comparison, locations, action."""
-    names = sorted(set(str(v.actual_value) for v in members if v.actual_value))
-    blocks = getattr(audit, "document_blocks", None) if audit else None
-    compact_pages, unavailable = _pages_summary_for_group(members, audit)
-    rows = [
-        ("Issue", _student_clean(members[0].message) or ""),
-        ("Required", (exp_val if rule_code == "REFERENCE_DOI_FORMAT" else _student_clean(exp_val)) or "—"),
-        ("Observed", " · ".join(names if rule_code == "REFERENCE_DOI_FORMAT" else
-                                (_student_clean(n) for n in names)) or "—"),
-    ]
-    # Page handling for grouped findings per contract.
-    if compact_pages:
-        if unavailable > 0:
-            rows.append(("Original document pages", compact_pages))
-            rows.append(("Page availability", "Some affected locations unavailable"))
-        else:
-            # Check if single page vs multiple vs range already handled by compact
-            if "–" in compact_pages or "," in compact_pages:
-                rows.append(("Original document pages", compact_pages))
-            else:
-                rows.append(("Original document page", compact_pages))
-            if unavailable:
-                rows.append(("Page availability", "Some affected locations unavailable"))
-        # Also add unavailable flag if partial
-        if unavailable > 0 and not compact_pages:
-            rows.append(("Original document page", "Unavailable"))
-            rows.append(("Page availability", "Some affected locations unavailable"))
-    else:
-        # No pages known at all
-        if unavailable > 0:
-            rows.append(("Original document page", "Unavailable"))
-            rows.append(("Page availability", "Some affected locations unavailable"))
-        else:
-            rows.append(("Original document page", "Unavailable"))
-    rows.append(("Affected Locations", _location_summary(members, blocks)))
-    # If no compact but unavailable, already added. Ensure page line exists.
-    # A consolidated finding carries `occurrences` per member; the panel must
-    # not lose the additional occurrences from its summary.
-    total_occurrences = sum(
-        n for n in (
-            (v.location or {}).get("occurrences") for v in members
-        )
-        if isinstance(n, int) and not isinstance(n, bool)
-    )
-    if total_occurrences > len(members):
-        rows.append((
-            "Occurrences",
-            f"{total_occurrences} affected locations across {len(members)} grouped finding(s)",
-        ))
-    rows.append(("Required Action", action))
-    return _panel(f"{gid} — {_rule_name(rule_code)}", f"Minor · {len(members)} finding(s)", rows)
 
 
-def _rule_cell(v) -> Paragraph:
-    """Plain-language rule name. Never prints the internal rule code."""
-    return Paragraph(
-        _clean(_rule_name(v.rule_code)),
-        ParagraphStyle("rule-cell", fontName="Helvetica-Bold", fontSize=8,
-                       leading=10.8, textColor=INK),
-    )
-
-
-def _appendix_table(entries, audit=None) -> Table:
-    """Register rows: ID, Severity, Rule, Location, Current, Required."""
-    rows = [[_p(h, size=8, font="Helvetica-Bold", color=colors.white) for h in
-             ("ID", "Severity", "Rule", "Location", "Current", "Required")]]
-    for f_idx, v in entries:
-        # Friendly location without Run; include page when available
-        friendly_loc = friendly_location_text(v.location, getattr(audit, "document_blocks", None) if audit else None)
-        # A consolidated finding keeps its truthful occurrence count — the
-        # register is the authoritative one-row area, so the count cannot be
-        # lost here even though only the primary location is shown.
-        occ = occurrence_label(v.location)
-        if occ:
-            friendly_loc = f"{friendly_loc}<br/>({occ})"
-        # For appendix, combine page and location in same cell for compactness
-        if audit and hasattr(audit, "paragraph_page_mapping"):
-            mapping = _sanitize_mapping_for_pdf(
-                getattr(audit, "paragraph_page_mapping", None),
-                getattr(audit, "rendered_preview_pages", None),
-            )
-            page_label, page_value = page_label_for_location(
-                v.location or {}, mapping,
-                getattr(audit, "document_blocks", None),
-                getattr(audit, "section_metadata", None),
-                getattr(audit, "rendered_preview_pages", None),
-            )
-            # Only show page if not Document-wide (which is its own location)
-            if page_value not in ("Document-wide",):
-                friendly_loc = f"{page_label}: {page_value}<br/>{friendly_loc}"
-            else:
-                friendly_loc = f"{friendly_loc} ({page_value})"
-        rows.append([
-            _p(_f_id(f_idx), size=8),
-            _p(_severity_label(v.severity), size=8,
-               font="Helvetica-Bold" if v.severity == "MAJOR" else "Helvetica"),
-            _rule_cell(v),
-            _p(friendly_loc, size=8),
-            _p((v.actual_value or "") if v.rule_code == "REFERENCE_DOI_FORMAT"
-               else _student_clean(v.actual_value or ""), size=8),
-            _p((v.expected_value or "") if v.rule_code == "REFERENCE_DOI_FORMAT"
-               else _student_clean(v.expected_value or ""), size=8),
-        ])
-    table = Table(rows, colWidths=[14 * mm, 20 * mm, 55 * mm, 62 * mm, 58 * mm, 58 * mm],
-                  repeatRows=1)
-    table.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), NAVY),
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, LIGHT]),
-        ("GRID", (0, 0), (-1, -1), 0.3, colors.HexColor("#D8D5CB")),
-        ("TOPPADDING", (0, 0), (-1, -1), 4),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-        ("LEFTPADDING", (0, 0), (-1, -1), 3),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 3),
-    ]))
+def _appendix_table(entries, audit=None, title=None):
+    """Complete register: severity order and stable saved order within each group."""
+    rows = []
+    action_rows = []
+    paired_rows = []
+    for v in entries:
+        location = _finding_location(v, audit)
+        location = (location.replace("\nOriginal document page: ", " · Original page ")
+                    .replace("\nOriginal document pages: ", " · Original pages ")
+                    .replace("\nStarting original document page: ", " · First proven original page "))
+        occurrences = occurrence_label(v.location)
+        if occurrences:
+            location += f"\n{occurrences}"
+        current, required = _display_values(v)
+        status = _severity_label(v.severity)
+        if v.severity == "REVIEW":
+            status += " · Unscored"
+        finding = _rule_name(v.rule_code)
+        # The register is a concise factual comparison, not a second detail panel.
+        rows.append((status, finding, location, current, required))
+        # Major and REVIEW findings already have an Action in their detail
+        # panels. Minor (and actionable historical) findings have only this
+        # complete register; keep each correction beside its saved finding.
+        if v.severity not in ("MAJOR", "REVIEW") and (v.rule_code in _REQUIRED_ACTIONS or v.expected_value):
+            action = _friendly_required_action(
+                v, friendly_location_text(v.location, getattr(audit, "document_blocks", None)),
+                _affected_text_info(v, getattr(audit, "document_blocks", None)))
+            if action:
+                action_rows.append(len(rows))
+                if len(action) <= 240 and max(map(len, (location, current, required))) <= 300:
+                    paired_rows.append(len(rows))
+                rows.append((_p("Action", size=8, font="Helvetica-Bold", color=NAVY),
+                             _p(action, size=9), "", "", ""))
+    table = _report_table(("Status", "Finding", "Location", "Current", "Required"),
+                          rows, (27, 57, 63, 60, 60), size=8,
+                          accent=PURPLE if title == "Manual Review Register" else NAVY,
+                          title=title, padding=4, action_rows=action_rows,
+                          paired_rows=paired_rows)
     return table
 
 
-def _append_profile_disclosure(story, profile_snapshot) -> None:
-    """Formatting Profile + Margin disclosure block for the report header.
+def _coverage_rows(snapshot):
+    """Coverage comes only from saved requirements, never current defaults."""
+    areas = (
+        ("Body text", "body", None), ("Headings", "heading", None),
+        ("References", "references", None), ("Citations", "citation_matching", None),
+        ("Headers", "headers", "check_header_requirements"),
+        ("Footers", "footers", "check_footer_requirements"),
+        ("Page numbers", "page_numbers", "check_page_number_requirements"),
+        ("Margins", "margins", None),
+    )
+    labels = {"font_family": "font family", "font_size_pt": "font size",
+              "line_spacing": "line spacing", "alignment": "alignment",
+              "space_before_pt": "space before", "space_after_pt": "space after",
+              "first_line_indent_in": "first-line indent"}
+    for area, key, toggle in areas:
+        group = snapshot.get(key) if isinstance(snapshot, dict) else None
+        if toggle:
+            enabled = isinstance(group, dict) and group.get(toggle) is True
+            description = "Normal-pages content in each section"
+            if key == "page_numbers":
+                placement = {"header": "Header", "footer": "Footer", "either": "Header or Footer"}
+                description = "Normal-pages PAGE field · Placement: " + placement.get(
+                    (group or {}).get("placement"), "Not recorded")
+            yield area, "Manual review" if enabled else "Not checked", (
+                description if enabled else "Disabled in this Profile"), "None"
+            continue
+        if not isinstance(group, dict):
+            yield area, "Not checked", "Requirements not recorded", "N/A"
+            continue
+        if key == "references":
+            selected = []
+            formatting = ("heading_text", "heading_bold", "heading_alignment", "start_on_new_page",
+                          "hanging_indent", "line_spacing", "space_before", "space_after",
+                          "font_family", "font_size", "alignment")
+            if any(group.get(f"check_{name}") is True for name in formatting) or any(
+                group.get(name) is not None and group.get(f"check_{name}") is not False
+                for name in ("line_spacing", "hanging_indent_in")):
+                selected.append("Formatting")
+            if group.get("check_reference_order") is True:
+                selected.append("Alphabetical order")
+            if group.get("check_doi_format") is True:
+                selected.append("DOI presentation")
+            description = ", ".join(selected)
+            enabled = bool(selected)
+        elif key == "citation_matching":
+            names = {"check_citations_have_references": "citations have references",
+                     "check_references_are_cited": "references are cited",
+                     "check_author_year_consistency": "author/year consistency",
+                     "check_year_suffixes": "year suffixes", "check_duplicate_references": "duplicates"}
+            description = ", ".join(label for name, label in names.items() if group.get(name) is True)
+            enabled = bool(description)
+            if group.get("flag_ambiguous_matches") is True:
+                description += ("; " if description else "") + "ambiguous matches: manual"
+                if not enabled:
+                    yield area, "Manual review", description, "None"
+                    continue
+        elif key == "margins":
+            description = ", ".join(side for side in ("left", "right", "top", "bottom")
+                                    if group.get(f"{side}_in") is not None) + " margins"
+            enabled = any(group.get(f"{side}_in") is not None for side in ("left", "right", "top", "bottom"))
+        else:
+            selected = [label for name, label in labels.items() if group.get(name) is not None]
+            if group.get("allowed_font_combos") and not any(label.startswith("font") for label in selected):
+                selected.insert(0, "allowed font choices")
+            description = ", ".join(selected)
+            enabled = bool(selected)
+        yield area, "Scored" if enabled else "Not checked", (
+            description if enabled else "Disabled in this Profile"), "Included" if enabled else "None"
 
-    Reads ONLY the STORED snapshot (immutable, per-Audit). Never exposes
-    schema/version/fingerprint/PresetConfig terminology. Historical audits
-    (no snapshot) get a legacy-requirements note instead.
-    """
+
+def _append_profile_coverage(story, snapshot):
+    story.append(_section("Profile Coverage Matrix"))
+    rows = list(_coverage_rows(snapshot))
+    story.append(_report_table(("Area", "Status", "Coverage", "Score"), rows, (26, 30, 94, 30), size=8))
+
+
+def _category_disabled(category, snapshot):
+    """Only mark known saved disabled requirements N/A; absent history is unknown."""
+    if not isinstance(snapshot, dict):
+        return False
+    coverage = {row[0]: (row[1], row[3]) for row in _coverage_rows(snapshot)}
+    if category == "page_margins":
+        return coverage["Margins"] == ("Not checked", "None")
+    if category == "heading_hierarchy":
+        return all(coverage[area] == ("Not checked", "None") for area in ("Headings", "References"))
+    if category in ("font_consistency", "font_size"):
+        groups = [snapshot.get(key) for key in ("body", "heading", "references")]
+        if not all(isinstance(group, dict) for group in groups):
+            return False
+        key, toggle = (("font_family", "check_font_family") if category == "font_consistency"
+                       else ("font_size_pt", "check_font_size"))
+        return not (any(group.get(key) is not None or group.get("allowed_font_combos")
+                        for group in groups[:2]) or
+                    (groups[2].get(toggle) is True and groups[2].get(key) is not None))
+    if category == "paragraph_typography":
+        keys = ("line_spacing", "alignment", "space_before_pt", "space_after_pt", "first_line_indent_in")
+        groups = [snapshot.get(key) for key in ("body", "heading", "captions", "lists", "references")]
+        if not all(isinstance(group, dict) for group in groups):
+            return False
+        if any(group.get(key) is not None for group in groups[:4] for key in keys):
+            return False
+        refs = groups[4]
+        return not any(refs.get(key) is not None and refs.get(toggle) is not False
+                       for key, toggle in (("line_spacing", "check_line_spacing"),
+                                           ("hanging_indent_in", "check_hanging_indent"),
+                                           ("space_before_pt", "check_space_before"),
+                                           ("space_after_pt", "check_space_after"),
+                                           ("alignment", "check_alignment")))
+    if category == "citation_apa":
+        matching, refs = snapshot.get("citation_matching"), snapshot.get("references")
+        if not isinstance(matching, dict) or not isinstance(refs, dict):
+            return False
+        return not (any(value is True for key, value in matching.items() if key.startswith("check_")) or
+                    refs.get("check_reference_order") is True or refs.get("check_doi_format") is True)
+    # Caption presence/semantics and historical adjustments have no saved off switch.
+    return False
+
+
+def _priority_findings(violations):
+    """Major before manual review; saved order is stable, minor never promoted."""
+    return ([v for v in violations if v.severity == "MAJOR"] +
+            [v for v in violations if v.severity == "REVIEW"])[:3]
+
+
+def _append_priority_actions(story, violations, audit):
+    story.append(Spacer(1, 3 * mm))
+    story.append(_section("Attention Required"))
+    selected = _priority_findings(violations)
+    if not selected:
+        story.append(_p("No major or manual-review findings. See the formatting summary for minor findings.",
+                        size=9, color=MUTED))
+    for v in selected:
+        if v.rule_code in PAGE_ELEMENT_RULES:
+            action = ("Inspect this section in Word; the supported evidence could not verify the requirement."
+                      if (v.location or {}).get("evidence_state") == "unresolved" else
+                      ("Inspect normal-pages numbering and insert a PAGE field if needed."
+                       if v.rule_code == "PAGE_NUMBER_FIELD_REQUIRED" else
+                       "Inspect the normal-pages header/footer and add the required content if needed."))
+        elif v.rule_code.startswith("MARGIN_"):
+            side = v.rule_code.removeprefix("MARGIN_").lower()
+            action = f"Set this section’s {side} margin to {_student_clean(v.expected_value) or 'the saved requirement'}."
+        else:
+            action = {
+                "HEADING_HIERARCHY": "Restore consecutive heading levels in Word.",
+                "CITATION_MISMATCH": "Add the missing References entry or correct the citation.",
+                "CITATION_REFERENCE_MISMATCH": "Make the citation year match the intended Reference List entry.",
+                "CITATION_YEAR_SUFFIX_MISMATCH": "Match the citation’s year suffix to its Reference List entry.",
+                "CITATION_REFERENCE_AMBIGUOUS": "Identify the intended source and disambiguate the citation.",
+                "TABLE_CAPTION_MISSING": "Insert a Word caption for this table.",
+                "IMAGE_CAPTION_MISSING": "Insert a Word caption for this figure.",
+                "IMAGE_ALT_TEXT_MISSING": "Add meaningful alternative text to this figure in Word.",
+            }.get(v.rule_code, "Apply the saved requirement at this location; see the complete register.")
+        accent = RED if v.severity == "MAJOR" else PURPLE
+        heading = Table([[_symbol("major" if v.severity == "MAJOR" else "review", accent),
+                          _p(f"{_severity_label(v.severity)} · {_rule_name(v.rule_code)}",
+                             size=9, font="Helvetica-Bold", color=accent)]],
+                        colWidths=[7 * mm, 173 * mm])
+        heading.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"),
+                                    ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                                    ("TOPPADDING", (0, 0), (-1, -1), 1),
+                                    ("BOTTOMPADDING", (0, 0), (-1, -1), 1)]))
+        story.append(KeepTogether([
+            heading,
+            _p(_finding_location(v, audit).replace("\n", " · "), size=8, color=MUTED),
+            _p(action, size=8.5), Spacer(1, 2 * mm),
+        ]))
+
+
+def _minor_frequency(violations):
+    """Count saved MINOR finding rows, not runs, occurrences or inferred issues."""
+    counts = defaultdict(int)
+    for v in violations:
+        if v.severity == "MINOR":
+            counts[v.rule_code] += 1
+    return list(counts.items())
+
+
+def _append_frequency(story, violations):
+    story.append(Spacer(1, 2 * mm))
+    story.append(_section("Issue Frequency Summary"))
+    counts = _minor_frequency(violations)
+    if not counts:
+        story.append(_p("No scored minor findings.", size=9, color=MUTED))
+        return
+    # Two issue/count pairs per row keep the executive page concise.
+    pairs = [(_rule_name(code), count) for code, count in counts]
+    rows = [(*pairs[index], *(pairs[index + 1] if index + 1 < len(pairs) else ("", "")))
+            for index in range(0, len(pairs), 2)]
+    story.append(_report_table(("Minor issue", "Count", "Minor issue", "Count"),
+                              rows, (73, 17, 73, 17), size=8))
+
+
+def _formatting_summary_rows(minor, audit):
+    groups = defaultdict(list)
+    for v in minor:
+        groups[(v.rule_code, v.expected_value or "")].append(v)
+    rows = []
+    for (rule, expected), members in groups.items():
+        pages, unavailable = _pages_summary_for_group(members, audit)
+        page_text = pages or "Unavailable"
+        if pages and unavailable:
+            page_text += " · some unavailable"
+        observed = list(dict.fromkeys(_display_values(v)[0] for v in members))
+        # The compact comparison is bounded; every full value remains in the register.
+        observed_text = "; ".join(observed)
+        if len(observed_text) > 200:
+            observed_text = observed_text[:197].rstrip() + "... (full values in register)"
+        rows.append((_rule_name(rule), len(members), page_text, observed_text, _display_values(members[0])[1]))
+    return rows
+
+
+def _formatting_summary(minor, audit):
+    return _report_table(("Issue", "Count", "Pages", "Observed", "Required"),
+                         _formatting_summary_rows(minor, audit), (55, 14, 27, 43, 41),
+                         size=8, accent=AMBER)
+
+
+def _append_profile_disclosure(story, profile_snapshot) -> None:
+    """One immutable requirement per row; no profile resolution or duplicated inventory."""
+    story.append(_section("Appendix: Full Profile Requirements"))
     if not isinstance(profile_snapshot, dict):
-        story.append(_p(
-            "Formatting Profile: Legacy formatting requirements (not recorded).",
-            size=9,
-        ))
+        story.append(_p("Formatting Profile: Legacy formatting requirements (not recorded).", size=9))
+        story.append(_report_table(("Area", "Requirement", "Status"), [
+            ("Profile", "Requirements not recorded", "Unknown"),
+            ("Headers", "No saved enabled requirement", "Not checked"),
+            ("Footers", "No saved enabled requirement", "Not checked"),
+            ("Page numbers", "No saved enabled requirement", "Not checked"),
+            ("Citation style", "Not recorded", "Unknown"),
+        ], (30, 116, 34)))
         return
 
     name = str(profile_snapshot.get("profile_name") or "Selected profile")
     version = profile_snapshot.get("profile_version")
-    citation = str(profile_snapshot.get("citation_style") or "APA 7")
-    margins = (profile_snapshot.get("margins") or {})
-    left = margins.get("left_in")
-    right = margins.get("right_in")
-    top = margins.get("top_in")
-    bottom = margins.get("bottom_in")
+    identity = f"Formatting Profile: {name}"
+    if version is not None:
+        identity += f" (v{version})"
+    story.append(_p(identity, size=9))
+    source = {"built_in": "Built-in", "custom": "Custom"}.get(profile_snapshot.get("profile_source"), "Not recorded")
+    story.append(_p(f"Source: {source}", size=9))
+    scored, manual, unchecked, policies = [], [], [], []
+    properties = (
+        ("font_family", "font", ""),
+        ("font_size_pt", "font size", " pt"),
+        ("line_spacing", "line spacing", ""),
+        ("alignment", "alignment", ""),
+        ("space_before_pt", "space before", " pt"),
+        ("space_after_pt", "space after", " pt"),
+        ("first_line_indent_in", "first-line indent", " in"),
+        ("bold", "bold", ""),
+        ("italic", "italic", ""),
+    )
 
-    if all(v is None for v in (left, right, top, bottom)):
-        margin_line = "Margins: Not checked"
-    elif all(v is not None for v in (left, right, top, bottom)) and len({left, right, top, bottom}) == 1:
-        margin_line = f"Margins: {left:g} in on all sides"
-    elif left is not None:
-        margin_line = f"Margins: {left:g} in left"
-    else:
-        margin_line = "Margins: Not checked"
+    def formatting_lines(group, label, stored_only=False):
+        if not isinstance(group, dict):
+            return
+        combos = group.get("allowed_font_combos")
+        if combos:
+            choices = ", ".join(f"{family} {size:g} pt" for family, size in combos)
+            scored.append(f"{label} font choices: {choices}")
+        for key, title, unit in properties:
+            if key not in group:
+                continue
+            value = group.get(key)
+            if value is None:
+                if not (combos and key in ("font_family", "font_size_pt")):
+                    unchecked.append(f"{label} {title}: Not checked")
+            else:
+                shown = ("Yes" if value else "No") if isinstance(value, bool) else str(value)
+                if stored_only or key in ("bold", "italic"):
+                    unchecked.append(f"{label} {title}: {shown}{unit} (stored setting; not checked)")
+                else:
+                    scored.append(f"{label} {title}: {shown}{unit}")
 
-    story.append(_p(
-        f"Formatting Profile: {name} (v{version}). Citation Style: {citation}.",
-        size=9,
-    ))
-    story.append(_p(margin_line, size=9))
+    for key, label in (("body", "Body"), ("heading", "Headings"),
+                       ("captions", "Captions"), ("lists", "Lists")):
+        group = profile_snapshot.get(key)
+        formatting_lines(group, label)
+        if key == "heading" and isinstance(group, dict):
+            for level in (1, 2, 3):
+                formatting_lines(group.get(f"level_{level}"), f"Heading {level}", stored_only=True)
 
-    reference_line = _references_disclosure_line(profile_snapshot.get("references") or {})
-    if reference_line:
-        story.append(_p(reference_line, size=9))
+    margins = profile_snapshot.get("margins") or {}
+    sides = [(side, margins.get(f"{side}_in")) for side in ("left", "right", "top", "bottom")]
+    for side, value in sides:
+        if value is None:
+            unchecked.append(f"{side.capitalize()} margin: Not checked")
+        else:
+            scored.append(f"{side.capitalize()} margin: {value:g} in")
 
+    refs = profile_snapshot.get("references") or {}
+    for toggle, value_key, label in (
+        ("check_heading_text", "heading_text", "Reference heading"),
+        ("check_heading_bold", "heading_bold", "Reference heading bold"),
+        ("check_heading_alignment", "heading_alignment", "Aligned Reference heading"),
+        ("check_start_on_new_page", None, "References start on a new page"),
+        ("check_hanging_indent", "hanging_indent_in", "Hanging indent"),
+        ("check_line_spacing", "line_spacing", "Reference line spacing"),
+        ("check_space_before", "space_before_pt", "Space before entries"),
+        ("check_space_after", "space_after_pt", "Space after entries"),
+        ("check_font_family", "font_family", "Reference font"),
+        ("check_font_size", "font_size_pt", "Reference font size"),
+        ("check_alignment", "alignment", "Reference entry alignment"),
+        ("check_reference_order", None, "Alphabetical order"),
+        ("check_doi_format", None, "Reference DOI format"),
+    ):
+        enabled = refs.get(toggle) is True
+        if toggle in ("check_line_spacing", "check_hanging_indent") and toggle not in refs:
+            enabled = refs.get(value_key) is not None
+        value = refs.get(value_key) if value_key else None
+        detail = label
+        if value_key and value is not None:
+            shown = ("Yes" if value else "No") if isinstance(value, bool) else str(value)
+            units = {"hanging_indent_in": " in", "space_before_pt": " pt",
+                     "space_after_pt": " pt", "font_size_pt": " pt"}.get(value_key, "")
+            detail += f": {shown}{units}"
+        if enabled and (value_key is None or value is not None):
+            scored.append(detail)
+        else:
+            unchecked.append(detail + (" (stored setting; not checked)" if value is not None else ": Not checked"))
+    if "allow_heading_aliases" in refs:
+        detail = "Reference heading aliases: " + ("Common alternatives accepted" if refs["allow_heading_aliases"] else "Exact heading required")
+        policies.append(("References", detail, "Scope policy"))
 
-def _references_disclosure_line(refs) -> str:
-    """Plain-language Reference List requirements from a STORED snapshot.
+    matching = profile_snapshot.get("citation_matching") or {}
+    for key, label in (
+        ("check_citations_have_references", "Citations have references"),
+        ("check_references_are_cited", "References are cited"),
+        ("check_author_year_consistency", "Author and year consistency"),
+        ("check_year_suffixes", "Year suffixes"),
+        ("check_duplicate_references", "Duplicate references"),
+    ):
+        if matching.get(key) is True:
+            scored.append(label)
+        elif key in matching:
+            unchecked.append(f"{label}: Not checked")
+    if matching.get("flag_ambiguous_matches") is True:
+        manual.append("Ambiguous citation matches · Manual review only · Unscored")
+    elif "flag_ambiguous_matches" in matching:
+        unchecked.append("Ambiguous citation matches: Not checked")
+    if "allow_personal_communication" in matching:
+        policies.append(("Citations", "Personal communication citations: " +
+                         ("Allowed without Reference List entries" if matching["allow_personal_communication"]
+                          else "No personal-communication exemption"), "Scope policy"))
 
-    Only ENABLED checks are stated. A stored value whose check is off is not
-    a requirement, so it is never claimed. Historical v1/v2 snapshots carry
-    no toggles at all: their line spacing was enforced exactly when a value
-    was stored, which is what this reads.
-    """
-    if not isinstance(refs, dict):
-        return ""
-    parts: List[str] = []
-    if refs.get("check_heading_text") and refs.get("heading_text"):
-        word = str(refs["heading_text"]).strip().capitalize()
-        parts.append(
-            f'"{word}" heading (common alternatives accepted)'
-            if refs.get("allow_heading_aliases")
-            else f'"{word}" heading'
-        )
-    if refs.get("check_heading_bold"):
-        parts.append("bold heading" if refs.get("heading_bold") else "heading not bold")
-    if refs.get("check_heading_alignment") and refs.get("heading_alignment"):
-        parts.append(f"{str(refs['heading_alignment']).capitalize()}-aligned heading")
-    if refs.get("check_start_on_new_page"):
-        parts.append("starts on a new page")
-    if refs.get("check_hanging_indent") and refs.get("hanging_indent_in") is not None:
-        parts.append(f"{refs['hanging_indent_in']:g} in hanging indent")
-    if refs.get("check_line_spacing") is not False and refs.get("line_spacing") is not None:
-        ls = refs["line_spacing"]
-        parts.append("double line spacing" if abs(ls - 2.0) < 0.01 else f"{ls:g} line spacing")
-    if refs.get("check_space_before") and refs.get("space_before_pt") is not None:
-        parts.append(f"{refs['space_before_pt']:g} pt space before")
-    if refs.get("check_space_after") and refs.get("space_after_pt") is not None:
-        parts.append(f"{refs['space_after_pt']:g} pt space after")
-    if refs.get("check_font_family") and refs.get("font_family"):
-        parts.append(str(refs["font_family"]))
-    if refs.get("check_font_size") and refs.get("font_size_pt") is not None:
-        parts.append(f"{refs['font_size_pt']:g} pt")
-    if refs.get("check_alignment") and refs.get("alignment"):
-        parts.append(f"{refs['alignment']}-aligned entries")
-    if refs.get("check_reference_order"):
-        parts.append("alphabetical order")
+    requirement_rows = []
+    for group_name, toggle, label in (
+        ("headers", "check_header_requirements", "Headers"),
+        ("footers", "check_footer_requirements", "Footers"),
+        ("page_numbers", "check_page_number_requirements", "Page numbers"),
+    ):
+        group = profile_snapshot.get(group_name) or {}
+        if group.get(toggle) is not True:
+            unchecked.append(f"{label}: Not checked")
+            if group_name == "page_numbers" and "placement" in group:
+                placement = {"header": "Header", "footer": "Footer", "either": "Header or Footer"}
+                unchecked.append("Page numbers placement: " + placement.get(group["placement"], "Not recorded") +
+                                 " (stored setting; not checked)")
+            continue
+        detail = f"{label}: Manual review only · Unscored"
+        if group_name == "page_numbers":
+            placement = {"header": "Header", "footer": "Footer", "either": "Header or Footer"}
+            detail += f" · Placement: {placement.get(group.get('placement'), 'Header or Footer')}"
+        manual.append(detail)
+
+    for status, lines in (("Scored", scored), ("Manual review", manual), ("Not checked", unchecked)):
+        for line in lines:
+            if line.startswith("Body"):
+                area = "Body text"
+            elif line.startswith(("Heading", "Headings")):
+                area = "Headings"
+            elif line.startswith(("Header", "Footer", "Page number")):
+                area = "Page Elements"
+            elif line.startswith(("Margin", "Left margin", "Right margin", "Top margin", "Bottom margin")):
+                area = "Margins"
+            elif line.startswith(("Caption", "List")):
+                area = "Captions and lists"
+            elif any(word in line.lower() for word in ("citation", "cited", "author and year", "year suffix", "duplicate")):
+                area = "Citations"
+            else:
+                area = "References"
+            requirement_rows.append((area, line.removesuffix(": Not checked"), status))
+    requirement_rows.append(("Citation style", str(profile_snapshot.get("citation_style") or "Not recorded"), "Style basis"))
+    for key, label in (("description", "Description"), ("institution_specific", "Institution-specific basis"),
+                       ("role_exemptions", "Excluded paragraph roles"), ("table_eligibility", "Table eligibility")):
+        if key not in profile_snapshot:
+            continue
+        value = profile_snapshot[key]
+        if isinstance(value, bool):
+            value = "Yes" if value else "No"
+        elif isinstance(value, (list, tuple)):
+            value = ", ".join(str(item).replace("_", " ").capitalize() for item in value) or "None"
+        requirement_rows.append(("Profile policy", f"{label}: {value or 'Not recorded'}", "Scope policy"))
+    requirement_rows.extend(policies)
+    area_order = {area: index for index, area in enumerate((
+        "Body text", "Headings", "References", "Citations", "Page Elements", "Margins",
+        "Captions and lists", "Citation style", "Profile policy",
+    ))}
+    requirement_rows.sort(key=lambda row: area_order.get(row[0], len(area_order)))
+    story.append(_report_table(("Area", "Requirement", "Status"), requirement_rows,
+                              (30, 116, 34), size=8, padding=3))
     if refs.get("check_doi_format") is True:
-        parts.append(
-            "The selected profile requires the visible DOI format https://doi.org/<doi>; "
-            "presentation only, not registration or resolution."
-        )
-    if not parts:
-        return "References: Not checked"
-    return "References: " + ", ".join(parts)
+        story.append(_p("DOI note: The selected profile requires the visible DOI format https://doi.org/<doi>; "
+                        "presentation only, not registration or resolution.", size=8, color=MUTED))
 
 
-def _score_summary(score, major, minor) -> Table:
-    def cell(text, size, font, color, bg=None):
-        return Paragraph(_clean(text), ParagraphStyle(
-            f"cell-{size}-{font}",
-            fontName=_font_for(text) if font == "Helvetica" else font,
-            fontSize=size,
-            leading=size * 1.3,
-            textColor=color,
-            alignment=1,
-        ))
 
-    data = [
-        [cell("Compliance Score (enabled checks)", 8.5, "Helvetica-Bold", MUTED),
-         cell("Major", 8.5, "Helvetica-Bold", MUTED),
-         cell("Minor", 8.5, "Helvetica-Bold", MUTED)],
-        [cell(str(score), 20, "Helvetica-Bold", colors.white),
-         cell(str(major), 16, "Helvetica-Bold", RED),
-         cell(str(minor), 16, "Helvetica-Bold", MUTED)],
-    ]
-    table = Table(data, colWidths=[90 * mm, 45 * mm, 45 * mm])
+
+def _score_summary(score, major, minor, manual=0):
+    cards = (
+        ("Score", f"{score} / 100", "Enabled deterministic checks", BLUE, "score", "#EDF3FD"),
+        ("Major", str(major), "Scored findings · address first", RED, "major", "#FDF1EF"),
+        ("Minor", str(minor), "Scored formatting findings", AMBER, "minor", "#FBF5E9"),
+        ("Manual review", str(manual), "Unscored · human judgement", PURPLE, "review", "#F3F0F9"),
+    )
+    cells = []
+    for title, value, label, accent, kind, tint in cards:
+        card = Table([[_symbol(kind, accent), _p(title, size=9, font="Helvetica-Bold", color=accent)],
+                      [_p(value, size=23, font="Helvetica-Bold", color=NAVY), ""],
+                      [_p(label, size=8, color=INK), ""]],
+                     colWidths=[8 * mm, 34 * mm])
+        card.setStyle(TableStyle([
+            ("SPAN", (0, 1), (-1, 1)), ("SPAN", (0, 2), (-1, 2)),
+            ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor(tint)),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("TOPPADDING", (0, 0), (-1, -1), 5),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+        ]))
+        cells.append(card)
+    table = Table([cells], colWidths=[45 * mm] * 4)
     table.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (0, 1), NAVY),
-        ("BACKGROUND", (1, 0), (-1, 0), LIGHT),
-        ("BACKGROUND", (1, 1), (-1, 1), colors.white),
-        ("BOX", (0, 0), (-1, -1), 0.6, NAVY),
-        ("LINEBELOW", (1, 0), (-1, 0), 0.4, colors.HexColor("#D8D5CB")),
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("TOPPADDING", (0, 0), (-1, -1), 6),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 3),
+        ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
     ]))
     return table
 
 
+class _TotalPagesCanvas(Canvas):
+    """Replay page states once; retain each page's actual portrait/landscape size."""
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._report_pages = []
+
+    def showPage(self):
+        self._report_pages.append(dict(self.__dict__))
+        self._startPage()
+
+    def save(self):
+        total = len(self._report_pages)
+        for state in self._report_pages:
+            self.__dict__.update(state)
+            width, _ = self._pagesize
+            self.saveState()
+            self.setFont("Helvetica", 7.5)
+            self.setFillColor(MUTED)
+            self.drawRightString(width - _MARGIN, 10 * mm, f"Page {self._pageNumber} of {total}")
+            self.restoreState()
+            Canvas.showPage(self)
+        Canvas.save(self)
+
+
 def _draw_chrome(canvas, doc, page_w, page_h):
+    canvas.setPageSize((page_w, page_h))
     canvas.saveState()
-    # Navy header band
+    canvas.setStrokeColor(LIGHT)
+    canvas.line(_MARGIN, page_h - 12 * mm, page_w - _MARGIN, page_h - 12 * mm)
     canvas.setFillColor(NAVY)
-    canvas.rect(0, page_h - 11 * mm, page_w, 11 * mm, stroke=0, fill=1)
-    canvas.setFillColor(colors.white)
     canvas.setFont("Helvetica-Bold", 8.5)
-    canvas.drawString(_MARGIN, page_h - 7.2 * mm, "Compliance Report")
-    canvas.drawRightString(page_w - _MARGIN, page_h - 7.2 * mm,
-                           _clean(getattr(doc, "title", "Compliance Report"))[:60])
-    # Footer rule + page number
-    canvas.setStrokeColor(NAVY)
-    canvas.setLineWidth(0.6)
+    canvas.drawString(_MARGIN, page_h - 8 * mm, "ACA Compliance Report")
+    profile = str(getattr(doc, "profile_label", "Stored profile"))
+    max_width = page_w - 2 * _MARGIN - 115 * mm
+    font = _font_for(profile)
+    while profile and pdfmetrics.stringWidth(profile, font, 8) > max_width:
+        profile = profile[:-1]
+    canvas.setFont(font, 8)
+    canvas.drawRightString(page_w - _MARGIN, page_h - 8 * mm, profile)
+    canvas.setStrokeColor(LIGHT)
     canvas.line(_MARGIN, 14 * mm, page_w - _MARGIN, 14 * mm)
     canvas.setFillColor(MUTED)
     canvas.setFont("Helvetica", 7.5)
-    canvas.drawString(_MARGIN, 10 * mm, "Academic Compliance Auditor - Manuscript Review Desk")
-    canvas.drawRightString(page_w - _MARGIN, 10 * mm, f"Page {doc.page}")
+    canvas.drawString(_MARGIN, 10 * mm, "Generated locally · Original DOCX unchanged")
     canvas.restoreState()
 
 
@@ -1231,8 +1579,8 @@ def generate_audit_pdf(audit, violations, citation_issues, profile_snapshot=None
 
     `profile_snapshot` is the STORED per-Audit snapshot dict (optional): the
     report discloses the Formatting Profile name/version, Citation Style,
-    and enabled/disabled Margin checks. Historical PDFs keep their stored
-    snapshot — never a re-resolution.
+    margin checks and manual structural requirements. Historical PDFs keep
+    their stored snapshot — never a re-resolution.
     """
     reconstructed = [
         LayoutViolation(
@@ -1280,35 +1628,37 @@ def generate_audit_pdf(audit, violations, citation_issues, profile_snapshot=None
         consistency_note = selection.note
 
     story = []
-    story.append(_p("Academic Compliance Report", size=18, font="Helvetica-Bold", color=NAVY, leading=22))
-    story.append(_p("Manuscript Review Desk", size=10, color=MUTED))
+    story.append(_p("Executive Summary", size=23, font="Helvetica-Bold", color=NAVY, leading=28))
+    story.append(_p("Academic Compliance Report", size=10, color=MUTED))
     story.append(Spacer(1, 3 * mm))
 
     report_date = audit.completed_at or audit.created_at
     story.append(_kv_table([
         ("Document", audit.filename),
-        ("Audit ID", audit.id),
-        # English UK convention ("18 Aug 2026, 12:30 PM") with an explicit
-        # UTC label — the report date is a naive UTC wall-clock moment
-        # (datetime.utcnow()) and must never be shown as an unlabelled local
-        # time.
         ("Report Date", report_date.strftime("%d %b %Y, %I:%M %p UTC") if report_date else "Unavailable"),
-        ("Deployment Mode", audit.deploy_mode),
-        ("AI Citation Review", audit.ai_review_status or "Not recorded"),
+        ("Audit status", {"completed": "Completed", "processing": "Processing", "failed": "Failed"}.get(
+            audit.status, "Not recorded")),
+        ("Profile", (str(profile_snapshot.get("profile_name") or "Selected profile") +
+                     (f" (v{profile_snapshot['profile_version']})" if profile_snapshot.get("profile_version") is not None else ""))
+         if isinstance(profile_snapshot, dict) else "Not recorded"),
+        ("Profile source", {"built_in": "Built-in", "custom": "Custom"}.get(
+            profile_snapshot.get("profile_source"), "Not recorded")
+         if isinstance(profile_snapshot, dict) else "Not recorded"),
     ]))
     story.append(Spacer(1, 4 * mm))
 
-    # ---- Executive Summary ----
-    story.append(_section("Executive Summary"))
-    story.append(Spacer(1, 2 * mm))
-    story.append(_score_summary(display_score, score_result.major_count, score_result.minor_count))
+    story.append(_score_summary(
+        display_score, score_result.major_count, score_result.minor_count,
+        sum(v.severity == "REVIEW" for v in violations),
+    ))
     story.append(Spacer(1, 2 * mm))
     story.append(_p(
-        f"The score of {display_score}/100 applies only to the enabled deterministic "
-        "checks in the selected formatting profile. It does not assess writing quality, "
-        "factual accuracy, or requirements that are not enabled in that profile.",
+        f"Compliance Score (enabled checks): {display_score}/100. Only enabled deterministic "
+        "formatting and citation checks contribute; this is not an assessment of academic quality.",
         size=8.5, color=MUTED,
     ))
+    story.append(_p("Manual review findings are unscored and do not affect the score.",
+                    size=8.5, color=MUTED))
     if consistency_note:
         # Safe historical-consistency disclosure. Plain reader-facing
         # language: no internal rule codes, bucket names, or version
@@ -1324,38 +1674,32 @@ def generate_audit_pdf(audit, violations, citation_issues, profile_snapshot=None
         ))
         story.append(Spacer(1, 2 * mm))
 
-    # ---- Selected Formatting Profile disclosure (stored snapshot only) ----
-    _append_profile_disclosure(story, profile_snapshot)
+    _append_priority_actions(story, violations, audit)
+    _append_frequency(story, violations)
+    story.append(PageBreak())
+    _append_profile_coverage(story, profile_snapshot)
     story.append(Spacer(1, 4 * mm))
 
-    # ---- Category Breakdown ----
-    story.append(_section("Category Breakdown"))
+    # ---- Category Performance (unchanged scoring facts) ----
+    story.append(_section("Category Performance"))
     story.append(Spacer(1, 2 * mm))
-    break_rows = [[_p(h, size=8.5, font="Helvetica-Bold", color=colors.white) for h in
-                   ("Category", "Major", "Minor", "Deducted", "Remaining")]]
+    break_rows = []
     for item in breakdown_items:
         label = item.label
         if item.category == "citation_apa":
             label = "APA Citations"
-        break_rows.append([_p(label, size=9), _p(item.major, size=9),
-                           _p(item.minor, size=9), _p(item.deduction, size=9),
-                           _p(item.remaining, size=9)])
-    break_table = Table(break_rows, colWidths=[68 * mm, 26 * mm, 26 * mm, 30 * mm, 30 * mm], repeatRows=1)
-    break_table.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), NAVY),
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, LIGHT]),
-        ("LINEBELOW", (0, 0), (-1, 0), 0.6, NAVY),
-        ("GRID", (0, 0), (-1, -1), 0.3, colors.HexColor("#D8D5CB")),
-        ("TOPPADDING", (0, 0), (-1, -1), 2.5),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 2.5),
-    ]))
-    story.append(break_table)
+        disabled = (_category_disabled(item.category, profile_snapshot)
+                    and item.major == 0 and item.minor == 0 and item.deduction == 0)
+        break_rows.append((label, f"{item.major} major · {item.minor} minor", item.deduction,
+                           f"N/A · Not checked (stored {item.remaining})" if disabled else item.remaining))
+    story.append(_report_table(("Category", "Findings", "Deducted", "Result"),
+                              break_rows, (64, 46, 24, 46)))
     story.append(Spacer(1, 4 * mm))
 
     # ---- Major Priority Findings ----
-    story.append(_section("Major Priority Findings"))
-    story.append(Spacer(1, 2 * mm))
+    if any(v.severity == "MAJOR" for v in violations):
+        story.append(_section("Major Priority Findings"))
+        story.append(Spacer(1, 2 * mm))
     major = [v for v in violations if v.severity == "MAJOR"]
     minor = [v for v in violations if v.severity == "MINOR"]
     review = [v for v in violations if v.severity == "REVIEW"]
@@ -1363,13 +1707,7 @@ def generate_audit_pdf(audit, violations, citation_issues, profile_snapshot=None
     # malformed token is reachable. Without this partition such a finding would
     # be counted in the total below yet rendered nowhere.
     unclassified = [v for v in violations if v.severity not in _PANEL_SEVERITIES]
-    if not violations:
-        story.append(_p(
-            "No issues were detected by the enabled deterministic checks. This does not "
-            "certify that the document is academically correct in every respect.",
-            size=9.5, color=GREEN,
-        ))
-    else:
+    if violations:
         summary = (
             f"{len(violations)} deterministic finding(s): {len(major)} major (shown individually), "
             f"{len(minor)} minor (grouped by rule code and expected value)"
@@ -1385,9 +1723,8 @@ def generate_audit_pdf(audit, violations, citation_issues, profile_snapshot=None
         story.append(_p(summary, size=8.5, color=MUTED))
         story.append(Spacer(1, 2 * mm))
 
-        # Major findings — individual panels with P### IDs
-        for i, v in enumerate(major):
-            story.append(KeepTogether([_priority_table(_p_id(i + 1), v, audit)]))
+        for v in major:
+            story.append(_priority_table(v, audit))
             story.append(Spacer(1, 3 * mm))
 
     # ---- Citation Guidance ----
@@ -1434,28 +1771,6 @@ def generate_audit_pdf(audit, violations, citation_issues, profile_snapshot=None
             story.append(Spacer(1, 2 * mm))
             story.append(_p(f"Note: {warning}", size=8.5, color=MUTED))
 
-    # ---- Grouped Minor Findings ----
-    if minor:
-        story.append(Spacer(1, 3 * mm))
-        story.append(_section("Grouped Minor Findings"))
-        story.append(Spacer(1, 2 * mm))
-        groups = defaultdict(list)
-        for v in minor:
-            key = (v.rule_code, v.expected_value or "")
-            groups[key].append(v)
-
-        group_idx = 0
-        for (rule_code, exp_val), members in groups.items():
-            if len(members) == 1:
-                # Use friendly action without Run
-                friendly_loc = friendly_location_text(members[0].location, getattr(audit, "document_blocks", None))
-                affected = _affected_text_info(members[0], getattr(audit, "document_blocks", None))
-                action = _friendly_required_action(members[0], friendly_loc, affected)
-            else:
-                action = _group_action(rule_code, exp_val)
-            story.append(KeepTogether([_group_panel(_g_id(group_idx + 1), members, rule_code, exp_val, action, audit)]))
-            story.append(Spacer(1, 4 * mm))
-            group_idx += 1
 
     # ---- Manual Review Findings ----
     # REVIEW is a manual-review flag: never scored, never counted, but it must
@@ -1463,19 +1778,47 @@ def generate_audit_pdf(audit, violations, citation_issues, profile_snapshot=None
     # register row and no explanation.
     if review:
         story.append(Spacer(1, 3 * mm))
-        story.append(_section("Manual Review Findings"))
-        story.append(Spacer(1, 2 * mm))
-        story.append(_p(
-            "ACA could not determine whether these citations or entries match "
-            "reliably. Confirm each one against the source; none of them affect "
-            "the score.",
-            size=9.5, color=MUTED,
-        ))
-        story.append(Spacer(1, 2 * mm))
-        for i, v in enumerate(review):
-            story.append(KeepTogether([_priority_table(_p_id(i + 1), v, audit)]))
+        story.append(KeepTogether([
+            _section("Manual Review Findings"),
+            _p("These findings require manual review and do not affect the score.", size=9, color=MUTED),
+            _priority_table(review[0], audit),
+        ]))
+        story.append(Spacer(1, 3 * mm))
+        for v in review[1:]:
+            story.append(KeepTogether([_priority_table(v, audit)]))
             story.append(Spacer(1, 3 * mm))
+    if minor:
+        story.append(Spacer(1, 3 * mm))
+        story.append(_section("Formatting Issue Summary"))
+        story.append(_p("Grouped by saved rule and required value; counts are finding rows. "
+                        "All observed values and locations appear in the complete register.", size=8, color=MUTED))
+        story.append(_formatting_summary(minor, audit))
 
+
+    # Complete registers precede the single requirements inventory and final scope.
+    if violations:
+        story.append(NextPageTemplate("appendix"))
+        story.append(PageBreak())
+        story.append(_section("Appendix — Findings Register"))
+        story.append(_p(
+            "Order: Major findings in saved order, then Minor findings grouped by saved rule and "
+            "required value (first appearance; saved order within each group), then historical "
+            "unclassified findings. Manual reviews follow in their own register in saved order. "
+            "Counts represent saved findings; consolidated occurrence counts are retained.",
+            size=8.5, color=MUTED))
+        minor_groups = defaultdict(list)
+        for v in minor:
+            minor_groups[(v.rule_code, v.expected_value or "")].append(v)
+        scored = major + [v for group in minor_groups.values() for v in group] + unclassified
+        if scored:
+            story.append(_appendix_table(scored, audit, title="Scored and Historical Findings Register"))
+        if review:
+            story.append(Spacer(1, 3 * mm))
+            story.append(_appendix_table(review, audit, title="Manual Review Register"))
+        story.append(NextPageTemplate("main"))
+        story.append(PageBreak())
+    else:
+        story.append(PageBreak())
     # ---- Document Statistics ----
     story.append(Spacer(1, 3 * mm))
     story.append(_section("Document Statistics"))
@@ -1488,103 +1831,35 @@ def generate_audit_pdf(audit, violations, citation_issues, profile_snapshot=None
         ("Sections", audit.section_count),
         ("Words", audit.word_count),
     ]
-    stat_rows = [[_p(h, size=8.5, font="Helvetica-Bold", color=colors.white) for h in ("Metric", "Value")]]
-    for label, value in stats:
-        stat_rows.append([_p(label, size=9), _p(value if value is not None else "Unavailable", size=9)])
-    stat_table = Table(stat_rows, colWidths=[90 * mm, 90 * mm], repeatRows=1)
-    stat_table.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), NAVY),
-        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, LIGHT]),
-        ("GRID", (0, 0), (-1, -1), 0.3, colors.HexColor("#D8D5CB")),
-        ("TOPPADDING", (0, 0), (-1, -1), 2.5),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 2.5),
-    ]))
-    story.append(stat_table)
+    story.append(_report_table(("Metric", "Value", "Metric", "Value"), [
+        (stats[index][0], stats[index][1] if stats[index][1] is not None else "Unavailable",
+         stats[index + 1][0], stats[index + 1][1] if stats[index + 1][1] is not None else "Unavailable")
+        for index in range(0, len(stats), 2)
+    ], (45, 45, 45, 45)))
 
-    # ---- Scope, Limitations, Privacy ----
-    story.append(Spacer(1, 4 * mm))
-    story.append(_section("Scope, Limitations and Privacy"))
-    story.append(Spacer(1, 2 * mm))
-    story.append(_p(
-        "Scope. This report covers layout and APA citation compliance of the uploaded .docx file: "
-        "page margins, heading hierarchy, media captions, font consistency and size, paragraph "
-        "typography, and APA citation matching.",
-        size=9,
-    ))
-    story.append(_p(
-        "Limitations. Checks are deterministic and rule-based; inline run-level font overrides may "
-        "not be fully captured. AI-assisted guidance is advisory only — it never adds, removes, or "
-        "re-scores findings. Verify AI-suggested corrections against the official APA 7 manual.",
-        size=9,
-    ))
-    story.append(_p(
-        "Privacy. The original Word file is not stored or modified. Extracted paragraph "
-        "text may be stored in the local audit database to support document preview and "
-        "audit history. This PDF excludes the full document text.",
-        size=9,
-    ))
-
-    # ---- Appendix — Findings Register (new landscape page, severity-split) ----
-    if violations:
-        story.append(NextPageTemplate("appendix"))
-        story.append(PageBreak())
-        story.append(_section("Appendix — Findings Register"))
-        story.append(Spacer(1, 2 * mm))
-        story.append(_p(
-            "Every finding in this report appears exactly once below, grouped by "
-            "severity. Individual detail panels are shown earlier for Major and "
-            "Manual review findings; Minor findings are grouped by rule.",
-            size=8.5, color=MUTED,
-        ))
-        story.append(Spacer(1, 3 * mm))
-
-        f_idx = 0
-        major_entries = []
-        for v in major:
-            f_idx += 1
-            major_entries.append((f_idx, v))
-        if major_entries:
-            story.append(_p("Major Findings", size=9.5, font="Helvetica-Bold", color=NAVY))
-            story.append(Spacer(1, 1.5 * mm))
-            story.append(_appendix_table(major_entries, audit))
-            story.append(Spacer(1, 5 * mm))
-
-        minor_entries = []
-        minor_groups = defaultdict(list)
-        for v in minor:
-            key = (v.rule_code, v.expected_value or "")
-            minor_groups[key].append(v)
-        for members in minor_groups.values():
-            for v in members:
-                f_idx += 1
-                minor_entries.append((f_idx, v))
-        if minor_entries:
-            story.append(_p("Minor Findings", size=9.5, font="Helvetica-Bold", color=NAVY))
-            story.append(Spacer(1, 1.5 * mm))
-            story.append(_appendix_table(minor_entries, audit))
-            story.append(Spacer(1, 5 * mm))
-
-        review_entries = []
-        for v in review:
-            f_idx += 1
-            review_entries.append((f_idx, v))
-        if review_entries:
-            story.append(_p("Manual review", size=9.5, font="Helvetica-Bold", color=NAVY))
-            story.append(Spacer(1, 1.5 * mm))
-            story.append(_appendix_table(review_entries, audit))
-            story.append(Spacer(1, 5 * mm))
-
-        unclassified_entries = []
-        for v in unclassified:
-            f_idx += 1
-            unclassified_entries.append((f_idx, v))
-        if unclassified_entries:
-            story.append(_p(
-                _UNCLASSIFIED_SEVERITY,
-                size=9.5, font="Helvetica-Bold", color=NAVY,
-            ))
-            story.append(Spacer(1, 1.5 * mm))
-            story.append(_appendix_table(unclassified_entries, audit))
+    _append_profile_disclosure(story, profile_snapshot)
+    scope = [Spacer(1, 5 * mm), _section("Scope, Limitations and Privacy")]
+    for label, text in (
+        ("Audit scope", "Generated locally from persisted audit data. Enabled deterministic formatting and "
+         "citation checks use the immutable saved Profile; this report is not a new audit. "
+         f"Saved deployment mode: {getattr(audit, 'deploy_mode', None) or 'Not recorded'}. "
+         "Optional cloud-assisted guidance requires explicit opt-in."),
+        ("Manual review", "Manual-review findings are unscored. Disabled requirements are not evaluated."),
+        ("Structural evidence", "Checks stored Normal-pages definitions in every document section when enabled. "
+         "First-page and even-page definitions are not checked. Structural page mapping does not establish "
+         "exact geometry or rendered visibility; unsupported evidence remains unresolved."),
+        ("Page numbering", "A PAGE field is not a typed number. The rendered sequence, restarts and numbering "
+         "continuity are not verified."),
+        ("Content limits", "Writing quality, academic merit and factual accuracy are not assessed. Inline run-level font overrides "
+         "may not be fully captured. AI-assisted guidance is advisory only; it never changes findings or scores. "
+         "Verify suggestions against the official APA 7 manual."),
+        ("Local privacy", "The original Word file is not stored or modified. Extracted paragraph text may be stored "
+         "in the local audit database for preview and history. This PDF excludes the full document text."),
+    ):
+        scope.append(_p(label, size=9, font="Helvetica-Bold", color=NAVY, keepWithNext=True))
+        scope.append(_p(text, size=8.5))
+        scope.append(Spacer(1, 2 * mm))
+    story.append(KeepTogether(scope))
 
     buf = io.BytesIO()
     doc = BaseDocTemplate(
@@ -1597,6 +1872,10 @@ def generate_audit_pdf(audit, violations, citation_issues, profile_snapshot=None
         title=build_export_filename(audit.filename),
         author="Academic Compliance Auditor",
     )
+    doc.profile_label = (
+        str(profile_snapshot.get("profile_name") or "Selected profile")
+        if isinstance(profile_snapshot, dict) else "Profile not recorded"
+    )
     doc.addPageTemplates([
         PageTemplate(id="main", frames=[Frame(
             _MARGIN, 18 * mm, _PAGE_W - 2 * _MARGIN, _PAGE_H - 34 * mm, id="body",
@@ -1605,5 +1884,5 @@ def generate_audit_pdf(audit, violations, citation_issues, profile_snapshot=None
             _MARGIN, 18 * mm, _LAND_W - 2 * _MARGIN, _LAND_H - 34 * mm, id="appendix-body",
         )], onPage=_on_landscape),
     ])
-    doc.build(story)
+    doc.build(story, canvasmaker=_TotalPagesCanvas)
     return buf.getvalue()

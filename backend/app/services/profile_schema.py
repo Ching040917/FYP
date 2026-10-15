@@ -228,6 +228,25 @@ class CitationMatchingSettings:
 
 
 @dataclass
+class HeaderSettings:
+    """Stored Normal-pages Header content requirement (manual review only)."""
+    check_header_requirements: bool = False
+
+
+@dataclass
+class FooterSettings:
+    """Stored Normal-pages Footer content requirement (manual review only)."""
+    check_footer_requirements: bool = False
+
+
+@dataclass
+class PageNumberSettings:
+    """Stored Normal-pages PAGE-field requirement, independent of content."""
+    check_page_number_requirements: bool = False
+    placement: str = "either"
+
+
+@dataclass
 class DocumentFormattingProfile:
     """Versioned, validated document formatting profile.
 
@@ -249,6 +268,9 @@ class DocumentFormattingProfile:
     lists: ListSettings = field(default_factory=ListSettings)
     role_policy: RolePolicy = field(default_factory=RolePolicy)
     citation_matching: CitationMatchingSettings = field(default_factory=CitationMatchingSettings)
+    headers: HeaderSettings = field(default_factory=HeaderSettings)
+    footers: FooterSettings = field(default_factory=FooterSettings)
+    page_numbers: PageNumberSettings = field(default_factory=PageNumberSettings)
 
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
@@ -448,6 +470,24 @@ class DocumentFormattingProfile:
                     "must be true or false",
                 ))
 
+        for group_name, cls, toggle in (
+            ("headers", HeaderSettings, "check_header_requirements"),
+            ("footers", FooterSettings, "check_footer_requirements"),
+            ("page_numbers", PageNumberSettings, "check_page_number_requirements"),
+        ):
+            group = getattr(self, group_name)
+            if not isinstance(group, cls):
+                errors.append((group_name, "must be a settings object"))
+                continue
+            value = getattr(group, toggle)
+            if not isinstance(value, bool):
+                errors.append((f"{group_name}.{toggle}", "must be true or false"))
+            elif value and self.profile_source != "custom":
+                errors.append((f"{group_name}.{toggle}", "Available only in Custom Profiles"))
+        if isinstance(self.page_numbers, PageNumberSettings):
+            if self.page_numbers.placement not in ("header", "footer", "either"):
+                errors.append(("page_numbers.placement", "must be one of: header, footer, either"))
+
         return errors
 
     def validate_or_raise(self) -> "DocumentFormattingProfile":
@@ -482,7 +522,8 @@ def _ordered_dict(d: Dict[str, Any]) -> Dict[str, Any]:
         "profile_id", "profile_name", "profile_version", "profile_source",
         "description", "citation_style",
         "body", "heading", "margins", "references", "captions", "lists",
-        "role_policy", "citation_matching", "created_at", "updated_at",
+        "role_policy", "citation_matching", "headers", "footers", "page_numbers",
+        "created_at", "updated_at",
     )
     out: Dict[str, Any] = {}
     for key in order:
@@ -524,7 +565,8 @@ def profile_from_dict(data: Dict[str, Any]) -> DocumentFormattingProfile:
         "profile_id", "profile_name", "profile_version", "profile_source",
         "description", "citation_style",
         "body", "heading", "margins", "references", "captions", "lists",
-        "role_policy", "citation_matching", "created_at", "updated_at",
+        "role_policy", "citation_matching", "headers", "footers", "page_numbers",
+        "created_at", "updated_at",
     }
     unknown = set(data) - allowed
     if unknown:
@@ -532,8 +574,8 @@ def profile_from_dict(data: Dict[str, Any]) -> DocumentFormattingProfile:
             (k, f"unknown field") for k in sorted(unknown)
         ])
 
-    def _group(key: str, cls):
-        val = data.get(key) or {}
+    def _group(key: str, cls, *, strict: bool = False):
+        val = data.get(key, {}) if strict else data.get(key) or {}
         if not isinstance(val, dict):
             raise ProfileValidationError([(key, "must be a JSON object")])
         known = {f for f in cls.__dataclass_fields__}  # type: ignore[attr-defined]
@@ -552,6 +594,9 @@ def profile_from_dict(data: Dict[str, Any]) -> DocumentFormattingProfile:
     lists_raw = _group("lists", ListSettings)
     rp_raw = _group("role_policy", RolePolicy)
     cm_raw = _group("citation_matching", CitationMatchingSettings)
+    headers_raw = _group("headers", HeaderSettings, strict=True)
+    footers_raw = _group("footers", FooterSettings, strict=True)
+    page_numbers_raw = _group("page_numbers", PageNumberSettings, strict=True)
 
     # allowed_font_combos arrives as a list of pairs — restore tuple form.
     if body_raw.get("allowed_font_combos") is not None:
@@ -581,6 +626,9 @@ def profile_from_dict(data: Dict[str, Any]) -> DocumentFormattingProfile:
             lists=ListSettings(**lists_raw),
             role_policy=RolePolicy(**rp_raw),
             citation_matching=CitationMatchingSettings(**cm_raw),
+            headers=HeaderSettings(**headers_raw),
+            footers=FooterSettings(**footers_raw),
+            page_numbers=PageNumberSettings(**page_numbers_raw),
             created_at=data.get("created_at"),
             updated_at=data.get("updated_at"),
         )
@@ -628,6 +676,9 @@ def new_custom_profile(
             citation_matching=CitationMatchingSettings(
                 **asdict(base.citation_matching)
             ),
+            headers=HeaderSettings(**asdict(base.headers)),
+            footers=FooterSettings(**asdict(base.footers)),
+            page_numbers=PageNumberSettings(**asdict(base.page_numbers)),
             created_at=now,
             updated_at=now,
         )

@@ -9,9 +9,9 @@
  *   list; expose helpers to resolve the authoritative default, validate a
  *   persisted selection, and build an immutable submission request.
  */
-import type { FormattingProfile } from '../types/api'
+import type { FormattingProfile, ProfileSnapshot } from '../types/api'
 import type { StoredCustomProfile, StoreEnvelope } from './custom-profile-store/store.ts'
-import { summarizeProfile } from './custom-profile-store/editor.ts'
+import { profilePayloadSnapshot, summarizeProfile } from './custom-profile-store/editor.ts'
 
 // ---------------------------------------------------------------------------
 // Selector identity: `builtin:<profile_id>` vs `custom:<uuid>`
@@ -99,7 +99,9 @@ export type SelectorOption = {
   /** Presentation-safe key requirements shown beneath the selector. */
   keyRequirements: string[]
   citationStyle: string
-  /** Custom budgets use the summarizer; built-ins use the backend's text. */
+  /** Canonical controls for presentation only; never used to submit a built-in. */
+  snapshot?: ProfileSnapshot
+  /** Built-ins are immutable registry profiles, never editable custom entries. */
   isBuiltIn: boolean
   isRecommended: boolean
   /** Only present for custom entries (used on submit). */
@@ -109,6 +111,7 @@ export type SelectorOption = {
 export function buildSelectorOptions(
   builtinProfiles: FormattingProfile[],
   confirmedCustomProfiles: readonly StoredCustomProfile[],
+  builtinPayloads: Readonly<Record<string, Record<string, unknown>>> = {},
 ): SelectorOption[] {
   const opts: SelectorOption[] = []
   for (const p of builtinProfiles) {
@@ -120,6 +123,7 @@ export function buildSelectorOptions(
       description: p.description,
       keyRequirements: [...p.key_requirements],
       citationStyle: p.citation_style,
+      ...(builtinPayloads[p.profile_id] ? { snapshot: profilePayloadSnapshot(builtinPayloads[p.profile_id]) } : {}),
       isBuiltIn: true,
       isRecommended: p.recommended,
     })
@@ -143,6 +147,7 @@ export function buildSelectorOptions(
       description: p.description,
       keyRequirements: keyReqs,
       citationStyle: 'APA 7',
+      snapshot: profilePayloadSnapshot({ ...p.payload, profile_name: p.name, description: p.description }),
       isBuiltIn: false,
       isRecommended: false,
       sourceCustomId: p.id,

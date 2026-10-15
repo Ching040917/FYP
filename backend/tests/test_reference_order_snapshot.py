@@ -62,9 +62,9 @@ def test_profile_dict_round_trip_carries_the_toggle():
 # --- versions frozen --------------------------------------------------------
 
 
-def test_current_version_is_5_and_supported_versions_extend():
-    assert SNAPSHOT_SCHEMA_VERSION == 5
-    assert tuple(SUPPORTED_SNAPSHOT_SCHEMA_VERSIONS) == (1, 2, 3, 4, 5)
+def test_current_version_is_6_and_supported_versions_extend():
+    assert SNAPSHOT_SCHEMA_VERSION == 6
+    assert tuple(SUPPORTED_SNAPSHOT_SCHEMA_VERSIONS) == (1, 2, 3, 4, 5, 6)
 
 
 def test_v1_and_v2_groups_stay_two_keys():
@@ -83,7 +83,7 @@ def test_v1_and_v2_groups_stay_two_keys():
 
 def test_v3_group_has_no_order_key():
     snap = resolve_snapshot(_custom(True))
-    assert snap.schema_version == 5
+    assert snap.schema_version == 6
     as_v3 = EffectiveProfileSnapshot(
         **{**snap.__dict__, "schema_version": 3, "fingerprint": ""},
     ).with_fingerprint()

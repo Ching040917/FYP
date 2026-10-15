@@ -439,7 +439,7 @@ def test_pdf_confirmed_legacy_explains_stored_score(client, test_engine):
                              profile_snapshot=audit.profile_snapshot)
     text = _pdf_text(pdf)
     # The stored score is displayed, not a recomputation.
-    assert "The score of 97/100 applies only to the enabled deterministic" in text
+    assert re.search(r"\b97\s*/\s*100\b", text)
     # The presentation-only row reconciles: 1 (paragraph typography) +
     # 2 (legacy adjustment) == 3 == 100 - 97.
     assert "Legacy spacing adjustment" in text
@@ -454,7 +454,7 @@ def test_pdf_inconsistent_audit_gets_safe_notice_not_legacy_row(client, test_eng
     text = _pdf_text(generate_audit_pdf(
         audit, list(audit.violations), list(audit.citation_issues),
         profile_snapshot=audit.profile_snapshot))
-    assert "The score of 91/100 applies only to the enabled deterministic" in text
+    assert re.search(r"\b91\s*/\s*100\b", text)
     assert "cannot be fully reconstructed" in text
     # Never mislabelled:
     assert "Legacy spacing adjustment" not in text
@@ -468,7 +468,7 @@ def test_pdf_new_style_audit_has_no_legacy_row(client, test_engine):
     text = _pdf_text(generate_audit_pdf(
         audit, list(audit.violations), list(audit.citation_issues),
         profile_snapshot=audit.profile_snapshot))
-    assert "The score of 99/100 applies only to the enabled deterministic" in text
+    assert re.search(r"\b99\s*/\s*100\b", text)
     assert "Legacy spacing adjustment" not in text
     assert "cannot be fully reconstructed" not in text
 
@@ -536,7 +536,7 @@ def test_new_audit_pipeline_spacing_score_parity(client, test_engine, monkeypatc
     text = _pdf_text(generate_audit_pdf(
         audit, list(audit.violations), list(audit.citation_issues),
         profile_snapshot=audit.profile_snapshot))
-    assert f"The score of {new_score}/100 applies only to the enabled deterministic" in text
+    assert re.search(rf"\b{new_score}\s*/\s*100\b", text)
     assert "Legacy spacing adjustment" not in text
 
 

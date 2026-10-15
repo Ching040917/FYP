@@ -15,6 +15,8 @@ from app.services.citation_sensor import (
     run_citation_sensor,
 )
 from app.services.reference_section import reference_section_bounds
+from app.services.page_elements import extract_page_elements
+from app.services.page_element_rules import check_page_element_requirements
 from app.services.role_eligibility import (
     is_font_eligible,
     is_heading_role,
@@ -1336,5 +1338,14 @@ def run_static_rules_engine(
     all_violations.extend(run_reference_rules(
         doc, paragraphs, preset, page_mapping=page_mapping,
     ))
+    # Custom structural requirements are opt-in. Off/legacy/built-in paths
+    # perform no additional story traversal.
+    if getattr(preset, "profile_source", None) == "custom" and any(
+        getattr(preset, name, False) is True for name in (
+            "HEADER_CHECK_REQUIREMENTS", "FOOTER_CHECK_REQUIREMENTS",
+            "PAGE_NUMBER_CHECK_REQUIREMENTS",
+        )
+    ):
+        all_violations.extend(check_page_element_requirements(extract_page_elements(doc), preset))
 
     return all_violations

@@ -12,6 +12,8 @@
  * already-friendly strings the caller passes in.
  */
 
+import { structuralStoryLabel, STRUCTURAL_PAGE_UNAVAILABLE, STRUCTURAL_HIGHLIGHT_UNAVAILABLE } from './page-elements.ts'
+
 export type EvidenceTone = 'destructive' | 'warning' | 'muted'
 
 export interface EvidenceSummary {
@@ -22,6 +24,9 @@ export interface EvidenceSummary {
 }
 
 export interface EvidenceSummaryInput {
+  /** Selected stored story; takes precedence over all stale visual evidence. */
+  structuralLocation?: Record<string, unknown> | null
+  structuralPage?: number | null
   /** Exact citation highlight rects; non-empty means the highlight exists. */
   citationRects?: readonly unknown[] | null
   citationLabel?: string | null
@@ -38,7 +43,28 @@ export interface EvidenceSummaryInput {
   marginChipLabel?: string | null
 }
 
+function provenStructuralPage(input: { structuralLocation?: Record<string, unknown> | null; structuralPage?: number | null }): number | null {
+  return input.structuralLocation && structuralStoryLabel(input.structuralLocation) &&
+    typeof input.structuralPage === 'number' && Number.isInteger(input.structuralPage) && input.structuralPage > 0
+    ? input.structuralPage : null
+}
+
+function structuralSummary(location: Record<string, unknown>, page: number | null): string {
+  return [
+    page === null ? 'Structural evidence only' : 'Page-level structural evidence',
+    page === null ? null : `Page ${page}`,
+    structuralStoryLabel(location),
+    page === null ? STRUCTURAL_PAGE_UNAVAILABLE : STRUCTURAL_HIGHLIGHT_UNAVAILABLE,
+  ].filter(Boolean).join(' · ')
+}
+
 export function evidenceSummary(input: EvidenceSummaryInput): EvidenceSummary | null {
+  if (input.structuralLocation != null) {
+    return {
+      text: structuralSummary(input.structuralLocation, provenStructuralPage(input)),
+      tone: 'muted',
+    }
+  }
   const entries: Array<{ text: string; tone: EvidenceTone }> = []
   const add = (text: string | null | undefined, tone: EvidenceTone) => {
     if (text) entries.push({ text, tone })
@@ -104,6 +130,8 @@ export function evidenceSummary(input: EvidenceSummaryInput): EvidenceSummary | 
  * Evidence precision for the Selected-evidence details view — coarse,
  * truthful, and derived from the same inputs as `evidenceSummary`:
  *
+ * - structural evidence: stored story identity only, never a physical page
+ *   or visual region, even when older highlight props are still present;
  * - exact citation evidence: exact highlight rects exist;
  * - paragraph evidence: a formatting highlight exists (run or paragraph);
  * - page-only evidence: an object/figure/margin selection with no
@@ -111,13 +139,16 @@ export function evidenceSummary(input: EvidenceSummaryInput): EvidenceSummary | 
  * - visual region unavailable: message-only fallback, no highlight at all.
  */
 export type EvidencePrecision =
-  | 'Exact citation evidence'
+  | 'Exact evidence'
+  | 'Page-level structural evidence'
+  | 'Structural evidence only'
   | 'Paragraph evidence'
   | 'Page-only evidence'
   | 'Visual region unavailable'
 
 export function evidencePrecision(input: EvidenceSummaryInput): EvidencePrecision {
-  if (input.citationRects && input.citationRects.length > 0) return 'Exact citation evidence'
+  if (input.structuralLocation != null) return provenStructuralPage(input) === null ? 'Structural evidence only' : 'Page-level structural evidence'
+  if (input.citationRects && input.citationRects.length > 0) return 'Exact evidence'
   if (input.formattingEvidence) return 'Paragraph evidence'
   if (
     input.figureOutline ||
@@ -130,12 +161,16 @@ export function evidencePrecision(input: EvidenceSummaryInput): EvidencePrecisio
   return 'Visual region unavailable'
 }
 
-/** First known physical page across the highlight sources, if any. */export function evidencePage(input: {
+/** First known physical page across the highlight sources, if any. */
+export function evidencePage(input: {
+  structuralLocation?: Record<string, unknown> | null
+  structuralPage?: number | null
   citationRects?: readonly { page: number }[] | null
   formattingPageRects?: readonly { page: number }[] | null
   figurePage?: number | null
   marginStartPage?: number | null
 }): number | null {
+  if (input.structuralLocation != null) return provenStructuralPage(input)
   if (input.citationRects && input.citationRects.length > 0) return input.citationRects[0].page
   if (input.formattingPageRects && input.formattingPageRects.length > 0) {
     return input.formattingPageRects[0].page
@@ -146,6 +181,7 @@ export function evidencePrecision(input: EvidenceSummaryInput): EvidencePrecisio
 }
 
 export interface EvidenceTargetLabelInput {
+  structuralLocation?: Record<string, unknown> | null
   citationRects?: readonly unknown[] | null
   formattingEvidence?: unknown
   /** True when the selected finding is a Reference List rule. */
@@ -167,6 +203,9 @@ export interface EvidenceTargetLabelInput {
  * the short object/margin label when one applies, else '—'.
  */
 export function evidenceTargetLabel(input: EvidenceTargetLabelInput): string {
+  if (input.structuralLocation != null) {
+    return structuralStoryLabel(input.structuralLocation) ?? 'Stored Header/Footer definition'
+  }
   if (input.citationRects && input.citationRects.length > 0) return 'Citation occurrence'
   if (input.formattingEvidence) {
     if (input.headingEntry) return 'References heading'
@@ -179,6 +218,8 @@ export function evidenceTargetLabel(input: EvidenceTargetLabelInput): string {
 }
 
 export interface CompactEvidenceParts {
+  structuralLocation?: Record<string, unknown> | null
+  structuralPage?: number | null
   /** Zero-based paragraph identity; rendered one-based. */
   paragraphIndex: number | null
   page: number | null
@@ -193,9 +234,13 @@ export interface CompactEvidenceParts {
  * paragraph/object location and evidence precision — never the Finding
  * title (already visible in Finding Details) and never the full target
  * text (available in the details view). Only the compact presentation is
- * built here; stored text is untouched.
+ * built here; stored text is untouched. Structural selections replace page
+ * and body targets with the stored-story label and visual unavailability.
  */
 export function compactEvidenceText(parts: CompactEvidenceParts): string {
+  if (parts.structuralLocation != null) {
+    return structuralSummary(parts.structuralLocation, provenStructuralPage(parts))
+  }
   const slots: string[] = ['Evidence']
   if (parts.page != null) slots.push(`Page ${parts.page}`)
   if (parts.paragraphIndex != null) {
@@ -213,5 +258,5 @@ export function compactEvidenceText(parts: CompactEvidenceParts): string {
  * form to match the compact examples.
  */
 export function compactPrecisionLabel(precision: EvidencePrecision): string {
-  return precision === 'Exact citation evidence' ? 'Citation evidence' : precision
+  return precision
 }

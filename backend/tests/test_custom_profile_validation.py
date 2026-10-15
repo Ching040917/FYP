@@ -11,6 +11,7 @@ from app.services.profile_registry import (
     get_builtin_profile,
 )
 from app.services.profile_schema import new_custom_profile
+from app.services.custom_profile_validation import validate_custom_profile
 
 URL = "/api/formatting-profiles/validate"
 
@@ -377,3 +378,68 @@ def test_citation_group_must_be_an_object(client):
     body = resp.json()
     assert body["valid"] is False
     assert any(e["field"] == "citation_matching" for e in body["errors"])
+
+
+def test_page_element_validation_normalizes_legacy_defaults_without_version_bump():
+    result = validate_custom_profile(_blank_payload(schema_version=1))
+    assert result["valid"] is True
+    assert result["profile"]["headers"] == {"check_header_requirements": False}
+    assert result["profile"]["footers"] == {"check_footer_requirements": False}
+    assert result["profile"]["page_numbers"] == {
+        "check_page_number_requirements": False, "placement": "either",
+    }
+
+
+def test_page_element_validation_reports_friendly_field_paths():
+    cases = [
+        ({"headers": None}, "headers", "This section is not well formed."),
+        ({"footers": []}, "footers", "This section is not well formed."),
+        ({"page_numbers": False}, "page_numbers", "This section is not well formed."),
+        ({"headers": {"check_header_requirements": 1}},
+         "headers.check_header_requirements", "Choose true or false for this check."),
+        ({"footers": {"check_footer_requirements": "true"}},
+         "footers.check_footer_requirements", "Choose true or false for this check."),
+        ({"page_numbers": {"check_page_number_requirements": None}},
+         "page_numbers.check_page_number_requirements", "Choose true or false for this check."),
+        ({"page_numbers": {"placement": "body"}},
+         "page_numbers.placement", "Choose Header, Footer or Either."),
+        ({"headers": {"unknown": False}},
+         "headers.unknown", "This field is not recognized."),
+    ]
+    for overrides, field, message in cases:
+        result = validate_custom_profile(_blank_payload(**overrides))
+        assert result == {"valid": False, "errors": [{"field": field, "message": message}]}
+
+
+def test_page_element_validation_keeps_custom_only_error_on_each_control():
+    for group, toggle in (
+        ("headers", "check_header_requirements"),
+        ("footers", "check_footer_requirements"),
+        ("page_numbers", "check_page_number_requirements"),
+    ):
+        result = validate_custom_profile(_blank_payload(
+            profile_source="built_in", **{group: {toggle: True}},
+        ))
+        assert result == {
+            "valid": False,
+            "errors": [{
+                "field": f"{group}.{toggle}",
+                "message": "Available only in Custom Profiles",
+            }],
+        }
+
+
+def test_page_element_enabled_settings_survive_api_validation_without_mutation(client):
+    payload = _blank_payload(
+        schema_version=1,
+        headers={"check_header_requirements": True},
+        footers={"check_footer_requirements": True},
+        page_numbers={"check_page_number_requirements": True, "placement": "footer"},
+    )
+    response = client.post(URL, json=payload)
+    assert response.status_code == 200
+    result = response.json()
+    assert result["valid"] is True
+    for group in ("headers", "footers", "page_numbers"):
+        assert result["profile"][group] == payload[group]
+    assert payload["schema_version"] == 1

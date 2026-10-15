@@ -128,6 +128,10 @@ class EffectiveProfileConfig:
         # looks at any entry.
         self.REFERENCES_CHECK_REFERENCE_ORDER = snapshot.references_check_reference_order
         self.REFERENCES_CHECK_DOI_FORMAT = snapshot.references_check_doi_format
+        self.HEADER_CHECK_REQUIREMENTS = snapshot.header_check_requirements
+        self.FOOTER_CHECK_REQUIREMENTS = snapshot.footer_check_requirements
+        self.PAGE_NUMBER_CHECK_REQUIREMENTS = snapshot.page_number_check_requirements
+        self.PAGE_NUMBER_PLACEMENT = snapshot.page_number_placement
         # Preserved rule: the snapshot already resolved "was this enforced
         # before this feature?" — an explicit toggle, else a stored value.
         self.REFERENCES_CHECK_LINE_SPACING = snapshot.references_check_line_spacing

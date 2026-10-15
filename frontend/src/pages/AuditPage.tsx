@@ -47,6 +47,7 @@ import {
 } from '../lib/friendly-finding'
 import { isLocalAiCitationEligible } from '../lib/local-ai-citation-eligibility.ts'
 import { presentationFor } from '../lib/audit/finding-presentation'
+import { isPageElementRule, structuralStoryLabel, sectionFirstRenderedPage } from '../lib/audit/page-elements.ts'
 import { interruptionMessage } from '../lib/audit/interrupted-audit'
 import { formatAuditDateTime, auditDateTimeAttr } from '../lib/format-date'
 import { PendingNav, hasParagraphIdentity, type NavCommand } from '../lib/pdf/pending-navigation.ts'
@@ -106,7 +107,8 @@ type WorkspaceView = (typeof WORKSPACE_TABS)[number]['id']
 
 function toLayoutError(v: Violation): LayoutError {
   const loc = (v.location ?? {}) as Record<string, unknown>
-  const paragraphIndex = typeof loc.paragraph_index === 'number' ? loc.paragraph_index : -1
+  const structural = isPageElementRule(v.rule_code)
+  const paragraphIndex = !structural && typeof loc.paragraph_index === 'number' ? loc.paragraph_index : -1
   const position = paragraphIndex >= 0 ? paragraphIndex + 1 : 0
   const pres = presentationFor(v)
   return {
@@ -118,11 +120,11 @@ function toLayoutError(v: Violation): LayoutError {
     // Student-facing plain language; the raw deterministic message stays
     // untouched in the violation record.
     detail: friendlyFindingMessage(v.rule_code, v.message, v.expected_value, v.actual_value, v.location),
-    suggestion: v.expected_value ?? v.actual_value ?? 'No automatic fix available — review manually.',
+    suggestion: structural ? pres.requiredAction ?? 'Review manually in Word.' : v.expected_value ?? v.actual_value ?? 'No automatic fix available — review manually.',
     // Card preview line: the rule's own evidence span when it has one,
     // otherwise the plain-language explanation.
     evidencePreview: pres.evidence ?? undefined,
-    comparison: v.rule_code === 'REFERENCE_DOI_FORMAT'
+    comparison: structural ? null : v.rule_code === 'REFERENCE_DOI_FORMAT'
       ? v.actual_value != null && v.expected_value != null
         ? `${v.actual_value} → ${v.expected_value}`
         : v.actual_value != null
@@ -144,6 +146,12 @@ export function AuditPage() {
   const [, setPolling] = useState(false)
   const [pollAttempts, setPollAttempts] = useState(0)
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const selectedViolation = audit?.violations.find((v) => v.id === selectedId) ?? null
+  // Updated synchronously by selection too: delayed evidence cannot repaint
+  // between the click and React committing the newly selected finding.
+  const structuralSelectionRef = useRef(false)
+  structuralSelectionRef.current = selectedViolation !== null && classifyFindingTarget(selectedViolation) === 'structural'
+  const pendingStructuralRef = useRef<string | null>(null)
 
   // Document preview state — loaded once after audit is available.
   const [blocks, setBlocks] = useState<DocumentBlock[] | null>(null)
@@ -250,6 +258,8 @@ export function AuditPage() {
   }, [gatedAuditId, renderedPdf?.status, renderedPdf?.bytes])
   const [previewMode, setPreviewMode] = useState<'rendered' | 'text'>('rendered')
   const [pageCommand, setPageCommand] = useState<{ page: number; seq: number } | null>(null)
+  // Clearing a structural selection's command must not reuse a consumed seq.
+  const pageCommandSeqRef = useRef(0)
   const [locatingId, setLocatingId] = useState<string | null>(null)
   const [navNotice, setNavNotice] = useState<string | null>(null)
   // Exact citation highlight (Build 6) — latest selected finding wins.
@@ -311,8 +321,9 @@ export function AuditPage() {
   }, [])
 
   const navigateToRenderedPage = (page: number) => {
+    if (structuralSelectionRef.current) return
     setPreviewMode('rendered')
-    setPageCommand((cur) => ({ page, seq: (cur?.seq ?? 0) + 1 }))
+    setPageCommand({ page, seq: ++pageCommandSeqRef.current })
   }
 
   /**
@@ -323,6 +334,7 @@ export function AuditPage() {
    * excluded by the caller (their overlays resolve through object paths).
    */
   const applyOverlay = useCallback((violation: Violation) => {
+    if (structuralSelectionRef.current || classifyFindingTarget(violation) === 'structural') return
     const findingLike = {
       id: violation.id,
       ruleCode: violation.rule_code,
@@ -406,6 +418,7 @@ export function AuditPage() {
    */
   const applyFigureOutline = useCallback(
     (violation: Violation, navigatePage: number | null) => {
+      if (structuralSelectionRef.current || classifyFindingTarget(violation) === 'structural') return
       const ruleCode = violation.rule_code
       const imageIndex = (violation.location ?? {}).image_index
       if (
@@ -442,6 +455,7 @@ export function AuditPage() {
   // Geometry arrives AFTER the selection: apply the outline for the LATEST
   // figure selection only (latest-wins; stale selections never repaint).
   useEffect(() => {
+    if (structuralSelectionRef.current) return
     const state = figureStateRef.current
     if (!state || !figureGeometry) return
     const result = resolveFigureOutline({
@@ -461,6 +475,12 @@ export function AuditPage() {
   const pendingNavRef = useRef<PendingNav | null>(null)
   if (!pendingNavRef.current) pendingNavRef.current = new PendingNav()
   const emitNav = useCallback((command: NavCommand) => {
+    if (command.kind === 'preserve' || structuralSelectionRef.current) {
+      setLocatingId(null)
+      setNavNotice(null)
+      setPageCommand(null)
+      return
+    }
     if (command.kind === 'navigate') {
       setLocatingId(null)
       setNavNotice(null)
@@ -494,6 +514,7 @@ export function AuditPage() {
   // Reset navigation state when the audit changes.
   useEffect(() => {
     pendingNavRef.current?.reset()
+    pendingStructuralRef.current = null
     setPageCommand(null)
     setPreviewMode('rendered')
     setLocatingId(null)
@@ -535,6 +556,10 @@ export function AuditPage() {
   // settles — never before. Overlay resolution on arrival belongs to the
   // derivation effect below (single writer).
   useEffect(() => {
+    if (structuralSelectionRef.current) {
+      pendingNavRef.current?.reset()
+      return
+    }
     if (mappingStatus === 'ready' && mappingBundle) {
       pendingNavRef.current?.onMappingReady(mappingBundle.byIndex, selectedId, emitNav)
     } else if (mappingStatus === 'error') {
@@ -600,12 +625,50 @@ export function AuditPage() {
     setSectionRanges(ranges)
   }, [gatedAuditId, sectionMeta, mappingBundle])
 
+  const structuralPages = useMemo(() => {
+    const pages = new Map<number, number | null>()
+    if (!mappingBundle || renderedPdf.status !== 'available') return pages
+    for (const finding of audit?.violations ?? []) {
+      if (classifyFindingTarget(finding) !== 'structural') continue
+      const location = finding.location ?? {}
+      const index = location.section_index
+      if (typeof index !== 'number' || pages.has(index)) continue
+      pages.set(index, sectionFirstRenderedPage(
+        location, sectionMeta, blocks, mappingBundle.byIndex, mappingBundle.pages.length,
+      ))
+    }
+    return pages
+  }, [audit?.violations, sectionMeta, blocks, mappingBundle, renderedPdf.status])
+  const selectedStructuralPage = selectedViolation
+    ? structuralPages.get(selectedViolation.location?.section_index as number) ?? null : null
+
+  // Retain only an explicit structural selection while its mapping loads.
+  // Consume once: manual page controls remain in charge after navigation.
+  useEffect(() => {
+    if (!pendingStructuralRef.current || pendingStructuralRef.current !== selectedId ||
+        !structuralSelectionRef.current) return
+    if (selectedStructuralPage !== null) {
+      pendingStructuralRef.current = null
+      setPreviewMode('rendered')
+      setPageCommand({ page: selectedStructuralPage, seq: ++pageCommandSeqRef.current })
+    } else if (mappingStatus === 'ready' || mappingStatus === 'error' ||
+        !['idle', 'loading', 'available'].includes(renderedPdf.status)) {
+      pendingStructuralRef.current = null
+    }
+  }, [selectedId, selectedStructuralPage, mappingStatus, renderedPdf.status])
+
   // User-facing location labels per finding (exact/approximate → page label,
   // unavailable → paragraph label; never confidence terminology).
   const locationLabels = useMemo(() => {
     if (!audit) return null
     const labels = new Map<string, string>()
     for (const v of audit.violations) {
+      if (classifyFindingTarget(v) === 'structural') {
+        const label = structuralStoryLabel(v.location ?? {})
+        const page = structuralPages.get(v.location?.section_index as number)
+        if (label) labels.set(v.id, page != null ? `${label} · Page ${page}` : label)
+        continue
+      }
       if (MARGIN_RULES.has(v.rule_code)) {
         const idx = sectionIndexOf(v.location)
         if (idx !== null) {
@@ -647,7 +710,7 @@ export function AuditPage() {
       }
     }
     return labels
-  }, [figureBundle, mappingBundle, mappingStatus, audit, tableNav, sectionRanges])
+  }, [figureBundle, mappingBundle, mappingStatus, audit, tableNav, sectionRanges, structuralPages])
 
   // Mobile/tablet workspace view — tabs below lg, side-by-side at lg+.
   const [mobileView, setMobileView] = useState<WorkspaceView>('findings')
@@ -855,6 +918,27 @@ export function AuditPage() {
   const applyNavigation = (e: LayoutError) => {
     const violation = violations.find((v) => v.id === e.id) ?? null
     if (!violation) return
+    structuralSelectionRef.current = classifyFindingTarget(violation) === 'structural'
+    pendingStructuralRef.current = null
+    if (structuralSelectionRef.current) {
+      clearCitationHighlight()
+      clearFormattingHighlight()
+      clearObjectStatus()
+      clearFigureOutline()
+      clearMarginStatus()
+      pendingNavRef.current?.reset()
+      setLocatingId(null)
+      setNavNotice(null)
+      setPageCommand(null)
+      pendingStructuralRef.current = violation.id
+      const page = structuralPages.get(violation.location?.section_index as number)
+      if (page != null) {
+        pendingStructuralRef.current = null
+        setPreviewMode('rendered')
+        setPageCommand({ page, seq: ++pageCommandSeqRef.current })
+      }
+      return
+    }
     const findingLike = {
       id: violation.id,
       ruleCode: violation.rule_code,
@@ -965,6 +1049,18 @@ export function AuditPage() {
   const overlayGenRef = useRef(0)
   useEffect(() => {
     const sel = audit?.violations.find((v) => v.id === selectedId) ?? null
+    if (structuralSelectionRef.current || (sel && classifyFindingTarget(sel) === 'structural')) {
+      overlaySelRef.current = null
+      clearCitationHighlight()
+      clearFormattingHighlight()
+      clearObjectStatus()
+      clearFigureOutline()
+      clearMarginStatus()
+      pendingNavRef.current?.reset()
+      setLocatingId(null)
+      setNavNotice(null)
+      return
+    }
     const paragraphSel = sel && classifyFindingTarget(sel) !== 'object' ? sel : null
     if (previewMode !== 'rendered' || !paragraphSel) {
       if (overlaySelRef.current !== null) {
@@ -984,7 +1080,7 @@ export function AuditPage() {
     if (mappingBundle.pages.length === 0) return
     overlayGenRef.current += 1
     applyOverlay(paragraphSel)
-  }, [audit, selectedId, previewMode, mappingBundle, mappingStatus, applyOverlay, clearCitationHighlight, clearFormattingHighlight])
+  }, [audit, selectedId, previewMode, mappingBundle, mappingStatus, applyOverlay, clearCitationHighlight, clearFormattingHighlight, clearObjectStatus, clearFigureOutline, clearMarginStatus])
 
   // Reset detail scroll to top when the selected finding changes — no focus
   // theft; the user's keyboard cursor stays exactly where it was.
@@ -1076,7 +1172,6 @@ export function AuditPage() {
   // Manual-review findings: shown, never scored and never counted as
   // major/minor (the backend ignores the REVIEW severity for scoring).
   const reviewCount = mappedErrors.filter((e) => e.severity === 'review').length
-  const selectedViolation = violations.find((v) => v.id === selectedId) ?? null
 
   const breakdown = audit?.score_breakdown ?? []
   // The "Legacy spacing adjustment" row is a presentation-only
@@ -1385,6 +1480,7 @@ export function AuditPage() {
                     onSelectViolation={setSelectedId}
                     active={mobileView === 'document'}
                     renderedPdf={renderedPdf}
+                    structuralPage={selectedStructuralPage}
                     notice={navNotice}
                                         previewMode={previewMode}
                     onPreviewModeChange={setPreviewMode}
@@ -1471,6 +1567,7 @@ export function AuditPage() {
                     }}
                     fitRegion
                     renderedPdf={renderedPdf}
+                    structuralPage={selectedStructuralPage}
                     notice={navNotice}
                                         previewMode={previewMode}
                     onPreviewModeChange={setPreviewMode}
@@ -1537,6 +1634,7 @@ export function AuditPage() {
                       onSelectViolation={setSelectedId}
                       fitRegion
                       renderedPdf={renderedPdf}
+                      structuralPage={selectedStructuralPage}
                       notice={navNotice}
                       previewMode={previewMode}
                       onPreviewModeChange={setPreviewMode}

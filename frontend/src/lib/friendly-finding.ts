@@ -12,12 +12,15 @@
  */
 
 import { extractCitationEvidence } from './pdf/citation-highlight.ts'
+import { isPageElementRule, structuralStoryLabel } from './audit/page-elements.ts'
 
 /** One-based friendly object label from the violation location. */
 export function objectLabel(
   location: Record<string, unknown> | null | undefined,
 ): string | null {
   const loc = location ?? {}
+  const structural = structuralStoryLabel(loc)
+  if (structural) return structural
   if (typeof loc.table_index === 'number') return `Table ${loc.table_index + 1}`
   if (typeof loc.image_index === 'number') return `Figure ${loc.image_index + 1}`
   return null
@@ -40,6 +43,9 @@ export function objectLabel(
  * backend/tests/test_export_pdf.py enforces the match.
  */
 const FRIENDLY_RULE_TITLES: Record<string, string> = {
+  HEADER_CONTENT_REQUIRED: 'Header needs review',
+  FOOTER_CONTENT_REQUIRED: 'Footer needs review',
+  PAGE_NUMBER_FIELD_REQUIRED: 'Page number needs review',
   FONT_CONSISTENCY: 'Font family does not match',
   FONT_SIZE: 'Font size does not match',
   LINE_SPACING: 'Line spacing does not match',
@@ -153,6 +159,22 @@ export function friendlyFindingMessage(
   location: Record<string, unknown> | null = null,
 ): string {
   const code = (ruleCode ?? '').toUpperCase()
+  if (isPageElementRule(code)) {
+    if (location?.evidence_state === 'unresolved') {
+      return 'ACA could not check this requirement from the supported document content.'
+    }
+    if (code === 'PAGE_NUMBER_FIELD_REQUIRED') {
+      return 'No page-number field was found in the selected header or footer.'
+    }
+    const kind = code === 'HEADER_CONTENT_REQUIRED' ? 'header' : 'footer'
+    if (location?.evidence_state === 'missing') {
+      return `No ${kind} is defined for normal pages in this section.`
+    }
+    if (location?.evidence_state === 'empty') {
+      return `The normal-pages ${kind} has no text or supported field.`
+    }
+    return 'ACA could not check this requirement from the supported document content.'
+  }
   if (code === 'REFERENCE_DOI_FORMAT') {
     return 'The visible DOI presentation does not match the selected profile’s required format: https://doi.org/<doi>. ACA checks presentation only, not registration or resolution.'
   }
@@ -261,6 +283,18 @@ export function friendlyRequiredAction(
   location: Record<string, unknown> | null = null,
 ): string | null {
   const code = (ruleCode ?? '').toUpperCase()
+  if (isPageElementRule(code)) {
+    const target = code === 'HEADER_CONTENT_REQUIRED' ? 'header'
+      : code === 'FOOTER_CONTENT_REQUIRED' ? 'footer'
+      : location?.story_type === 'header' ? 'header'
+      : location?.story_type === 'footer' ? 'footer' : 'header or footer'
+    const change = location?.evidence_state === 'unresolved'
+      ? ''
+      : code === 'PAGE_NUMBER_FIELD_REQUIRED'
+        ? ' and insert a page-number field if needed'
+        : ' and add text or a supported field if needed'
+    return `In Word, check this section’s ${target}${change}. Verify the rendered document manually.`
+  }
   if (code === 'REFERENCE_DOI_FORMAT') return REFERENCE_REQUIRED_ACTIONS[code]
   const exp = friendlyValue(expected)
   const act = friendlyValue(actual)

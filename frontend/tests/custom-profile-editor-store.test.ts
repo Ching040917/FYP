@@ -18,6 +18,9 @@ import {
   generateProfileId,
   isUnsavedDraft,
   loadEnvelope,
+  cloneRecord,
+  pageElementsFromUiModel,
+  pageElementsToUiModel,
   persistEnvelope,
   resolveUniqueName,
   upsertAndBump,
@@ -396,4 +399,70 @@ test('isUnsavedDraft distinguishes drafts from saved profiles', () => {
   assert.equal(isUnsavedDraft(draftOnly, env), true)
   assert.equal(isUnsavedDraft(null, env), false)
   assert.equal(isUnsavedDraft(draftOnly, null), false)
+})
+
+test('page elements survive Save/reload with no storage envelope version change', () => {
+  for (let bits = 0; bits < 8; bits += 1) {
+    for (const placement of ['header', 'footer', 'either'] as const) {
+      const ui = {
+        headerEnabled: Boolean(bits & 1),
+        footerEnabled: Boolean(bits & 2),
+        pageNumberEnabled: Boolean(bits & 4),
+        placement,
+      }
+      const adapter = seedStore()
+      const draft = makeStored('Structural profile')
+      Object.assign(draft.payload, pageElementsFromUiModel(ui))
+      const envelope = loadEnvelope(adapter)
+      assert.deepEqual(clientValidate(draft, envelope), [])
+      const confirmed = { ...draft, payload: buildSavePayload(draft) }
+      const next = upsertAndBump(envelope, confirmed, NOW)
+      assert.equal(persistEnvelope(adapter, next, envelope.revision).ok, true)
+      const reloadAdapter = createMemoryStoreAdapter()
+      reloadAdapter.set(ACTIVE_KEY, adapter.get(ACTIVE_KEY)!)
+      const loaded = loadEnvelope(reloadAdapter)
+      assert.equal(loaded.schema_version, 1)
+      assert.deepEqual(pageElementsToUiModel(loaded.profiles[0]!.payload), ui)
+    }
+  }
+})
+
+test('page element draft discard/reset restores stored values without modifying another copy', () => {
+  const storedUi = { headerEnabled: true, footerEnabled: false, pageNumberEnabled: true, placement: 'footer' as const }
+  const source = makeStored('Source')
+  Object.assign(source.payload, pageElementsFromUiModel(storedUi))
+  const copy = makeStored('Independent copy', {
+    payload: copyProfilePayload(source.payload, 'copy', 'Independent copy'),
+  })
+  const adapter = seedStore([source, copy])
+  const loaded = loadEnvelope(adapter)
+  let draft = cloneRecord(loaded.profiles[0]!)
+  Object.assign(draft.payload, pageElementsFromUiModel({
+    headerEnabled: false, footerEnabled: true, pageNumberEnabled: false, placement: 'header',
+  }))
+  assert.deepEqual(pageElementsToUiModel(loaded.profiles[0]!.payload), storedUi)
+  assert.deepEqual(pageElementsToUiModel(loaded.profiles[1]!.payload), storedUi)
+  draft = cloneRecord(loadEnvelope(adapter).profiles[0]!)
+  assert.deepEqual(pageElementsToUiModel(draft.payload), storedUi)
+  const blank = blankProfilePayload('new', 'New')
+  assert.deepEqual(pageElementsToUiModel(blank), {
+    headerEnabled: false, footerEnabled: false, pageNumberEnabled: false, placement: 'either',
+  })
+})
+
+test('loading an old stored profile does not add page element requirements', () => {
+  const stored = makeStored('Historical')
+  delete stored.payload.headers
+  delete stored.payload.footers
+  delete stored.payload.page_numbers
+  const adapter = seedStore([stored])
+  const loaded = loadEnvelope(adapter).profiles[0]!
+  assert.deepEqual(pageElementsToUiModel(loaded.payload), {
+    headerEnabled: false, footerEnabled: false, pageNumberEnabled: false, placement: 'either',
+  })
+  assert.deepEqual(clientValidate(loaded, loadEnvelope(adapter)), [])
+  const saved = buildSavePayload(loaded)
+  assert.deepEqual(saved.headers, { check_header_requirements: false })
+  assert.deepEqual(saved.footers, { check_footer_requirements: false })
+  assert.deepEqual(saved.page_numbers, { check_page_number_requirements: false, placement: 'either' })
 })

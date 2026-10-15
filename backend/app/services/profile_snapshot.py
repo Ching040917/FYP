@@ -42,7 +42,7 @@ from app.services.profile_schema import (
 #  byte-for-byte.
 #  v1 snapshots stay loadable: their canonical key order is frozen below so
 #  their stored SHA-256 keeps verifying byte-for-byte.
-SNAPSHOT_SCHEMA_VERSION = 5
+SNAPSHOT_SCHEMA_VERSION = 6
 
 # Frozen v1 canonical key order — NEVER edit. v1 snapshots are fingerprinted
 # over exactly these keys; changing the tuple invalidates stored fingerprints
@@ -63,6 +63,12 @@ _CANONICAL_ORDER = (
     "profile_source", "description", "citation_style", "institution_specific",
     "body", "heading", "margins", "references", "captions", "lists",
     "role_exemptions", "table_eligibility", "citation_matching", "fingerprint",
+)
+
+# v6 adds independent structural requirements; historical top-level tuples
+# and nested references keys remain frozen.
+_CANONICAL_ORDER_V6 = _CANONICAL_ORDER[:-1] + (
+    "headers", "footers", "page_numbers", "fingerprint",
 )
 
 # Nested `references` keys of a v3 snapshot. The two pre-existing keys keep
@@ -98,7 +104,7 @@ _REFERENCES_GROUP_KEYS_V5: Tuple[str, ...] = _REFERENCES_GROUP_KEYS_V4 + (
 _REFERENCES_GROUP_KEYS_LEGACY: Tuple[str, ...] = ("line_spacing", "hanging_indent_in")
 
 # Snapshot schema versions this build can load (older first).
-SUPPORTED_SNAPSHOT_SCHEMA_VERSIONS = (1, 2, 3, 4, SNAPSHOT_SCHEMA_VERSION)
+SUPPORTED_SNAPSHOT_SCHEMA_VERSIONS = (1, 2, 3, 4, 5, 6)
 
 
 def _references_group_keys(version: Any) -> Tuple[str, ...]:
@@ -107,7 +113,7 @@ def _references_group_keys(version: Any) -> Tuple[str, ...]:
         version_int = int(version)
     except (TypeError, ValueError):
         return _REFERENCES_GROUP_KEYS_LEGACY
-    if version_int == 5:
+    if version_int in (5, 6):
         return _REFERENCES_GROUP_KEYS_V5
     if version_int >= 4:
         return _REFERENCES_GROUP_KEYS_V4
@@ -124,6 +130,8 @@ def _canonical_order_for(version: Any) -> Tuple[str, ...]:
         version_int = int(version)
     except (TypeError, ValueError):
         return _CANONICAL_ORDER_V1
+    if version_int == 6:
+        return _CANONICAL_ORDER_V6
     return _CANONICAL_ORDER_V1 if version_int <= 1 else _CANONICAL_ORDER
 
 
@@ -224,6 +232,11 @@ class EffectiveProfileSnapshot:
     citation_flag_ambiguous_matches: bool = True
     citation_allow_personal_communication: bool = True
 
+    header_check_requirements: bool = False
+    footer_check_requirements: bool = False
+    page_number_check_requirements: bool = False
+    page_number_placement: str = "either"
+
     fingerprint: str = ""
 
     # ------------------------------------------------------------------
@@ -292,6 +305,12 @@ class EffectiveProfileSnapshot:
                 "check_duplicate_references": self.citation_check_duplicate_references,
                 "flag_ambiguous_matches": self.citation_flag_ambiguous_matches,
                 "allow_personal_communication": self.citation_allow_personal_communication,
+            },
+            "headers": {"check_header_requirements": self.header_check_requirements},
+            "footers": {"check_footer_requirements": self.footer_check_requirements},
+            "page_numbers": {
+                "check_page_number_requirements": self.page_number_check_requirements,
+                "placement": self.page_number_placement,
             },
             "fingerprint": self.fingerprint,
         }
@@ -425,6 +444,10 @@ class EffectiveProfileSnapshot:
             citation_check_duplicate_references=self.citation_check_duplicate_references,
             citation_flag_ambiguous_matches=self.citation_flag_ambiguous_matches,
             citation_allow_personal_communication=self.citation_allow_personal_communication,
+            header_check_requirements=self.header_check_requirements,
+            footer_check_requirements=self.footer_check_requirements,
+            page_number_check_requirements=self.page_number_check_requirements,
+            page_number_placement=self.page_number_placement,
             fingerprint=fp,
         )
 
@@ -643,6 +666,10 @@ def resolve_snapshot(
         citation_check_duplicate_references=bool(cm.check_duplicate_references),
         citation_flag_ambiguous_matches=bool(cm.flag_ambiguous_matches),
         citation_allow_personal_communication=bool(cm.allow_personal_communication),
+        header_check_requirements=profile.headers.check_header_requirements,
+        footer_check_requirements=profile.footers.check_footer_requirements,
+        page_number_check_requirements=profile.page_numbers.check_page_number_requirements,
+        page_number_placement=profile.page_numbers.placement,
     )
     return snapshot.with_fingerprint()
 
@@ -658,7 +685,7 @@ def snapshot_from_dict(data: Dict[str, Any]) -> EffectiveProfileSnapshot:
         raise ProfileValidationError([("", "snapshot payload must be a JSON object")])
 
     version = data.get("schema_version")
-    if version not in SUPPORTED_SNAPSHOT_SCHEMA_VERSIONS:
+    if type(version) is not int or version not in SUPPORTED_SNAPSHOT_SCHEMA_VERSIONS:
         raise ProfileValidationError([
             ("schema_version", f"unsupported schema version {version!r}; "
                                f"expected one of {list(SUPPORTED_SNAPSHOT_SCHEMA_VERSIONS)}")
@@ -743,6 +770,37 @@ def snapshot_from_dict(data: Dict[str, Any]) -> EffectiveProfileSnapshot:
                 ])
         ref_values[attr] = raw
 
+    structural_values: Dict[str, Any] = {}
+    for group_name, toggle, attr in (
+        ("headers", "check_header_requirements", "header_check_requirements"),
+        ("footers", "check_footer_requirements", "footer_check_requirements"),
+        ("page_numbers", "check_page_number_requirements", "page_number_check_requirements"),
+    ):
+        group = data.get(group_name, {})
+        if not isinstance(group, dict):
+            raise ProfileValidationError([(group_name, "must be a JSON object")])
+        keys = {toggle, "placement"} if group_name == "page_numbers" else {toggle}
+        unknown = set(group) - keys
+        if unknown:
+            raise ProfileValidationError([
+                (f"{group_name}.{key}", "unknown field") for key in sorted(unknown)
+            ])
+        value = group.get(toggle, False)
+        if not isinstance(value, bool):
+            raise ProfileValidationError([(f"{group_name}.{toggle}", "must be true or false")])
+        if value and data.get("profile_source") != "custom":
+            raise ProfileValidationError([
+                (f"{group_name}.{toggle}", "Available only in Custom Profiles")
+            ])
+        structural_values[attr] = value
+        if group_name == "page_numbers":
+            placement = group.get("placement", "either")
+            if not isinstance(placement, str) or placement not in ("header", "footer", "either"):
+                raise ProfileValidationError([
+                    ("page_numbers.placement", "must be 'header', 'footer', or 'either'")
+                ])
+            structural_values["page_number_placement"] = placement
+
     snapshot = EffectiveProfileSnapshot(
         schema_version=int(version),
         profile_id=str(data.get("profile_id") or ""),
@@ -781,6 +839,7 @@ def snapshot_from_dict(data: Dict[str, Any]) -> EffectiveProfileSnapshot:
         table_eligibility=str(data.get("table_eligibility") or "administrative"),
         fingerprint=str(data.get("fingerprint") or ""),
         **cm_values,
+        **structural_values,
     )
 
     if not snapshot.verify_fingerprint():

@@ -358,5 +358,7 @@ def _key_requirements_summary(profile: DocumentFormattingProfile) -> List[str]:
         )
     for item in ref_lines:
         lines.append(item)
+    # Listing disclosure only; built-in definitions and defaults remain unchanged.
+    lines.extend(["Headers: Not checked", "Footers: Not checked", "Page numbers: Not checked"])
 
     return lines

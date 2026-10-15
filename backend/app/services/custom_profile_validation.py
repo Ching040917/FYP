@@ -87,6 +87,13 @@ _FIELD_MAP = {
     "captions.space_after_pt": "captions.space_after",
     "lists.space_after_pt": "lists.space_after",
     "role_policy.table_eligibility": "role_policy.table_eligibility",
+    "headers": "headers",
+    "headers.check_header_requirements": "headers.check_header_requirements",
+    "footers": "footers",
+    "footers.check_footer_requirements": "footers.check_footer_requirements",
+    "page_numbers": "page_numbers",
+    "page_numbers.check_page_number_requirements": "page_numbers.check_page_number_requirements",
+    "page_numbers.placement": "page_numbers.placement",
 }
 
 # Citation matching toggles — flat booleans, one editor field each.
@@ -275,6 +282,18 @@ def _font_message(message: str) -> str:
 
 def _message_for(path: str, message: str) -> str:
     lower = message.lower()
+
+    if path.split(".", 1)[0] in ("headers", "footers", "page_numbers"):
+        if "available only in custom profiles" in lower:
+            return "Available only in Custom Profiles"
+        if "unknown field" in lower:
+            return "This field is not recognized."
+        if "must be a JSON object" in message:
+            return "This section is not well formed."
+        if path == "page_numbers.placement":
+            return "Choose Header, Footer or Either."
+        if "must be true or false" in lower:
+            return "Choose true or false for this check."
 
     if path.startswith("margins."):
         return f"Enter a margin between {EDITOR_MARGIN_MIN_IN:g} and {EDITOR_MARGIN_MAX_IN:g} in."

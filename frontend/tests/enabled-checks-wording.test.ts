@@ -8,7 +8,11 @@ import {
   ALL_ENABLED_CHECKS_PASSED,
   ENABLED_CHECKS_CAUTION,
   ENABLED_CHECKS_SUFFIX,
+  PAGE_ELEMENTS_HELP_TEXT,
+  pageElementCheckParts,
+  pageElementDisclosureLines,
   profileDisclosure,
+  selectedProfileSummary,
 } from '../src/lib/audit/enabled-checks-wording.ts'
 import type { ProfileSnapshot } from '../src/types/api'
 
@@ -76,4 +80,80 @@ test('never exposes schema, fingerprint, or PresetConfig terminology', () => {
   assert.ok(!line.includes('PresetConfig'))
   assert.ok(!line.includes('schema'))
   assert.ok(!line.includes('null'))
+})
+
+test('historical disclosures explicitly leave page elements unchecked', () => {
+  const line = profileDisclosure(snap())!
+  for (const status of ['Headers: Not checked', 'Footers: Not checked', 'Page numbers: Not checked']) {
+    assert.ok(line.includes(status))
+  }
+  assert.deepEqual(pageElementCheckParts(snap()), [])
+  assert.ok(!line.includes(PAGE_ELEMENTS_HELP_TEXT))
+})
+
+test('every independent enabled structural group discloses manual, unscored scope', () => {
+  for (let bits = 0; bits < 8; bits += 1) {
+    const s = snap({
+      profile_source: 'custom',
+      headers: { check_header_requirements: Boolean(bits & 1) },
+      footers: { check_footer_requirements: Boolean(bits & 2) },
+      page_numbers: { check_page_number_requirements: Boolean(bits & 4), placement: 'either' },
+    })
+    const names = [
+      ...(bits & 1 ? ['Header requirements'] : []),
+      ...(bits & 2 ? ['Footer requirements'] : []),
+      ...(bits & 4 ? ['Page number requirements'] : []),
+    ]
+    assert.deepEqual(pageElementCheckParts(s), names)
+    const line = profileDisclosure(s)!
+    for (const name of names) assert.ok(line.includes(`${name} · Manual review only · Unscored`))
+    assert.equal(line.includes('Headers: Not checked'), !(bits & 1))
+    assert.equal(line.includes('Footers: Not checked'), !(bits & 2))
+    assert.equal(line.includes('Page numbers: Not checked'), !(bits & 4))
+    assert.equal(line.includes(PAGE_ELEMENTS_HELP_TEXT), bits !== 0)
+  }
+})
+
+test('PAGE placement affects disclosure only when the PAGE requirement is enabled', () => {
+  for (const [placement, label] of [['header', 'Header'], ['footer', 'Footer'], ['either', 'Header or Footer']] as const) {
+    const off = snap({ page_numbers: { check_page_number_requirements: false, placement } })
+    assert.deepEqual(pageElementDisclosureLines(off), [
+      'Headers: Not checked', 'Footers: Not checked', 'Page numbers: Not checked',
+    ])
+    assert.deepEqual(pageElementCheckParts(off), [])
+    const on = snap({ page_numbers: { check_page_number_requirements: true, placement } })
+    assert.deepEqual(pageElementDisclosureLines(on), [
+      'Headers: Not checked',
+      'Footers: Not checked',
+      `Page number requirements · Manual review only · Unscored · Placement: ${label}`,
+    ])
+  }
+})
+
+test('structural helper states the exact stored-definition limitations', () => {
+  assert.equal(PAGE_ELEMENTS_HELP_TEXT,
+    'Checks stored Normal-pages definitions in every document section. Does not verify rendered visibility or numbering. First-page and even-page definitions are not checked. Unsupported evidence is reported for manual review.')
+})
+
+test('compact selected profile always discloses independent page-element states and enabled placements', () => {
+  for (let bits = 0; bits < 8; bits += 1) {
+    for (const placement of ['header', 'footer', 'either'] as const) {
+      const rows = selectedProfileSummary(snap({
+        headers: { check_header_requirements: Boolean(bits & 1) },
+        footers: { check_footer_requirements: Boolean(bits & 2) },
+        page_numbers: { check_page_number_requirements: Boolean(bits & 4), placement },
+      }))
+      const manual = rows.find((row) => row.heading.startsWith('Manual'))!
+      const items = rows.flatMap((row) => row.items ?? [])
+      for (const [label, bit] of [['Headers', 1], ['Footers', 2], ['Page numbers', 4]] as const) {
+        assert.equal(items.find((item) => item.label === label)?.value,
+          bits & bit ? 'Manual review' : 'Not checked')
+      }
+      assert.equal(manual.items!.find((item) => item.label === 'Placement')?.value,
+        bits & 4 ? placement === 'header' ? 'Header' : placement === 'footer' ? 'Footer' : 'Header or Footer' : undefined)
+      assert.equal(rows.find((row) => row.heading === 'Scored checks')?.text, '0 enabled')
+    }
+  }
+  const defaults = selectedProfileSummary(snap()).flatMap((row) => row.items ?? []).filter((item) => ['Headers', 'Footers', 'Page numbers'].includes(item.label))
+  assert.deepEqual(defaults, ['Headers', 'Footers', 'Page numbers'].map((label) => ({ label, value: 'Not checked' })))
 })

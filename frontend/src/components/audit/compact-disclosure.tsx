@@ -217,6 +217,8 @@ export function DisclosureRows({ rows }: { rows: Array<[string, string]> }) {
 export interface DisclosureSection {
   heading: string
   items: Array<{ text: string; tone: 'check' | 'plain' | 'muted' }>
+  groups?: Array<{ heading: string; items: DisclosureSection['items'] }>
+  note?: string
 }
 
 /**
@@ -228,9 +230,12 @@ export function DisclosureSections({ sections }: { sections: DisclosureSection[]
     <span className="block space-y-4">
       {sections.map((section) => (
         <section key={section.heading} aria-label={section.heading}>
-          <h3 className="text-[13px] font-semibold text-foreground">{section.heading}</h3>
-          <ul className="mt-1.5 space-y-1">
-            {section.items.map((item) => (
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{section.heading}</h3>
+          {(section.groups?.length ? section.groups : [{ heading: '', items: section.items }]).map((group) => (
+            <div key={group.heading} className="mt-2">
+              {group.heading && <h4 className="text-[13px] font-medium text-foreground">{group.heading}</h4>}
+              <ul className="mt-1.5 space-y-1">
+            {group.items.map((item) => (
               <li
                 key={item.text}
                 className="flex items-start gap-2 text-[13px] leading-[19px] text-foreground"
@@ -245,7 +250,10 @@ export function DisclosureSections({ sections }: { sections: DisclosureSection[]
                 </span>
               </li>
             ))}
-          </ul>
+              </ul>
+            </div>
+          ))}
+          {section.note && <p className="mt-2 text-xs leading-relaxed text-muted-foreground">{section.note}</p>}
         </section>
       ))}
     </span>

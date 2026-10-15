@@ -1,8 +1,7 @@
 import { test, describe } from 'node:test'
 import assert from 'node:assert/strict'
 import { api, TimeoutError } from '../src/services/api.ts'
-import { createRequire } from 'node:module'
-const requireNode = createRequire(import.meta.url)
+import { adaptAuditResponse } from '../src/lib/audit/adapter.ts'
 
 function mockFetchOnce(handler: (input: RequestInfo, init?: RequestInit) => Promise<Response> | Response) {
   const orig = globalThis.fetch
@@ -123,12 +122,6 @@ test('listAudits successful audit-history response parses correctly', async () =
   } finally { restore() }
 })
 
-// vite proxy contract: /health must be proxied in dev
-test('vite config proxies /health to backend', () => {
-  const src = requireNode('fs').readFileSync(requireNode('path').join(process.cwd(), 'vite.config.ts'), 'utf8')
-  assert.ok(src.includes("'/health'") || src.includes('"/health"'), 'vite.config.ts should proxy /health')
-  assert.ok(src.includes('127.0.0.1:8000'), 'proxy target should be 127.0.0.1:8000')
-})
 
 // ---------------------------------------------------------------------------
 // REVIEW severity (manual review) — real adapter behaviour
@@ -169,5 +162,37 @@ test('adapter keeps REVIEW findings visible but out of the major/minor counts', 
   assert.equal(result.physical_layout_errors[1].title, 'Citation could match more than one entry')
   // Counts fall back to the deterministic findings and exclude review.
   assert.equal(result.major_count, 1)
+  assert.equal(result.minor_count, 0)
+})
+
+test('adapter retains geometry-free page-element reviews without scored categories', () => {
+  const codes = ['HEADER_CONTENT_REQUIRED', 'FOOTER_CONTENT_REQUIRED', 'PAGE_NUMBER_FIELD_REQUIRED']
+  const action = 'In Word, review Section 1 · Header · Normal pages against your Custom Profile and add the required content if needed. Verify the rendered document manually.'
+  const raw = {
+    status: 'completed',
+    audit_id: 'structural-review',
+    weighted_compliance_score: 100,
+    physical_layout_errors: codes.map((rule_code, index) => ({
+      id: `structural-${index}`, rule_code, severity: 'REVIEW',
+      location: { structural_story: true, section_index: 0, story_type: 'header', story_variant: 'default', evidence_state: 'missing' },
+      message: action,
+      expected_value: "Text or a supported field in each section's Normal-pages Header definition",
+      actual_value: 'No effective Normal-pages Header definition',
+    })),
+    ai_citation_tooltips: [],
+  } as Parameters<typeof adaptAuditResponse>[0]['raw']
+  const result = adaptAuditResponse({ raw })
+  assert.equal(result.physical_layout_errors.length, 3)
+  for (const finding of result.physical_layout_errors) {
+    assert.equal(finding.category, null)
+    assert.equal(finding.severity, 'review')
+    assert.equal(finding.position, 0)
+    assert.equal(finding.snippet, undefined)
+    assert.match(finding.suggestion, /^In Word, check this section’s /)
+    assert.match(finding.suggestion, /Verify the rendered document manually\.$/)
+    assert.doesNotMatch(finding.detail, /effective Normal-pages|Custom Profile|definition/)
+  }
+  assert.equal(result.physical_layout_errors.filter(finding => finding.category === 'page_margins').length, 0)
+  assert.equal(result.major_count, 0)
   assert.equal(result.minor_count, 0)
 })

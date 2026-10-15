@@ -207,9 +207,7 @@ function DashboardShell({
   }, [])
 
   return (
-    <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-2 xl:grid-cols-[5fr_7fr]">
-      {/* Intake — upload + specification */}
-      <div className="min-w-0 space-y-6">
+    <div className="min-w-0 space-y-5">
         {completion ? (
           <AuditCompletionPanel
             model={{ source: 'snapshot', value: completion }}
@@ -238,9 +236,6 @@ function DashboardShell({
           onResult={onResult}
           onReset={onReset}
         />
-      </div>
-
-      {/* Result / guidance — priority: audit result > first-run guidance > no-audit */}
       <div className="min-w-0">
         {result ? (
           <ComplianceSummary result={result} />
@@ -280,22 +275,20 @@ export function Dashboard() {
         subtitle="Academic Compliance Auditor"
       />
 
-      <main id="dashboard-main" className="mx-auto w-full max-w-[1440px] px-4 py-6 md:px-6 md:py-8">
-        <section className="border-b border-border pb-5">
+      <main id="dashboard-main" className="mx-auto w-full max-w-[1440px] px-4 py-5 md:px-6">
+        <section className="border-b border-border pb-4">
           <h1 className="font-serif text-page-title leading-[34px] text-foreground">
             Audit Dashboard
           </h1>
-          <p className="mt-2 max-w-2xl text-sm leading-[21px] text-muted-foreground">
-            Upload a .docx thesis draft to run supported formatting checks and review the
-            compliance summary. The full evidence report opens in the Audit Workspace.
+          <p className="mt-1 text-sm leading-[21px] text-muted-foreground">
+            Upload a DOCX, choose a profile and run supported formatting checks. Review full evidence in the Audit Workspace.
           </p>
           <p className="mt-1 text-[13px] leading-[19px] text-muted-foreground">
-            Documents are processed locally. The optional AI-assisted citation review uses
-            your local AI service when it is available.
+            Documents are processed locally; optional AI citation review uses your local AI service.
           </p>
         </section>
 
-        <div className="mt-6">
+        <div className="mt-4">
           <DashboardContent />
         </div>
       </main>

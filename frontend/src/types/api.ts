@@ -193,6 +193,26 @@ export interface ProfileSnapshot {
     top_in: number | null
     bottom_in: number | null
   }
+  /** Stored effective controls; absent on older responses, never read from a live profile. */
+  body?: ProfileSnapshotTextControls & { line_spacing?: number | null; first_line_indent_in?: number | null }
+  heading?: ProfileSnapshotTextControls & {
+    level_1?: Record<string, string | number | boolean | null>
+    level_2?: Record<string, string | number | boolean | null>
+    level_3?: Record<string, string | number | boolean | null>
+  }
+  captions?: { space_before_pt?: number | null; space_after_pt?: number | null }
+  role_exemptions?: string[]
+  table_eligibility?: string
+  lists?: { space_after_pt?: number | null }
+  citation_matching?: {
+    check_citations_have_references?: boolean
+    check_references_are_cited?: boolean
+    check_author_year_consistency?: boolean
+    check_year_suffixes?: boolean
+    check_duplicate_references?: boolean
+    flag_ambiguous_matches?: boolean
+    allow_personal_communication?: boolean
+  }
   /**
    * Reference List rules carried by snapshot schema v4. Older audits (v1/v2)
    * return only `line_spacing` / `hanging_indent_in`; every toggle is then
@@ -200,6 +220,22 @@ export interface ProfileSnapshot {
    * v3 snapshots additionally lack `check_reference_order` (read as off).
    */
   references?: ProfileSnapshotReferences
+  /** Optional v6 structural requirements; missing historical groups stay off. */
+  headers?: { check_header_requirements?: boolean }
+  footers?: { check_footer_requirements?: boolean }
+  page_numbers?: {
+    check_page_number_requirements?: boolean
+    placement?: 'header' | 'footer' | 'either'
+  }
+}
+
+export interface ProfileSnapshotTextControls {
+  font_family?: string | null
+  font_size_pt?: number | null
+  allowed_font_combos?: Array<[string, number]>
+  alignment?: string | null
+  space_before_pt?: number | null
+  space_after_pt?: number | null
 }
 
 export interface ProfileSnapshotReferences {

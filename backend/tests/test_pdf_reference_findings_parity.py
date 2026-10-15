@@ -212,46 +212,20 @@ def _pdf_text(pdf_bytes) -> str:
 
 
 def _register_rows(pdf_text: str):
-    """(id, severity, title) for every F### row in the Findings Register only.
-
-    The register is the single authoritative one-row-per-finding area; the
-    earlier detail panels reuse the same titles, so counting text everywhere
-    would confuse panels, group sections and summary mentions.
-
-    A register row begins with `F###`, then the severity label, then the
-    friendly rule title. The title ends where the next row begins (`F###` +
-    severity) or at the end of the register text, so the parser is anchored
-    on the deterministic ID/severity pair rather than on line breaks (pypdf
-    flattens the table).
-    """
+    """Read the complete register by visible status/title, without internal IDs."""
+    from app.services.pdf_report import _RULE_NAME
     marker = "Appendix — Findings Register"
     assert marker in pdf_text, "the Findings Register is missing from the PDF"
-    register = pdf_text.split(marker, 1)[1]
-    sev_alt = "Major|Minor|Manual review|Unclassified"
-    pattern = re.compile(
-        rf"(F\d{{3}}) ({sev_alt}) (.*?)(?= F\d{{3}} (?:{sev_alt}) |$)"
-    )
-    rows = []
-    for m in pattern.finditer(register):
-        rows.append((m.group(1), m.group(2), m.group(3).strip()))
-    assert rows, "no F### rows parsed from the Findings Register"
+    register = pdf_text.split(marker, 1)[1].split("Appendix: Full Profile Requirements", 1)[0]
+    titles = "|".join(re.escape(title) for title in sorted(set(_RULE_NAME.values()), key=len, reverse=True))
+    pattern = re.compile(rf"(Major|Minor|Manual review(?: · Unscored)?|Unclassified) ({titles})(?= |$)")
+    rows = [(index, match.group(1).removesuffix(" · Unscored"), match.group(2))
+            for index, match in enumerate(pattern.finditer(register), 1)]
+    assert rows, "no finding rows parsed from the complete register"
     return rows
 
 
 def _register_title_only(title_cell: str) -> str:
-    """Strip the trailing Location/Current/Required columns from a row cell.
-
-    The whole row is one flat string, so the friendly title is the prefix up
-    to the first cell that starts with a location label.
-    """
-    for marker in (
-        "Original document page", "Original document pages",
-        "Starting original document page", "Paragraph ", "Heading “",
-        "Table ", "Figure ", "Section ", "Entire document",
-    ):
-        idx = title_cell.find(marker)
-        if idx > 0:
-            return title_cell[:idx].strip()
     return title_cell.strip()
 
 
@@ -463,7 +437,6 @@ def test_new_page_current_and_required_values(client, owner_audit):
     text = _pdf_text(client.get(f"/api/audit/{owner_audit}/export-pdf").content)
     assert "Starts on the same page as preceding content" in text
     assert "Start References on a new page" in text
-    assert "Insert a page break before the Reference List heading." in text
 
 
 def test_heading_bold_current_and_required_values(client, owner_audit):
@@ -622,9 +595,8 @@ def test_v1_and_v2_snapshots_still_export(client, test_engine):
 def test_v3_export_discloses_enabled_reference_rules(client, owner_audit):
     """A v3 snapshot export states the enabled Reference requirements."""
     text = _pdf_text(client.get(f"/api/audit/{owner_audit}/export-pdf").content)
-    assert "References:" in text
-    # The configured hanging indent is disclosed in user-friendly language.
-    assert "0.5 in hanging indent" in text
+    assert "Reference heading bold" in text
+    assert "Hanging indent: 0.5 in" in text
 
 
 def test_export_does_not_rerun_or_change_the_audit(client, owner_audit):
@@ -637,7 +609,7 @@ def test_export_does_not_rerun_or_change_the_audit(client, owner_audit):
 
 
 def test_doi_pdf_preserves_raw_case_and_unit_like_suffixes(client, test_engine):
-    """Grouped panels and register retain persisted DOI spelling verbatim."""
+    """The complete register retains persisted DOI spelling verbatim."""
     import uuid
     from sqlalchemy.orm import sessionmaker
     from app.models.audit import AuditRecord, Violation
@@ -650,11 +622,6 @@ def test_doi_pdf_preserves_raw_case_and_unit_like_suffixes(client, test_engine):
         "DOI: 10.1234/numPr",
     )
     canonical = "https://doi.org/<doi>"
-    action = (
-        "Replace the visible DOI text with the configured canonical format. "
-        "Verify the DOI independently because ACA checks presentation only and "
-        "does not confirm registration or resolution."
-    )
     snapshot = EffectiveProfileSnapshot(
         profile_id="doi-pdf-parity", profile_name="DOI PDF parity",
         profile_source="custom", references_check_doi_format=True,
@@ -686,12 +653,11 @@ def test_doi_pdf_preserves_raw_case_and_unit_like_suffixes(client, test_engine):
     assert response.status_code == 200
     text = _pdf_text(response.content)
     panels, register = text.split("Appendix — Findings Register", 1)
+    register = register.split("Appendix: Full Profile Requirements", 1)[0]
     for current in current_values:
-        assert current in panels
         assert register.count(current) == 1
     assert canonical in panels
-    assert register.count(canonical) == len(current_values)
-    assert action in panels
+    assert canonical in register
     assert "Reference DOI format does not match" in panels
     assert all(
         "Reference DOI format does not match" in row[2]

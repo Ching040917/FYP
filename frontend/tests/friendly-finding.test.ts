@@ -21,6 +21,7 @@ import {
 } from '../src/lib/friendly-finding.ts'
 import {
   normalizeViolationSeverity,
+  categoryForRuleCode,
 } from '../src/lib/audit/adapter.ts'
 import { severityBadge } from '../src/lib/audit/categories.ts'
 
@@ -682,4 +683,40 @@ test('no helper emits a raw rule code, paragraph index or location JSON', () => 
   assert.equal(occurrenceLabel({ paragraph_index: 7, occurrences: 1 }), null)
   assert.equal(occurrenceLabel({ paragraph_index: 7 }), null)
   assert.equal(occurrenceLabel(null), null)
+})
+
+test('only the three page-element rules have no scored category', () => {
+  const titles = {
+    HEADER_CONTENT_REQUIRED: 'Header needs review',
+    FOOTER_CONTENT_REQUIRED: 'Footer needs review',
+    PAGE_NUMBER_FIELD_REQUIRED: 'Page number needs review',
+  }
+  for (const [code, title] of Object.entries(titles)) {
+    assert.equal(categoryForRuleCode(code), null)
+    assert.equal(friendlyRuleTitle(code), title)
+  }
+  assert.equal(categoryForRuleCode('PAGE_MARGIN'), 'page_margins')
+  assert.equal(categoryForRuleCode('HEADER_UNKNOWN'), 'paragraph_typography')
+  assert.equal(categoryForRuleCode('REFERENCE_FONT_SIZE'), 'font_size')
+  assert.equal(categoryForRuleCode('UNKNOWN_RULE'), 'paragraph_typography')
+})
+
+test('page-element issues and manual actions distinguish missing, empty and unresolved evidence', () => {
+  const base = { structural_story: true, section_index: 1, story_type: 'footer', story_variant: 'default' }
+  for (const [state, current] of [
+    ['missing', 'No footer is defined for normal pages in this section.'],
+    ['empty', 'The normal-pages footer has no text or supported field.'],
+  ]) {
+    const location = { ...base, evidence_state: state }
+    assert.equal(friendlyFindingMessage('FOOTER_CONTENT_REQUIRED', 'stored action', null, 'historical protocol wording', location), current)
+    assert.equal(friendlyRequiredAction('FOOTER_CONTENT_REQUIRED', null, current, location),
+      'In Word, check this section’s footer and add text or a supported field if needed. Verify the rendered document manually.')
+  }
+  const unresolved = { ...base, evidence_state: 'unresolved' }
+  assert.equal(friendlyFindingMessage('FOOTER_CONTENT_REQUIRED', 'stored action', null, 'unknown', unresolved),
+    'ACA could not check this requirement from the supported document content.')
+  assert.equal(friendlyRequiredAction('FOOTER_CONTENT_REQUIRED', null, null, unresolved),
+    'In Word, check this section’s footer. Verify the rendered document manually.')
+  assert.equal(friendlyRequiredAction('PAGE_NUMBER_FIELD_REQUIRED', null, null, { ...base, evidence_state: 'missing', story_type: 'either' }),
+    'In Word, check this section’s header or footer and insert a page-number field if needed. Verify the rendered document manually.')
 })

@@ -590,7 +590,7 @@ def test_api_end_to_end_with_order_enabled(client):
     assert finding["severity"] == "MINOR"
     assert finding["location"]["paragraph_index"] == 2 + 1  # body + heading precede entries
     snapshot = payload["profile_snapshot"]
-    assert snapshot["schema_version"] == 5
+    assert snapshot["schema_version"] == 6
     assert snapshot["references"]["check_reference_order"] is True
 
     audit_id = payload["audit_id"]
@@ -615,7 +615,14 @@ def test_api_end_to_end_with_order_enabled(client):
         ),
     )
     assert text.count("Reference List is not in alphabetical order") >= 1
-    assert "Move this Reference List entry to the correct alphabetical position" in text
+    action = ("Move this Reference List entry to the correct alphabetical position "
+              "according to the selected profile.")
+    assert text.count(action) == 1
+    assert f"Action {action}" in text
+    assert finding["location"]["paragraph_index"] == 3
+    assert "Paragraph 4" in text
+    assert finding["actual_value"] in text
+    assert "automatically reordered" not in text.lower()
 
 
 def test_api_builtin_profile_has_no_order_finding(client):

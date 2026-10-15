@@ -37,10 +37,32 @@ After an audit, ACA shows what it found and why:
 
 - Identifies supported formatting and citation issues, grouped by severity.
 - Shows the required value and the value found in your document (Expected and Actual).
-- Links each finding to evidence — a rendered page preview when the optional LibreOffice integration is available, or the extracted text otherwise.
+- Links supported body findings to a rendered page preview when the optional LibreOffice integration is available, or to extracted text otherwise. Structural reviews identify stored section/story definitions without a visual region.
 - Produces a PDF report you can save or share.
 
 ![Academic Compliance Auditor workspace showing findings, rendered-page evidence, expected and actual values, and PDF export.](docs/images/aca-audit-workspace.png)
+
+### Optional Header, Footer and Page Number reviews
+
+Custom Profiles can independently enable **Check Header requirements**,
+**Check Footer requirements**, and **Check Page Number requirements**. All
+three default to Off (**Not checked**); Built-in Profiles remain unchanged.
+Page Number placement can be Header, Footer or Either without enabling a
+Header or Footer content requirement.
+
+These checks inspect each section's stored **Normal-pages** definition,
+including effective inherited definitions. They do not inspect first-page
+or even-page definitions or verify rendered visibility, numbering or sequence.
+A resolved PAGE field satisfies the Page Number requirement; typed digits
+and total-page fields do not. Missing/empty definitions and insufficient
+supported evidence produce **Manual review** findings with no score deduction.
+When the section's first rendered page can be proven, selecting a review
+opens that page with **Page-level structural evidence**, but no exact
+Header/Footer highlight or rectangle. Otherwise, **Structural evidence only**
+shows **Rendered page could not be determined** and preserves the current
+preview page. Corrections remain manual in Word; Local AI and Guided Fixes
+are unavailable for these findings.
+History and PDF reports retain the settings and findings saved with the audit.
 
 ### Optional Reference DOI presentation check
 

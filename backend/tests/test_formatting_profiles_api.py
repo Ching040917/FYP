@@ -64,6 +64,8 @@ def test_endpoint_output_is_presentation_safe(client):
         assert "schema_version" not in text
         assert "exempt" not in text
         assert "presetconfig" not in text
+        for state in ("Headers: Not checked", "Footers: Not checked", "Page numbers: Not checked"):
+            assert state in p["key_requirements"]
 
 
 def test_endpoint_suc_summary_institution_specific(client):

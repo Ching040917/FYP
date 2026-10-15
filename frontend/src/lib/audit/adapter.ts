@@ -12,7 +12,8 @@
 
 import type { AuditCategory, AuditResult, CitationTip, LayoutError, DocumentStats, ScoreCategory, AiReviewStatus, AiProvider, ViolationSeverity } from '../../types/audit'
 import type { AuditSubmitResponse, CitationIssue, Violation } from '../../types/api'
-import { friendlyRuleTitle } from '../friendly-finding.ts'
+import { friendlyRuleTitle, friendlyFindingMessage, friendlyRequiredAction } from '../friendly-finding.ts'
+import { isPageElementRule } from './page-elements.ts'
 
 /** All canonical audit categories, used to validate backend-sent values. */
 const AUDIT_CATEGORY_VALUES: readonly AuditCategory[] = [
@@ -78,8 +79,9 @@ const REFERENCE_FORMATTING_CATEGORY: Record<string, AuditCategory> = {
   REFERENCE_FONT_SIZE: 'font_size',
 }
 /** Map backend rule_code to reference AuditCategory. Default = paragraph_typography. */
-export function categoryForRuleCode(ruleCode: string): AuditCategory {
+export function categoryForRuleCode(ruleCode: string): AuditCategory | null {
   const code = ruleCode.toUpperCase()
+  if (isPageElementRule(code)) return null
   const referenceCategory = REFERENCE_FORMATTING_CATEGORY[code]
   if (referenceCategory) return referenceCategory
 
@@ -159,9 +161,10 @@ export function normalizeViolationSeverity(raw: string | null | undefined): Viol
 function adaptViolation(v: Violation): LayoutError {
   const loc = (v.location ?? {}) as Record<string, unknown>
   const paragraphIndex = typeof loc.paragraph_index === 'number' ? loc.paragraph_index : -1
-  const position = paragraphIndex >= 0 ? paragraphIndex + 1 : 0
-  const snippet = (v.actual_value ?? '').toString().slice(0, 140) || undefined
-  const suggestion =
+  const structural = isPageElementRule(v.rule_code)
+  const position = !structural && paragraphIndex >= 0 ? paragraphIndex + 1 : 0
+  const snippet = structural ? undefined : (v.actual_value ?? '').toString().slice(0, 140) || undefined
+  const suggestion = structural ? friendlyRequiredAction(v.rule_code, v.expected_value, v.actual_value, v.location) ?? 'Review manually in Word.' :
     v.expected_value ??
     v.actual_value ??
     'No automatic fix available — review manually.'
@@ -172,7 +175,7 @@ function adaptViolation(v: Violation): LayoutError {
     severity: normalizeViolationSeverity(v.severity),
     position,
     title: friendlyRuleTitle(v.rule_code) ?? humanizeRuleCode(v.rule_code),
-    detail: v.message,
+    detail: structural ? friendlyFindingMessage(v.rule_code, v.message, v.expected_value, v.actual_value, v.location) : v.message,
     suggestion,
     snippet,
   }

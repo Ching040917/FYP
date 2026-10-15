@@ -1327,7 +1327,7 @@ def test_current_snapshot_carries_every_reference_key_and_legacy_ones_do_not():
         _REFERENCES_GROUP_KEYS_V5,
     )
 
-    assert SNAPSHOT_SCHEMA_VERSION == 5
+    assert SNAPSHOT_SCHEMA_VERSION == 6
     group = _snapshot(ReferencesSettings()).to_dict()["references"]
     assert tuple(group) == _REFERENCES_GROUP_KEYS_V5
     assert _REFERENCES_GROUP_KEYS_V5 == _REFERENCES_GROUP_KEYS_V4 + ("check_doi_format",)

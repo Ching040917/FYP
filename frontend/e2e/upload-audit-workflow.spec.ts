@@ -69,6 +69,39 @@ test.describe('readiness card @readiness', () => {
   })
 })
 
+test('profile requirements stay in a viewport dialog without moving the audit action @profile-dialog', async ({ page }) => {
+  await page.goto('/dashboard')
+  const review = page.getByRole('button', { name: 'Review full requirements' })
+  await expect(review).toBeVisible()
+  const run = page.getByRole('button', { name: 'Run compliance audit' })
+  await expect(run).toBeDisabled()
+  await expect(page.getByText('Upload a DOCX file to continue.', { exact: true })).toBeVisible()
+  for (const size of [{ width: 1366, height: 768 }, { width: 1280, height: 800 }, { width: 1024, height: 768 }, { width: 375, height: 667 }]) {
+    await page.setViewportSize(size)
+    await review.scrollIntoViewIfNeeded()
+    const before = await run.evaluate((element) => ({ x: element.getBoundingClientRect().x + window.scrollX, y: element.getBoundingClientRect().y + window.scrollY }))
+    await review.click()
+    const dialog = page.getByRole('dialog', { name: 'Full profile requirements' })
+    await expect(dialog).toHaveCount(1)
+    await expect(dialog).toBeVisible()
+    expect(await dialog.evaluate((element) => element.parentElement?.parentElement === document.body)).toBe(true)
+    const box = await dialog.boundingBox()
+    expect(box!.width).toBeLessThanOrEqual(size.width)
+    expect(box!.height).toBeLessThanOrEqual(size.height)
+    await expect(dialog.getByRole('button', { name: 'Close', exact: true })).toBeFocused()
+    await page.keyboard.press('Shift+Tab')
+    expect(await dialog.evaluate((element) => element.contains(document.activeElement))).toBe(true)
+    await page.keyboard.press('Tab')
+    expect(await dialog.evaluate((element) => element.contains(document.activeElement))).toBe(true)
+    await expectNoHorizontalOverflow(page)
+    await page.keyboard.press('Escape')
+    await expect(dialog).toHaveCount(0)
+    await expect(review).toBeFocused()
+    const after = await run.evaluate((element) => ({ x: element.getBoundingClientRect().x + window.scrollX, y: element.getBoundingClientRect().y + window.scrollY }))
+    expect(after).toEqual(before)
+  }
+})
+
 test.describe('upload + completed audit workflow @workflow', () => {
   test('full workflow: keyboard-driven upload -> completion -> audit view -> history entry -> announced toast', async ({ page }, testInfo) => {
     annotate(testInfo, {

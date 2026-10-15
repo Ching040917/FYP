@@ -36,7 +36,7 @@ export type ScoreCategory = AuditCategory | 'unknown' | 'legacy_spacing'
 
 export interface LayoutError {
   id: string
-  category: AuditCategory
+  category: AuditCategory | null
   severity: ViolationSeverity
   /** 1-indexed paragraph / block index in the document body */
   position: number
