@@ -416,69 +416,31 @@ test.describe('workspace vertical space @vertical-space', () => {
     ).toBeLessThanOrEqual(v!.regionClientHeight)
   })
 
-  test('selected evidence is an inline disclosure in the preview heading, never its own row', async ({ page }, testInfo) => {
-    annotate(testInfo, {
-      id: 'VS-EVIDENCE-CHIP',
-      objective: 'The selected-evidence summary sits inside the Document Preview heading as one compact, single-line disclosure: no full-width evidence row above the page, no extra toolbar row, and the full evidence context stays available through an explicit Details control (never a tooltip alone).',
-      precondition: 'Completed synthetic audit at 1366x768 with a finding selected.',
-      steps: ['Open at 1366x768', 'Assert disclosure is inside the heading', 'Assert one-line height', 'Assert Details control visible', 'Assert no dedicated row between toolbar and page'],
-      expected: 'Disclosure inside <header>, height <= 26px, Details button visible with aria-expanded="false", gap between the page toolbar and the rendering viewport equals the container gap, toolbar stays at <= 2 rows.',
-      severity: 'high',
-    })
+  test('Evidence metadata expands in normal flow without covering Preview controls', async ({ page }) => {
     await openCompletedAudit(page, 1366, 768)
-    // The evidence summary follows a real selection (the load-time preselection
-    // reads the mapping before citation rects exist), so select the first
-    // finding explicitly — the same path a reviewer takes.
-    const firstFinding = page.locator('#ws-panel-findings .scrollbar-thin button[aria-pressed]').first()
-    await expect(firstFinding).toBeVisible()
-    await firstFinding.click()
-    // Three preview instances are mounted (mobile/tablet/xl); scope to the
-    // visible desktop panel so the locator resolves to one element.
-    const chip = page.locator('#ws-panel-preview [data-testid="preview-evidence-disclosure"]')
-    await expect(chip).toBeVisible()
-
-    const info = await page.evaluate(() => {
-      const scope = document.querySelector('#ws-panel-preview')
-      const header = scope?.querySelector('header')
-      // Scope to the visible panel: the mobile/tablet instances are hidden and
-      // their chip has a zero-size box.
-      const chipEl = scope?.querySelector('[data-testid="preview-evidence-disclosure"]') ?? null
-      const region = scope?.querySelector<HTMLElement>(
-        'div[aria-label="Rendered document preview"].overflow-auto',
-      )
-      const root = region?.parentElement
-      const toolbar = root?.children[0]
-      const detailsButton = chipEl?.querySelector('button[aria-haspopup="dialog"]') ?? null
-      return {
-        insideHeading: !!header && !!chipEl && header.contains(chipEl),
-        chipHeight: Math.round(chipEl?.getBoundingClientRect().height ?? 0),
-        detailsVisible: !!detailsButton && (detailsButton.getBoundingClientRect().width > 0),
-        detailsLabel: (detailsButton?.textContent ?? '').trim(),
-        detailsExpanded: detailsButton?.getAttribute('aria-expanded') ?? null,
-        chipText: (chipEl?.textContent ?? '').trim(),
-        chipWidth: Math.round(chipEl?.getBoundingClientRect().width ?? 0),
-        gapToolbarToRegion:
-          region && toolbar
-            ? Math.round(region.getBoundingClientRect().top - toolbar.getBoundingClientRect().bottom)
-            : -1,
-        containerGap: root ? Number.parseFloat(getComputedStyle(root).rowGap || '0') : -1,
-      }
+    await page.locator('#ws-panel-findings li button').first().click()
+    const preview = page.locator('#ws-panel-preview')
+    const disclosure = preview.locator('[data-testid="preview-evidence-disclosure"]')
+    await expect(disclosure).toBeVisible()
+    await expect(disclosure).not.toHaveAttribute('open')
+    await disclosure.locator('summary').click()
+    await expect(disclosure.locator('dl')).toBeVisible()
+    await expect(page.getByRole('dialog')).toHaveCount(0)
+    const geometry = await preview.evaluate(el => {
+      const header = el.querySelector('header')!.getBoundingClientRect()
+      const evidence = el.querySelector('[data-testid="preview-evidence-disclosure"]')!.getBoundingClientRect()
+      const nav = el.querySelector('[aria-label="Page navigation"]')?.getBoundingClientRect()
+      const region = el.querySelector<HTMLElement>('div[aria-label="Rendered document preview"].overflow-auto')
+      return { headerBottom: header.bottom, evidenceTop: evidence.top, evidenceBottom: evidence.bottom,
+        navTop: nav?.top ?? null, regionHeight: region?.clientHeight ?? null }
     })
-
-    expect(info.insideHeading, 'the evidence summary must live in the preview heading').toBe(true)
-    expect(info.chipHeight, 'one compact line, never a 38px row').toBeLessThanOrEqual(26)
-    expect(info.detailsVisible, 'the Details control must stay visible').toBe(true)
-    expect(info.detailsLabel, 'the explicit control reads Evidence details').toBe('Evidence details')
-    expect(info.detailsExpanded, 'the disclosure starts collapsed').toBe('false')
-    expect(info.chipText.length).toBeGreaterThan(0)
-    expect(info.chipWidth, 'the chip stays on the heading line').toBeGreaterThan(100)
-    expect(
-      info.gapToolbarToRegion,
-      'no dedicated evidence row may sit between the page toolbar and the rendering viewport',
-    ).toBeLessThanOrEqual(info.containerGap + 1)
-
+    expect(geometry.evidenceTop).toBeGreaterThanOrEqual(geometry.headerBottom)
+    if (geometry.navTop !== null) {
+      expect(geometry.navTop).toBeGreaterThanOrEqual(geometry.evidenceBottom)
+      expect(geometry.regionHeight).toBeGreaterThan(150)
+    }
     const g = await readGeometry(page)
-    expect(g.toolbarRows, 'toolbar must stay at one or two rows at 1366').toBeLessThanOrEqual(2)
+    expect(g.toolbarRows).toBeLessThanOrEqual(2)
     expect(g.toolbarHeight).toBeLessThanOrEqual(MAX_PREVIEW_TOOLBAR_PX)
   })
 

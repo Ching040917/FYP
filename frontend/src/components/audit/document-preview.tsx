@@ -18,16 +18,13 @@
  */
 import * as React from 'react'
 import type { ReactNode } from 'react'
-import { AlertOctagon, AlertTriangle, Check, FileText, Info, Loader2, ScrollText } from 'lucide-react'
+import { AlertOctagon, AlertTriangle, Check, ChevronDown, FileText, Info, Loader2, ScrollText } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import { evidencePage, evidencePrecision, evidenceTargetLabel, compactEvidenceText, compactPrecisionLabel, evidenceSummary } from '../../lib/audit/evidence-summary.ts'
 import { friendlyRuleTitle } from '../../lib/friendly-finding'
 import { structuralStoryLabel, STRUCTURAL_PAGE_UNAVAILABLE, STRUCTURAL_HIGHLIGHT_UNAVAILABLE } from '../../lib/audit/page-elements.ts'
 import { classifyFindingTarget, getParagraphIndex } from '../../lib/pdf/finding-navigation.ts'
-import {
-  CompactDisclosure,
-  DisclosureRows,
-} from './compact-disclosure.tsx'
+import { DisclosureRows } from './compact-disclosure.tsx'
 import type { DocumentBlock, Violation } from '../../types/api'
 import type { ViolationSeverity } from '../../types/audit'
 import { severityBadge } from '../../lib/audit/categories'
@@ -127,6 +124,7 @@ export function DocumentPreview({
   workspaceControls = null,
 }: DocumentPreviewProps) {
   const containerRef = React.useRef<HTMLDivElement>(null)
+  const headingRef = React.useRef<HTMLHeadingElement>(null)
   const blockRefs = React.useRef<Map<number, HTMLElement>>(new Map())
   const selectedEvidenceViolation = selectedViolationId
     ? (violations.find((vi) => vi.id === selectedViolationId) ?? null)
@@ -202,16 +200,9 @@ export function DocumentPreview({
 
   // The compact header is rendered on every path so the desktop panel/focus
   // toggles stay reachable even when the rendered preview is unavailable.
-  // Height budget: the title and the located-finding count stay on the first
-  // line, the workspace controls + preview-mode switch share the second line
-  // with `ml-auto` so they wrap as ONE group (a group that fits the narrowest
-  // supported preview column, 544px at 1280 with both side panels open).
-  // In focus mode and in the 1024 two-column layout everything fits one line.
-  // The compact selected-evidence summary lives on the heading line instead of
-  // its own full-width row above the page (that row cost 38px, 54px when the
-  // message wrapped). Wording/precedence come from the pure helper so they stay
-  // identical to the previous chip set; `null` renders no chip at all, so no
-  // empty evidence space is reserved.
+  // Evidence metadata sits immediately below the heading in normal flow.
+  // The existing pure helpers retain provenance, precision and availability;
+  // no disclosure or reserved space exists when there is no current evidence.
   const evidence = evidenceSummary({
     structuralLocation: selectedStructuralLocation,
     structuralPage,
@@ -227,13 +218,7 @@ export function DocumentPreview({
     marginStatus,
     marginChipLabel,
   })
-  // Selected evidence uses the shared compact disclosure: one visual line
-  // prioritizing page + paragraph/object location and evidence precision,
-  // with the complete evidence context one explicit Evidence-details press
-  // away. The compact bar never repeats the Finding title (visible in
-  // Finding Details) and never carries the full target text. The DOM text
-  // stays complete (truncation is visual only); no `title` tooltip is the
-  // sole access path.
+  // Evidence metadata stays in normal flow, independent of the Profile modal.
   const selectedEvidenceParagraph =
     selectedEvidenceViolation !== null ? getParagraphIndex(selectedEvidenceViolation) : null
   const selectedEvidencePage = evidencePage({
@@ -294,9 +279,9 @@ export function DocumentPreview({
       ? `Paragraph ${selectedEvidenceParagraph + 1}`
       : selectedEvidenceObject,
   ].filter((part): part is string => part !== null).join(' · ') || 'Location unavailable'
-  const evidenceChip = evidence ? (
-    <CompactDisclosure
-      className="min-w-[140px] max-w-[420px] flex-1 basis-[140px] text-[11px] leading-[16px]"
+  const evidenceDetails = evidence && selectedEvidenceViolation ? (
+    <InlineEvidenceDetails
+      headingRef={headingRef}
       icon={(
         <Info
           className={cn(
@@ -316,27 +301,19 @@ export function DocumentPreview({
         objectLabel: selectedEvidenceObject,
         precision: compactPrecisionLabel(selectedEvidencePrecision),
       })}
-      detailsLabel="Evidence details"
-      panelLabel="Evidence details"
-      testId="preview-evidence-disclosure"
-    >
-      <DisclosureRows
-        rows={([
-          ['Finding', selectedEvidenceViolation
-            ? (friendlyRuleTitle(selectedEvidenceViolation.rule_code) ?? selectedEvidenceViolation.rule_code)
-            : 'No finding selected'],
+      rows={[
+          ['Finding', friendlyRuleTitle(selectedEvidenceViolation.rule_code) ?? selectedEvidenceViolation.rule_code],
           ['Location', selectedEvidenceLocation],
           ['Evidence target', selectedEvidenceTarget ?? '—'],
           ['Evidence precision', selectedEvidencePrecision],
           ...(selectedEvidenceMessage ? [['Availability', selectedEvidenceMessage] as [string, string]] : []),
-        ] as Array<[string, string]>)}
-      />
-    </CompactDisclosure>
+      ]}
+    />
   ) : null
 
-  const header = (
+  const header = (<>
     <header className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1">
-      <h2 className="flex shrink-0 items-center gap-1.5 text-[13px] font-medium leading-[19px] text-foreground">
+      <h2 ref={headingRef} className="flex shrink-0 items-center gap-1.5 rounded text-[13px] font-medium leading-[19px] text-foreground focus:outline-none focus:ring-2 focus:ring-primary">
         <ScrollText className="h-4 w-4 text-primary" aria-hidden="true" />
         Document preview
       </h2>
@@ -346,7 +323,6 @@ export function DocumentPreview({
           <span className="hidden xl:inline">{locatableCount} finding{locatableCount > 1 ? 's' : ''} located in document</span>
         </span>
       )}
-      {evidenceChip}
       <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
         {workspaceControls}
         {hasRendered && renderedAvailable && (
@@ -365,6 +341,8 @@ export function DocumentPreview({
         )}
       </div>
     </header>
+    {evidenceDetails}
+  </>
   )
 
   if (isLoading) {
@@ -542,6 +520,41 @@ export function DocumentPreview({
       </div>
       </div>
     </div>
+  )
+}
+
+/** Native toggle only: Escape remains owned by the surrounding workspace. */
+function InlineEvidenceDetails({ headingRef, summary, icon, rows }: {
+  headingRef: React.RefObject<HTMLHeadingElement>
+  summary: string
+  icon: React.ReactNode
+  rows: Array<[string, string]>
+}) {
+  const detailsRef = React.useRef<HTMLDetailsElement>(null)
+  React.useLayoutEffect(() => {
+    const details = detailsRef.current
+    return () => {
+      if (!details?.contains(document.activeElement)) return
+      const heading = headingRef.current
+      if (!heading?.isConnected || !heading.getClientRects().length) return
+      heading.setAttribute('tabindex', '-1')
+      heading.focus({ preventScroll: true })
+      heading.addEventListener('blur', () => heading.removeAttribute('tabindex'), { once: true })
+    }
+  }, [headingRef])
+  return (
+    <details ref={detailsRef} data-testid="preview-evidence-disclosure" className="group min-w-0 shrink-0 rounded-md border border-border bg-card">
+      <summary aria-label="Evidence details" className="flex min-w-0 cursor-pointer list-none items-center gap-1.5 rounded-md px-2 py-1 text-[11px] leading-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary [&::-webkit-details-marker]:hidden">
+        {icon}
+        <span className="min-w-0 flex-1 truncate text-muted-foreground max-[300px]:hidden">{summary}</span>
+        <span className="flex shrink-0 items-center gap-1 font-medium text-foreground">
+          Evidence details<ChevronDown className="h-3 w-3 transition-transform group-open:rotate-180" aria-hidden="true" />
+        </span>
+      </summary>
+      <div aria-live="polite" aria-atomic="true" className="min-w-0 border-t border-border p-3 [&>dl]:grid-cols-1 sm:[&>dl]:grid-cols-[max-content_minmax(0,1fr)] [&_dt]:whitespace-normal">
+        <DisclosureRows rows={rows} />
+      </div>
+    </details>
   )
 }
 
