@@ -729,8 +729,10 @@ export function UploadCard({ onResult, onReset, trySampleSignal = 0 }: UploadCar
               {(() => {
                 const opt = selectedOption
                 if (!opt) return null
+                const citationStyle = summaryRows.find((row) => row.heading === 'Citation style')
                 return (
-                  <div className="space-y-1.5 text-xs leading-[16px] text-muted-foreground">
+                  <div className="space-y-2 text-xs leading-[16px] text-muted-foreground">
+                    <p className="break-words font-medium text-foreground">{opt.displayName}</p>
                     <div className="flex flex-wrap items-center gap-1">
                       <span>Source: {opt.isBuiltIn ? 'Built-in · Read-only' : 'Custom · Independently editable'}</span>
                       {opt.isRecommended && (
@@ -739,26 +741,46 @@ export function UploadCard({ onResult, onReset, trySampleSignal = 0 }: UploadCar
                         </Badge>
                       )}
                     </div>
+                    {citationStyle && (
+                      <p className="break-words">
+                        Citation style: <span className="font-medium text-foreground">{citationStyle.text}</span>
+                      </p>
+                    )}
 
                     {summaryRows.length > 0 ? (
                       <dl className="divide-y divide-border rounded-md border border-border bg-background/40 px-2.5">
-                        {summaryRows.map((row) => (
-                          <div key={row.heading} className="py-1.5">
+                        {summaryRows.filter((row) => row.heading !== 'Citation style').map((row) => (
+                          <div key={row.heading} className="py-2">
                             <dt className={cn('flex items-center gap-1.5 font-medium', row.heading.startsWith('Manual') ? 'text-purple-700 dark:text-purple-300' : row.heading === 'Not checked' ? 'text-muted-foreground' : 'text-foreground')}>
                               {row.heading.startsWith('Manual') ? <ClipboardList className="h-3.5 w-3.5 shrink-0" aria-hidden="true" /> : row.heading === 'Not checked' ? <MinusCircle className="h-3.5 w-3.5 shrink-0" aria-hidden="true" /> : <CheckCircle2 className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />}
-                              {row.heading}
+                              {row.heading === 'Not checked' ? 'Not checked by ACA' : row.heading.startsWith('Manual') ? 'Manual review only' : row.heading}
                             </dt>
                             <dd className="mt-0.5 break-words">
-                              <p>{row.text}</p>
+                              {row.heading === 'Scored checks' ? (
+                                <>
+                                  <p>{row.text.replace(' enabled', ' requirements checked automatically')}</p>
+                                  <p>These checks affect the compliance score.</p>
+                                </>
+                              ) : row.heading.startsWith('Manual') ? (
+                                <>
+                                  <p>{row.text} · Unscored</p>
+                                  <p>Manual review does not affect the numeric compliance score.</p>
+                                </>
+                              ) : (
+                                <>
+                                  <p>{row.text}</p>
+                                  <p>Not included in this profile’s automated checks.</p>
+                                </>
+                              )}
                               {row.items && row.items.length > 0 && (
-                                <dl className="mt-1 space-y-1">
+                                <ul className="mt-1 space-y-0.5" aria-label={`${row.heading} requirements`}>
                                   {row.items.map((item) => (
-                                    <div key={item.label} className="flex flex-wrap justify-between gap-x-3 gap-y-0.5">
-                                      <dt className="font-medium">{item.label}</dt>
-                                      <dd className="flex items-center gap-1.5">{item.value === 'Not checked' ? <MinusCircle className="h-3 w-3 shrink-0" aria-hidden="true" /> : item.value === 'Manual review' ? <ClipboardList className="h-3 w-3 shrink-0 text-purple-700 dark:text-purple-300" aria-hidden="true" /> : null}{item.value}</dd>
-                                    </div>
+                                    <li key={item.label} className="break-words">
+                                      {item.label}
+                                      {item.value !== 'Not checked' && item.value !== 'Manual review' && ` · ${item.value}`}
+                                    </li>
                                   ))}
-                                </dl>
+                                </ul>
                               )}
                             </dd>
                           </div>
@@ -779,9 +801,9 @@ export function UploadCard({ onResult, onReset, trySampleSignal = 0 }: UploadCar
 
                     <Button
                       type="button"
-                      variant="ghost"
+                      variant="outline"
                       size="sm"
-                      className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
+                      className="h-auto min-h-9 max-w-full whitespace-normal border-border px-3 py-2 text-left text-primary hover:bg-muted/40 hover:text-foreground"
                       aria-haspopup="dialog"
                       onClick={() => setShowFullRequirements(true)}
                     >

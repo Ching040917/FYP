@@ -102,6 +102,87 @@ test('profile requirements stay in a viewport dialog without moving the audit ac
   }
 })
 
+test('selected profile explains scored, manual and unchecked coverage without changing the requirements dialog', async ({ page }) => {
+  await page.goto('/dashboard')
+  const profile = page.locator('main [data-slot="card"]').nth(1)
+  await expect(profile.getByText('SUC Academic Report', { exact: true })).toBeVisible()
+  await expect(profile.getByText('Source: Built-in · Read-only')).toBeVisible()
+  await expect(profile.getByText('Recommended', { exact: true })).toBeVisible()
+  await expect(profile.getByText('Citation style: APA 7')).toBeVisible()
+  await expect(profile.locator('dt')).toHaveText(['Scored checks', 'Manual review only', 'Not checked by ACA'])
+  await expect(profile.getByText(/14 requirements checked automatically/)).toBeVisible()
+  await expect(profile.getByText('These checks affect the compliance score.')).toBeVisible()
+  await expect(profile.getByText('1 requirement · Unscored')).toBeVisible()
+  await expect(profile.getByText('Manual review does not affect the numeric compliance score.')).toBeVisible()
+  await expect(profile.getByRole('list', { name: 'Manual review only · Unscored requirements' })).toContainText('Ambiguous citation matches')
+  await expect(profile.getByText('21 requirements · Margins not checked')).toBeVisible()
+  await expect(profile.getByRole('list', { name: 'Not checked requirements' })).toContainText('Page numbers')
+  await expect(profile.getByText('Not included in this profile’s automated checks.')).toBeVisible()
+  await expect(profile.getByRole('list', { name: 'Not checked requirements' }).locator('li').filter({ hasText: /^Headers$/ })).toHaveCount(1)
+  const review = profile.getByRole('button', { name: 'Review full requirements' })
+  await review.focus()
+  await assertFocusVisible(page, review)
+  await review.click()
+  await expect(page.getByRole('dialog', { name: 'Full profile requirements' })).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(review).toBeFocused()
+
+  for (const size of [{ width: 1366, height: 768 }, { width: 1280, height: 800 }, { width: 1024, height: 768 }, { width: 683, height: 768 }, { width: 195, height: 667 }]) {
+    await page.setViewportSize(size)
+    const geometry = await profile.evaluate((el) => {
+      const card = el.getBoundingClientRect()
+      const controls = [el.querySelector('#profile-select'), el.querySelector('a[href="/profiles/custom"]'), el.querySelector('button[aria-haspopup="dialog"]')]
+      return {
+        scrollWidth: el.scrollWidth, clientWidth: el.clientWidth,
+        card: { left: card.left, right: card.right },
+        controls: controls.map((control) => {
+          const rect = control!.getBoundingClientRect()
+          return { left: rect.left, right: rect.right }
+        }),
+      }
+    })
+    expect(geometry.scrollWidth, `${size.width}: profile card does not overflow internally`).toBeLessThanOrEqual(geometry.clientWidth + 1)
+    expect(geometry.card.left).toBeGreaterThanOrEqual(0)
+    expect(geometry.card.right).toBeLessThanOrEqual(size.width + 1)
+    for (const control of geometry.controls) {
+      expect(control.left).toBeGreaterThanOrEqual(0)
+      expect(control.right).toBeLessThanOrEqual(size.width + 1)
+    }
+    await expect(profile.getByText('Citation style: APA 7')).toBeVisible()
+    await expect(review).toBeVisible()
+  }
+})
+
+test('saved custom profile keeps its full long name and independent coverage', async ({ page }) => {
+  await page.goto('/profiles/custom')
+  await page.getByRole('button', { name: 'Copy SUC Academic Report', exact: true }).click()
+  const name = 'Long custom academic thesis requirements profile for departmental review'
+  await page.locator('#profile-name').fill(name)
+  await page.getByRole('button', { name: /Save custom profile/i }).click()
+  await expect(page.getByText(/Profile saved|Saved/i).first()).toBeVisible()
+  await page.goto('/dashboard')
+  const profile = page.locator('main [data-slot="card"]').nth(1)
+  await profile.locator('#profile-select').click()
+  await page.getByRole('option', { name }).click()
+  await expect(profile.locator('p').filter({ hasText: name }).first()).toBeVisible()
+  await expect(profile.getByText('Source: Custom · Independently editable')).toBeVisible()
+  await expect(profile.locator('dt')).toHaveText(['Scored checks', 'Manual review only', 'Not checked by ACA'])
+  await expect(profile.getByText('Citation style: APA 7')).toBeVisible()
+  await profile.getByRole('button', { name: 'Review full requirements' }).click()
+  await expect(page.getByRole('dialog', { name: 'Full profile requirements' })).toContainText(name)
+})
+
+test('profile load error retains retry and restores coverage', async ({ page }) => {
+  await page.route('**/api/formatting-profiles', (route) => route.fulfill({ status: 503, body: 'Unavailable' }))
+  await page.goto('/dashboard')
+  const profile = page.locator('main [data-slot="card"]').nth(1)
+  await expect(profile.getByRole('alert')).toContainText('Document requirements could not be loaded')
+  await expect(profile.getByRole('button', { name: 'Retry' })).toBeVisible()
+  await page.unroute('**/api/formatting-profiles')
+  await profile.getByRole('button', { name: 'Retry' }).click()
+  await expect(profile.getByText('These checks affect the compliance score.')).toBeVisible()
+})
+
 test.describe('upload + completed audit workflow @workflow', () => {
   test('full workflow: keyboard-driven upload -> completion -> audit view -> history entry -> announced toast', async ({ page }, testInfo) => {
     annotate(testInfo, {
