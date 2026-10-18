@@ -77,11 +77,16 @@ An audit that could not finish (for example, because the application was closed 
 Results open in the Audit Workspace:
 
 - **Score** — a weighted compliance score out of 100 for the checks your profile enables. Major findings deduct more than minor ones. Very old audits may show *Unavailable* instead of a score.
-- **Findings list** — grouped by category and severity (major findings first).
-- **Expected and Actual** — what your profile requires versus what was found in the document.
+- **Findings list** — compact rows show the finding, severity, location and current-to-required comparison where available. Use the severity and category filters to narrow the list; select a row to read its complete details.
+- **Current and Required** — what ACA found versus what the saved profile requires, followed by the required action in Finding Details.
 - **Not checked** — a profile requirement can be switched off (for example, margins); this means the check does not apply, not that it passed.
 
 ACA reports the checks it supports. **It does not guarantee institutional acceptance or complete academic compliance** — treat findings as guidance for your own review.
+
+Open the document-name disclosure in the report header to read a long filename
+without leaving the workspace. It supports keyboard activation and Escape to
+close. **Profile details** always describes that audit's saved profile snapshot,
+not a later edit to the current profile.
 
 ## 7. View Finding Evidence
 
@@ -90,6 +95,7 @@ Selecting a finding shows its evidence:
 - **Location** — the finding's location in plain language, such as a heading, paragraph, figure, or table (never internal numbering).
 - **Rendered-page preview** — a page preview of your document with the finding highlighted. This needs the optional LibreOffice integration.
 - **Extracted text** — when page preview is unavailable, the finding links to the exact paragraph in the extracted text view instead.
+- **Page navigation and zoom** — previous/next controls change pages; zoom and Fit page/Fit width controls change the view. The active Fit button identifies the fit mode; a manual zoom shows its percentage.
 
 The preview is a locally generated copy of your document; the original Word file is not stored or modified.
 

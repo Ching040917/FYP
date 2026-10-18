@@ -362,7 +362,7 @@ export function RenderedPreview({
     <div className={cn('flex flex-col gap-2', fitRegion && 'h-full min-h-0')}>
       {/* Toolbar */}
       <div className="flex shrink-0 flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-1">
+        <div role="group" aria-label="Page navigation" className="flex items-center gap-1">
           <ToolButton label="Previous page" disabled={pageNum <= 1} onClick={prevPage}>
             <ChevronLeft className="h-4 w-4" aria-hidden="true" />
           </ToolButton>
@@ -373,7 +373,7 @@ export function RenderedPreview({
             Page <span className="font-medium text-foreground">{pageNum}</span> of {numPages}
           </p>
         </div>
-        <div className="flex items-center gap-1">
+        <div role="group" aria-label="Zoom and fit controls" className="flex items-center gap-1">
           <ToolButton label="Zoom out" onClick={zoomOut}>
             <ZoomOut className="h-4 w-4" aria-hidden="true" />
           </ToolButton>
@@ -414,7 +414,9 @@ export function RenderedPreview({
             <Maximize2 className="h-4 w-4" aria-hidden="true" />
             Fit width
           </button>
-          <p className="ml-1 w-16 text-right text-[13px] tabular-nums text-muted-foreground">{zoomLabel}</p>
+          {scale !== null && (
+            <p className="ml-1 w-16 text-right text-[13px] tabular-nums text-muted-foreground">{zoomLabel}</p>
+          )}
         </div>
       </div>
 

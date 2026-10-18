@@ -116,6 +116,24 @@ test.describe('collapsible audit workspace @collapsible-panels', () => {
     expect(boxes.details, 'details column must be visible when open').toBeGreaterThan(0)
   })
 
+  test('compact findings preserve keyboard selection and complete evidence in Details', async ({ page }) => {
+    await page.setViewportSize({ width: 1366, height: 768 })
+    await openCompletedAudit(page)
+    await ensurePreselect(page)
+    const rows = page.locator('#ws-panel-findings li button')
+    expect((await rows.first().boundingBox())!.height).toBeLessThanOrEqual(88)
+    await rows.nth(1).focus()
+    await page.keyboard.press('Enter')
+    await expect(rows.nth(1)).toHaveAttribute('aria-pressed', 'true')
+    await expect(rows.first()).toHaveAttribute('aria-pressed', 'false')
+    await expect(page.locator('#ws-panel-details')).toContainText('Current')
+    await expect(page.locator('#ws-panel-details')).toContainText('Required')
+    if (await renderedViewerVisible(page)) {
+      await expect(page.getByRole('group', { name: 'Page navigation', exact: true })).toBeVisible()
+      await expect(page.getByRole('group', { name: 'Zoom and fit controls', exact: true })).toBeVisible()
+    }
+  })
+
   test('collapsing a side panel gives its width to the preview, and reopening restores it', async ({ page }, testInfo) => {
     annotate(testInfo, {
       id: 'CP-COLLAPSE',
@@ -236,9 +254,8 @@ test.describe('collapsible audit workspace @collapsible-panels', () => {
     await page.getByRole('button', { name: 'Guided Fixes' }).click()
     const checkbox = page.locator('input[type="checkbox"][aria-label]').first()
     await checkbox.click()
-    await expect(
-      page.getByText(/selected · .*available for Guided Fix · Maximum 20|selected · Maximum reached/).first(),
-    ).toBeVisible()
+    await expect(checkbox).toBeChecked()
+    await expect(page.getByRole('button', { name: 'Review 1 selected change' })).toBeEnabled()
 
     // Focus entry is blocked while a modal dialog is open.
     await expect(page.getByRole('button', { name: 'Focus on document' })).toBeDisabled()
@@ -249,9 +266,8 @@ test.describe('collapsible audit workspace @collapsible-panels', () => {
     await expect(page.getByRole('button', { name: 'Hide details' })).toHaveAttribute('aria-expanded', 'true')
     // The Guided trigger is still fully functional after the round-trip.
     await page.getByRole('button', { name: 'Guided Fixes' }).click()
-    await expect(
-      page.getByText(/selected · .*available for Guided Fix · Maximum 20|No findings selected · .*available for Guided Fix · Maximum 20|selected · Maximum reached/).first(),
-    ).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Close Guided Fixes' })).toBeVisible()
+    await expect(page.locator('input[type="checkbox"][aria-label]').first()).toBeEnabled()
   })
 
   test('findings, preview, and details scroll independently; header stays visible', async ({ page }, testInfo) => {

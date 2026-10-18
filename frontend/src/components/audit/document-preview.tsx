@@ -342,7 +342,8 @@ export function DocumentPreview({
       </h2>
       {locatableCount > 0 && (
         <span className="shrink-0 text-[11px] text-muted-foreground">
-          {locatableCount} finding{locatableCount > 1 ? 's' : ''} located in document
+          <span className="xl:hidden">{locatableCount} located</span>
+          <span className="hidden xl:inline">{locatableCount} finding{locatableCount > 1 ? 's' : ''} located in document</span>
         </span>
       )}
       {evidenceChip}

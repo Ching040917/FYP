@@ -318,7 +318,7 @@ export function ErrorList({
                       aria-pressed={selected}
                       aria-label={accessibleName}
                       className={cn(
-                        'flex w-full items-start gap-2.5 border-l-2 px-3 py-2.5 text-left transition-colors',
+                        'flex w-full items-start gap-2.5 border-l-2 px-3 py-2 text-left transition-colors',
                         'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary',
                         selected
                           ? 'border-l-finding-selected-indicator bg-finding-selected-bg text-finding-selected-title ring-1 ring-finding-selected-border'
@@ -367,13 +367,12 @@ export function ErrorList({
                             {comparison}
                           </span>
                         )}
-                        {evidence && (
+                        {!comparison && evidence && (
                           <span
                             className="mt-1 block truncate text-[11px] leading-4 text-ink-muted"
                             title={evidence}
                           >
                             {evidence}
-                            <span className="sr-only">{evidence}</span>
                           </span>
                         )}
                       </span>
