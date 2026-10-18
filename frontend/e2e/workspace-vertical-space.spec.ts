@@ -17,6 +17,8 @@
  * assertions are skipped when the page/fit toolbar is unavailable.
  */
 import { test, expect, type Page } from '@playwright/test'
+import fs from 'node:fs'
+import path from 'node:path'
 import { createSyntheticAudit, expectNoHorizontalOverflow, annotate } from './helpers'
 
 const VIEWPORTS: Array<{ width: number; height: number; label: string }> = [
@@ -190,6 +192,34 @@ test.describe('workspace vertical space @vertical-space', () => {
         `${vp.label}: the report header stays compact (two rows at 1366/1280, wrapped at 1024)`,
       ).toBeLessThanOrEqual(vp.width >= 1280 ? 88 : 120)
       await assertPanelsAlign(g, vp.label)
+      await expectNoHorizontalOverflow(page)
+    }
+  })
+
+  test('long document name stays keyboard-readable without growing the report header', async ({ page }) => {
+    const fixtures = path.resolve(process.cwd(), 'e2e', 'fixtures')
+    const filename = fs.readdirSync(fixtures).find((name) => name.startsWith('e2e-layout-stress'))!
+    const audit = await createSyntheticAudit(page, path.join(fixtures, filename), filename)
+    await page.goto(`/audit/${audit.auditId}`)
+    await expect(page.locator('#audit-report > div.border-b summary')).toBeVisible()
+    const title = page.locator('#audit-report > div.border-b summary')
+    await expect(title).toContainText(filename)
+    for (const viewport of [...VIEWPORTS, { width: 768, height: 800, label: '768x800' }, { width: 195, height: 667, label: '195x667' }]) {
+      await page.setViewportSize(viewport)
+      await title.focus()
+      await page.keyboard.press('Enter')
+      const fullName = page.getByText('Full document name', { exact: true }).locator('..')
+      await expect(fullName).toBeVisible()
+      await expect(fullName).toContainText(filename)
+      const bounds = await fullName.boundingBox()
+      expect(bounds!.x, viewport.label).toBeGreaterThanOrEqual(0)
+      expect(bounds!.x + bounds!.width, viewport.label).toBeLessThanOrEqual(viewport.width + 1)
+      if (viewport.width >= 1024) {
+        const header = page.locator('#audit-report > div.border-b')
+        expect((await header.boundingBox())!.height).toBeLessThanOrEqual(viewport.width >= 1280 ? 88 : 120)
+      }
+      await page.keyboard.press('Escape')
+      await expect(fullName).toBeHidden()
       await expectNoHorizontalOverflow(page)
     }
   })

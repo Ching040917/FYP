@@ -1242,23 +1242,30 @@ export function AuditPage() {
           />
         ) : (
           <>
-            {/* ────────────── Report header — two compact rows ──────────────
-             * Row 1: document title · completion status · score.
-             * Row 2: finding counts · profile disclosure · actions
-             * (Categories · Guided Fixes · Export PDF).
-             * Keeping the header short is what gives the workspace its
-             * vertical room — no whole-page scrolling is used to
-             * compensate for a tall header. */}
+            {/* Identity, status and score stay above counts, stored-profile
+                context and report actions; workspace height remains reserved. */}
             <div className="shrink-0 border-b border-border pb-2 lg:pb-2">
-              {/* Row 1: title + status + score — one compact line. */}
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                <h1
-                  className="min-w-0 flex-1 basis-[280px] truncate font-serif text-lg font-semibold leading-6 text-foreground md:text-xl"
-                  title={audit.filename}
-                  aria-label={`Audit report for ${audit.filename}`}
+                <details
+                  className="group relative min-w-0 flex-1 basis-[280px]"
+                  onKeyDown={(event) => {
+                    if (event.key === 'Escape') event.currentTarget.open = false
+                  }}
                 >
-                  {audit.filename}
-                </h1>
+                  <summary className="flex min-w-0 cursor-pointer list-none items-center gap-1 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
+                    <h1
+                      className="min-w-0 flex-1 truncate font-serif text-lg font-semibold leading-6 text-foreground md:text-xl"
+                      aria-label={`Audit report for ${audit.filename}`}
+                    >
+                      {audit.filename}
+                    </h1>
+                    <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform group-open:rotate-180" aria-hidden="true" />
+                  </summary>
+                  <div className="absolute left-0 top-full z-40 mt-2 w-[min(600px,calc(100vw-2rem))] rounded-md border border-border bg-card p-3 text-sm leading-5 text-foreground shadow-tonal-high">
+                    <span className="font-medium">Full document name</span>
+                    <p className="mt-1 break-all">{audit.filename}</p>
+                  </div>
+                </details>
                 <StatusBadge status={audit.status} />
                 <div
                   className="flex shrink-0 items-baseline gap-1.5"
@@ -1304,7 +1311,7 @@ export function AuditPage() {
                     />
                   </CompactDisclosure>
                 )}
-                <div className="ml-auto flex min-w-0 max-w-full flex-wrap items-center gap-2">
+                <div className="ml-auto flex min-w-0 max-w-full flex-wrap items-center gap-2 max-[240px]:[&_button]:h-auto max-[240px]:[&_button]:max-w-full max-[240px]:[&_button]:flex-wrap max-[240px]:[&_button]:whitespace-normal">
                   {/* Category overview trigger — compact, never expanded by default.
                       Exposes popover semantics: haspopup="dialog" + aria-expanded +
                       aria-controls relationship to the dialog panel below. */}
