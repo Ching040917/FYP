@@ -751,7 +751,7 @@ export function UploadCard({ onResult, onReset, trySampleSignal = 0 }: UploadCar
                       <dl className="divide-y divide-border rounded-md border border-border bg-background/40 px-2.5">
                         {summaryRows.filter((row) => row.heading !== 'Citation style').map((row) => (
                           <div key={row.heading} className="py-2">
-                            <dt className={cn('flex items-center gap-1.5 font-medium', row.heading.startsWith('Manual') ? 'text-purple-700 dark:text-purple-300' : row.heading === 'Not checked' ? 'text-muted-foreground' : 'text-foreground')}>
+                            <dt className={cn('flex items-center gap-1.5 font-medium', row.heading.startsWith('Manual') ? 'text-purple-700 dark:text-purple-300' : row.heading === 'Not checked' ? 'text-destructive' : 'text-success')}>
                               {row.heading.startsWith('Manual') ? <ClipboardList className="h-3.5 w-3.5 shrink-0" aria-hidden="true" /> : row.heading === 'Not checked' ? <MinusCircle className="h-3.5 w-3.5 shrink-0" aria-hidden="true" /> : <CheckCircle2 className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />}
                               {row.heading === 'Not checked' ? 'Not checked by ACA' : row.heading.startsWith('Manual') ? 'Manual review only' : row.heading}
                             </dt>

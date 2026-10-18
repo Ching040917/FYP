@@ -119,6 +119,34 @@ test('selected profile explains scored, manual and unchecked coverage without ch
   await expect(profile.getByRole('list', { name: 'Not checked requirements' })).toContainText('Page numbers')
   await expect(profile.getByText('Not included in this profile’s automated checks.')).toBeVisible()
   await expect(profile.getByRole('list', { name: 'Not checked requirements' }).locator('li').filter({ hasText: /^Headers$/ })).toHaveCount(1)
+  const coverage = await profile.locator('dl').first().evaluate((list) => {
+    const headings = [...list.querySelectorAll('dt')]
+    const luminance = (value: string) => {
+      const [r, g, b] = (value.match(/\d+/g) ?? []).slice(0, 3).map(Number).map((channel) => {
+        const v = channel / 255
+        return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4
+      })
+      return 0.2126 * r + 0.7152 * g + 0.0722 * b
+    }
+    return headings.map((heading) => {
+      const color = getComputedStyle(heading).color
+      return {
+        label: heading.textContent?.trim(),
+        color,
+        iconColor: getComputedStyle(heading.querySelector('svg')!).color,
+        bodyColor: getComputedStyle(heading.nextElementSibling!).color,
+        contrastOnWhite: (1.05) / (luminance(color) + 0.05),
+      }
+    })
+  })
+  expect(coverage.map((group) => group.label)).toEqual(['Scored checks', 'Manual review only', 'Not checked by ACA'])
+  expect(new Set(coverage.map((group) => group.color)).size).toBe(3)
+  for (const group of coverage) {
+    expect(group.contrastOnWhite, `${group.label} heading must meet 4.5:1`).toBeGreaterThanOrEqual(4.5)
+    expect(group.iconColor).toBe(group.color)
+    expect(group.bodyColor).not.toBe(group.color)
+  }
+  expect((await profile.textContent()) ?? '').not.toMatch(/\b(?:Passed|Failed|Error|Non-compliant)\b/i)
   const review = profile.getByRole('button', { name: 'Review full requirements' })
   await review.focus()
   await assertFocusVisible(page, review)
