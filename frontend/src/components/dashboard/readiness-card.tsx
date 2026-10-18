@@ -257,9 +257,9 @@ export function ReadinessCard({
   return (
     <section
       aria-labelledby="readiness-heading"
-      className="rounded-md border border-border bg-card px-3 py-2.5"
+      className="rounded-md border border-border bg-card px-4 py-3"
     >
-      <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-x-3 gap-y-1.5 p-0">
+      <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-x-5 gap-y-2 p-0">
         <CardTitle
           id="readiness-heading"
           tabIndex={-1}
@@ -270,9 +270,9 @@ export function ReadinessCard({
         <div
           role="status"
           aria-live="polite"
-          className="min-w-0 flex-1 text-sm max-[240px]:basis-full"
+          className="min-w-0 flex-1 text-sm"
         >
-          <p className="flex items-start gap-2 font-medium text-foreground">
+          <p className="flex items-center gap-2 font-medium text-foreground">
             {state === 'checking' ? <Loader2 className="h-4 w-4 shrink-0 animate-spin" aria-hidden="true" /> : model?.overall === 'ready' ? <CheckCircle2 className="h-4 w-4 shrink-0" aria-hidden="true" /> : <AlertTriangle className="h-4 w-4 shrink-0 text-amber-700" aria-hidden="true" />}
             {headline}
           </p>
@@ -284,7 +284,7 @@ export function ReadinessCard({
                   type="button"
                   variant="outline"
                   size="sm"
-                  className="min-h-[44px] border-border text-foreground max-[240px]:h-auto max-[240px]:min-h-[44px] max-[240px]:whitespace-normal"
+                  className="border-border text-foreground min-h-[44px]"
                   aria-expanded={expanded}
                   aria-controls={detailsId}
                   onClick={() => setExpanded((e) => !e)}
@@ -306,7 +306,7 @@ export function ReadinessCard({
                 type="button"
                 variant="outline"
                 size="sm"
-                className="min-h-[44px] border-border text-foreground"
+                className="border-border text-foreground min-h-[44px]"
                 onClick={() => void fetchReadiness(true)}
                 disabled={refreshing}
                 aria-label="Refresh system readiness"

@@ -511,9 +511,9 @@ export function UploadCard({ onResult, onReset, trySampleSignal = 0 }: UploadCar
     : [], [selectedOption])
 
   return (
-    <div className="grid min-w-0 grid-cols-1 items-start gap-4 md:grid-cols-[11fr_9fr]">
+    <div className="grid min-w-0 grid-cols-1 items-start gap-5 md:grid-cols-[11fr_9fr]">
     <Card className="min-w-0 border-border bg-card">
-      <CardHeader className="pb-3">
+      <CardHeader className="pb-4">
         <div className="flex items-center justify-between gap-3">
           <div>
             <CardTitle className="text-base font-semibold">Start an audit</CardTitle>
@@ -530,7 +530,7 @@ export function UploadCard({ onResult, onReset, trySampleSignal = 0 }: UploadCar
           </Badge>
         </div>
       </CardHeader>
-      <CardContent className="space-y-3">
+      <CardContent className="space-y-4">
         <label
           id="upload-dropzone"
           tabIndex={-1}
@@ -542,7 +542,7 @@ export function UploadCard({ onResult, onReset, trySampleSignal = 0 }: UploadCar
           onDrop={onDrop}
           className={cn(
             'relative flex cursor-pointer items-center justify-center gap-2 rounded-md border border-dashed px-6 text-center transition-colors focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2 focus-within:ring-offset-background',
-            file ? 'min-h-[64px] flex-row py-3' : 'min-h-[112px] flex-col py-5',
+            file ? 'min-h-[64px] flex-row py-3' : 'min-h-[148px] flex-col py-8',
             isDragging
               ? 'border-primary bg-primary/5'
               : 'border-border bg-input hover:border-primary/50 hover:bg-input/70',
@@ -563,7 +563,8 @@ export function UploadCard({ onResult, onReset, trySampleSignal = 0 }: UploadCar
         </label>
 
         <p className="text-[13px] leading-[19px] text-muted-foreground">
-          Checks include typography, headings, margins and media captions; the selected profile controls which are enabled.
+          Supported formatting checks: margins, fonts, font sizes, paragraph spacing, heading
+          hierarchy, and media captions.
         </p>
 
         <Button
@@ -740,14 +741,26 @@ export function UploadCard({ onResult, onReset, trySampleSignal = 0 }: UploadCar
                     </div>
 
                     {summaryRows.length > 0 ? (
-                      <dl className="grid gap-x-3 gap-y-1.5 rounded-md border border-border bg-background/40 px-2.5 py-2 sm:grid-cols-3">
-                        {summaryRows.slice(0, 3).map((row) => (
-                          <div key={row.heading} className="min-w-0">
-                            <dt className={cn('flex items-start gap-1 font-medium', row.heading.startsWith('Manual') ? 'text-purple-700 dark:text-purple-300' : row.heading === 'Not checked' ? 'text-muted-foreground' : 'text-foreground')}>
-                              {row.heading.startsWith('Manual') ? <ClipboardList className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" /> : row.heading === 'Not checked' ? <MinusCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" /> : <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />}
+                      <dl className="divide-y divide-border rounded-md border border-border bg-background/40 px-2.5">
+                        {summaryRows.map((row) => (
+                          <div key={row.heading} className="py-1.5">
+                            <dt className={cn('flex items-center gap-1.5 font-medium', row.heading.startsWith('Manual') ? 'text-purple-700 dark:text-purple-300' : row.heading === 'Not checked' ? 'text-muted-foreground' : 'text-foreground')}>
+                              {row.heading.startsWith('Manual') ? <ClipboardList className="h-3.5 w-3.5 shrink-0" aria-hidden="true" /> : row.heading === 'Not checked' ? <MinusCircle className="h-3.5 w-3.5 shrink-0" aria-hidden="true" /> : <CheckCircle2 className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />}
                               {row.heading}
                             </dt>
-                            <dd className="mt-0.5 break-words">{row.heading === 'Scored checks' ? row.text.split(' · ')[0] : row.text}</dd>
+                            <dd className="mt-0.5 break-words">
+                              <p>{row.text}</p>
+                              {row.items && row.items.length > 0 && (
+                                <dl className="mt-1 space-y-1">
+                                  {row.items.map((item) => (
+                                    <div key={item.label} className="flex flex-wrap justify-between gap-x-3 gap-y-0.5">
+                                      <dt className="font-medium">{item.label}</dt>
+                                      <dd className="flex items-center gap-1.5">{item.value === 'Not checked' ? <MinusCircle className="h-3 w-3 shrink-0" aria-hidden="true" /> : item.value === 'Manual review' ? <ClipboardList className="h-3 w-3 shrink-0 text-purple-700 dark:text-purple-300" aria-hidden="true" /> : null}{item.value}</dd>
+                                    </div>
+                                  ))}
+                                </dl>
+                              )}
+                            </dd>
                           </div>
                         ))}
                       </dl>
