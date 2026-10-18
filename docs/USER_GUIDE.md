@@ -105,6 +105,15 @@ location and shows the confirmed current and required values before you
 approve a change. If a location or requirement cannot be verified safely,
 correct that finding manually in Word instead.
 
+Findings that ACA cannot safely correct automatically remain visible under
+**Manual correction required** without a selection checkbox; follow their
+**Required action** in the audit report. If no findings are candidates, the
+selection view explains this and **Review** remains unavailable. The upload
+header's **Back to findings** arrow returns to the selection without clearing
+it. The pre-Apply review labels the saved-profile destination **Required and
+proposed**; nothing has changed until Apply passes verification. At high
+browser zoom, scroll within the dialog to reach its safety text and actions.
+
 After you choose **Apply and verify changes**, ACA compares the saved DOCX
 package with the original, re-runs deterministic checks with the audit's saved
 profile, and rejects any unverified or regressed result. Only a passed review

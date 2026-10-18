@@ -14,7 +14,7 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
-import { AlertCircle, Check, Download, Loader2, Wand2, X } from 'lucide-react'
+import { AlertCircle, ArrowLeft, Check, Download, Loader2, Wand2, X } from 'lucide-react'
 import { api, ApiRequestError, downloadBlob, type GuidedFixReview, type GuidedFixVerification } from '../../services/api'
 import { Button } from '../ui/button'
 import { Badge } from '../ui/badge'
@@ -110,7 +110,7 @@ function GuidedDialog({
     <div role="presentation" className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-2 sm:p-4"
       onMouseDown={(e) => { if (dismissible && e.target === e.currentTarget) onDismiss() }}>
       <div ref={panelRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label={label}
-        className="flex max-h-[90dvh] w-full min-w-0 max-w-2xl flex-col overflow-hidden rounded-md border border-border bg-card shadow-xl">
+        className="flex max-h-[90dvh] w-full min-w-0 max-w-2xl flex-col overflow-hidden rounded-md border border-border bg-card shadow-xl max-[240px]:block max-[240px]:overflow-y-auto">
         {children}
       </div>
     </div>,
@@ -430,7 +430,7 @@ export function GuidedFixesPanel({
       <>
         {trigger}
         <GuidedDialog label="Guided Fixes Beta — select candidate findings" onDismiss={closeToIdle}>
-          <div className="flex shrink-0 items-start justify-between gap-3 border-b border-border px-5 py-3">
+          <div className="flex shrink-0 items-start justify-between gap-3 border-b border-border px-5 py-3 max-[240px]:gap-1 max-[240px]:px-2">
             <div className="min-w-0">
               <div className="flex items-center gap-2">
                 <h2 className="text-base font-semibold text-foreground">Guided Fixes</h2>
@@ -445,7 +445,7 @@ export function GuidedFixesPanel({
             </Button>
           </div>
 
-          <div className="shrink-0 px-5 pt-3">
+          <div className="shrink-0 px-5 pt-3 max-[240px]:px-2">
             <p className="text-[13px] leading-[19px] text-muted-foreground">{GF_INTRO}</p>
             <p className="mt-1 text-[13px] leading-[19px] text-muted-foreground">{GF_SECONDARY}</p>
           </div>
@@ -454,7 +454,7 @@ export function GuidedFixesPanel({
             role="group"
             aria-label="Filter findings"
             onKeyDown={onDialogKeyDown}
-            className="mx-5 mt-3 flex shrink-0 flex-wrap items-center gap-1 rounded-md border border-border bg-input/20 p-1"
+            className="mx-5 mt-3 flex shrink-0 flex-wrap items-center gap-1 rounded-md border border-border bg-input/20 p-1 max-[240px]:mx-2"
           >
             {FILTER_OPTIONS.map((o) => {
               const count =
@@ -481,13 +481,14 @@ export function GuidedFixesPanel({
             })}
           </div>
 
-          <div className="mt-2 flex shrink-0 flex-wrap items-center gap-2 px-5">
+          <div className="mt-2 flex shrink-0 flex-wrap items-center gap-2 px-5 max-[240px]:px-2">
             <Button
               type="button"
               variant="outline"
               size="sm"
               disabled={viewAvailableIds.length === 0}
               onClick={allViewSelected ? clearAvailableSelection : selectAllAvailable}
+              className="max-[240px]:h-auto max-[240px]:max-w-full max-[240px]:whitespace-normal"
             >
               {allViewSelected
                 ? 'Clear candidate selection'
@@ -495,7 +496,14 @@ export function GuidedFixesPanel({
             </Button>
           </div>
 
-          <div className="min-h-0 flex-1 overflow-y-auto px-5 py-3 scrollbar-thin">
+          <div className="min-h-0 flex-1 overflow-y-auto px-5 py-3 scrollbar-thin max-[240px]:px-2">
+            {viewIds.size === 0 && (
+              <p className="text-[13px] leading-[19px] text-muted-foreground">
+                {filter === 'available' && manualCount > 0
+                  ? 'No findings are candidates for Guided Fixes. Choose Manual correction required to view the other findings.'
+                  : 'No findings in this view.'}
+              </p>
+            )}
             <ul className="space-y-1.5">
               {classified.map(({ v, pres }) => {
                 if (!viewIds.has(v.id)) return null
@@ -505,7 +513,7 @@ export function GuidedFixesPanel({
                 const atCap = !checked && selectedIds.length >= MAX_SELECTED
                 return (
                   <li key={v.id}>
-                    <div className="flex items-start gap-3 rounded-md border border-border bg-input/10 px-3 py-2">
+                    <div className="flex items-start gap-3 rounded-md border border-border bg-input/10 px-3 py-2 max-[240px]:gap-1 max-[240px]:px-2">
                       {pres.supported ? (
                         <input
                           type="checkbox"
@@ -537,7 +545,7 @@ export function GuidedFixesPanel({
                           </>
                         ) : (
                           <p className="mt-1 text-[13px] leading-[19px] text-muted-foreground">
-                            Manual correction required
+                            ACA cannot safely correct this finding automatically. Follow its Required action in the audit report.
                           </p>
                         )}
                       </div>
@@ -548,7 +556,7 @@ export function GuidedFixesPanel({
             </ul>
           </div>
 
-          <div className="shrink-0 border-t border-border px-5 py-3">
+          <div className="shrink-0 border-t border-border px-5 py-3 max-[240px]:px-2 max-[240px]:[&_button]:h-auto max-[240px]:[&_button]:w-full max-[240px]:[&_button]:min-w-0 max-[240px]:[&_button]:whitespace-normal">
             <p className="text-[13px] text-muted-foreground">{guidedCountLine(selectedIds.length, availableCount)}</p>
             {limitNotice && (
               <p className="mt-1 text-[13px] text-warning">{limitNotice}</p>
@@ -587,7 +595,7 @@ export function GuidedFixesPanel({
       <>
         {trigger}
         <GuidedDialog label="Guided Fixes — review confirmed changes" onDismiss={cancelReview}>
-          <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-5 py-3">
+          <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-5 py-3 max-[240px]:gap-1 max-[240px]:px-2">
             <div className="min-w-0">
               <h2 className="text-base font-semibold text-foreground">Review confirmed changes</h2>
               {workflow}
@@ -597,7 +605,7 @@ export function GuidedFixesPanel({
               <X className="h-4 w-4" aria-hidden="true" />
             </Button>
           </div>
-          <div className="min-h-0 flex-1 overflow-y-auto px-5 py-3 scrollbar-thin">
+          <div className="min-h-0 flex-1 overflow-y-auto px-5 py-3 scrollbar-thin max-[240px]:px-2">
             <p className="text-sm text-foreground" role="status">
               Safety review passed for {review.items.length} selected {review.items.length === 1 ? 'finding' : 'findings'}. Nothing has been changed yet.
             </p>
@@ -607,8 +615,9 @@ export function GuidedFixesPanel({
                 return (
                   <li key={item.violation_id} className="rounded-md border border-border bg-input/20 px-3 py-2">
                     <p className="text-sm font-medium text-foreground">{finding ? reviewLabelFor(finding) : 'Formatting change'}</p>
-                    <p className="mt-1 text-xs text-muted-foreground">Property changed: {item.property}</p>
-                    <p className="mt-1 text-xs text-muted-foreground">Before: {item.before} · After: {item.after}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">Property to change: {item.property}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">Current: {item.before}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">Required and proposed: {item.after}</p>
                     <p className="mt-1 text-xs text-muted-foreground">
                       {item.affected_count} affected {item.affected_count === 1 ? 'location' : 'locations'}: {item.locations.join(', ')}
                     </p>
@@ -624,7 +633,7 @@ export function GuidedFixesPanel({
               <p>Review expires at {new Date(review.expires_at).toLocaleString()}.</p>
             </div>
           </div>
-          <div className="flex shrink-0 flex-wrap justify-end gap-2 border-t border-border px-5 py-3">
+          <div className="flex shrink-0 flex-wrap justify-end gap-2 border-t border-border px-5 py-3 max-[240px]:px-2 max-[240px]:[&_button]:h-auto max-[240px]:[&_button]:w-full max-[240px]:[&_button]:min-w-0 max-[240px]:[&_button]:whitespace-normal">
             <Button variant="ghost" onClick={cancelReview}>Cancel review</Button>
             <Button onClick={() => void applyFixes()}>Apply and verify changes</Button>
           </div>
@@ -644,7 +653,7 @@ export function GuidedFixesPanel({
           label="Guided Fixes Beta — upload the original DOCX"
           onDismiss={() => setStage('selecting')}
         >
-          <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-5 py-3">
+          <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-5 py-3 max-[240px]:gap-1 max-[240px]:px-2">
             <div className="min-w-0">
               <h2 className="text-base font-semibold text-foreground">Upload the original DOCX</h2>
               {workflow}
@@ -653,13 +662,13 @@ export function GuidedFixesPanel({
               variant="ghost"
               size="icon"
               onClick={() => setStage('selecting')}
-              aria-label="Close upload panel"
+              aria-label="Back to findings"
               data-dialog-initial-focus
             >
-              <X className="h-4 w-4" aria-hidden="true" />
+              <ArrowLeft className="h-4 w-4" aria-hidden="true" />
             </Button>
           </div>
-          <div className="min-h-0 flex-1 overflow-y-auto px-5 py-3 scrollbar-thin">
+          <div className="min-h-0 flex-1 overflow-y-auto px-5 py-3 scrollbar-thin max-[240px]:px-2">
             <p className="text-[13px] leading-[19px] text-muted-foreground">
               ACA does not keep your original document. Upload the same DOCX that was used for this
               audit so ACA can verify it before creating a corrected copy.
@@ -684,12 +693,12 @@ export function GuidedFixesPanel({
               onChange={(e) => handleFile(e.target.files?.[0] ?? null)}
             />
             {selectedFile && (
-              <p className="mt-2 text-[13px] text-muted-foreground" role="status">
+              <p className="mt-2 break-all text-[13px] text-muted-foreground" role="status">
                 Selected file: {selectedFile.name} — you can replace it before safety review.
               </p>
             )}
           </div>
-          <div className="flex shrink-0 flex-wrap justify-end gap-2 border-t border-border px-5 py-3">
+          <div className="flex shrink-0 flex-wrap justify-end gap-2 border-t border-border px-5 py-3 max-[240px]:px-2 max-[240px]:[&_button]:h-auto max-[240px]:[&_button]:w-full max-[240px]:[&_button]:min-w-0 max-[240px]:[&_button]:whitespace-normal">
             <Button variant="ghost" onClick={() => setStage('selecting')}>Back to findings</Button>
             <Button onClick={() => void reviewFixes()} disabled={!selectedFile}>
               Review safety and locations
@@ -733,7 +742,7 @@ export function GuidedFixesPanel({
     <>
       {trigger}
       <GuidedDialog label="Fix applied; re-audit passed" onDismiss={closeToIdle}>
-        <div className="min-h-0 flex-1 overflow-y-auto p-5">
+        <div className="min-h-0 flex-1 overflow-y-auto p-5 max-[240px]:p-2" tabIndex={0} aria-label="Re-audit results">
           <div className="flex items-center gap-2">
             <Check className="h-5 w-5 text-success" aria-hidden="true" />
             <h2 className="text-base font-semibold text-foreground">Fix applied; re-audit passed</h2>
@@ -778,7 +787,7 @@ export function GuidedFixesPanel({
           {downloaded && !errorMessage && <p role="status" className="mt-2 text-[13px] text-success">Downloaded. The one-use link has expired.</p>}
           {workflow}
         </div>
-        <div className="flex shrink-0 flex-wrap justify-end gap-2 border-t border-border px-5 py-3">
+        <div className="flex shrink-0 flex-wrap justify-end gap-2 border-t border-border px-5 py-3 max-[240px]:px-2 max-[240px]:[&_button]:h-auto max-[240px]:[&_button]:w-full max-[240px]:[&_button]:min-w-0 max-[240px]:[&_button]:whitespace-normal">
           <Button variant="ghost" onClick={closeToIdle} data-dialog-initial-focus>Close</Button>
           <Button variant="outline" onClick={() => navigate('/dashboard')}>Audit corrected copy</Button>
           <Button onClick={() => void downloadResult()} disabled={!verification || downloading || downloaded}>

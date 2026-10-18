@@ -30,7 +30,7 @@ export function AppNav({ current, title, subtitle, backTo }: AppNavProps) {
 
   return (
     <header className="sticky top-0 z-30 border-b border-outline-variant bg-surface-container/80 backdrop-blur-md">
-      <div className="mx-auto flex max-w-[1440px] items-center justify-between gap-3 px-4 py-3 md:px-6">
+      <div className="mx-auto flex max-w-[1440px] items-center justify-between gap-3 px-4 py-3 md:px-6 max-[240px]:gap-1 max-[240px]:px-2">
         {/* Left: back button + logo + title */}
         <div className="flex items-center gap-2.5">
           {backTo && (
@@ -48,7 +48,7 @@ export function AppNav({ current, title, subtitle, backTo }: AppNavProps) {
             <div className="grid h-9 w-9 place-items-center rounded-md bg-primary/15 text-primary ring-1 ring-primary/30">
               <ShieldCheck className="h-5 w-5" />
             </div>
-            <div className="text-left">
+            <div className="text-left max-[240px]:sr-only">
               <div className="text-sm font-semibold tracking-tight text-on-surface">{title}</div>
               {subtitle && (
                 <div className="text-[11px] uppercase tracking-wider text-on-surface-variant">
@@ -89,7 +89,7 @@ function NavLink({
          rest expose none at all (never a wrong token like "false"). */
       aria-current={active ? 'page' : undefined}
       aria-label={label}
-      className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+      className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors max-[240px]:px-1 ${
         active
           ? 'bg-primary/15 text-primary ring-1 ring-primary/30'
           : 'text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface'

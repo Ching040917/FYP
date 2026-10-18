@@ -1304,7 +1304,7 @@ export function AuditPage() {
                     />
                   </CompactDisclosure>
                 )}
-                <div className="ml-auto flex flex-wrap items-center gap-2">
+                <div className="ml-auto flex min-w-0 max-w-full flex-wrap items-center gap-2">
                   {/* Category overview trigger — compact, never expanded by default.
                       Exposes popover semantics: haspopup="dialog" + aria-expanded +
                       aria-controls relationship to the dialog panel below. */}
@@ -1316,7 +1316,7 @@ export function AuditPage() {
                         size="sm"
                         aria-haspopup="dialog"
                         aria-expanded={categoryOpen}
-                        aria-controls="category-panel"
+                        className="max-[240px]:h-auto max-[240px]:max-w-full max-[240px]:flex-wrap max-[240px]:whitespace-normal"
                         onClick={() => setCategoryOpen((o) => !o)}
                       >
                         <Filter className="h-3.5 w-3.5" aria-hidden="true" />
@@ -1424,7 +1424,7 @@ export function AuditPage() {
                         onClick={() => setMobileView(tab.id)}
                         onKeyDown={(e) => handleTabKeyDown(e, i)}
                         className={cn(
-                          'flex-1 rounded px-3 py-1.5 text-sm transition-colors',
+                          'min-w-0 flex-1 rounded px-3 py-1.5 text-sm transition-colors max-[240px]:break-words max-[240px]:px-1 max-[240px]:text-[11px]',
                           'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary',
                           selected
                             ? 'bg-card font-medium text-foreground ring-1 ring-border'
