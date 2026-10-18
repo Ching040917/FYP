@@ -22,6 +22,7 @@ export const SUPPORTED_FIX_RULES: Readonly<Record<string, true>> = {
   LINE_SPACING: true,
   SPACE_BEFORE: true,
   SPACE_AFTER: true,
+  REFERENCE_HEADING_ALIGNMENT: true,
 }
 
 /** Maximum selected findings — matches backend GuidedFixSelectionRequest. */
@@ -183,7 +184,7 @@ export function guidedProposalFor(ruleCode: string, expected: string | null | un
   const value = friendlyValue(expected)
   if (!value) return 'Profile requirement (see finding details)'
   const upper = ruleCode.toUpperCase()
-  if (upper === 'ALIGNMENT') return alignmentWord(value)
+  if (upper === 'ALIGNMENT' || upper === 'REFERENCE_HEADING_ALIGNMENT') return alignmentWord(value)
   if (upper === 'LINE_SPACING') return `${value} line spacing`
   if (upper === 'SPACE_BEFORE') return `${value} spacing before`
   if (upper === 'SPACE_AFTER') return `${value} spacing after`

@@ -812,9 +812,7 @@ class TestMigration:
 # ---------------------------------------------------------------------------
 
 def test_new_citation_codes_are_never_selectable_guided_fixes(client, docx_factory):
-    """The Guided Fixes whitelist is unchanged: citation/reference matching
-    findings can never be auto-applied, and a selection containing only them
-    produces no corrected file."""
+    """Citation and semantic reference findings cannot be auto-applied."""
     file_bytes = docx_factory(
         paragraphs=["Orphan (Garcia, 2018) text.", "Another (Lee, 2019) line."],
         references=["Other, X. (2020). Unrelated entry. Press."],
@@ -828,7 +826,3 @@ def test_new_citation_codes_are_never_selectable_guided_fixes(client, docx_facto
     assert r.status_code == 422
     assert r.json()["detail"] == "Fix cannot be applied safely. Manual correction required."
     assert r.content != file_bytes or r.headers.get("content-type", "").startswith("application/json")
-
-    # The whitelist itself is unchanged — no new code entered either set.
-    assert guided_fix.SAFE_RUN_RULES == frozenset({"FONT_CONSISTENCY", "FONT_SIZE"})
-    assert guided_fix.SAFE_PARA_RULES == frozenset({"ALIGNMENT", "LINE_SPACING", "SPACE_BEFORE", "SPACE_AFTER"})

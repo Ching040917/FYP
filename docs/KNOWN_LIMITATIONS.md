@@ -34,7 +34,7 @@ These limitations describe the current release. Nothing here describes a planned
 
 ## Guided Fixes
 
-- Only eligible direct font family/size and paragraph alignment/line/before/after spacing findings can be changed. Unsafe, ambiguous, partially indexed or already compliant targets remain manual.
+- Only eligible direct font family/size and paragraph alignment/line/before/after spacing findings, plus a unique, resolved Reference heading alignment enabled by the saved profile, can be changed. Other Reference List findings and unsafe, ambiguous, partially indexed or already compliant targets remain manual.
 - A corrected copy is available only after whole-package preservation and deterministic re-audit pass. This is not a guarantee of identical Word pagination or institutional acceptance; inspect the downloaded copy in Word.
 - Reviews and one-use downloads expire after 15 minutes and do not survive an application restart. Verified output is temporary local storage; the original document and saved History row are unchanged. A later upload of the corrected document is an independent audit.
 

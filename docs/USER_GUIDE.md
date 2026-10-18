@@ -96,11 +96,14 @@ The preview is a locally generated copy of your document; the original Word file
 ### Guided Fixes: verified formatting copies
 
 In a completed Audit Workspace, select candidate font family, font size,
-alignment, line spacing, or paragraph spacing findings. Re-upload the **exact
-original DOCX** used for that audit. ACA checks every selected location and
-shows the confirmed current and required values before you approve a change.
-If a location or requirement cannot be verified safely, correct that finding
-manually in Word instead.
+paragraph alignment, line spacing, paragraph spacing, or Reference heading
+alignment findings. Reference heading alignment is eligible only when the
+saved profile enables that check and the document has one unambiguous,
+supported heading; other Reference List findings remain manual. Re-upload
+the **exact original DOCX** used for that audit. ACA checks every selected
+location and shows the confirmed current and required values before you
+approve a change. If a location or requirement cannot be verified safely,
+correct that finding manually in Word instead.
 
 After you choose **Apply and verify changes**, ACA compares the saved DOCX
 package with the original, re-runs deterministic checks with the audit's saved

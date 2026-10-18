@@ -237,22 +237,7 @@ def test_no_new_severity_token_is_introduced():
     }
 
 
-# --- 12: Guided Fixes whitelist --------------------------------------------
-
-
-def test_guided_fixes_whitelist_is_unchanged():
-    from app.services.guided_fix import SAFE_PARA_RULES, SAFE_RUN_RULES
-
-    assert set(SAFE_RUN_RULES) == {"FONT_CONSISTENCY", "FONT_SIZE"}
-    assert set(SAFE_PARA_RULES) == {
-        "ALIGNMENT", "LINE_SPACING", "SPACE_BEFORE", "SPACE_AFTER",
-    }
-    # No Reference-List rule is eligible for an automatic fix.
-    assert not any("REFERENCE" in r for r in SAFE_RUN_RULES | SAFE_PARA_RULES)
-
-
 # --- 13/14: Local AI and model download untouched --------------------------
-
 
 def test_local_ai_module_has_no_reference_structure_dependency():
     import app.services.ai_citation as ai

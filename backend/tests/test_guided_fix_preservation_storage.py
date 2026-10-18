@@ -50,6 +50,7 @@ def test_declared_run_size_and_repacked_package_pass():
 @pytest.mark.parametrize("rule,property_name,attribute,value,run_index", [
     ("FONT_CONSISTENCY", "rFonts", "ascii", "Times New Roman", 0),
     ("ALIGNMENT", "jc", "val", "center", None),
+    ("REFERENCE_HEADING_ALIGNMENT", "jc", "val", "center", None),
     ("LINE_SPACING", "spacing", "line", "360", None),
     ("SPACE_BEFORE", "spacing", "before", "120", None),
     ("SPACE_AFTER", "spacing", "after", "120", None),

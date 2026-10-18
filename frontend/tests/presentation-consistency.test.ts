@@ -132,19 +132,6 @@ test('severity labels come from the shared badge on card, detail and preview', (
 // Guided Fixes candidate classification only; eligibility requires Review.
 // ---------------------------------------------------------------------------
 
-test('the Guided Fixes candidate set is exactly the six existing formatting rules', () => {
-  assert.deepEqual(
-    Object.keys(SUPPORTED_FIX_RULES).sort(),
-    [
-      'ALIGNMENT',
-      'FONT_CONSISTENCY',
-      'FONT_SIZE',
-      'LINE_SPACING',
-      'SPACE_AFTER',
-      'SPACE_BEFORE',
-    ].sort(),
-  )
-})
 
 test('citation and reference findings stay manual-only', () => {
   for (const code of [

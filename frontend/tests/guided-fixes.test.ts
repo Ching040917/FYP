@@ -83,6 +83,19 @@ describe('guided presentation', () => {
     const noExpected = guidedPresentationFor({ ...violation('FONT_SIZE'), expected_value: null })
     assert.equal(noExpected.proposed, 'Profile requirement (see finding details)')
   })
+
+  test('Reference heading alignment is a single safe paragraph proposal', () => {
+    const pres = guidedPresentationFor(violation('REFERENCE_HEADING_ALIGNMENT', {
+      location: { paragraph_index: 1 },
+      expected_value: 'Center',
+      actual_value: 'Left',
+    }))
+    assert.equal(pres.supported, true)
+    assert.equal(pres.friendlyLocation, 'Paragraph 2')
+    assert.equal(pres.current, 'Left')
+    assert.equal(pres.proposed, 'centered')
+    assert.equal(guidedPresentationFor(violation('REFERENCE_HEADING_BOLD')).supported, false)
+  })
 })
 
 // ---------------------------------------------------------------------------

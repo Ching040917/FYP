@@ -1375,9 +1375,3 @@ def test_required_action_copy_names_no_low_level_unit():
         action = _REQUIRED_ACTIONS[code]
         for token in ("twip", "EMU", "w:ind", "regex", "px"):
             assert token not in action, (code, token)
-
-
-def test_guided_fixes_never_touches_a_reference_rule():
-    from app.services.guided_fix import SAFE_PARA_RULES, SAFE_RUN_RULES
-
-    assert not any("REFERENCE" in rule for rule in SAFE_RUN_RULES | SAFE_PARA_RULES)

@@ -24,6 +24,7 @@ _PROPERTIES = {
     "FONT_CONSISTENCY": ("rPr", "rFonts", ("ascii", "hAnsi", "eastAsia")),
     "FONT_SIZE": ("rPr", "sz", ("val",)),
     "ALIGNMENT": ("pPr", "jc", ("val",)),
+    "REFERENCE_HEADING_ALIGNMENT": ("pPr", "jc", ("val",)),
     "LINE_SPACING": ("pPr", "spacing", ("line", "lineRule")),
     "SPACE_BEFORE": ("pPr", "spacing", ("before",)),
     "SPACE_AFTER": ("pPr", "spacing", ("after",)),

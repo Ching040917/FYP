@@ -4,6 +4,7 @@
  */
 import { test, expect, type Page } from '@playwright/test'
 import path from 'node:path'
+import { execFileSync } from 'node:child_process'
 import { AxeBuilder } from '@axe-core/playwright'
 import { createSyntheticAudit, SAMPLE_THESIS, annotate } from './helpers'
 
@@ -131,6 +132,50 @@ test.describe('guided fixes workflow @guided-fixes', () => {
     // Audit corrected copy returns to Dashboard only.
     await page.getByRole('button', { name: 'Audit corrected copy' }).click()
     await page.waitForURL(/\/dashboard/)
+  })
+
+  test('Reference heading alignment candidate completes Review, Apply, Download', async ({ page }) => {
+    const backendDir = path.resolve(process.cwd(), '..', 'backend')
+    const python = path.join(backendDir, '.venv', 'Scripts', 'python.exe')
+    const fixture = JSON.parse(execFileSync(python, ['-c', `
+import base64, io, json
+from docx import Document
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from app.services.profile_schema import new_custom_profile
+doc = Document()
+doc.add_paragraph("Body paragraph.")
+heading = doc.add_paragraph("References")
+heading.alignment = WD_ALIGN_PARAGRAPH.LEFT
+doc.add_paragraph("Smith, A. (2024). Entry. Press.")
+out = io.BytesIO()
+doc.save(out)
+profile = new_custom_profile("Reference heading E2E")
+profile.references.check_heading_alignment = True
+profile.references.heading_alignment = "center"
+print(json.dumps({"docx": base64.b64encode(out.getvalue()).decode(), "profile": profile.to_dict()}))
+`], { cwd: backendDir, encoding: 'utf8' })) as { docx: string; profile: object }
+    const buffer = Buffer.from(fixture.docx, 'base64')
+    const file = { name: 'reference-heading.docx', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', buffer }
+    const audit = await page.request.post('/api/audit', {
+      multipart: { file, custom_profile: JSON.stringify(fixture.profile) },
+      timeout: 90_000,
+    })
+    expect(audit.ok(), await audit.text()).toBeTruthy()
+    const auditId = (await audit.json()).audit_id
+    await page.goto(`/audit/${auditId}`)
+    await page.getByRole('button', { name: 'Guided Fixes' }).click()
+    const candidate = page.getByRole('checkbox', { name: /Reference List heading alignment does not match, Page 1 · Paragraph 2/i })
+    await expect(candidate).toBeVisible()
+    await candidate.check()
+    await page.getByRole('button', { name: /Review .* selected chang(e|es)/ }).click()
+    await page.locator('#guided-fixes-file-input').setInputFiles(file)
+    await page.getByRole('button', { name: 'Review safety and locations' }).click()
+    await expect(page.getByText(/Safety review passed for 1 selected finding/)).toBeVisible({ timeout: 60_000 })
+    await page.getByRole('button', { name: 'Apply and verify changes' }).click()
+    await expect(page.getByRole('heading', { name: 'Fix applied; re-audit passed' })).toBeVisible({ timeout: 60_000 })
+    const downloadPromise = page.waitForEvent('download')
+    await page.getByRole('button', { name: 'Download corrected document' }).click()
+    expect((await downloadPromise).suggestedFilename()).toContain('_ACA-fixed.docx')
   })
 
   test('axe scan and horizontal-overflow pass at desktop and mobile widths', async ({ page }, testInfo) => {

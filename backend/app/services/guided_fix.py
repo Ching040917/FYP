@@ -21,7 +21,7 @@ from app.services.profile_schema import (
 # ---------------------------------------------------------------------------
 
 SAFE_RUN_RULES = frozenset({"FONT_CONSISTENCY", "FONT_SIZE"})
-SAFE_PARA_RULES = frozenset({"ALIGNMENT", "LINE_SPACING", "SPACE_BEFORE", "SPACE_AFTER"})
+SAFE_PARA_RULES = frozenset({"ALIGNMENT", "LINE_SPACING", "SPACE_BEFORE", "SPACE_AFTER", "REFERENCE_HEADING_ALIGNMENT"})
 
 MISMATCH_DETAIL = (
     "The selected document does not match the document used for this audit. "
@@ -239,6 +239,19 @@ def _resolve_expected(
         return _resolve_font_consistency_expected(
             expected_value, audit, doc, role,
         )
+    if rule_code == "REFERENCE_HEADING_ALIGNMENT":
+        from app.services.profile_snapshot import snapshot_from_dict
+        from app.services.profile_preset_adapter import EffectiveProfileConfig
+        try:
+            config = EffectiveProfileConfig(snapshot_from_dict(audit.profile_snapshot))
+            required = config.REFERENCES_HEADING_ALIGNMENT
+            if (config.REFERENCES_CHECK_HEADING_ALIGNMENT and
+                    isinstance(required, str) and required.lower() in _ALIGNMENTS and
+                    isinstance(expected_value, str) and expected_value.strip().lower() == required.lower()):
+                return required.lower()
+        except Exception:
+            return None
+        return None
     return None
 
 
@@ -354,6 +367,9 @@ def _current_matches_expected(rule_code: str, expected: Any, para_dict: Dict, ru
         # FONT_CONSISTENCY
         current = run_dict.get("effective_font_name")
         return current is not None and current.lower() == expected.lower()
+    if rule_code == "REFERENCE_HEADING_ALIGNMENT":
+        from app.services.formatting_evidence import resolve_alignment
+        return para is not None and resolve_alignment(para).alignment == expected
     if para is not None:
         pf = para.paragraph_format
         if rule_code == "LINE_SPACING":
@@ -432,6 +448,11 @@ def _current_changed_from_actual(rule_code: str, para_dict: Dict, run_dict: Opti
                 "space_before" if rule_code == "SPACE_BEFORE" else "space_after"
             )
         return current is None or abs(current - actual_pt) > 1
+    if rule_code == "REFERENCE_HEADING_ALIGNMENT":
+        from app.services.formatting_evidence import resolve_alignment
+        return (para is None or not isinstance(actual_value, str) or
+                actual_value.strip().lower() not in _ALIGNMENTS or
+                resolve_alignment(para).alignment != actual_value.strip().lower())
     if rule_code == "ALIGNMENT":
         if actual_value not in _ALIGNMENTS:
             return True
@@ -505,6 +526,7 @@ def review_targets(audit: AuditRecord, source_bytes: bytes, violations: List[Vio
         raise GuidedFixFailed("paragraph traversal is ambiguous")
     items = []
     targets = set()
+    property_targets = set()
     for violation in violations:
         code = violation.rule_code
         if code not in SAFE_RUN_RULES | SAFE_PARA_RULES:
@@ -512,6 +534,8 @@ def review_targets(audit: AuditRecord, source_bytes: bytes, violations: List[Vio
         loc = violation.location
         if not isinstance(loc, dict):
             raise GuidedFixFailed("missing location")
+        if code == "REFERENCE_HEADING_ALIGNMENT" and set(loc) != {"paragraph_index"}:
+            raise GuidedFixFailed("ambiguous heading location")
         index = loc.get("paragraph_index")
         if type(index) is not int or not 0 <= index < len(paragraphs):
             raise GuidedFixFailed("invalid paragraph")
@@ -529,6 +553,21 @@ def review_targets(audit: AuditRecord, source_bytes: bytes, violations: List[Vio
             raise GuidedFixFailed("run traversal is ambiguous")
         if any(run.text != parsed.get("text") for run, parsed in zip(para.runs, paragraphs[index]["runs"])):
             raise GuidedFixFailed("run traversal changed")
+        if code == "REFERENCE_HEADING_ALIGNMENT":
+            from app.services.reference_section import reference_section_bounds, normalise_reference_heading
+            from app.services.formatting_evidence import resolve_alignment
+            bounds = reference_section_bounds(paragraphs)
+            recognized = [p["index"] for p in paragraphs if normalise_reference_heading(p["text"]) is not None]
+            table_heading = any(
+                normalise_reference_heading("".join(
+                    node.text or "" for node in cell_para.iter(_W + "t")
+                )) is not None
+                for table in doc.element.body.iter(_W + "tbl")
+                for cell_para in table.iter(_W + "p")
+            )
+            if (bounds is None or recognized != [index] or bounds.heading_index != index or
+                    table_heading or not resolve_alignment(para).is_resolved):
+                raise GuidedFixFailed("ambiguous Reference heading")
         raw = loc.get("run_indexes", loc.get("run_index"))
         run_indexes = raw if isinstance(raw, list) else [raw]
         if code in SAFE_RUN_RULES:
@@ -551,6 +590,10 @@ def review_targets(audit: AuditRecord, source_bytes: bytes, violations: List[Vio
             if key in targets:
                 raise GuidedFixFailed("duplicate target")
             targets.add(key)
+            property_key = (index, run_index, "ALIGNMENT" if code == "REFERENCE_HEADING_ALIGNMENT" else code)
+            if property_key in property_targets:
+                raise GuidedFixFailed("conflicting property targets")
+            property_targets.add(property_key)
             parsed = paragraphs[index]["runs"][run_index] if run_index is not None else None
             if _current_changed_from_actual(code, paragraphs[index], parsed, violation.actual_value, para=para):
                 raise GuidedFixFailed("source differs from finding")
@@ -666,6 +709,8 @@ def apply_guided_fixes(
                 ok = _fix_line_spacing(para, expected)
             elif rule_code == "SPACE_BEFORE":
                 ok = _fix_space_before(para, expected)
+            elif rule_code == "REFERENCE_HEADING_ALIGNMENT":
+                ok = _fix_alignment(para, expected)
             else:  # SPACE_AFTER
                 ok = _fix_space_after(para, expected)
         except Exception:
