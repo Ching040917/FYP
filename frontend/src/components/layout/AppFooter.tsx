@@ -17,11 +17,11 @@ const SHIELD_LOGO = (
 
 export function AppFooter() {
   return (
-    <footer className="border-t border-outline-variant bg-surface-container-lowest py-xl">
-      <div className="max-w-[1440px] mx-auto px-md">
-        <div className="grid md:grid-cols-4 gap-lg mb-lg">
+    <footer className="border-t border-outline-variant bg-surface-container-lowest py-5 md:py-6">
+      <div className="mx-auto max-w-[1440px] px-4">
+        <div className="mb-4 grid gap-4 md:grid-cols-4">
           <div className="md:col-span-2">
-            <div className="flex items-center gap-md mb-sm">
+            <div className="mb-2 flex items-center gap-3">
               <div className="w-8 h-8 rounded-md bg-primary/15 border border-primary/30 flex items-center justify-center">
                 {SHIELD_LOGO}
               </div>
@@ -32,7 +32,7 @@ export function AppFooter() {
             </p>
           </div>
           <div>
-            <p className="text-xs uppercase tracking-wider text-on-surface-variant mb-sm">Product</p>
+            <p className="mb-2 text-xs uppercase tracking-wider text-on-surface-variant">Product</p>
             <ul className="space-y-xs text-sm">
               <li><Link to="/dashboard" className="text-on-surface-variant hover:text-on-surface transition-colors">Dashboard</Link></li>
               <li><Link to="/history" className="text-on-surface-variant hover:text-on-surface transition-colors">History</Link></li>
@@ -40,7 +40,7 @@ export function AppFooter() {
             </ul>
           </div>
           <div>
-            <p className="text-xs uppercase tracking-wider text-on-surface-variant mb-sm">Resources</p>
+            <p className="mb-2 text-xs uppercase tracking-wider text-on-surface-variant">Resources</p>
             <ul className="space-y-xs text-sm">
               <li><Link to="/#how" className="text-on-surface-variant hover:text-on-surface transition-colors">How it works</Link></li>
               <li><Link to="/#privacy" className="text-on-surface-variant hover:text-on-surface transition-colors">Privacy</Link></li>
@@ -48,7 +48,7 @@ export function AppFooter() {
             </ul>
           </div>
         </div>
-        <div className="pt-md border-t border-outline-variant flex flex-col md:flex-row items-center justify-between gap-sm text-xs text-on-surface-variant">
+        <div className="flex flex-col items-start justify-between gap-2 border-t border-outline-variant pt-3 text-xs text-on-surface-variant md:flex-row md:items-center">
           <p className="font-mono">
             © {new Date().getFullYear()} Academic Compliance Systems. All rights reserved.
           </p>
