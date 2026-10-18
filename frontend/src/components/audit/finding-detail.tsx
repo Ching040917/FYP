@@ -139,7 +139,7 @@ export function FindingDetail({
           <dt className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
             Missing requirement
           </dt>
-          <dd className="mt-1.5 rounded border border-rule-border bg-muted/40 px-3 py-2 text-sm leading-[21px] text-foreground">
+          <dd className="mt-1.5 whitespace-pre-wrap break-words border-l-2 border-border pl-3 text-sm leading-[21px] text-foreground">
             {pres.missingRequirement}
           </dd>
         </div>
@@ -147,7 +147,7 @@ export function FindingDetail({
           <dt className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
             Affected element
           </dt>
-          <dd className="mt-1.5 rounded border border-rule-border bg-muted/40 px-3 py-2 font-mono text-[13px] leading-[19px] text-foreground">
+          <dd className="mt-1.5 whitespace-pre-wrap break-words border-l-2 border-border pl-3 font-mono text-[13px] leading-[19px] text-foreground">
             {pres.affectedElement}
           </dd>
         </div>
@@ -161,7 +161,7 @@ export function FindingDetail({
           <dt className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
             Required heading sequence
           </dt>
-          <dd className="mt-1.5 whitespace-pre-wrap break-words rounded border border-rule-border bg-muted/40 px-3 py-2 font-mono text-[13px] leading-[19px] text-foreground">
+          <dd className="mt-1.5 whitespace-pre-wrap break-words border-l-2 border-border pl-3 font-mono text-[13px] leading-[19px] text-foreground">
             {pres.expectedHeadingSequence}
           </dd>
         </div>
@@ -169,7 +169,7 @@ export function FindingDetail({
           <dt className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
             Current heading sequence
           </dt>
-          <dd className="mt-1.5 whitespace-pre-wrap break-words rounded border border-rule-border bg-muted/40 px-3 py-2 font-mono text-[13px] leading-[19px] text-foreground">
+          <dd className="mt-1.5 whitespace-pre-wrap break-words border-l-2 border-border pl-3 font-mono text-[13px] leading-[19px] text-foreground">
             {pres.actualHeadingSequence}
           </dd>
         </div>
@@ -258,7 +258,7 @@ export function FindingDetail({
           <h3 className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
             Required action
           </h3>
-          <p className="mt-1.5 whitespace-pre-wrap break-words rounded border border-rule-border bg-muted/40 px-3 py-2 text-sm leading-[21px] text-foreground">
+          <p className="mt-1.5 whitespace-pre-wrap break-words text-sm leading-[21px] text-foreground">
             {pres.requiredAction}
           </p>
         </div>
