@@ -84,7 +84,7 @@ test('profile requirements stay in a viewport dialog without moving the audit ac
     const dialog = page.getByRole('dialog', { name: 'Full profile requirements' })
     await expect(dialog).toHaveCount(1)
     await expect(dialog).toBeVisible()
-    expect(await dialog.evaluate((element) => element.parentElement?.parentElement === document.body)).toBe(true)
+    expect(await dialog.evaluate((element) => element.matches(':modal'))).toBe(true)
     const box = await dialog.boundingBox()
     expect(box!.width).toBeLessThanOrEqual(size.width)
     expect(box!.height).toBeLessThanOrEqual(size.height)

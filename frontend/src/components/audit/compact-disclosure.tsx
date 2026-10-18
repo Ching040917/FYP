@@ -13,10 +13,8 @@
  * through a portal to `document.body` — outside the Findings sidebar, the
  * Document Preview column, the Finding Details sidebar and every parent
  * overflow container — so no sidebar ever has to be hidden to read it.
- * The dialog follows the repository's ConfirmDialog contract: overlay
- * click closes, Escape closes, Tab focus is trapped, focus returns to the
- * triggering button, the body does not scroll behind it, `role="dialog"`
- * with `aria-modal`, a visible labelled title and a visible Close button.
+ * Native top-layer modality, focus and scrolling are owned by
+ * SupportingDetailsDialog. Overlay click and Escape close it.
  * Only one context dialog is open at a time (group announcement).
  *
  * The dialog is width-capped to the viewport with internal vertical
@@ -26,8 +24,7 @@
  * technology; no `title` tooltip is the sole access path to content.
  */
 import * as React from 'react'
-import { createPortal } from 'react-dom'
-import { Check, ChevronDown, ChevronUp, Minus, X } from 'lucide-react'
+import { ChevronDown, ChevronUp, Minus } from 'lucide-react'
 import { Button } from '../ui/button'
 import { cn } from '../../lib/utils'
 import {
@@ -35,9 +32,8 @@ import {
   announceDisclosureOpen,
   isForeignDisclosureEvent,
 } from '../../lib/audit/disclosure-group.ts'
+import { SupportingDetailsDialog } from './supporting-details-dialog'
 
-const FOCUSABLE_SELECTOR =
-  'button:not([disabled]), [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
 
 export interface CompactDisclosureProps {
   /** Compact one-line content. Keep it short; it ellipsises visually. */
@@ -69,10 +65,7 @@ export function CompactDisclosure({
 }: CompactDisclosureProps) {
   const [open, setOpen] = React.useState(false)
   const panelId = React.useId()
-  const titleId = `${panelId}-title`
   const triggerRef = React.useRef<HTMLButtonElement>(null)
-  const dialogRef = React.useRef<HTMLDivElement>(null)
-  const closeRef = React.useRef<HTMLButtonElement>(null)
 
   const close = React.useCallback(() => setOpen(false), [])
 
@@ -92,44 +85,6 @@ export function CompactDisclosure({
     return () => window.removeEventListener(DISCLOSURE_GROUP_EVENT, onGroup)
   }, [panelId])
 
-  // Modal dialog contract (mirrors ConfirmDialog): initial focus on Close,
-  // Escape closes, Tab focus is trapped, body scroll locks, and focus
-  // returns to the triggering button on close.
-  React.useEffect(() => {
-    if (!open) return
-    closeRef.current?.focus()
-    const prevOverflow = document.body.style.overflow
-    document.body.style.overflow = 'hidden'
-    const onKey = (e: globalThis.KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.preventDefault()
-        setOpen(false)
-        return
-      }
-      if (e.key !== 'Tab') return
-      const dialog = dialogRef.current
-      if (!dialog) return
-      const focusables = Array.from(
-        dialog.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR),
-      )
-      if (focusables.length === 0) return
-      const first = focusables[0]
-      const last = focusables[focusables.length - 1]
-      if (e.shiftKey && document.activeElement === first) {
-        e.preventDefault()
-        last.focus()
-      } else if (!e.shiftKey && document.activeElement === last) {
-        e.preventDefault()
-        first.focus()
-      }
-    }
-    window.addEventListener('keydown', onKey)
-    return () => {
-      window.removeEventListener('keydown', onKey)
-      document.body.style.overflow = prevOverflow
-      triggerRef.current?.focus?.()
-    }
-  }, [open ])
 
   const Chevron = open ? ChevronUp : ChevronDown
 
@@ -155,47 +110,11 @@ export function CompactDisclosure({
         {detailsLabel}
         <Chevron className="h-3 w-3" aria-hidden="true" />
       </Button>
-      {open && typeof document !== 'undefined'
-        ? createPortal(
-          <span
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
-            onClick={close}
-          >
-            <span
-              id={panelId}
-              ref={dialogRef}
-              role="dialog"
-              aria-modal="true"
-              aria-labelledby={titleId}
-              onClick={(e) => e.stopPropagation()}
-              className={cn(
-                'max-h-[calc(100vh-2rem)] w-full max-w-[560px] overflow-y-auto rounded-md border border-border bg-card p-4 shadow-tonal-high',
-                panelClassName,
-              )}
-            >
-              <span className="flex items-start justify-between gap-3">
-                <span id={titleId} className="text-base font-semibold text-foreground">
-                  {panelLabel}
-                </span>
-                <Button
-                  ref={closeRef}
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="h-7 shrink-0 gap-1 px-2 text-xs"
-                  aria-label="Close dialog"
-                  onClick={close}
-                >
-                  <X className="h-3.5 w-3.5" aria-hidden="true" />
-                  Close
-                </Button>
-              </span>
-              <span className="mt-3 block">{children}</span>
-            </span>
-          </span>,
-          document.body,
-        )
-        : null}
+      {open && (
+        <SupportingDetailsDialog id={panelId} title={panelLabel} onClose={close} className={cn('max-w-[560px]', panelClassName)}>
+          {children}
+        </SupportingDetailsDialog>
+      )}
     </span>
   )
 }
@@ -227,12 +146,14 @@ export interface DisclosureSection {
  */
 export function DisclosureSections({ sections }: { sections: DisclosureSection[] }) {
   return (
-    <span className="block space-y-4">
+    <div className="space-y-5">
       {sections.map((section) => (
-        <section key={section.heading} aria-label={section.heading}>
-          <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{section.heading}</h3>
+        <section key={section.heading} aria-label={section.heading} className="border-t border-border pt-4">
+          <h3 className="text-base font-semibold text-primary">{section.heading}</h3>
+          {section.note && <p className="mt-2 text-[13px] leading-5 text-muted-foreground">{section.note}</p>}
+          <div data-requirement-groups className={cn('mt-3 grid grid-cols-1 gap-4', (section.groups?.length ?? 0) > 1 && 'min-[1100px]:grid-cols-2')}>
           {(section.groups?.length ? section.groups : [{ heading: '', items: section.items }]).map((group) => (
-            <div key={group.heading} className="mt-2">
+            <div key={group.heading} className="min-w-0">
               {group.heading && <h4 className="text-[13px] font-medium text-foreground">{group.heading}</h4>}
               <ul className="mt-1.5 space-y-1">
             {group.items.map((item) => (
@@ -241,7 +162,7 @@ export function DisclosureSections({ sections }: { sections: DisclosureSection[]
                 className="flex items-start gap-2 text-[13px] leading-[19px] text-foreground"
               >
                 {item.tone === 'check' ? (
-                  <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-success" aria-hidden="true" />
+                  <span className="w-3.5 shrink-0 text-center text-primary" aria-hidden="true">•</span>
                 ) : item.tone === 'muted' ? (
                   <Minus className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
                 ) : null}
@@ -253,9 +174,9 @@ export function DisclosureSections({ sections }: { sections: DisclosureSection[]
               </ul>
             </div>
           ))}
-          {section.note && <p className="mt-2 text-xs leading-relaxed text-muted-foreground">{section.note}</p>}
+          </div>
         </section>
       ))}
-    </span>
+    </div>
   )
 }

@@ -68,13 +68,12 @@ import {
   ALL_ENABLED_CHECKS_PASSED,
   ENABLED_CHECKS_CAUTION,
   compactProfileSummary,
-  profileDetailSections,
   profileDisclosure,
 } from '../lib/audit/enabled-checks-wording'
 import {
   CompactDisclosure,
-  DisclosureSections,
 } from '../components/audit/compact-disclosure.tsx'
+import { ProfileRequirements } from '../components/audit/profile-requirements'
 import { isScoreAvailable } from '../lib/score-display'
 import {
   initialPanelSession,
@@ -1305,10 +1304,9 @@ export function AuditPage() {
                     detailsLabel="Profile details"
                     panelLabel="Profile details"
                     testId="profile-summary-disclosure"
+                    panelClassName="max-w-3xl"
                   >
-                    <DisclosureSections
-                      sections={profileDetailSections(audit.profile_snapshot)}
-                    />
+                    <ProfileRequirements snapshot={audit.profile_snapshot!} context="saved" />
                   </CompactDisclosure>
                 )}
                 <div className="ml-auto flex min-w-0 max-w-full flex-wrap items-center gap-2 max-[240px]:[&_button]:h-auto max-[240px]:[&_button]:max-w-full max-[240px]:[&_button]:flex-wrap max-[240px]:[&_button]:whitespace-normal">

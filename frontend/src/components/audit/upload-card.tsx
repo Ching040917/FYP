@@ -10,7 +10,6 @@
  */
 
 import * as React from 'react'
-import { createPortal } from 'react-dom'
 import { CheckCircle2, MinusCircle, ClipboardList } from 'lucide-react'
 import {
   Upload,
@@ -64,8 +63,9 @@ import {
 } from '../../lib/custom-profile-store/store.ts'
 import { loadEnvelope } from '../../lib/custom-profile-store/editor.ts'
 import { createBrowserStoreAdapter } from '../../lib/custom-profile-store/localstorage-adapter.ts'
-import { profileDetailSections, selectedProfileSummary } from '../../lib/audit/enabled-checks-wording'
-import { DisclosureSections } from './compact-disclosure'
+import { selectedProfileSummary } from '../../lib/audit/enabled-checks-wording'
+import { ProfileRequirements } from './profile-requirements'
+import { SupportingDetailsDialog } from './supporting-details-dialog'
 
 const MAX_SIZE_MB = 10
 const MAX_SIZE_BYTES = MAX_SIZE_MB * 1024 * 1024
@@ -809,9 +809,9 @@ export function UploadCard({ onResult, onReset, trySampleSignal = 0 }: UploadCar
                     >
                       Review full requirements
                     </Button>
-                    {showFullRequirements && <RequirementsDialog onClose={() => setShowFullRequirements(false)}>
+                    {showFullRequirements && <SupportingDetailsDialog title="Full profile requirements" onClose={() => setShowFullRequirements(false)}>
                       {opt.snapshot ? (
-                        <DisclosureSections sections={profileDetailSections(opt.snapshot)} />
+                        <ProfileRequirements snapshot={opt.snapshot} context="current" />
                       ) : (
                         <>
                           {opt.description && <p className="break-words">{opt.description}</p>}
@@ -820,7 +820,7 @@ export function UploadCard({ onResult, onReset, trySampleSignal = 0 }: UploadCar
                           </ul>
                         </>
                       )}
-                    </RequirementsDialog>}
+                    </SupportingDetailsDialog>}
                   </div>
                 )
               })()}
@@ -830,45 +830,5 @@ export function UploadCard({ onResult, onReset, trySampleSignal = 0 }: UploadCar
       </CardContent>
     </Card>
     </div>
-  )
-}
-
-function RequirementsDialog({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
-  const panelRef = React.useRef<HTMLDivElement>(null)
-  const closeRef = React.useRef<HTMLButtonElement>(null)
-  const titleId = React.useId()
-  React.useEffect(() => {
-    const trigger = document.activeElement as HTMLElement | null
-    const overflow = document.body.style.overflow
-    document.body.style.overflow = 'hidden'
-    closeRef.current?.focus()
-    return () => {
-      document.body.style.overflow = overflow
-      trigger?.focus()
-    }
-  }, [])
-  return createPortal(
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-3 sm:p-6" onClick={onClose}>
-      <div ref={panelRef} role="dialog" aria-modal="true" aria-labelledby={titleId}
-        className="flex max-h-[90dvh] w-full min-w-0 max-w-3xl flex-col overflow-hidden rounded-lg border border-border bg-card text-foreground shadow-xl"
-        onClick={(event) => event.stopPropagation()}
-        onKeyDown={(event) => {
-          if (event.key === 'Escape') { event.preventDefault(); onClose(); return }
-          if (event.key !== 'Tab') return
-          const controls = Array.from(panelRef.current?.querySelectorAll<HTMLElement>('button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])') ?? []).filter((element) => element.getClientRects().length > 0)
-          const first = controls[0]
-          const last = controls[controls.length - 1]
-          if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus() }
-          else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus() }
-        }}>
-        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-5 py-4">
-          <h2 id={titleId} className="text-base font-semibold">Full profile requirements</h2>
-          <Button ref={closeRef} type="button" variant="outline" size="sm" onClick={onClose}><X className="mr-1.5 h-4 w-4" aria-hidden="true" />Close</Button>
-        </div>
-        <div className="min-h-0 overflow-y-auto overscroll-contain break-words p-5 text-sm">{children}
-          <section className="mt-4 border-t border-border pt-3"><h3 className="font-semibold">Scope</h3><p className="mt-1 text-muted-foreground">Only enabled deterministic checks contribute to the score. Manual review requirements are unscored. Writing quality, factual accuracy and unsupported formatting requirements are not assessed.</p></section>
-        </div>
-      </div>
-    </div>, document.body,
   )
 }
