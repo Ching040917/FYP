@@ -88,6 +88,7 @@ function NavLink({
          only the visually-active link exposes aria-current="page"; the
          rest expose none at all (never a wrong token like "false"). */
       aria-current={active ? 'page' : undefined}
+      aria-label={label}
       className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
         active
           ? 'bg-primary/15 text-primary ring-1 ring-primary/30'

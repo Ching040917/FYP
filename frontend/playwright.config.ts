@@ -45,6 +45,7 @@ const backendEnv: Record<string, string> = {
   // recorded UNAVAILABLE and the audit still completes deterministically.
   OLLAMA_HOST: 'http://127.0.0.1:9',
   PREVIEW_STORAGE_DIR: path.join(runDir, 'previews'),
+  GUIDED_FIX_STORAGE_DIR: path.join(runDir, 'guided-fix-outputs'),
 }
 
 export default defineConfig({

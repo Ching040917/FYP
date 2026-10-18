@@ -446,13 +446,13 @@ def test_offline_api_persistence_history_evidence_pdf_and_scores(offline_api, mo
         assert "selected profile" in text
     _assert_plain_text(json.dumps(findings) + text)
     if count:
-        fix = client.post(
-            f"/api/audit/{audit_id}/guided-fixes",
+        review = client.post(
+            f"/api/audit/{audit_id}/guided-fixes/review",
             files={"file": ("doi.docx", data, "application/octet-stream")},
             data={"selection": json.dumps({"violation_ids": [findings[0]["id"]]})},
         )
-        assert fix.status_code == 422
-        assert "No selected Guided Fix" in fix.json()["detail"]
+        assert review.status_code == 422
+        assert review.json()["detail"] == "Fix cannot be applied safely. Manual correction required."
         assert client.get(f"/api/audit/{audit_id}").json()["violations"] == findings
 
 

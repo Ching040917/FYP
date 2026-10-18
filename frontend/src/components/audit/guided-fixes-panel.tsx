@@ -1,66 +1,46 @@
 /**
  * Guided Fixes (Beta) — workspace entry point and dialog flow.
  *
- * The entry trigger lives in the completed Audit Workspace action row (visible
- * at every supported desktop width). Every workflow stage after it is a
- * modal dialog, so selection, review, upload, applying, and success work
- * identically at 1366/1280/1024 widths. The workspace findings list is
- * untouched — evidence navigation keeps its normal behavior.
+ * The trigger lives in the completed Audit Workspace action row. Selection,
+ * original upload, server-confirmed review, apply/verification and explicit
+ * download share a responsive modal. Workspace evidence navigation is
+ * untouched while the dialog is closed.
  *
  * Selection lives in React state ONLY — never browser storage — and is
  * cleared whenever the audit id changes. Nothing here exposes run indexes,
  * raw rule codes as primary labels, or internal OOXML terminology. The
- * client sends violation IDs only; all targets come from persisted data.
+ * client sends violation IDs only; the server alone confirms exact targets.
  */
-import {
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type KeyboardEvent,
-  type ReactNode,
-} from 'react'
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
 import { AlertCircle, Check, Download, Loader2, Wand2, X } from 'lucide-react'
-import { api, downloadBlob } from '../../services/api'
+import { api, ApiRequestError, downloadBlob, type GuidedFixReview, type GuidedFixVerification } from '../../services/api'
 import { Button } from '../ui/button'
 import { Badge } from '../ui/badge'
 import { cn } from '../../lib/utils'
 import {
-  GF_INTRO,
-  GF_SECONDARY,
-  MAX_SELECTED,
-  WORKFLOW_STEPS,
-  correctedFilename,
-  deselectInView,
-  friendlyGuidedFixError,
-  guidedCountLine,
-  guidedLimitNotice,
-  guidedPresentationFor,
-  guidedReviewLabel,
-  selectAllInView,
-  workflowStepForStage,
+  GF_INTRO, GF_SECONDARY, MAX_SELECTED, WORKFLOW_STEPS, correctedFilename,
+  deselectInView, friendlyGuidedFixError, guidedCountLine, guidedLimitNotice,
+  guidedPresentationFor, guidedReviewLabel, selectAllInView, workflowStepForStage,
 } from '../../lib/guided-fixes'
 import { friendlyRuleTitle } from '../../lib/friendly-finding'
 import type { Violation } from '../../types/api'
 
 export type GuidedFixStage =
-  | 'idle'
-  | 'selecting'
-  | 'reviewing'
-  | 'ready_to_upload'
-  | 'applying'
-  | 'completed'
-  | 'error'
+  | 'idle' | 'selecting' | 'ready_to_upload' | 'checking'
+  | 'reviewing' | 'applying' | 'completed' | 'error'
 
 /** Presentation filter over the findings already classified by the helper. */
 export type GuidedFilter = 'all' | 'available' | 'manual'
 
 const FILTER_OPTIONS: Array<{ id: GuidedFilter; label: string }> = [
   { id: 'all', label: 'All findings' },
-  { id: 'available', label: 'Available for Guided Fix' },
+  { id: 'available', label: 'Candidates for safety review' },
   { id: 'manual', label: 'Manual correction required' },
 ]
+/** Page-session only: names we issued, not browser disk contents. */
+const downloadedNames = new Set<string>()
 
 /**
  * Removal-button label for a finding. Reads the shared friendly title map so
@@ -70,62 +50,71 @@ function reviewLabelFor(v: Violation): string {
   return friendlyRuleTitle(v.rule_code) ?? 'finding'
 }
 
-function formatValueForPanel(v: Violation): { current: string; proposed: string } {
-  const pres = guidedPresentationFor(v)
-  const current = pres.current
-  let proposed = pres.proposed
-  if (v.rule_code === 'FONT_SIZE') proposed = `${proposed} text`
-  if (v.rule_code === 'FONT_CONSISTENCY') proposed = `${proposed} font`
-  if (v.rule_code === 'SPACE_BEFORE') proposed = `${proposed} this paragraph`
-  if (v.rule_code === 'SPACE_AFTER') proposed = `${proposed} this paragraph`
-  return { current, proposed }
-}
 
-/** Modal shell: overlay, dialog semantics, Escape, initial focus, restore. */
+/** Modal shell follows the shared confirmation's focus, Escape and scroll-lock behavior. */
 function GuidedDialog({
-  label,
-  onDismiss,
-  dismissible = true,
-  children,
+  label, onDismiss, dismissible = true, children,
 }: {
   label: string
   onDismiss: () => void
-  /** false while applying — Escape must not abandon an in-flight request. */
   dismissible?: boolean
   children: ReactNode
 }) {
   const panelRef = useRef<HTMLDivElement>(null)
-
+  const returnFocus = useRef<HTMLElement | null>(null)
   useEffect(() => {
+    returnFocus.current = document.activeElement as HTMLElement | null
+    const oldOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
     const frame = requestAnimationFrame(() => {
-      panelRef.current?.querySelector<HTMLElement>('[data-dialog-initial-focus]')?.focus()
+      const initial = panelRef.current?.querySelector<HTMLElement>('[data-dialog-initial-focus]')
+      ;(initial ?? panelRef.current)?.focus()
     })
-    return () => cancelAnimationFrame(frame)
-  }, [])
-
-  const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
-    if (e.key === 'Escape' && dismissible) {
-      e.stopPropagation()
-      onDismiss()
+    return () => {
+      cancelAnimationFrame(frame)
+      document.body.style.overflow = oldOverflow
+      if (returnFocus.current?.isConnected) returnFocus.current.focus()
     }
-  }
-
-  return (
-    <div
-      role="presentation"
-      onKeyDown={onKeyDown}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
-    >
-      <div
-        ref={panelRef}
-        role="dialog"
-        aria-modal="true"
-        aria-label={label}
-        className="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-md border border-border bg-card"
-      >
+  }, [])
+  useEffect(() => {
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (e.key === 'Escape' && dismissible) {
+        e.preventDefault()
+        onDismiss()
+      }
+      if (e.key !== 'Tab') return
+      const panel = panelRef.current
+      if (!panel) return
+      const nodes = Array.from(panel.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      )).filter((node) => node.getClientRects().length > 0)
+      if (!nodes.length) {
+        e.preventDefault()
+        panel.focus()
+        return
+      }
+      const first = nodes[0]
+      const last = nodes[nodes.length - 1]
+      if (e.shiftKey && (document.activeElement === first || !panel.contains(document.activeElement))) {
+        e.preventDefault()
+        last.focus()
+      } else if (!e.shiftKey && (document.activeElement === last || !panel.contains(document.activeElement))) {
+        e.preventDefault()
+        first.focus()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [dismissible, onDismiss])
+  return createPortal(
+    <div role="presentation" className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-2 sm:p-4"
+      onMouseDown={(e) => { if (dismissible && e.target === e.currentTarget) onDismiss() }}>
+      <div ref={panelRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label={label}
+        className="flex max-h-[90dvh] w-full min-w-0 max-w-2xl flex-col overflow-hidden rounded-md border border-border bg-card shadow-xl">
         {children}
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
 
@@ -150,10 +139,14 @@ export function GuidedFixesPanel({
   const [limitNotice, setLimitNotice] = useState<string | null>(null)
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
-  const [applied, setApplied] = useState(0)
-  const [skipped, setSkipped] = useState(0)
-  const [resultBlob, setResultBlob] = useState<Blob | null>(null)
-  const [resultFilename, setResultFilename] = useState(correctedFilename(null))
+  const [errorHeading, setErrorHeading] = useState('Fix not applied')
+  const [review, setReview] = useState<GuidedFixReview | null>(null)
+  const reviewRef = useRef<{ auditId: string; id: string } | null>(null)
+  const [verification, setVerification] = useState<GuidedFixVerification | null>(null)
+  const [downloading, setDownloading] = useState(false)
+  const [downloaded, setDownloaded] = useState(false)
+  const [downloadFilename, setDownloadFilename] = useState<string | null>(null)
+  const requestSerial = useRef(0)
   const [announcement, setAnnouncement] = useState<string | null>(null)
   // The dialog is mounted for every non-idle stage; report that to the
   // workspace so focus-mode entry can be blocked while it is open.
@@ -161,9 +154,7 @@ export function GuidedFixesPanel({
   useEffect(() => {
     onOpenChange?.(guidedOpen)
   }, [guidedOpen, onOpenChange])
-  const [backToStage, setBackToStage] = useState<GuidedFixStage>('selecting')
-
-  // Clear selection + upload + transient state when the audit changes.
+  // Audit switches/unmounts invalidate in-flight UI work and revoke unused reviews.
   useEffect(() => {
     setStage('idle')
     setSelectedIds([])
@@ -171,11 +162,18 @@ export function GuidedFixesPanel({
     setLimitNotice(null)
     setSelectedFile(null)
     setErrorMessage(null)
-    setApplied(0)
-    setSkipped(0)
-    setResultBlob(null)
-    setResultFilename(correctedFilename(null))
-    setBackToStage('selecting')
+    setReview(null)
+    setVerification(null)
+    setDownloaded(false)
+    setDownloadFilename(null)
+    return () => {
+      requestSerial.current++
+      if (reviewRef.current) {
+        const { auditId: oldAudit, id } = reviewRef.current
+        reviewRef.current = null
+        void api.cancelGuidedFixReview(oldAudit, id).catch(() => undefined)
+      }
+    }
   }, [auditId])
 
   /** Presentation classification per finding, computed once per audit. */
@@ -244,8 +242,7 @@ export function GuidedFixesPanel({
 
   const openReview = () => {
     if (selectedIds.length === 0) return
-    setBackToStage('selecting')
-    setStage('reviewing')
+    setStage('ready_to_upload')
   }
 
   const clearSelection = () => {
@@ -254,52 +251,109 @@ export function GuidedFixesPanel({
     announce('All Guided Fixes selections cleared.')
   }
 
+  const revokeReview = () => {
+    if (!reviewRef.current) return
+    const { auditId: oldAudit, id } = reviewRef.current
+    reviewRef.current = null
+    setReview(null)
+    void api.cancelGuidedFixReview(oldAudit, id).catch(() => undefined)
+  }
+
   const closeToIdle = () => {
+    revokeReview()
+    setReview(null)
     setStage('idle')
     setSelectedIds([])
     setLimitNotice(null)
     setSelectedFile(null)
     setErrorMessage(null)
-    // Return focus to the trigger that opened the flow.
+    setVerification(null)
     requestAnimationFrame(() => triggerRef.current?.focus())
   }
 
   const handleFile = (file: File | null) => {
+    revokeReview()
     setSelectedFile(file)
     if (file) announce(`Selected ${file.name}. Upload the original DOCX used for this audit.`)
   }
 
-  const applyFixes = async () => {
-    if (!selectedFile) return
-    setStage('applying')
-    announce('Creating your corrected copy…')
+  const reviewFixes = async () => {
+    if (!selectedFile || selectedIds.length === 0) return
+    const serial = ++requestSerial.current
+    setStage('checking')
+    setErrorMessage(null)
     try {
-      const { blob, filename, summary } = await api.applyGuidedFixes(
-        auditId,
-        selectedFile,
-        selectedIds,
-      )
-      setApplied(summary?.applied ?? 1)
-      setSkipped(summary?.skipped ?? 0)
-      setResultBlob(blob)
-      setResultFilename(correctedFilename(filename))
-      setStage('completed')
-      announce('Corrected copy created.')
+      const result = await api.reviewGuidedFixes(auditId, selectedFile, selectedIds)
+      if (serial !== requestSerial.current) {
+        void api.cancelGuidedFixReview(auditId, result.review_id).catch(() => undefined)
+        return
+      }
+      const returned = result.items.map((item) => item.violation_id)
+      if (!result.review_id || returned.length !== selectedIds.length ||
+          new Set(returned).size !== returned.length ||
+          selectedIds.some((id) => !returned.includes(id))) {
+        if (result.review_id) void api.cancelGuidedFixReview(auditId, result.review_id).catch(() => undefined)
+        throw new Error('Incomplete safety review')
+      }
+      reviewRef.current = { auditId, id: result.review_id }
+      setReview(result)
+      setStage('reviewing')
+      announce('Safety review passed. Inspect every confirmed location before applying.')
     } catch (err: unknown) {
-      // Keep the selection and the chosen file — a recoverable upload error
-      // must never discard the user's work.
-      const message = err instanceof Error ? err.message : undefined
-      setErrorMessage(friendlyGuidedFixError(message))
-      setBackToStage('ready_to_upload')
+      if (serial !== requestSerial.current) return
+      setErrorHeading('Fix not applied')
+      setErrorMessage(friendlyGuidedFixError(err instanceof Error ? err.message : undefined))
       setStage('error')
-      announce(`Guided Fixes failed. ${friendlyGuidedFixError(message)}`)
     }
   }
 
-  const downloadResult = () => {
-    if (!resultBlob) return
-    downloadBlob(resultBlob, resultFilename)
-    announce('Downloading the corrected document.')
+  const applyFixes = async () => {
+    if (!selectedFile || !review || reviewRef.current?.id !== review.review_id) return
+    const serial = ++requestSerial.current
+    setStage('applying')
+    try {
+      const result = await api.applyGuidedFixes(auditId, selectedFile, selectedIds, review.review_id)
+      reviewRef.current = null // consumed by apply; never revoke a used token
+      if (serial !== requestSerial.current) return
+      if (result.resolved.length !== selectedIds.length ||
+          selectedIds.some((id) => !result.resolved.includes(id)) ||
+          result.new_findings.length !== 0) throw new Error('Verification did not pass')
+      setVerification(result)
+      setDownloaded(false)
+      setDownloadFilename(null)
+      setStage('completed')
+      announce('Fix applied; re-audit passed. Download is now available.')
+    } catch (err: unknown) {
+      if (serial !== requestSerial.current) return
+      revokeReview()
+      setVerification(null)
+      const verificationFailed = err instanceof ApiRequestError && err.status === 422 &&
+        /re.audit|verification|preserv|regression|score|output/i.test(err.message)
+      setErrorHeading(verificationFailed ? 'Fix applied; verification failed' : 'Fix not applied')
+      setErrorMessage(verificationFailed
+        ? 'The attempted change did not pass verification. The output was discarded; no corrected document is available.'
+        : friendlyGuidedFixError(err instanceof Error ? err.message : undefined))
+      setStage('error')
+    }
+  }
+
+  const downloadResult = async () => {
+    if (!verification || downloading || downloaded) return
+    setDownloading(true)
+    try {
+      const blob = await api.downloadGuidedFix(auditId, verification.download_token)
+      const name = correctedFilename(verification.output_filename, downloadedNames)
+      downloadBlob(blob, name)
+      downloadedNames.add(name)
+      setDownloadFilename(name)
+      setDownloaded(true)
+      announce(`Downloading ${name}.`)
+    } catch (err) {
+      if (err instanceof ApiRequestError && (err.status === 410 || err.status === 404)) setDownloaded(true)
+      setErrorMessage('The verified download is unavailable or expired. Your original document was not changed.')
+    } finally {
+      setDownloading(false)
+    }
   }
 
   const step = workflowStepForStage(stage)
@@ -323,12 +377,13 @@ export function GuidedFixesPanel({
       variant="outline"
       size="sm"
       onClick={() => {
+        revokeReview()
         setSelectedIds([])
         setFilter('available')
         setLimitNotice(null)
         setSelectedFile(null)
         setErrorMessage(null)
-        setBackToStage('selecting')
+        setVerification(null)
         setStage('selecting')
       }}
     >
@@ -374,7 +429,7 @@ export function GuidedFixesPanel({
     return (
       <>
         {trigger}
-        <GuidedDialog label="Guided Fixes Beta — select supported findings" onDismiss={closeToIdle}>
+        <GuidedDialog label="Guided Fixes Beta — select candidate findings" onDismiss={closeToIdle}>
           <div className="flex shrink-0 items-start justify-between gap-3 border-b border-border px-5 py-3">
             <div className="min-w-0">
               <div className="flex items-center gap-2">
@@ -435,10 +490,8 @@ export function GuidedFixesPanel({
               onClick={allViewSelected ? clearAvailableSelection : selectAllAvailable}
             >
               {allViewSelected
-                ? 'Clear available selection'
-                : filter === 'all'
-                  ? 'Select all available'
-                  : 'Select all available in this view'}
+                ? 'Clear candidate selection'
+                : 'Select all candidates in this view'}
             </Button>
           </div>
 
@@ -478,8 +531,8 @@ export function GuidedFixesPanel({
                             <p className="mt-1 text-[13px] leading-[19px] text-muted-foreground">
                               Current: {pres.current} · Proposed: {pres.proposed}
                             </p>
-                            <p className="mt-0.5 text-[11px] leading-[16px] text-success">
-                              Available for Guided Fix
+                            <p className="mt-0.5 text-[11px] leading-[16px] text-muted-foreground">
+                              Candidate only — safety review required
                             </p>
                           </>
                         ) : (
@@ -523,79 +576,57 @@ export function GuidedFixesPanel({
     )
   }
 
-  // ------------------------------------------------------------------
-  // Reviewing
-  // ------------------------------------------------------------------
-  if (stage === 'reviewing') {
+  // Review is shown ONLY after the server validates the uploaded source and
+  // confirms complete targets for every selected finding.
+  if (stage === 'reviewing' && review) {
+    const cancelReview = () => {
+      revokeReview()
+      setStage('ready_to_upload')
+    }
     return (
       <>
         {trigger}
-        <GuidedDialog
-          label="Guided Fixes Beta — review selected changes"
-          onDismiss={() => setStage('selecting')}
-        >
+        <GuidedDialog label="Guided Fixes — review confirmed changes" onDismiss={cancelReview}>
           <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-5 py-3">
             <div className="min-w-0">
-              <h2 className="text-base font-semibold text-foreground">Review selected changes</h2>
+              <h2 className="text-base font-semibold text-foreground">Review confirmed changes</h2>
               {workflow}
             </div>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => setStage('selecting')}
-              aria-label="Close review panel"
-              data-dialog-initial-focus
-            >
+            <Button variant="ghost" size="icon" onClick={cancelReview}
+              aria-label="Cancel safety review" data-dialog-initial-focus>
               <X className="h-4 w-4" aria-hidden="true" />
             </Button>
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto px-5 py-3 scrollbar-thin">
-            <p className="text-sm text-muted-foreground" role="status">
-              Selected changes: {selected.length}
-            </p>
-            <p className="mt-2 text-[13px] leading-[19px] text-muted-foreground">
-              These changes are proposed from your audit findings. Nothing has been changed yet.
+            <p className="text-sm text-foreground" role="status">
+              Safety review passed for {review.items.length} selected {review.items.length === 1 ? 'finding' : 'findings'}. Nothing has been changed yet.
             </p>
             <ul className="mt-3 space-y-2">
-              {selected.map((v) => {
-                const { current, proposed } = formatValueForPanel(v)
-                const label = locationLabels?.get(v.id) ?? guidedPresentationFor(v).friendlyLocation
+              {review.items.map((item) => {
+                const finding = selected.find((v) => v.id === item.violation_id)
                 return (
-                  <li key={v.id} className="rounded-md border border-border bg-input/20 px-3 py-2">
-                    <div className="flex items-start justify-between gap-2">
-                      <span className="text-sm font-medium text-foreground">
-                        {reviewLabelFor(v)}
-                      </span>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-7 px-2 text-xs text-muted-foreground"
-                        onClick={() => setSelectedIds((cur) => cur.filter((x) => x !== v.id))}
-                        aria-label={`Remove ${reviewLabelFor(v)} from selection`}
-                      >
-                        Remove from selection
-                      </Button>
-                    </div>
-                    {label && <p className="mt-1 text-[11px] text-muted-foreground">{label}</p>}
+                  <li key={item.violation_id} className="rounded-md border border-border bg-input/20 px-3 py-2">
+                    <p className="text-sm font-medium text-foreground">{finding ? reviewLabelFor(finding) : 'Formatting change'}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">Property changed: {item.property}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">Before: {item.before} · After: {item.after}</p>
                     <p className="mt-1 text-xs text-muted-foreground">
-                      Current: {current} · Proposed: {proposed}
+                      {item.affected_count} affected {item.affected_count === 1 ? 'location' : 'locations'}: {item.locations.join(', ')}
                     </p>
                   </li>
                 )
               })}
             </ul>
+            <div className="mt-3 space-y-1 text-[13px] leading-[19px] text-muted-foreground">
+              <p>Scope: Only the confirmed formatting property at the listed locations will change. Text, other formatting, document parts and your original file are preserved.</p>
+              <p>Layout risk: Font and paragraph formatting can reflow pages. ACA checks preservation and re-audits the corrected copy before permitting download.</p>
+              {review.limitations.map((limitation) => <p key={limitation}>{limitation}</p>)}
+              <p>Proposed filename: <span className="break-all font-medium text-foreground">{correctedFilename(review.output_filename, downloadedNames)}</span></p>
+              <p>Review expires at {new Date(review.expires_at).toLocaleString()}.</p>
+            </div>
           </div>
           <div className="flex shrink-0 flex-wrap justify-end gap-2 border-t border-border px-5 py-3">
-            <Button variant="ghost" onClick={() => setStage('selecting')}>
-              Back to findings
-            </Button>
-            <Button onClick={() => {
-              setErrorMessage(null)
-              setBackToStage('reviewing')
-              setStage('ready_to_upload')
-            }}>
-              Continue to upload original DOCX
-            </Button>
+            <Button variant="ghost" onClick={cancelReview}>Cancel review</Button>
+            <Button onClick={() => void applyFixes()}>Apply and verify changes</Button>
           </div>
         </GuidedDialog>
       </>
@@ -637,12 +668,9 @@ export function GuidedFixesPanel({
               Accepted format: .docx · Maximum size: 10 MB
             </p>
             {stage === 'error' && errorMessage && (
-              <div
-                role="alert"
-                className="mt-3 flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2"
-              >
+              <div role="alert" className="mt-3 flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2">
                 <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" aria-hidden="true" />
-                <p className="text-[13px] leading-[19px] text-destructive">{errorMessage}</p>
+                <p className="text-[13px] leading-[19px] text-destructive"><strong>{errorHeading}.</strong> {errorMessage}</p>
               </div>
             )}
             <label htmlFor="guided-fixes-file-input" className="mt-4 block text-sm font-medium text-foreground">
@@ -657,16 +685,14 @@ export function GuidedFixesPanel({
             />
             {selectedFile && (
               <p className="mt-2 text-[13px] text-muted-foreground" role="status">
-                Selected file: {selectedFile.name} — you can replace it before creating the copy.
+                Selected file: {selectedFile.name} — you can replace it before safety review.
               </p>
             )}
           </div>
           <div className="flex shrink-0 flex-wrap justify-end gap-2 border-t border-border px-5 py-3">
-            <Button variant="ghost" onClick={() => setStage(backToStage === 'reviewing' ? 'reviewing' : 'selecting')}>
-              Back to findings
-            </Button>
-            <Button onClick={() => void applyFixes()} disabled={!selectedFile}>
-              Create corrected copy
+            <Button variant="ghost" onClick={() => setStage('selecting')}>Back to findings</Button>
+            <Button onClick={() => void reviewFixes()} disabled={!selectedFile}>
+              Review safety and locations
             </Button>
           </div>
         </GuidedDialog>
@@ -675,18 +701,24 @@ export function GuidedFixesPanel({
   }
 
   // ------------------------------------------------------------------
-  // Applying
+  // Server safety review and verification are separate non-dismissible steps.
   // ------------------------------------------------------------------
-  if (stage === 'applying') {
+  if (stage === 'checking' || stage === 'applying') {
+    const checking = stage === 'checking'
     return (
       <>
         {trigger}
-        <GuidedDialog label="Creating your corrected copy" onDismiss={() => undefined} dismissible={false}>
+        <GuidedDialog label={checking ? 'Checking safety and locations' : 'Applying and verifying'}
+          onDismiss={() => undefined} dismissible={false}>
           <div className="p-5 text-center">
             <Loader2 className="mx-auto h-6 w-6 animate-spin text-primary" aria-hidden="true" />
-            <h2 className="mt-3 text-base font-semibold text-foreground">Creating your corrected copy…</h2>
+            <h2 className="mt-3 text-base font-semibold text-foreground">
+              {checking ? 'Checking safety and locations…' : 'Applying changes and re-auditing…'}
+            </h2>
             <p className="mt-1 text-[13px] leading-[19px] text-muted-foreground" role="status">
-              ACA is verifying the document and applying your selected changes. This can take a moment.
+              {checking
+                ? 'ACA is checking the original document and every selected target. No change has been made.'
+                : 'ACA is checking the corrected copy against the original and re-auditing it. A failed check prevents download.'}
             </p>
             {workflow}
           </div>
@@ -695,45 +727,63 @@ export function GuidedFixesPanel({
     )
   }
 
-  // ------------------------------------------------------------------
-  // Completed
-  // ------------------------------------------------------------------
+  // Only a passed backend verification issues a token. No copy exists in the
+  // browser until the user explicitly requests the one-use download.
   return (
     <>
       {trigger}
-      <GuidedDialog label="Corrected copy created" onDismiss={closeToIdle}>
+      <GuidedDialog label="Fix applied; re-audit passed" onDismiss={closeToIdle}>
         <div className="min-h-0 flex-1 overflow-y-auto p-5">
           <div className="flex items-center gap-2">
             <Check className="h-5 w-5 text-success" aria-hidden="true" />
-            <h2 className="text-base font-semibold text-foreground">Corrected copy created</h2>
+            <h2 className="text-base font-semibold text-foreground">Fix applied; re-audit passed</h2>
           </div>
           <p className="mt-2 text-sm text-foreground">
-            Applied: {applied} · Skipped: {skipped}
+            {verification?.resolved.length ?? 0} selected {verification?.resolved.length === 1 ? 'finding' : 'findings'} resolved · No new findings.
           </p>
-          {skipped > 0 && (
-            <p className="mt-2 text-[13px] leading-[19px] text-muted-foreground">
-              Some selected findings were not changed. Unsupported or unverifiable formatting may
-              require manual correction.
-            </p>
-          )}
+          <p className="mt-1 text-[13px] text-muted-foreground">
+            Score: {verification?.before_score} → {verification?.after_score}.
+          </p>
+          <div className="mt-2 grid gap-3 text-[13px] text-muted-foreground sm:grid-cols-2">
+            {([
+              ['Before', verification?.before_findings ?? []],
+              ['After', verification?.after_findings ?? []],
+            ] as const).map(([label, findings]) => (
+              <div key={label} className="min-w-0 rounded-md border border-border p-3">
+                <p className="font-medium text-foreground">{label} re-audit findings</p>
+                {findings.length === 0
+                  ? <p className="mt-1">None</p>
+                  : <ul className="mt-1 space-y-1">
+                    {findings.map((finding, index) => (
+                      <li key={`${finding.rule_code}-${index}`}>
+                        {friendlyRuleTitle(finding.rule_code) ?? 'Finding'}: {finding.count}
+                        {finding.locations.length > 0 && ` · ${finding.locations.join(', ')}`}
+                      </li>
+                    ))}
+                  </ul>}
+              </div>
+            ))}
+          </div>
           <p className="mt-2 text-[13px] leading-[19px] text-muted-foreground">
-            Your original document was not changed. Review the corrected copy before submission.
+            Your original document and its History entry are unchanged. This verified result is session-only;
+            uploading the corrected copy from the Dashboard creates a separate, independent audit ID.
           </p>
           <p className="mt-1 text-[13px] leading-[19px] text-muted-foreground">
-            To verify the result, upload the corrected copy as a new audit from the Dashboard.
+            Review the corrected document in Word before submission. Download expires at {verification && new Date(verification.expires_at).toLocaleString()}.
           </p>
+          <p className="mt-1 break-all text-[13px] text-muted-foreground">
+            Filename: {downloadFilename ?? correctedFilename(verification?.output_filename, downloadedNames)}
+          </p>
+          {errorMessage && <p role="alert" className="mt-2 text-[13px] text-destructive">{errorMessage}</p>}
+          {downloaded && !errorMessage && <p role="status" className="mt-2 text-[13px] text-success">Downloaded. The one-use link has expired.</p>}
           {workflow}
         </div>
         <div className="flex shrink-0 flex-wrap justify-end gap-2 border-t border-border px-5 py-3">
-          <Button variant="ghost" onClick={closeToIdle} data-dialog-initial-focus>
-            Close
-          </Button>
-          <Button variant="outline" onClick={() => navigate('/dashboard')}>
-            Audit corrected copy
-          </Button>
-          <Button onClick={downloadResult}>
+          <Button variant="ghost" onClick={closeToIdle} data-dialog-initial-focus>Close</Button>
+          <Button variant="outline" onClick={() => navigate('/dashboard')}>Audit corrected copy</Button>
+          <Button onClick={() => void downloadResult()} disabled={!verification || downloading || downloaded}>
             <Download className="h-4 w-4" aria-hidden="true" />
-            Download corrected document
+            {downloading ? 'Downloading…' : 'Download corrected document'}
           </Button>
         </div>
       </GuidedDialog>

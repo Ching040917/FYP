@@ -8,6 +8,7 @@ from app.api import routes
 from app.database import init_db
 from app.config import settings
 from app.services.audit_recovery import reconcile_stale_audits
+from app.services.guided_fix_storage import cleanup as cleanup_guided_outputs
 
 # Root logging config so module-level loggers (app.api.routes, app.services.ai_citation)
 # emit tracebacks and info lines to the server terminal.
@@ -53,6 +54,7 @@ async def startup():
     # 2. Initialize the database schema (create_all only — Alembic migrations
     #    are applied manually by existing installations).
     init_db()
+    cleanup_guided_outputs()
     # 3. Run startup reconciliation for abandoned `processing` rows from an
     #    earlier process. Enabled by default for the supported local
     #    single-process deployment; the settings flag can disable it.

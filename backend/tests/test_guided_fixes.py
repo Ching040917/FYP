@@ -25,8 +25,7 @@ from app.services import guided_fix
 from app.services.guided_fix import (
     LEGACY_DETAIL,
     MISMATCH_DETAIL,
-    VERIFY_FAIL_DETAIL,
-    ZERO_DETAIL,
+    GuidedFixFailed,
     apply_guided_fixes,
     build_corrected_filename,
 )
@@ -64,15 +63,18 @@ def _rule_ids(resp, rule_code):
 
 
 def _fix_post(client, audit_id, file_bytes, violation_ids, filename="audit.docx"):
-    return client.post(
-        f"/api/audit/{audit_id}/guided-fixes",
-        data={"selection": json.dumps({"violation_ids": violation_ids})},
-        files={"file": (filename, file_bytes, DOCX_MIME)},
-    )
-
-
-def _summary(resp):
-    return json.loads(urllib.parse.unquote(resp.headers["X-Repair-Summary"]))
+    """Exercise the public mandatory Review → Apply → Download flow."""
+    path = f"/api/audit/{audit_id}/guided-fixes"
+    fields = {"selection": json.dumps({"violation_ids": violation_ids})}
+    review = client.post(path + "/review", data=fields, files={"file": (filename, file_bytes, DOCX_MIME)})
+    if review.status_code != 200:
+        return review
+    applied = client.post(path, data={**fields, "review_id": review.json()["review_id"]},
+                          files={"file": (filename, file_bytes, DOCX_MIME)})
+    if applied.status_code != 200:
+        return applied
+    assert applied.json()["status"] == "passed"
+    return client.get(path + "/download/" + applied.json()["download_token"])
 
 
 def _make_docx(text="Body paragraph.", size=11.0, family="Calibri"):
@@ -135,8 +137,7 @@ class TestIdentity:
         r = _fix_post(client, audit_id, file_bytes, [ids[0]])
         assert r.status_code == 200, r.text
         assert r.headers["content-type"].startswith(DOCX_MIME)
-        assert _summary(r)["applied"] == 1
-        assert "ACA_corrected.docx" in r.headers["content-disposition"]
+        assert "ACA-fixed.docx" in r.headers["content-disposition"]
         d = Document(io.BytesIO(r.content))
         assert d.paragraphs[0].runs[0].font.size.pt == 12.0
 
@@ -195,7 +196,7 @@ class TestRequestSecurity:
         audit_id = resp.json()["audit_id"]
         payload = {"violation_ids": [str(uuid.uuid4())], "run_indexes": [0]}
         r = client.post(
-            f"/api/audit/{audit_id}/guided-fixes",
+            f"/api/audit/{audit_id}/guided-fixes/review",
             data={"selection": json.dumps(payload)},
             files={"file": ("audit.docx", file_bytes, DOCX_MIME)},
         )
@@ -214,27 +215,23 @@ class TestRequestSecurity:
         assert r.status_code == 422
         assert r.json()["detail"] == "A selected finding does not belong to this audit."
 
-    def test_duplicates_applied_once(self, client, docx_factory):
+    def test_duplicate_selection_rejected(self, client, docx_factory):
         file_bytes = docx_factory(paragraphs=["Body paragraph."], body_size=11)
         resp = _post_audit_bytes(client, file_bytes)
-        audit_id = resp.json()["audit_id"]
         ids = _rule_ids(resp, "FONT_SIZE")
-        assert ids
-        r = _fix_post(client, audit_id, file_bytes, [ids[0], ids[0], ids[0]])
-        assert r.status_code == 200
-        assert _summary(r)["applied"] == 1
+        r = _fix_post(client, resp.json()["audit_id"], file_bytes, [ids[0], ids[0]])
+        assert r.status_code == 422
 
-    def test_empty_selection_400(self, client, docx_factory):
+    def test_empty_selection_422(self, client, docx_factory):
         file_bytes = docx_factory(paragraphs=["Body paragraph."])
         resp = _post_audit_bytes(client, file_bytes)
         audit_id = resp.json()["audit_id"]
         r = client.post(
-            f"/api/audit/{audit_id}/guided-fixes",
+            f"/api/audit/{audit_id}/guided-fixes/review",
             data={"selection": json.dumps({"violation_ids": []})},
             files={"file": ("audit.docx", file_bytes, DOCX_MIME)},
         )
-        assert r.status_code == 400
-        assert r.json()["detail"] == "Select at least one supported finding."
+        assert r.status_code == 422
 
     def test_21_ids_422(self, client, docx_factory):
         file_bytes = docx_factory(paragraphs=["Body paragraph."])
@@ -242,7 +239,7 @@ class TestRequestSecurity:
         audit_id = resp.json()["audit_id"]
         ids = [str(uuid.uuid4()) for _ in range(21)]
         r = client.post(
-            f"/api/audit/{audit_id}/guided-fixes",
+            f"/api/audit/{audit_id}/guided-fixes/review",
             data={"selection": json.dumps({"violation_ids": ids})},
             files={"file": ("audit.docx", file_bytes, DOCX_MIME)},
         )
@@ -253,7 +250,7 @@ class TestRequestSecurity:
         resp = _post_audit_bytes(client, file_bytes)
         audit_id = resp.json()["audit_id"]
         r = client.post(
-            f"/api/audit/{audit_id}/guided-fixes",
+            f"/api/audit/{audit_id}/guided-fixes/review",
             data={"selection": json.dumps({"violation_ids": ["x"]})},
             files={"file": ("garbage.docx", b"not a zip at all", DOCX_MIME)},
         )
@@ -266,7 +263,7 @@ class TestRequestSecurity:
         # tiny cap).
         audit_id = str(uuid.uuid4())
         r = client_with_small_cap.post(
-            f"/api/audit/{audit_id}/guided-fixes",
+            f"/api/audit/{audit_id}/guided-fixes/review",
             data={"selection": json.dumps({"violation_ids": ["x"]})},
             files={"file": ("big.docx", b"x" * 2048, DOCX_MIME)},
         )
@@ -280,11 +277,7 @@ class TestRequestSecurity:
         audit_id = resp.json()["audit_id"]
         ids = _rule_ids(resp, "FONT_SIZE")
         assert ids
-        r = client.post(
-            f"/api/audit/{audit_id}/guided-fixes",
-            data={"selection": json.dumps({"violation_ids": [ids[0]]})},
-            files={"file": (hostile, file_bytes, DOCX_MIME)},
-        )
+        r = _fix_post(client, audit_id, file_bytes, [ids[0]], filename=hostile)
         assert r.status_code == 200, r.text
         cd = r.headers["content-disposition"]
         assert "\r" not in cd and "\n" not in cd
@@ -312,7 +305,6 @@ class TestSupportedFixes:
         assert r.status_code == 200, r.text
         d = Document(io.BytesIO(r.content))
         assert abs(d.paragraphs[0].runs[0].font.size.pt - 12.0) < 0.01
-        assert _summary(r)["applied"] == 1
 
     def test_font_consistency_fix(self, client, docx_factory):
         file_bytes = docx_factory(paragraphs=["Body paragraph."], font_name="Calibri")
@@ -446,9 +438,7 @@ class TestSupportedFixes:
         assert d2.paragraphs[0].runs[1].font.size.pt == 12.0
 
     def test_ambiguous_family_never_guessed(self, client, docx_factory):
-        # APA profile: allowed combos span several families → the combo
-        # expected value resolves to None → expected_unresolved, never a
-        # guessed font, zero applied → 422 ZERO_DETAIL.
+        # Allowed combinations span several families: no family may be guessed.
         doc = Document()
         p = doc.add_paragraph("Body paragraph.")
         run = p.runs[0]
@@ -467,7 +457,7 @@ class TestSupportedFixes:
         assert ids, resp.json()["physical_layout_errors"]
         r = _fix_post(client, audit_id, file_bytes, [ids[0]])
         assert r.status_code == 422
-        assert r.json()["detail"] == ZERO_DETAIL
+        assert r.json()["detail"] == "Fix cannot be applied safely. Manual correction required."
 
 
 # ---------------------------------------------------------------------------
@@ -483,9 +473,8 @@ class TestSafety:
             location={"paragraph_index": 0, "run_index": 0}, message="m",
             expected_value="12pt", actual_value="9pt",
         )
-        out, applied, skipped = apply_guided_fixes(audit, _make_docx(size=11.0), [v])
-        assert applied == []
-        assert skipped[0][1] == "document_changed"
+        with pytest.raises(GuidedFixFailed):
+            apply_guided_fixes(audit, _make_docx(size=11.0), [v])
 
     def test_hyperlink_unsafe_structure(self):
         doc = Document()
@@ -516,9 +505,8 @@ class TestSafety:
             location={"paragraph_index": 0}, message="m",
             expected_value="justify", actual_value="left",
         )
-        out, applied, skipped = apply_guided_fixes(audit, data, [v])
-        assert applied == []
-        assert skipped[0][1] == "unsafe_structure"
+        with pytest.raises(GuidedFixFailed):
+            apply_guided_fixes(audit, data, [v])
 
     def test_unsupported_rule_skip(self):
         audit = AuditRecord(id="gf-unit", filename="gf.docx", file_size=1, status="completed")
@@ -528,9 +516,8 @@ class TestSafety:
             location={"paragraph_index": 0}, message="m",
             expected_value="1in", actual_value="0.5in",
         )
-        out, applied, skipped = apply_guided_fixes(audit, _make_docx(), [v])
-        assert applied == []
-        assert skipped[0][1] == "unsupported_rule"
+        with pytest.raises(GuidedFixFailed):
+            apply_guided_fixes(audit, _make_docx(), [v])
 
     def test_fixer_failure_422_verify(self, client, docx_factory, monkeypatch):
         file_bytes = docx_factory(paragraphs=["Body paragraph."], alignment=WD_ALIGN_PARAGRAPH.LEFT)
@@ -545,7 +532,7 @@ class TestSafety:
         monkeypatch.setattr(guided_fix, "_fix_alignment", boom)
         r = _fix_post(client, audit_id, file_bytes, [ids[0]])
         assert r.status_code == 422
-        assert r.json()["detail"] == VERIFY_FAIL_DETAIL
+        assert r.json()["detail"] == "Fix not applied. No file was produced."
         assert not r.content.startswith(b"PK")
 
     def test_nothing_persisted(self, client_file_db, docx_factory, tmp_path):
@@ -727,19 +714,9 @@ class TestOutputContract:
         assert r.status_code == 200
         assert r.headers["content-type"].startswith(DOCX_MIME)
         cd = r.headers["content-disposition"]
-        assert "audit_ACA_corrected.docx" in cd
+        assert "audit_ACA-fixed.docx" in cd
         assert "\r" not in cd and "\n" not in cd
 
-    def test_summary_header_shape(self, client, docx_factory):
-        file_bytes = docx_factory(paragraphs=["Body paragraph."], body_size=11)
-        resp = _post_audit_bytes(client, file_bytes)
-        audit_id = resp.json()["audit_id"]
-        ids = _rule_ids(resp, "FONT_SIZE")
-        r = _fix_post(client, audit_id, file_bytes, [ids[0]])
-        assert r.status_code == 200
-        summary = _summary(r)
-        assert set(summary.keys()) == {"applied", "skipped", "failed"}
-        assert all(isinstance(v, int) for v in summary.values())
 
     def test_corrected_bytes_reopenable(self, client, docx_factory):
         file_bytes = docx_factory(paragraphs=["Body paragraph."], body_size=11)
@@ -849,7 +826,7 @@ def test_new_citation_codes_are_never_selectable_guided_fixes(client, docx_facto
 
     r = _fix_post(client, audit_id, file_bytes, ids)
     assert r.status_code == 422
-    assert r.json()["detail"] == ZERO_DETAIL
+    assert r.json()["detail"] == "Fix cannot be applied safely. Manual correction required."
     assert r.content != file_bytes or r.headers.get("content-type", "").startswith("application/json")
 
     # The whitelist itself is unchanged — no new code entered either set.

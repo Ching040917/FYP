@@ -1,7 +1,6 @@
 /**
- * Guided Fixes (Beta) — end-to-end workflow across the three supported
- * desktop widths. Synthetic fixtures only (the committed sample thesis);
- * the backend verifies document identity via SHA-256.
+ * Guided Fixes — selection, server review, verification and one-use download.
+ * Synthetic fixtures only; backend proves document identity via SHA-256.
  */
 import { test, expect, type Page } from '@playwright/test'
 import path from 'node:path'
@@ -24,19 +23,17 @@ async function openCompletedAudit(page: Page) {
 async function openGuidedFixes(page: Page) {
   const open = page.getByRole('button', { name: 'Guided Fixes' })
   await open.click()
-  // Primary action label is dynamic: "Review N selected changes" (N >= 2) or
-  // "Review 1 selected change". Match either.
   await expect(page.getByRole('button', { name: /Review .* selected chang(e|es)/ })).toBeVisible()
 }
 
 test.describe('guided fixes workflow @guided-fixes', () => {
-  test('open, keyboard-select two supported findings, review, back preserves selection', async ({ page }, testInfo) => {
+  test('open, keyboard-select two candidates, upload step and back preserve selection', async ({ page }, testInfo) => {
     annotate(testInfo, {
       id: 'GF-WORKFLOW',
-      objective: 'Open Guided Fixes, keyboard-select two supported findings, review them, go back without losing selection.',
-      precondition: 'Completed synthetic audit with supported findings.',
-      steps: ['Open audit', 'Open Guided Fixes (Beta)', 'Space on two checkboxes', 'Review selected changes', 'Back to findings'],
-      expected: 'Review shows 2 selections; back keeps both selected; no Apply-all control exists.',
+      objective: 'Choose candidates, inspect persisted values, proceed to upload, and return without losing selection.',
+      precondition: 'Completed synthetic audit with candidate findings.',
+      steps: ['Open audit', 'Open Guided Fixes', 'Space on two checkboxes', 'Continue to upload', 'Back to findings'],
+      expected: 'Selection survives; no finding is declared safe until backend Review.',
       severity: 'high',
     })
     await openCompletedAudit(page)
@@ -53,6 +50,7 @@ test.describe('guided fixes workflow @guided-fixes', () => {
     await page.keyboard.press('Space')
     await checkboxes.nth(1).focus()
     await page.keyboard.press('Space')
+    await page.getByRole('radio', { name: /All findings/ }).click()
 
     // Unsupported findings are never selectable: captions/citations rows
     // carry no checkbox.
@@ -62,27 +60,27 @@ test.describe('guided fixes workflow @guided-fixes', () => {
       expect(await manualRows.nth(i).locator('input[type="checkbox"]').count()).toBe(0)
     }
 
-    // Selection count is announced (visible footer count line).
-    await expect(page.getByText(/selected · .*available for Guided Fix · Maximum 20|No findings selected · .*available for Guided Fix · Maximum 20|selected · Maximum reached/).first()).toBeVisible()
-
-    // Review panel: current + proposed values, two removable entries.
+    await expect(page.getByText(/selected · .*candidates for safety review · Maximum 20|selected · Maximum reached/).first()).toBeVisible()
+    await expect(page.getByText(/Candidate only — safety review required/).first()).toBeVisible()
     await page.getByRole('button', { name: /Review .* selected chang(e|es)/ }).click()
-    await expect(page.getByText('Selected changes: 2')).toBeVisible()
-    await expect(page.getByText(/Current:/).first()).toBeVisible()
-    await expect(page.getByText(/Proposed:/).first()).toBeVisible()
-
-    // Back keeps the selection.
+    await expect(page.getByText('Upload the original DOCX')).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Apply and verify changes' })).toHaveCount(0)
     await page.getByRole('button', { name: 'Back to findings' }).click()
-    await expect(page.getByText(/selected · .*available for Guided Fix · Maximum 20|No findings selected · .*available for Guided Fix · Maximum 20|selected · Maximum reached/).first()).toBeVisible()
+    await expect(page.getByText(/2 selected · .*candidates for safety review · Maximum 20/).first()).toBeVisible()
+    await page.getByRole('button', { name: /Review .* selected chang(e|es)/ }).focus()
+    await page.keyboard.press('Tab')
+    await expect(page.getByRole('button', { name: 'Close Guided Fixes' })).toBeFocused()
+    await page.keyboard.press('Escape')
+    await expect(page.getByRole('button', { name: 'Guided Fixes' })).toBeFocused()
   })
 
   test('wrong DOCX shows mismatch error; exact original creates and downloads corrected copy; audit unchanged', async ({ page }, testInfo) => {
     annotate(testInfo, {
       id: 'GF-UPLOAD-DOWNLOAD',
-      objective: 'Upload a different DOCX → mismatch error; replace with the exact original → corrected copy downloads with counts; original audit state unchanged.',
-      precondition: 'Completed synthetic audit; second synthetic DOCX available.',
-      steps: ['Open Guided Fixes', 'Select one finding', 'Review → continue', 'Upload wrong docx', 'Replace with exact original', 'Create corrected copy', 'Download'],
-      expected: 'Mismatch error surfaces verbatim; corrected copy downloads; applied/skipped counts shown; score/findings unchanged.',
+      objective: 'Reject wrong original at Review; exact original is reviewed, applied, re-audited and downloaded explicitly.',
+      precondition: 'Completed synthetic audit; a different DOCX is available.',
+      steps: ['Select candidate', 'Upload wrong DOCX', 'Review rejects', 'Upload original', 'Review confirmed targets', 'Apply', 'Download'],
+      expected: 'Mismatch blocks apply; only passed re-audit unlocks one-use download; source audit remains unchanged.',
       severity: 'high',
     })
     const summary = await openCompletedAudit(page)
@@ -90,38 +88,37 @@ test.describe('guided fixes workflow @guided-fixes', () => {
 
     await page.locator('input[type="checkbox"][aria-label]').first().check()
     await page.getByRole('button', { name: /Review .* selected chang(e|es)/ }).click()
-    await page.getByRole('button', { name: 'Continue to upload original DOCX' }).click()
-
     // Create a DIFFERENT docx (the long-filename fixture) for the mismatch path.
     const fixturesDir = path.resolve(process.cwd(), 'e2e', 'fixtures')
     const wrongPath = path.join(fixturesDir, 'long-filename-sample.docx')
     const wrong = page.locator('#guided-fixes-file-input')
     await wrong.setInputFiles(wrongPath)
-    await page.getByRole('button', { name: 'Create corrected copy' }).click()
+    await page.getByRole('button', { name: 'Review safety and locations' }).click()
     await expect(page.getByRole('alert')).toContainText(MISMATCH_TEXT)
 
     // Selection survives the error and the file can be replaced (dialog
     // stays open — never closed automatically on error).
     await page.getByRole('button', { name: 'Back to findings' }).click()
-    // Count line reads e.g. "1 selected · 6 available for Guided Fix · Maximum 20".
-    await expect(page.getByText(/selected · .*available for Guided Fix · Maximum 20|selected · Maximum reached/)).toBeVisible()
+    await expect(page.getByText(/selected · .*candidates for safety review · Maximum 20/)).toBeVisible()
     await page.getByRole('button', { name: /Review .* selected chang(e|es)/ }).click()
-    await page.getByRole('button', { name: 'Continue to upload original DOCX' }).click()
 
     // Replace with the EXACT original bytes used for the audit.
     await wrong.setInputFiles(SAMPLE_THESIS)
-    await page.getByRole('button', { name: 'Create corrected copy' }).click()
-    await expect(page.getByText('Creating your corrected copy…')).toBeVisible()
-
-    // Success: applied/skipped counts + download.
-    await expect(page.getByText('Corrected copy created')).toBeVisible({ timeout: 60_000 })
-    await expect(page.getByText(/Applied: \d+ · Skipped: \d+/)).toBeVisible()
-    await expect(page.getByText(/Your original document was not changed/)).toBeVisible()
+    await page.getByRole('button', { name: 'Review safety and locations' }).click()
+    await expect(page.getByText(/Safety review passed for 1 selected finding/)).toBeVisible({ timeout: 60_000 })
+    await expect(page.getByText(/affected location/)).toBeVisible()
+    await expect(page.getByText(/Property changed:/)).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Download corrected document' })).toHaveCount(0)
+    await page.getByRole('button', { name: 'Apply and verify changes' }).click()
+    await expect(page.getByRole('heading', { name: 'Fix applied; re-audit passed' })).toBeVisible({ timeout: 60_000 })
+    await expect(page.getByText(/No new findings/)).toBeVisible()
+    await expect(page.getByText(/Your original document and its History entry are unchanged/)).toBeVisible()
 
     const downloadPromise = page.waitForEvent('download')
     await page.getByRole('button', { name: 'Download corrected document' }).click()
     const download = await downloadPromise
-    expect(download.suggestedFilename()).toContain('_ACA_corrected.docx')
+    expect(download.suggestedFilename()).toContain('_ACA-fixed.docx')
+    await expect(page.getByRole('button', { name: 'Download corrected document' })).toBeDisabled()
 
     // Original audit score and findings remain unchanged.
     const before = await page.request.get(`/api/audit/${summary.auditId}`)
@@ -136,17 +133,17 @@ test.describe('guided fixes workflow @guided-fixes', () => {
     await page.waitForURL(/\/dashboard/)
   })
 
-  test('axe scan and horizontal-overflow pass at all three supported desktop widths', async ({ page }, testInfo) => {
+  test('axe scan and horizontal-overflow pass at desktop and mobile widths', async ({ page }, testInfo) => {
     annotate(testInfo, {
       id: 'GF-AXE-LAYOUT',
-      objective: 'No critical/serious axe violations and no horizontal overflow at 1366/1280/1024 widths while the Guided Fixes dialog is open.',
+      objective: 'No critical/serious axe violations or horizontal overflow at 1366/1280/1024/390 widths.',
       precondition: 'Completed synthetic audit.',
       steps: ['Open audit at each width', 'Open Guided Fixes dialog', 'Run axe scan', 'Measure overflow'],
       expected: 'Zero critical/serious axe violations; scrollWidth <= clientWidth.',
       severity: 'high',
     })
-    for (const width of [1366, 1280, 1024]) {
-      await page.setViewportSize({ width, height: width === 1024 ? 768 : 800 })
+    for (const width of [1366, 1280, 1024, 390]) {
+      await page.setViewportSize({ width, height: width <= 390 ? 780 : width === 1024 ? 768 : 800 })
       await openCompletedAudit(page)
       await openGuidedFixes(page)
       const results = await new AxeBuilder({ page }).analyze()

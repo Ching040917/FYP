@@ -14,32 +14,31 @@
 
 import { alignmentWord, friendlyRuleTitle, friendlyValue } from './friendly-finding.ts'
 
-/** Backend whitelist — SAFE_RUN_RULES ∪ SAFE_PARA_RULES (guided_fix.py). */
-export const SUPPORTED_FIX_RULES: ReadonlySet<string> = new Set([
-  'FONT_CONSISTENCY',
-  'FONT_SIZE',
-  'ALIGNMENT',
-  'LINE_SPACING',
-  'SPACE_BEFORE',
-  'SPACE_AFTER',
-])
+/** Candidate rule codes only; a finding is eligible ONLY after server Review. */
+export const SUPPORTED_FIX_RULES: Readonly<Record<string, true>> = {
+  FONT_CONSISTENCY: true,
+  FONT_SIZE: true,
+  ALIGNMENT: true,
+  LINE_SPACING: true,
+  SPACE_BEFORE: true,
+  SPACE_AFTER: true,
+}
 
 /** Maximum selected findings — matches backend GuidedFixSelectionRequest. */
 export const MAX_SELECTED = 20
 
-export const CORRECTED_FALLBACK_FILENAME = 'ACA_corrected.docx'
+export const CORRECTED_FALLBACK_FILENAME = 'ACA-fixed.docx'
 
-/** Concise dialog introduction (replaces the two longer Beta paragraphs). */
 export const GF_INTRO =
-  'Guided Fixes creates a corrected copy and never changes your original document. Select supported formatting issues, review the proposed changes, then upload the original DOCX.'
+  'Guided Fixes creates a corrected copy and never changes your original document. Select candidate formatting findings, then upload the original DOCX for a safety review.'
 export const GF_SECONDARY =
-  'Some findings require manual correction. Review the corrected copy before submission.'
+  'Only a successful review can confirm a fix is safe. Inspect the corrected copy before submission.'
 
-/** Non-interactive workflow steps (presentation order is authoritative). */
 export const WORKFLOW_STEPS = [
-  'Select fixes',
-  'Review changes',
+  'Select findings',
   'Upload original',
+  'Review verified targets',
+  'Apply and verify',
   'Download copy',
 ] as const
 
@@ -49,19 +48,17 @@ export const MISMATCH_DETAIL =
 export const LEGACY_DETAIL =
   'Guided Fixes is unavailable for audits created before document matching was introduced.'
 export const ZERO_DETAIL =
-  'No selected Guided Fix could be applied safely. Review the skipped findings and correct them manually.'
+  'Fix cannot be applied safely. Correct the selected findings manually.'
 export const GENERIC_FAILURE =
-  'Guided Fixes could not create a corrected copy. Your original document was not changed.'
+  'Fix cannot be applied safely. Your original document was not changed.'
 export const INVALID_DOCX =
   'A valid .docx file is required. Choose a Word document (.docx) and try again.'
 export const OVERSIZE_DOCX =
   'This file is larger than the 10 MB limit. Choose a smaller document and try again.'
 
 /**
- * Translate a raw backend detail into ordinary-user wording. Never exposes
- * internal skip codes (expected_unresolved, unsafe_structure, target_missing)
- * or OOXML terminology — unknown safe details pass through only when they
- * carry no internal tokens; anything else gets the generic fallback.
+ * Translate known backend messages; never expose internal skip codes, raw
+ * document structure or unexpected server detail to the user.
  */
 export function friendlyGuidedFixError(raw: string | null | undefined): string {
   const detail = (raw ?? '').trim()
@@ -70,7 +67,8 @@ export function friendlyGuidedFixError(raw: string | null | undefined): string {
   if (upper.includes('EXPECTED_UNRESOLVED') || upper.includes('UNSAFE_STRUCTURE') ||
       upper.includes('TARGET_MISSING') || upper.includes('UNSUPPORTED_RULE') ||
       upper.includes('DOCUMENT_CHANGED') || upper.includes('NO_LOCATION') ||
-      upper.includes('ALREADY_COMPLIANT')) {
+      upper.includes('ALREADY_COMPLIANT') || upper.includes('TRACEBACK') ||
+      upper.includes('REVIEW_ID') || upper.includes('XML') || upper.includes('SHA256')) {
     return GENERIC_FAILURE
   }
   if (detail === MISMATCH_DETAIL || detail === LEGACY_DETAIL || detail === ZERO_DETAIL) {
@@ -78,7 +76,7 @@ export function friendlyGuidedFixError(raw: string | null | undefined): string {
   }
   if (/does not match the document/i.test(detail)) return MISMATCH_DETAIL
   if (/predates document matching|before document matching/i.test(detail)) return LEGACY_DETAIL
-  if (/could not be applied safely/i.test(detail)) return ZERO_DETAIL
+  if (/could not be applied safely|cannot be applied safely/i.test(detail)) return ZERO_DETAIL
   if (/not a valid docx|only \.docx|unsupported file format/i.test(detail)) return INVALID_DOCX
   if (/10mb|exceeds the/i.test(detail)) return OVERSIZE_DOCX
   if (/not completed|not found/i.test(detail)) {
@@ -140,18 +138,13 @@ export function deselectInView(
   return current.filter((id) => !target.has(id))
 }
 
-/** Count line: "6 selected · 8 available for Guided Fix · Maximum 20". */
-export function guidedCountLine(
-  selectedCount: number,
-  availableCount: number,
-): string {
-  if (selectedCount >= MAX_SELECTED) {
-    return `${selectedCount} selected · Maximum reached`
-  }
+/** Candidate count is not a safety/availability determination. */
+export function guidedCountLine(selectedCount: number, candidateCount: number): string {
+  if (selectedCount >= MAX_SELECTED) return `${selectedCount} selected · Maximum reached`
   if (selectedCount === 0) {
-    return `No findings selected · ${availableCount} available for Guided Fix · Maximum ${MAX_SELECTED}`
+    return `No findings selected · ${candidateCount} candidates for safety review · Maximum ${MAX_SELECTED}`
   }
-  return `${selectedCount} selected · ${availableCount} available for Guided Fix · Maximum ${MAX_SELECTED}`
+  return `${selectedCount} selected · ${candidateCount} candidates for safety review · Maximum ${MAX_SELECTED}`
 }
 
 /** Limit notice shown when a select-all attempt was truncated by the cap. */
@@ -171,18 +164,13 @@ export function guidedReviewLabel(selectedCount: number): string {
 /** Workflow indicator step for a stage (null for idle). */
 export function workflowStepForStage(stage: string): number | null {
   switch (stage) {
-    case 'selecting':
-      return 0
-    case 'reviewing':
-      return 1
+    case 'selecting': return 0
     case 'ready_to_upload':
-    case 'error':
-      return 2
-    case 'applying':
-    case 'completed':
-      return 3
-    default:
-      return null
+    case 'error': return 1
+    case 'reviewing': return 2
+    case 'applying': return 3
+    case 'completed': return 4
+    default: return null
   }
 }
 
@@ -224,10 +212,8 @@ export interface GuidedFindingPresentation {
 }
 
 /**
- * Build the Guided Fixes presentation for ONE persisted violation. Supported
- * = rule in the backend whitelist AND the proposal is resolvable from the
- * persisted expected value; everything else shows "Manual correction
- * required". Never fabricates values for unsupported/unresolvable findings.
+ * Classify candidates for user selection, NOT eligibility. Display persisted
+ * finding values as clues; only the server's review establishes exact targets.
  */
 export function guidedPresentationFor(v: GuidedViolationLike): GuidedFindingPresentation {
   const ruleCode = (v.rule_code ?? '').toUpperCase()
@@ -238,13 +224,18 @@ export function guidedPresentationFor(v: GuidedViolationLike): GuidedFindingPres
     : null
   const friendlyLocation = para !== null ? `Paragraph ${para}` : null
   const current = friendlyValue(v.actual_value) ?? 'Not shown'
-  const supported = SUPPORTED_FIX_RULES.has(ruleCode)
+  const supported = SUPPORTED_FIX_RULES[ruleCode] === true
   const proposed = supported ? guidedProposalFor(ruleCode, v.expected_value) : ''
   return { ruleCode, supported, friendlyName, friendlyLocation, current, proposed }
 }
 
-/** Download filename — safe fallback when the header is absent/unparseable. */
-export function correctedFilename(fallback: string | null | undefined): string {
-  const name = (fallback ?? '').trim()
-  return name ? name : CORRECTED_FALLBACK_FILENAME
+/** Sanitize the server's suggested name and number local session collisions. */
+export function correctedFilename(filename: string | null | undefined, used: ReadonlySet<string> = new Set()): string {
+  const supplied = (filename ?? '').split(/[\\/]/).pop() ?? ''
+  const name = /^[^<>:"|?*\x00-\x1f]+\.docx$/i.test(supplied) ? supplied : CORRECTED_FALLBACK_FILENAME
+  if (!used.has(name)) return name
+  const stem = name.slice(0, -5)
+  let suffix = 2
+  while (used.has(`${stem}-${suffix}.docx`)) suffix++
+  return `${stem}-${suffix}.docx`
 }

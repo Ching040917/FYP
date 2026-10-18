@@ -221,7 +221,7 @@ def test_structural_reviews_persist_immutably_without_ai_or_fixes(client, state,
     from app.api import routes
     from app.services.ai_citation import AiCitationResult
     from app.services.ai_citation_eligibility import is_local_ai_citation_eligible
-    from app.services.guided_fix import apply_guided_fixes
+    from app.services.guided_fix import apply_guided_fixes, GuidedFixFailed
 
     doc = Document()
     doc.add_paragraph("Body remains unchanged.")
@@ -261,11 +261,10 @@ def test_structural_reviews_persist_immutably_without_ai_or_fixes(client, state,
     assert submitted["profile_snapshot"]["schema_version"] == 6
     assert ai_inputs == []
     assert all(not is_local_ai_citation_eligible(SimpleNamespace(**r)) for r in rows)
-    _, applied, skipped = apply_guided_fixes(
-        SimpleNamespace(profile_snapshot=submitted["profile_snapshot"]), source,
-        [SimpleNamespace(**row) for row in rows])
-    assert applied == []
-    assert [reason for _, reason in skipped] == ["unsupported_rule"] * len(rows)
+    with pytest.raises(GuidedFixFailed):
+        apply_guided_fixes(
+            SimpleNamespace(profile_snapshot=submitted["profile_snapshot"]), source,
+            [SimpleNamespace(**row) for row in rows])
     audit_id = submitted["audit_id"]
     profile.headers.check_header_requirements = False
     profile.page_numbers.placement = "footer"

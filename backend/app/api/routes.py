@@ -9,7 +9,9 @@ import logging
 import time
 import uuid
 import zipfile
-from datetime import datetime
+import secrets
+import threading
+from datetime import datetime, timezone
 
 from app.database import get_db
 from app.config import settings
@@ -53,15 +55,15 @@ from app.services.custom_profile_validation import validate_custom_profile
 from app.services.guided_fix import (
     apply_guided_fixes,
     build_corrected_filename,
+    review_targets,
     GuidedFixFailed,
     GuidedFixSelectionRequest,
     LEGACY_DETAIL,
     MISMATCH_DETAIL,
-    VERIFY_FAIL_DETAIL,
-    ZERO_DETAIL,
     _content_disposition,
-    _summary_header,
 )
+from app.services.guided_fix_verification import verify_reaudit
+from app.services import docx_preservation, guided_fix_storage
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -816,112 +818,157 @@ async def get_rendered_preview(audit_id: str, db: Session = Depends(get_db)):
     )
 
 
-@router.post("/api/audit/{audit_id}/guided-fixes")
-async def apply_guided_fixes_endpoint(
-    audit_id: str,
-    file: UploadFile = File(...),
-    selection: str = Form(...),
-    db: Session = Depends(get_db),
-):
-    """Guided Fixes (Beta) — apply whitelisted fixes to a verified copy.
+_review_lock = threading.Lock()
+_reviews: dict[str, tuple[str, str, tuple[str, ...], float]] = {}
+_REVIEW_SECONDS = 15 * 60
 
-    Multipart: `file` = the exact original DOCX (SHA-256 verified against
-    the audit); `selection` = JSON string {"violation_ids": [...]}.
 
-    Read-only toward the audit: the audit row, violations, score, and
-    findings are never modified and no finding is marked resolved. The
-    corrected DOCX is produced in memory and returned for download — never
-    persisted. Logs carry only the audit id, counts, and skip-category
-    strings — never filenames, document text, excerpts, run contents, or
-    target values.
-    """
-    # 1. Extension gate.
-    if not file.filename.endswith(".docx"):
+def _clean_reviews():
+    now = time.time()
+    with _review_lock:
+        for token, (_, _, _, expiry) in list(_reviews.items()):
+            if expiry <= now:
+                del _reviews[token]
+    guided_fix_storage.cleanup()
+
+
+async def _guided_request(audit_id: str, file: UploadFile, selection: str, db: Session):
+    if not file.filename or not file.filename.lower().endswith(".docx"):
         raise HTTPException(status_code=400, detail="Unsupported file format. Only .docx files are accepted.")
-
-    # 2. Size gate.
-    file_bytes = await file.read()
-    if len(file_bytes) > settings.MAX_FILE_SIZE:
+    source = await file.read(settings.MAX_FILE_SIZE + 1)
+    if len(source) > settings.MAX_FILE_SIZE:
         raise HTTPException(status_code=400, detail="File size exceeds the 10MB security boundary.")
-
-    # 3. Zip magic gate.
-    if not zipfile.is_zipfile(io.BytesIO(file_bytes)):
+    if not zipfile.is_zipfile(io.BytesIO(source)):
         raise HTTPException(status_code=400, detail="The uploaded file is not a valid DOCX.")
-
-    # 4. Selection payload validation.
     try:
-        payload = json.loads(selection)
-    except (ValueError, TypeError):
-        raise HTTPException(status_code=400, detail="Invalid selection payload.")
-    if not isinstance(payload, dict) or not payload.get("violation_ids"):
-        raise HTTPException(status_code=400, detail="Select at least one supported finding.")
-    try:
-        GuidedFixSelectionRequest.model_validate(payload)
+        payload = GuidedFixSelectionRequest.model_validate_json(selection)
     except Exception:
         raise HTTPException(status_code=422, detail="Invalid selection payload.")
-
-    # 5-6. Audit existence.
+    ids = payload.violation_ids
+    if len(set(ids)) != len(ids):
+        raise HTTPException(status_code=422, detail="Duplicate selected findings.")
     try:
         preview_storage.validate_audit_id(audit_id)
     except ValueError:
         raise HTTPException(status_code=404, detail="Audit not found")
     audit = db.query(AuditRecord).filter(AuditRecord.id == audit_id).first()
-    if not audit:
+    if audit is None:
         raise HTTPException(status_code=404, detail="Audit not found")
-
-    # 7. Completed-only.
     if audit.status != "completed":
         raise HTTPException(status_code=409, detail="This audit is not completed yet.")
-
-    # 8-9. Document identity — SHA-256 only, never filename/size fallbacks.
     if audit.document_sha256 is None:
         raise HTTPException(status_code=409, detail=LEGACY_DETAIL)
-    if hashlib.sha256(file_bytes).hexdigest() != audit.document_sha256:
+    if hashlib.sha256(source).hexdigest() != audit.document_sha256:
         raise HTTPException(status_code=409, detail=MISMATCH_DETAIL)
-
-    # 10. Dedupe ids preserving first occurrence; ownership gate.
-    seen = set()
-    ordered_ids: List[str] = []
-    for vid in payload["violation_ids"]:
-        if vid in seen:
-            continue
-        seen.add(vid)
-        ordered_ids.append(vid)
-
-    owned = {v.id for v in audit.violations}
-    if any(vid not in owned for vid in ordered_ids):
-        raise HTTPException(status_code=422, detail="A selected finding does not belong to this audit.")
-    selected_violations = [v for v in audit.violations if v.id in ordered_ids]
-    selected_violations.sort(key=lambda v: ordered_ids.index(v.id))
-
-    # 11. Apply (in-memory only).
     try:
-        corrected, applied, skipped = apply_guided_fixes(audit, file_bytes, selected_violations)
-    except GuidedFixFailed:
-        raise HTTPException(status_code=422, detail=VERIFY_FAIL_DETAIL)
+        docx_preservation.validate_package(source)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="This DOCX cannot be reviewed safely.")
+    from app.services.profile_snapshot import snapshot_from_dict
+    try:
+        snapshot_from_dict(audit.profile_snapshot)
     except Exception:
-        logger.exception("guided_fixes failed audit=%s", audit_id)
-        raise HTTPException(status_code=500, detail="Guided Fixes failed. No file was produced.")
+        raise HTTPException(status_code=409, detail="This audit has no valid formatting profile.")
+    owned = {v.id: v for v in audit.violations}
+    if any(id not in owned for id in ids):
+        raise HTTPException(status_code=422, detail="A selected finding does not belong to this audit.")
+    return audit, source, [owned[id] for id in ids], tuple(ids)
 
-    # 12. Nothing applied → nothing to download.
-    if not applied:
-        raise HTTPException(status_code=422, detail=ZERO_DETAIL)
 
-    # 13. Success — corrected DOCX for download.
-    logger.info(
-        "guided_fixes audit=%s applied=%d skipped=%d failed=0",
-        audit_id, len(applied), len(skipped),
-    )
-    name = build_corrected_filename(audit.filename or "document.docx")
+@router.post("/api/audit/{audit_id}/guided-fixes/review")
+async def review_guided_fixes_endpoint(
+    audit_id: str, file: UploadFile = File(...), selection: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    _clean_reviews()
+    audit, source, selected, ids = await _guided_request(audit_id, file, selection, db)
+    try:
+        items, _ = review_targets(audit, source, selected)
+    except GuidedFixFailed:
+        raise HTTPException(status_code=422, detail="Fix cannot be applied safely. Manual correction required.")
+    except Exception:
+        logger.exception("guided review failed audit=%s", audit_id)
+        raise HTTPException(status_code=422, detail="Fix cannot be applied safely. Manual correction required.")
+    token = secrets.token_urlsafe(32)
+    expiry = time.time() + _REVIEW_SECONDS
+    with _review_lock:
+        _reviews[token] = (audit_id, audit.document_sha256, ids, expiry)
+    return {
+        "review_id": token, "items": items,
+        "output_filename": build_corrected_filename(audit.filename),
+        "limitations": ["Only selected direct formatting will change.", "Layout and pagination may reflow.",
+                        "Original audit and document remain unchanged. Corrected results are session-only."],
+        "expires_at": datetime.fromtimestamp(expiry, timezone.utc).isoformat(),
+    }
+
+
+@router.delete("/api/audit/{audit_id}/guided-fixes/review/{review_id}", status_code=204)
+async def cancel_guided_review(audit_id: str, review_id: str):
+    with _review_lock:
+        if review_id in _reviews and _reviews[review_id][0] == audit_id:
+            del _reviews[review_id]
+    return Response(status_code=204)
+
+
+@router.post("/api/audit/{audit_id}/guided-fixes")
+async def apply_guided_fixes_endpoint(
+    audit_id: str, file: UploadFile = File(...), selection: str = Form(...),
+    review_id: str = Form(...), db: Session = Depends(get_db),
+):
+    _clean_reviews()
+    audit, source, selected, ids = await _guided_request(audit_id, file, selection, db)
+    with _review_lock:
+        binding = _reviews.get(review_id)
+        if binding is None or binding[3] <= time.time() or binding[:2] != (audit_id, audit.document_sha256):
+            raise HTTPException(status_code=409, detail="Review expired or does not match this document. Review again.")
+        if binding[2] != ids:
+            raise HTTPException(status_code=422, detail="Selection differs from the reviewed findings.")
+        del _reviews[review_id]
+    try:
+        _, targets = review_targets(audit, source, selected)
+    except Exception:
+        raise HTTPException(status_code=422, detail="Fix not applied. Review again or correct manually.")
+    try:
+        corrected, applied, _ = apply_guided_fixes(audit, source, selected)
+    except Exception:
+        raise HTTPException(status_code=422, detail="Fix not applied. No file was produced.")
+    try:
+        docx_preservation.compare_preservation(source, corrected, targets)
+        verification = verify_reaudit(audit, source, corrected, selected)
+    except (GuidedFixFailed, ValueError):
+        raise HTTPException(status_code=422, detail="Fix applied; verification failed. No file was produced.")
+    except Exception:
+        logger.exception("guided verification failed audit=%s", audit_id)
+        raise HTTPException(status_code=422, detail="Fix applied; verification failed. No file was produced.")
+    name = build_corrected_filename(audit.filename)
+    try:
+        download_token, expires_at = guided_fix_storage.store(audit_id, corrected, name)
+    except OSError:
+        logger.exception("guided output storage failed audit=%s", audit_id)
+        raise HTTPException(status_code=503, detail="Verified copy could not be stored. Try again.")
+    return {
+        "status": "passed", "resolved": [v.id for v in applied],
+        **verification, "download_token": download_token,
+        "output_filename": name, "expires_at": expires_at,
+    }
+
+
+@router.get("/api/audit/{audit_id}/guided-fixes/download/{token}")
+async def download_guided_fix(audit_id: str, token: str, db: Session = Depends(get_db)):
+    _clean_reviews()
+    if db.query(AuditRecord.id).filter(AuditRecord.id == audit_id).first() is None:
+        raise HTTPException(status_code=404, detail="Download not found.")
+    try:
+        data, filename = guided_fix_storage.retrieve(audit_id, token)
+    except PermissionError:
+        raise HTTPException(status_code=404, detail="Download not found.")
+    except (KeyError, ValueError, OSError):
+        raise HTTPException(status_code=410, detail="Download expired. Review the original again.")
     return Response(
-        content=corrected,
+        content=data,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        headers={
-            "Content-Disposition": _content_disposition(name),
-            "X-Content-Type-Options": "nosniff",
-            "Cache-Control": "private, no-store",
-            "X-Repair-Summary": _summary_header(len(applied), len(skipped), 0),
-        },
+        headers={"Content-Disposition": _content_disposition(filename),
+                 "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"},
     )
 
 
@@ -945,6 +992,7 @@ async def delete_audit(audit_id: str, db: Session = Depends(get_db)):
     filename = audit.filename
     db.delete(audit)
     db.commit()
+    guided_fix_storage.revoke_audit(audit_id)
 
     # Best-effort rendered-preview cleanup AFTER the DB commit. The path is
     # derived from the validated audit UUID only — invalid IDs are a safe

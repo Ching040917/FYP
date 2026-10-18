@@ -46,8 +46,8 @@ function violation(ruleCode: string, extra: Record<string, unknown> = {}) {
 
 describe('guided presentation', () => {
   test('supported rules are selectable and carry friendly labels', () => {
-    for (const rule of SUPPORTED_FIX_RULES) {
-      assert.ok(SUPPORTED_FIX_RULES.has(rule), rule)
+    for (const rule of Object.keys(SUPPORTED_FIX_RULES)) {
+      assert.equal(SUPPORTED_FIX_RULES[rule], true, rule)
       const pres = guidedPresentationFor(violation(rule))
       assert.equal(pres.supported, true, rule)
       assert.ok(pres.friendlyName.length > 0)
@@ -166,115 +166,111 @@ describe('review values', () => {
 // API contract (items 11-21)
 // ---------------------------------------------------------------------------
 
-describe('applyGuidedFixes API', () => {
-  test('sends violation_ids only — never indexes, values, or rule codes', async () => {
+describe('guided review, apply and download API', () => {
+  const review = {
+    review_id: 'review-token', items: [{ violation_id: 'v1', before: '11 pt', after: '12 pt',
+      property: 'Font size', locations: ['Paragraph 4'], affected_count: 1 }],
+    output_filename: 'report_ACA-fixed.docx', limitations: ['May reflow pages'],
+    expires_at: '2026-10-18T12:00:00Z',
+  }
+  const result = {
+    status: 'passed', resolved: ['v1'], before_score: 90, after_score: 92,
+    before_findings: [{ rule_code: 'FONT_SIZE', count: 1, locations: ['Paragraph 4'] }],
+    after_findings: [], new_findings: [], download_token: 'download-token',
+    output_filename: review.output_filename, expires_at: review.expires_at,
+  }
+
+  test('review sends original bytes and IDs only; returns server-confirmed targets', async () => {
     let captured: RequestInit | undefined
-    const restore = mockFetchOnce(async (_input, init) => {
+    let url = ''
+    const restore = mockFetchOnce((input, init) => {
+      url = String(input)
       captured = init
-      return new Response(new Blob(['PK-docx'], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }), {
-        status: 200,
-        headers: {
-          'content-disposition': 'attachment; filename="report_ACA_corrected.docx"',
-          'x-repair-summary': encodeURIComponent(JSON.stringify({ applied: 1, skipped: 0, failed: 0 })),
-        },
-      })
+      return Response.json(review)
     })
     try {
-      const file = new File(['docx'], 'original.docx')
-      await api.applyGuidedFixes('audit-1', file, ['v1', 'v2'])
-      const body = (captured as any).body as FormData
-      assert.ok(body instanceof FormData)
+      const file = new File(['PK-docx'], 'original.docx')
+      assert.deepEqual(await api.reviewGuidedFixes('audit-1', file, ['v1']), review)
+      assert.equal(url, '/api/audit/audit-1/guided-fixes/review')
+      assert.equal(captured?.method, 'POST')
+      const body = captured?.body as FormData
       assert.equal(body.get('file'), file)
-      const selection = JSON.parse(String(body.get('selection')))
-      assert.deepEqual(Object.keys(selection), ['violation_ids'])
-      assert.deepEqual(selection.violation_ids, ['v1', 'v2'])
-      const raw = String(body.get('selection'))
-      for (const banned of ['paragraph_index', 'run_index', 'run_indexes', 'expected_value', 'actual_value', 'rule_code', 'file_path']) {
-        assert.ok(!raw.includes(banned), `selection must not contain ${banned}`)
+      assert.deepEqual(JSON.parse(String(body.get('selection'))), { violation_ids: ['v1'] })
+      assert.deepEqual([...body.keys()], ['file', 'selection'])
+      for (const banned of ['paragraph_index', 'run_index', 'expected_value', 'rule_code']) {
+        assert.ok(!String(body.get('selection')).includes(banned))
       }
     } finally {
       restore()
     }
   })
 
-  test('multipart field names match the backend contract (file, selection)', async () => {
-    let capturedUrl = ''
-    const restore = mockFetchOnce(async (input) => {
-      capturedUrl = String(input)
-      return new Response(new Blob(['PK']), { status: 200, headers: {} })
+  test('apply requires a review token and returns verification JSON, never binary', async () => {
+    let captured: RequestInit | undefined
+    let url = ''
+    const restore = mockFetchOnce((input, init) => {
+      url = String(input)
+      captured = init
+      return Response.json(result)
     })
     try {
-      await api.applyGuidedFixes('audit-1', new File(['x'], 'a.docx'), ['v1'])
+      const file = new File(['PK-docx'], 'original.docx')
+      assert.deepEqual(await api.applyGuidedFixes('audit-1', file, ['v1'], 'review-token'), result)
+      assert.equal(url, '/api/audit/audit-1/guided-fixes')
+      const body = captured?.body as FormData
+      assert.deepEqual([...body.keys()], ['file', 'selection', 'review_id'])
+      assert.equal(body.get('file'), file)
+      assert.equal(body.get('review_id'), 'review-token')
+      assert.deepEqual(JSON.parse(String(body.get('selection'))), { violation_ids: ['v1'] })
     } finally {
       restore()
     }
-    assert.equal(capturedUrl, '/api/audit/audit-1/guided-fixes')
   })
 
-  test('Content-Disposition filename is parsed', async () => {
-    const restore = mockFetchOnce(async () => new Response(new Blob(['PK']), {
-      status: 200,
-      headers: { 'content-disposition': 'attachment; filename="report_ACA_corrected.docx"' },
-    }))
+  test('a non-passed response cannot unlock download', async () => {
+    const restore = mockFetchOnce(() => Response.json({ ...result, status: 'failed' }))
     try {
-      const res = await api.applyGuidedFixes('a', new File(['x'], 'a.docx'), ['v1'])
-      assert.equal(res.filename, 'report_ACA_corrected.docx')
+      await assert.rejects(() => api.applyGuidedFixes('a', new File(['x'], 'a.docx'), ['v1'], 'review-token'))
     } finally {
       restore()
     }
   })
 
-  test('missing filename returns null (caller applies safe fallback)', async () => {
-    const restore = mockFetchOnce(async () => new Response(new Blob(['PK']), { status: 200, headers: {} }))
+  test('cancel revokes the review and download GET retrieves one-use binary only on demand', async () => {
+    const calls: Array<{ url: string; method: string | undefined }> = []
+    const restore = mockFetchOnce((input, init) => {
+      calls.push({ url: String(input), method: init?.method })
+      if (init?.method === 'DELETE') return new Response(null, { status: 204 })
+      return new Response(new Blob(['PK-docx']), { status: 200 })
+    })
     try {
-      const res = await api.applyGuidedFixes('a', new File(['x'], 'a.docx'), ['v1'])
-      assert.equal(res.filename, null)
-      assert.equal(correctedFilename(res.filename), 'ACA_corrected.docx')
+      await api.cancelGuidedFixReview('a', 'review-token')
+      const blob = await api.downloadGuidedFix('a', 'download-token')
+      assert.equal(await blob.text(), 'PK-docx')
+      assert.deepEqual(calls, [
+        { url: '/api/audit/a/guided-fixes/review/review-token', method: 'DELETE' },
+        { url: '/api/audit/a/guided-fixes/download/download-token', method: undefined },
+      ])
     } finally {
       restore()
     }
   })
 
-  test('valid summary is parsed', async () => {
-    const restore = mockFetchOnce(async () => new Response(new Blob(['PK']), {
-      status: 200,
-      headers: { 'x-repair-summary': encodeURIComponent(JSON.stringify({ applied: 2, skipped: 1, failed: 0 })) },
-    }))
-    try {
-      const res = await api.applyGuidedFixes('a', new File(['x'], 'a.docx'), ['v1'])
-      assert.deepEqual(res.summary, { applied: 2, skipped: 1, failed: 0 })
-    } finally {
-      restore()
-    }
-  })
-
-  test('missing or malformed summary does not block the download', async () => {
-    for (const header of [null, 'not-json', encodeURIComponent('{"applied":"x"}'), encodeURIComponent('{"applied":1}')]) {
-      const headers: Record<string, string> = {}
-      if (header !== null) headers['x-repair-summary'] = header
-      const restore = mockFetchOnce(async () => new Response(new Blob(['PK']), { status: 200, headers }))
-      try {
-        const res = await api.applyGuidedFixes('a', new File(['x'], 'a.docx'), ['v1'])
-        assert.equal(res.summary, null, `header=${header}`)
-        assert.ok(res.blob instanceof Blob)
-      } finally {
-        restore()
-      }
-    }
-  })
-
-  test('backend safe error detail is surfaced', async () => {
-    const restore = mockFetchOnce(async () => new Response(
-      JSON.stringify({ detail: MISMATCH_DETAIL }),
-      { status: 409, headers: { 'content-type': 'application/json' } },
-    ))
+  test('source mismatch and consumed/expired download are errors, not Blob fallbacks', async () => {
+    const restore = mockFetchOnce(() => Response.json({ detail: MISMATCH_DETAIL }, { status: 409 }))
     try {
       await assert.rejects(
-        () => api.applyGuidedFixes('a', new File(['x'], 'a.docx'), ['v1']),
+        () => api.reviewGuidedFixes('a', new File(['x'], 'a.docx'), ['v1']),
         (err: Error) => err.message === MISMATCH_DETAIL,
       )
     } finally {
       restore()
+    }
+    const restoreGone = mockFetchOnce(() => Response.json({ detail: 'Gone' }, { status: 410 }))
+    try {
+      await assert.rejects(() => api.downloadGuidedFix('a', 'used-token'), /Gone/)
+    } finally {
+      restoreGone()
     }
   })
 })
@@ -288,7 +284,7 @@ describe('error translation', () => {
     assert.equal(friendlyGuidedFixError(MISMATCH_DETAIL), MISMATCH_DETAIL)
   })
 
-  test('zero-applied shows manual-correction guidance', () => {
+  test('unsafe review shows manual-correction guidance', () => {
     assert.equal(friendlyGuidedFixError(ZERO_DETAIL), ZERO_DETAIL)
     assert.ok(friendlyGuidedFixError(ZERO_DETAIL).includes('manual'))
   })
@@ -313,84 +309,44 @@ describe('error translation', () => {
 })
 
 // ---------------------------------------------------------------------------
-// Success state + privacy invariants (items 23-28)
+// Verified result + privacy invariants
 // ---------------------------------------------------------------------------
 
-describe('success and privacy invariants', () => {
-  test('success reports applied/skipped counts from the parsed summary', async () => {
-    const restore = mockFetchOnce(async () => new Response(new Blob(['PK']), {
-      status: 200,
-      headers: {
-        'content-disposition': 'attachment; filename="a_ACA_corrected.docx"',
-        'x-repair-summary': encodeURIComponent(JSON.stringify({ applied: 3, skipped: 2, failed: 0 })),
-      },
-    }))
-    try {
-      const res = await api.applyGuidedFixes('a', new File(['x'], 'a.docx'), ['v1'])
-      assert.equal(res.summary?.applied, 3)
-      assert.equal(res.summary?.skipped, 2)
-    } finally {
-      restore()
-    }
+describe('verified download and privacy invariants', () => {
+  test('filename is safe and numbers same-session collisions', () => {
+    assert.equal(correctedFilename(null), 'ACA-fixed.docx')
+    assert.equal(correctedFilename('../unsafe.docx'), 'unsafe.docx')
+    assert.equal(correctedFilename('report_ACA-fixed.docx', new Set(['report_ACA-fixed.docx'])), 'report_ACA-fixed-2.docx')
+    assert.equal(correctedFilename('report_ACA-fixed.docx', new Set(['report_ACA-fixed.docx', 'report_ACA-fixed-2.docx'])), 'report_ACA-fixed-3.docx')
   })
 
-  test('original audit state is untouched by the client (GET data immutable)', async () => {
-    // The client never writes: applyGuidedFixes is the only mutation call and
-    // it targets /guided-fixes. There is no API surface that edits violations
-    // or scores — assert the exported api object contains no such methods.
+  test('source audit remains immutable and document bytes never enter browser storage', () => {
     const apiSurface = Object.keys(api)
     for (const banned of ['updateViolation', 'setScore', 'resolveFinding', 'markResolved']) {
       assert.ok(!apiSurface.includes(banned))
     }
-  })
-
-  test('corrected Blob is not persisted — no storage APIs in the client path', () => {
     const src = readFileSync(new URL('../src/components/audit/guided-fixes-panel.tsx', import.meta.url), 'utf8')
-    for (const banned of ['localStorage', 'sessionStorage', 'indexedDB']) {
-      assert.ok(!src.includes(banned), `panel must not use ${banned}`)
-    }
     const apiSrc = readFileSync(new URL('../src/services/api.ts', import.meta.url), 'utf8')
     for (const banned of ['localStorage', 'sessionStorage', 'indexedDB']) {
-      assert.ok(!apiSrc.includes(banned), `api must not use ${banned}`)
+      assert.ok(!src.includes(banned) && !apiSrc.includes(banned))
     }
-  })
-
-  test('Audit corrected copy navigates to Dashboard only', () => {
-    const src = readFileSync(new URL('../src/components/audit/guided-fixes-panel.tsx', import.meta.url), 'utf8')
     assert.ok(src.includes("navigate('/dashboard')"))
-    // No automatic audit of the corrected copy: no API upload call besides
-    // applyGuidedFixes.
-    const apiCalls = [...src.matchAll(/api\.(\w+)/g)].map((m) => m[1])
-    assert.ok(!apiCalls.includes('auditDocument'))
+    assert.ok(!src.includes('api.auditDocument'))
   })
 
-  test('intro copy is present and concise in the panel source', () => {
+  test('UI cannot apply before a server review or download before verification passes', () => {
     const src = readFileSync(new URL('../src/components/audit/guided-fixes-panel.tsx', import.meta.url), 'utf8')
-    const lib = readFileSync(new URL('../src/lib/guided-fixes.ts', import.meta.url), 'utf8')
-    // The panel renders the concise intro constants; the literals live in the lib.
-    assert.ok(src.includes('GF_INTRO'))
-    assert.ok(src.includes('GF_SECONDARY'))
-    assert.ok(lib.includes('Guided Fixes creates a corrected copy and never changes your original document.'))
-    assert.ok(lib.includes('Some findings require manual correction. Review the corrected copy before submission.'))
-  })
-
-  test('no automatic upload or re-audit exists', () => {
-    const src = readFileSync(new URL('../src/components/audit/guided-fixes-panel.tsx', import.meta.url), 'utf8')
-    // The only submission path is the explicit Create corrected copy button.
-    assert.ok(src.includes('Create corrected copy'))
-    // applyFixes is invoked only from the submit click handler.
-    const applyCalls = [...src.matchAll(/applyFixes/g)].length
-    assert.ok(applyCalls >= 1 && applyCalls <= 2, `applyFixes references: ${applyCalls}`)
-  })
-
-  test('Create action requires a selected file (disabled without one)', () => {
-    const src = readFileSync(new URL('../src/components/audit/guided-fixes-panel.tsx', import.meta.url), 'utf8')
-    assert.ok(src.includes('disabled={!selectedFile}'))
-  })
-
-  test('file control accepts DOCX only', () => {
-    const src = readFileSync(new URL('../src/components/audit/guided-fixes-panel.tsx', import.meta.url), 'utf8')
+    assert.ok(src.includes('api.reviewGuidedFixes'))
+    assert.ok(src.includes('api.cancelGuidedFixReview'))
+    assert.ok(src.includes('reviewRef.current?.id !== review.review_id'))
+    assert.ok(src.includes("result.new_findings.length !== 0"))
+    assert.ok(src.includes('api.downloadGuidedFix'))
+    assert.ok(!src.includes('summary?.applied ?? 1'))
+    assert.ok(!src.includes('resultBlob'))
+    assert.ok(src.includes('Fix not applied'))
+    assert.ok(src.includes('Fix applied; verification failed'))
+    assert.ok(src.includes('Fix applied; re-audit passed'))
+    assert.ok(src.includes('independent audit ID'))
     assert.ok(src.includes('accept=".docx"'))
-    assert.ok(src.includes('type="file"'))
   })
 })

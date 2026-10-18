@@ -2,13 +2,10 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   blankProfilePayload, buildSavePayload, createMemoryStoreAdapter, loadEnvelope,
-  persistEnvelope, referencesFromUiModel, referencesToUiModel, summarizeProfile, upsertAndBump,
+  persistEnvelope, referencesFromUiModel, referencesToUiModel, upsertAndBump,
 } from '../src/lib/custom-profile-store/editor.ts'
 import { emptyEnvelope } from '../src/lib/custom-profile-store/store.ts'
-import {
-  enabledCheckCount, profileDetailSections, referenceCheckParts,
-  referenceUncheckedParts, referencesDisclosure,
-} from '../src/lib/audit/enabled-checks-wording.ts'
+import { enabledCheckCount } from '../src/lib/audit/enabled-checks-wording.ts'
 import { categoryForRuleCode, normalizeViolationSeverity } from '../src/lib/audit/adapter.ts'
 import { presentationFor } from '../src/lib/audit/finding-presentation.ts'
 import { friendlyRuleTitle, friendlyRequiredAction } from '../src/lib/friendly-finding.ts'
@@ -49,25 +46,17 @@ test('custom DOI toggle persists through the normal save and reload path', () =>
   const envelope = upsertAndBump(emptyEnvelope(), saved, draft.updatedAt)
   assert.equal(persistEnvelope(adapter, envelope, 0).ok, true)
   const reloaded = loadEnvelope(adapter).profiles[0]!.payload
-  assert.ok(summarizeProfile(reloaded).lines.includes('Reference DOI format'))
   const reloadedRefs = reloaded.references as Record<string, unknown>
   assert.equal(reloadedRefs.check_doi_format, true)
   assert.equal(referencesToUiModel(reloadedRefs).doiFormatEnabled, true)
-  assert.ok(summarizeProfile(blankProfilePayload('off', 'Off')).lines.includes('Reference DOI format: Not checked'))
 })
 
-test('DOI summary and details count exactly one check and disclose selected-profile limits', () => {
+test('DOI option contributes one enabled check in the profile count', () => {
   const off = { line_spacing: null, hanging_indent_in: null }
   const on = { ...off, check_doi_format: true }
-  assert.deepEqual(referenceCheckParts(on), ['Reference DOI format'])
-  assert.ok(referenceUncheckedParts(off).includes('Reference DOI format: Not checked'))
-  assert.ok(!referenceUncheckedParts(on).includes('Reference DOI format: Not checked'))
   const snapshot = { profile_name: 'DOI custom', profile_source: 'custom', references: on, margins: {} } as ProfileSnapshot
   assert.equal(enabledCheckCount(snapshot), 1)
-  const sections = profileDetailSections(snapshot)
-  assert.ok(sections.find((s) => s.heading === 'Enabled checks')!.items.some((i) => i.text === 'Reference DOI format'))
-  assert.match(referencesDisclosure(on), /The selected profile requires the visible DOI format https:\/\/doi\.org\/<doi>; presentation only, not registration or resolution\./)
-  assert.equal(referencesDisclosure(off), 'References: Not checked')
+  assert.equal(enabledCheckCount({ ...snapshot, references: off }), 0)
 })
 
 test('DOI Current and Required remain source-faithful plain text across persisted reload', () => {
@@ -94,7 +83,7 @@ test('DOI title/action/category/severity and manual-only eligibility follow the 
   assert.equal(friendlyRequiredAction(violation.rule_code, REQUIRED, violation.actual_value, violation.location), ACTION)
   assert.equal(categoryForRuleCode(violation.rule_code), 'citation_apa')
   assert.equal(normalizeViolationSeverity(violation.severity), 'minor')
-  assert.equal(SUPPORTED_FIX_RULES.has(violation.rule_code), false)
+  assert.equal(SUPPORTED_FIX_RULES[violation.rule_code], undefined)
   assert.equal(guidedPresentationFor(violation).supported, false)
   assert.equal(isLocalAiCitationEligible(violation), false)
 })

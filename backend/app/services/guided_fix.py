@@ -1,33 +1,9 @@
-"""Guided Fixes — safe, verification-bound formatting corrections (Beta).
-
-A future frontend selects violation IDs after an audit; the user re-uploads
-the exact original DOCX; the backend verifies SHA-256 identity and applies
-only whitelisted formatting fixes to a NEW docx returned for download.
-
-Design contract:
-  - Client supplies violation IDs ONLY. All paragraph/run targets come from
-    the persisted `Violation.location`; expected values are never guessed.
-  - Whitelist is authoritative: FONT_CONSISTENCY / FONT_SIZE (run-level) and
-    ALIGNMENT / LINE_SPACING / SPACE_BEFORE / SPACE_AFTER (paragraph-level).
-    Everything else is skipped as `unsupported_rule`.
-  - Fixers use python-docx direct formatting only: no run merge/split/delete/
-    reorder, no shared-style edits, no highlight/shading changes.
-  - Every fix is verified after application; any failure raises
-    `GuidedFixFailed` (no partial output is ever returned).
-  - The corrected DOCX is saved to an in-memory buffer and returned for
-    download; it is NEVER persisted, and the audit row/violations/score are
-    NEVER modified. The input bytes are never mutated.
-  - Output validation reopens the corrected bytes and confirms paragraph/
-    table text, counts, and relationships are unchanged; an applied fix is
-    only reported when its target property verifiably equals the resolved
-    expected value.
-"""
+"""Guided Fixes: deterministic direct-format edits to a verified DOCX copy."""
 import io
-import json
 import math
 import re
+import unicodedata
 import urllib.parse
-import zipfile
 from typing import Any, Dict, List, Optional, Tuple
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -52,8 +28,6 @@ MISMATCH_DETAIL = (
     "Upload the original DOCX file and try again."
 )
 LEGACY_DETAIL = "Guided Fixes is unavailable for audits created before document matching was introduced."
-ZERO_DETAIL = "No selected Guided Fix could be applied safely. Review the skipped findings and correct them manually."
-VERIFY_FAIL_DETAIL = "The corrected document could not be verified. No file was produced."
 
 # WordprocessingML namespaces (explicit — no qn() needed for the tag set).
 _W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
@@ -138,24 +112,6 @@ def _family_from_actual(s) -> Optional[str]:
     return token or None
 
 
-def _paragraph_texts_equal(a: List[str], b: List[str]) -> bool:
-    return a == b
-
-
-def _table_texts_equal(a: List[List[List[str]]], b: List[List[List[str]]]) -> bool:
-    return a == b
-
-
-def _rel_counts(doc) -> Tuple[int, int]:
-    """(image_count, hyperlink_count) from the document part relationships."""
-    images = 0
-    hyperlinks = 0
-    for rel in doc.part.rels.values():
-        if "image" in rel.target_ref:
-            images += 1
-        if "hyperlink" in rel.reltype:
-            hyperlinks += 1
-    return images, hyperlinks
 
 
 # ---------------------------------------------------------------------------
@@ -491,13 +447,11 @@ _FILENAME_UNSAFE_RE = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 
 
 def build_corrected_filename(original_name: str) -> str:
-    """Corrected-download filename, always .docx, sanitized."""
+    """Sanitized download name, never a path."""
     stem = (original_name or "").rsplit(".", 1)[0] if "." in (original_name or "") else (original_name or "")
     stem = _FILENAME_UNSAFE_RE.sub("_", stem)
-    stem = re.sub(r"_{3,}", "_", stem).strip(" .")
-    if not stem:
-        stem = "document"
-    return f"{stem}_ACA_corrected.docx"
+    stem = re.sub(r"_{3,}", "_", stem).strip(" .")[:150]
+    return f"{stem or 'document'}_ACA-fixed.docx"
 
 
 def _content_disposition(filename: str) -> str:
@@ -509,19 +463,109 @@ def _content_disposition(filename: str) -> str:
         header += f"; filename*=UTF-8''{encoded}"
     return header
 
-
-def _summary_header(applied: int, skipped: int, failed: int) -> str:
-    """URL-encoded JSON summary — counts only, never IDs/text/filenames."""
-    payload = json.dumps(
-        {"applied": applied, "skipped": skipped, "failed": failed},
-        separators=(",", ":"),
-    )
-    return urllib.parse.quote(payload)
-
-
 # ---------------------------------------------------------------------------
 # Pipeline
 # ---------------------------------------------------------------------------
+
+def _unsupported_font_slots(run, code: str) -> bool:
+    """Do not certify a visual font change while Word may use another slot."""
+    rpr = run._r.find(_W + "rPr")
+    if any(unicodedata.bidirectional(ch) in ("R", "AL", "AN") for ch in run.text):
+        return True
+    if rpr is None:
+        return False
+    if rpr.find(_W + "cs") is not None or rpr.find(_W + "rtl") is not None:
+        return True
+    if code == "FONT_SIZE" and rpr.find(_W + "szCs") is not None:
+        return True
+    if code == "FONT_CONSISTENCY":
+        fonts = rpr.find(_W + "rFonts")
+        if fonts is not None and any(
+            name in fonts.attrib for name in (
+                _W + "asciiTheme", _W + "hAnsiTheme", _W + "eastAsiaTheme",
+                _W + "csTheme", _W + "cs",
+            )
+        ):
+            return True
+    return False
+
+
+def review_targets(audit: AuditRecord, source_bytes: bytes, violations: List[Violation]):
+    """Resolve the complete persisted targets before any mutation.
+
+    A review does not certify the edit: apply repeats these checks against
+    the exact source and later verifies the saved package and rule findings.
+    """
+    from app.services.role_classifier import classify_paragraphs
+
+    doc = parse_document(source_bytes)
+    paragraphs = extract_paragraphs(doc)
+    roles = classify_paragraphs(doc, paragraphs)
+    if len(paragraphs) != len(doc.paragraphs):
+        raise GuidedFixFailed("paragraph traversal is ambiguous")
+    items = []
+    targets = set()
+    for violation in violations:
+        code = violation.rule_code
+        if code not in SAFE_RUN_RULES | SAFE_PARA_RULES:
+            raise GuidedFixFailed("unsupported rule")
+        loc = violation.location
+        if not isinstance(loc, dict):
+            raise GuidedFixFailed("missing location")
+        index = loc.get("paragraph_index")
+        if type(index) is not int or not 0 <= index < len(paragraphs):
+            raise GuidedFixFailed("invalid paragraph")
+        if "paragraph_indexes" in loc or "occurrences" in loc:
+            indexes = loc.get("paragraph_indexes")
+            if (not isinstance(indexes, list) or
+                    any(type(i) is not int or not 0 <= i < len(paragraphs) for i in indexes) or
+                    loc.get("occurrences") != len(set(indexes)) or index not in indexes or
+                    len(indexes) != 1):
+                raise GuidedFixFailed("incomplete aggregate")
+        para = doc.paragraphs[index]
+        if _unsafe_paragraph(para):
+            raise GuidedFixFailed("unsafe paragraph")
+        if len(para.runs) != len(paragraphs[index]["runs"]):
+            raise GuidedFixFailed("run traversal is ambiguous")
+        if any(run.text != parsed.get("text") for run, parsed in zip(para.runs, paragraphs[index]["runs"])):
+            raise GuidedFixFailed("run traversal changed")
+        raw = loc.get("run_indexes", loc.get("run_index"))
+        run_indexes = raw if isinstance(raw, list) else [raw]
+        if code in SAFE_RUN_RULES:
+            if (not run_indexes or any(type(i) is not int or not 0 <= i < len(para.runs)
+                                       for i in run_indexes) or len(set(run_indexes)) != len(run_indexes)):
+                raise GuidedFixFailed("invalid run targets")
+            if any(_unsafe_run(para.runs[i]) for i in run_indexes):
+                raise GuidedFixFailed("unsafe run")
+            if any(_unsupported_font_slots(para.runs[i], code) for i in run_indexes):
+                raise GuidedFixFailed("unresolved alternate font slot")
+        else:
+            if raw is not None:
+                raise GuidedFixFailed("paragraph target contains run indexes")
+            run_indexes = [None]
+        expected = _resolve_expected(violation, audit, doc, roles[index] if index < len(roles) else None)
+        if expected is None:
+            raise GuidedFixFailed("unresolved requirement")
+        for run_index in run_indexes:
+            key = (index, run_index, code)
+            if key in targets:
+                raise GuidedFixFailed("duplicate target")
+            targets.add(key)
+            parsed = paragraphs[index]["runs"][run_index] if run_index is not None else None
+            if _current_changed_from_actual(code, paragraphs[index], parsed, violation.actual_value, para=para):
+                raise GuidedFixFailed("source differs from finding")
+            if _current_matches_expected(code, expected, paragraphs[index], parsed, para=para):
+                raise GuidedFixFailed("already compliant")
+        items.append({
+            "violation_id": violation.id,
+            "before": violation.actual_value,
+            "after": violation.expected_value,
+            "locations": [f"Paragraph {index + 1}"],
+            "affected_count": len(run_indexes),
+            "property": code.lower().replace("_", " "),
+        })
+    return items, targets
+
 
 def apply_guided_fixes(
     audit: AuditRecord,
@@ -531,6 +575,7 @@ def apply_guided_fixes(
     """Apply whitelisted fixes to a parsed copy; return
     (corrected_bytes, applied, skipped). Never mutates source_bytes; never
     persists anything. Raises GuidedFixFailed on any unverifiable state."""
+    review_targets(audit, source_bytes, violations)
     from app.services.role_classifier import classify_paragraphs
 
     doc = parse_document(source_bytes)
@@ -631,10 +676,8 @@ def apply_guided_fixes(
             break
         applied.append(violation)
 
-    if failed:
-        raise GuidedFixFailed(
-            f"Guided Fix failed for {len(failed)} finding(s); no output produced"
-        )
+    if failed or skipped or len(applied) != len(violations):
+        raise GuidedFixFailed("not all selected findings could be applied")
 
     # Serialize to memory; the input bytes object is never touched.
     output = io.BytesIO()
@@ -642,76 +685,25 @@ def apply_guided_fixes(
     corrected_bytes = output.getvalue()
 
     _validate_output(corrected_bytes, doc, applied, roles, audit)
-    return corrected_bytes, applied, skipped
-
-
-def _reopened_matches_expected(rule_code: str, expected: Any, para, para_dict: Dict, run_dict: Optional[Dict]) -> bool:
-    """Verify the reopened output against the resolved expected value.
-    Paragraph rules read the paragraph object's own properties —
-    `extract_paragraphs` maps explicit zero lengths to None, so the dict
-    view is unreliable for SPACE_* when the expected value is 0pt."""
-    return _current_matches_expected(rule_code, expected, para_dict, run_dict, para=para)
+    return corrected_bytes, applied, []
 
 
 def _validate_output(corrected_bytes: bytes, source_doc, applied: List[Violation], roles: List[str], audit) -> None:
-    """Output validation: zip structure, text/rel preservation, and per-fix
-    property verification. Raises GuidedFixFailed on any failure."""
-    if not zipfile.is_zipfile(io.BytesIO(corrected_bytes)):
-        raise GuidedFixFailed("output is not a zip archive")
-    required = {
-        "[Content_Types].xml",
-        "word/document.xml",
-        "_rels/.rels",
-        "word/_rels/document.xml.rels",
-        "word/styles.xml",
-        "word/settings.xml",
-    }
-    with zipfile.ZipFile(io.BytesIO(corrected_bytes)) as zf:
-        names = set(zf.namelist())
-        if not required.issubset(names):
-            raise GuidedFixFailed("output zip missing required parts")
-
-    doc2 = parse_document(corrected_bytes)
-    paragraphs2 = extract_paragraphs(doc2)
-    if len(doc2.paragraphs) != len(source_doc.paragraphs):
+    """Reopen and verify every target's effective value, including grouped runs."""
+    doc = parse_document(corrected_bytes)
+    paragraphs = extract_paragraphs(doc)
+    if len(doc.paragraphs) != len(source_doc.paragraphs):
         raise GuidedFixFailed("paragraph count changed")
-    if len(doc2.tables) != len(source_doc.tables):
-        raise GuidedFixFailed("table count changed")
-    if not _paragraph_texts_equal(
-        [p.text for p in source_doc.paragraphs],
-        [p.text for p in doc2.paragraphs],
-    ):
-        raise GuidedFixFailed("paragraph text changed")
-    if not _table_texts_equal(
-        [[[cell.text for cell in row.cells] for row in t.rows] for t in source_doc.tables],
-        [[[cell.text for cell in row.cells] for row in t.rows] for t in doc2.tables],
-    ):
-        raise GuidedFixFailed("table text changed")
-    if _rel_counts(doc2) != _rel_counts(source_doc):
-        raise GuidedFixFailed("relationship counts changed")
-
     for violation in applied:
-        rule_code = violation.rule_code
-        location = violation.location if isinstance(violation.location, dict) else {}
-        paragraph_index = location.get("paragraph_index")
-        if not isinstance(paragraph_index, int):
-            raise GuidedFixFailed("applied finding lost its location")
-        para_dict2 = paragraphs2[paragraph_index]
-        run_dict2 = None
-        if rule_code in SAFE_RUN_RULES:
-            raw = location.get("run_indexes")
-            if isinstance(raw, list) and raw:
-                first = raw[0]
-            else:
-                first = location.get("run_index")
-            if isinstance(first, int) and first < len(para_dict2.get("runs", [])):
-                run_dict2 = para_dict2["runs"][first]
-        expected = _resolve_expected(violation, audit, doc2, roles[paragraph_index] if paragraph_index < len(roles) else None)
+        location = violation.location
+        index = location["paragraph_index"]
+        expected = _resolve_expected(violation, audit, doc, roles[index] if index < len(roles) else None)
         if expected is None:
-            raise GuidedFixFailed("applied finding no longer resolvable")
-        if not _reopened_matches_expected(
-            rule_code, expected, doc2.paragraphs[paragraph_index], para_dict2, run_dict2
-        ):
-            raise GuidedFixFailed(
-                f"applied {rule_code} does not match expected after save"
-            )
+            raise GuidedFixFailed("requirement changed")
+        indexes = location.get("run_indexes", [location.get("run_index")]) if violation.rule_code in SAFE_RUN_RULES else [None]
+        for run_index in indexes:
+            if run_index is not None and (type(run_index) is not int or run_index >= len(paragraphs[index]["runs"])):
+                raise GuidedFixFailed("run missing after save")
+            run = paragraphs[index]["runs"][run_index] if run_index is not None else None
+            if not _current_matches_expected(violation.rule_code, expected, paragraphs[index], run, para=doc.paragraphs[index]):
+                raise GuidedFixFailed("target value differs after save")

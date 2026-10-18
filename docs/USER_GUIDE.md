@@ -93,6 +93,25 @@ Selecting a finding shows its evidence:
 
 The preview is a locally generated copy of your document; the original Word file is not stored or modified.
 
+### Guided Fixes: verified formatting copies
+
+In a completed Audit Workspace, select candidate font family, font size,
+alignment, line spacing, or paragraph spacing findings. Re-upload the **exact
+original DOCX** used for that audit. ACA checks every selected location and
+shows the confirmed current and required values before you approve a change.
+If a location or requirement cannot be verified safely, correct that finding
+manually in Word instead.
+
+After you choose **Apply and verify changes**, ACA compares the saved DOCX
+package with the original, re-runs deterministic checks with the audit's saved
+profile, and rejects any unverified or regressed result. Only a passed review
+and re-audit unlocks **Download corrected document**. Download the copy within
+15 minutes; the link works once. Review its appearance in Microsoft Word
+before submission: even a verified formatting change can alter page layout.
+Neither the original DOCX nor its saved Audit History row is changed.
+The temporary corrected copy is removed when downloaded or expired. Uploading
+it as a new audit creates an independent Audit ID, not a linked History entry.
+
 ## 8. Export a PDF Report
 
 Use **Export PDF** in the Audit Workspace to save a PDF report containing your findings, locations, and required actions. Export is offline and deterministic — it reads the stored audit only. Audits without a score (interrupted or very old) cannot be exported.

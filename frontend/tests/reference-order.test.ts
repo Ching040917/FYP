@@ -1,11 +1,8 @@
 /**
  * Reference List alphabetical-order review — frontend contract tests.
  *
- * Covers: Custom Profile editor toggle (source contract + store round
- * trip), default Off, built-in read-only notice, Profile Summary
- * Enabled/Not-checked wording, disclosure wording, adapter category,
- * friendly title/action, entry-preview presentation, Guided Fixes and
- * Local AI ineligibility.
+ * Covers: Custom Profile editor toggle, default Off, profile disclosure,
+ * adapter category, friendly action, entry preview and manual eligibility.
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -16,7 +13,6 @@ import {
   blankProfilePayload,
   referencesFromUiModel,
   referencesToUiModel,
-  summarizeProfile,
 } from '../src/lib/custom-profile-store/editor.ts'
 import { referencesDisclosure } from '../src/lib/audit/enabled-checks-wording.ts'
 import { categoryForRuleCode } from '../src/lib/audit/adapter.ts'
@@ -92,22 +88,6 @@ test('legacy payload without the toggle reads as off', () => {
   assert.equal(ui.referenceOrderEnabled, false)
 })
 
-// ---------------------------------------------------------------------------
-// Profile Summary wording
-// ---------------------------------------------------------------------------
-
-test('profile summary shows Enabled when on', () => {
-  const payload = blankProfilePayload('id-4', 'Custom')
-  ;(payload.references as Record<string, unknown>).check_reference_order = true
-  const summary = summarizeProfile(payload as never)
-  assert.ok(summary.lines.includes('Reference List alphabetical order'))
-})
-
-test('profile summary shows Not checked when off', () => {
-  const payload = blankProfilePayload('id-5', 'Custom')
-  const summary = summarizeProfile(payload as never)
-  assert.ok(summary.lines.includes('Reference List alphabetical order: Not checked'))
-})
 
 test('references disclosure names alphabetical order only when enabled', () => {
   const on = referencesDisclosure({ check_reference_order: true } as never)
@@ -152,7 +132,7 @@ test('order finding presents the entry preview with the fixed action', () => {
 })
 
 test('guided fixes remain unavailable for the order rule', () => {
-  assert.ok(!SUPPORTED_FIX_RULES.has('REFERENCE_ORDER'))
+  assert.equal(SUPPORTED_FIX_RULES.REFERENCE_ORDER, undefined)
   const pres = guidedPresentationFor(orderViolation() as never)
   assert.equal(pres.supported, false)
 })

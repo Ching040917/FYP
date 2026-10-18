@@ -129,12 +129,12 @@ test('severity labels come from the shared badge on card, detail and preview', (
 })
 
 // ---------------------------------------------------------------------------
-// Guided Fixes behaviour must be untouched
+// Guided Fixes candidate classification only; eligibility requires Review.
 // ---------------------------------------------------------------------------
 
-test('the Guided Fixes whitelist is exactly the seven safe formatting rules', () => {
+test('the Guided Fixes candidate set is exactly the six existing formatting rules', () => {
   assert.deepEqual(
-    [...SUPPORTED_FIX_RULES].sort(),
+    Object.keys(SUPPORTED_FIX_RULES).sort(),
     [
       'ALIGNMENT',
       'FONT_CONSISTENCY',
@@ -155,7 +155,7 @@ test('citation and reference findings stay manual-only', () => {
     'REFERENCE_NOT_CITED',
     'REFERENCE_DUPLICATE',
   ]) {
-    assert.equal(SUPPORTED_FIX_RULES.has(code), false, code)
+    assert.equal(SUPPORTED_FIX_RULES[code], undefined, code)
     const pres = guidedPresentationFor({
       rule_code: code,
       expected_value: null,
@@ -167,9 +167,7 @@ test('citation and reference findings stay manual-only', () => {
   }
 })
 
-test('no unknown-severity fallback can enable a Guided Fix', () => {
-  // Eligibility is decided by the rule whitelist alone; severity is not an
-  // input to the selection surface at all.
+test('severity cannot silently add a candidate, and a candidate is not confirmed eligible', () => {
   assert.doesNotMatch(GUIDED, /severity/i)
   const pres = guidedPresentationFor({
     rule_code: 'FONT_SIZE',
@@ -178,6 +176,7 @@ test('no unknown-severity fallback can enable a Guided Fix', () => {
     location: null,
   })
   assert.equal(pres.supported, true)
+  assert.match(GUIDED, /server's review establishes exact targets/)
 })
 
 // ---------------------------------------------------------------------------

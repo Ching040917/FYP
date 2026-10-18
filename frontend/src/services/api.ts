@@ -5,6 +5,7 @@ const API_BASE = '/api'
 // Per-request timeout (ms). Aborts via AbortController so polling can't hang forever.
 const UPLOAD_TIMEOUT_MS = 60_000
 const POLL_TIMEOUT_MS = 10_000
+const GUIDED_VERIFY_TIMEOUT_MS = 180_000
 
 class TimeoutError extends Error {
   constructor(ms: number) {
@@ -26,12 +27,30 @@ async function fetchWithTimeout(input: RequestInfo, init: RequestInit = {}, time
   }
 }
 
+export class ApiRequestError extends Error {
+  readonly status: number
+  constructor(message: string, status: number) {
+    super(message)
+    this.name = 'ApiRequestError'
+    this.status = status
+  }
+}
+
 async function handleResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
     const error = await response.json().catch(() => ({ detail: 'Unknown error' }))
-    throw new Error(error.detail || `HTTP ${response.status}`)
+    throw new ApiRequestError(typeof error.detail === 'string' ? error.detail : `HTTP ${response.status}`, response.status)
   }
   return response.json()
+}
+
+function parseContentDispositionFilename(header: string | null): string | null {
+  if (!header) return null
+  const encoded = header.match(/filename\*=UTF-8''([^;]+)/i)?.[1]
+  if (encoded) {
+    try { return decodeURIComponent(encoded) } catch { /* use the plain name */ }
+  }
+  return header.match(/filename="([^"]+)"/i)?.[1] ?? null
 }
 
 export const api = {
@@ -233,105 +252,98 @@ export const api = {
     }
   },
 
-  /**
-   * Guided Fixes (Beta) — apply whitelisted fixes to a verified copy of the
-   * exact original DOCX (POST /api/audit/{id}/guided-fixes).
-   *
-   * Multipart contract (authoritative backend): `file` = the original DOCX,
-   * `selection` = JSON string {"violation_ids": [...]}. The client sends
-   * violation IDs ONLY — never paragraph/run indexes, values, or rule codes.
-   * The backend SHA-256 check is the sole identity proof.
-   *
-   * Privacy: this method logs nothing and never reads the response body
-   * beyond the Blob handoff; the summary header carries counts only.
-   */
-  async applyGuidedFixes(
-    auditId: string,
-    file: File,
-    violationIds: string[],
-  ): Promise<{ blob: Blob; filename: string | null; summary: GuidedRepairSummary | null }> {
+  /** Review only; no DOCX is changed and no output is issued. */
+  async reviewGuidedFixes(auditId: string, file: File, violationIds: string[]): Promise<GuidedFixReview> {
     const formData = new FormData()
     formData.append('file', file)
     formData.append('selection', JSON.stringify({ violation_ids: violationIds }))
+    return handleResponse<GuidedFixReview>(await fetchWithTimeout(
+      `${API_BASE}/audit/${auditId}/guided-fixes/review`,
+      { method: 'POST', body: formData },
+      UPLOAD_TIMEOUT_MS,
+    ))
+  },
+
+  /** Revoking a review is idempotent; expiry also invalidates abandoned reviews. */
+  async cancelGuidedFixReview(auditId: string, reviewId: string): Promise<void> {
     const response = await fetchWithTimeout(
+      `${API_BASE}/audit/${auditId}/guided-fixes/review/${encodeURIComponent(reviewId)}`,
+      { method: 'DELETE' },
+      POLL_TIMEOUT_MS,
+    )
+    if (!response.ok) await handleResponse(response)
+  },
+
+  /** Re-upload the exact source; a passed response is the sole download permission. */
+  async applyGuidedFixes(
+    auditId: string, file: File, violationIds: string[], reviewId: string,
+  ): Promise<GuidedFixVerification> {
+    const formData = new FormData()
+    formData.append('file', file)
+    formData.append('selection', JSON.stringify({ violation_ids: violationIds }))
+    formData.append('review_id', reviewId)
+    const result = await handleResponse<GuidedFixVerification>(await fetchWithTimeout(
       `${API_BASE}/audit/${auditId}/guided-fixes`,
       { method: 'POST', body: formData },
+      GUIDED_VERIFY_TIMEOUT_MS,
+    ))
+    if (result.status !== 'passed' || !result.download_token) {
+      throw new Error('Verification did not pass')
+    }
+    return result
+  },
+
+  /** A download token is one-use; do not retrieve bytes until the user requests them. */
+  async downloadGuidedFix(auditId: string, token: string): Promise<Blob> {
+    const response = await fetchWithTimeout(
+      `${API_BASE}/audit/${auditId}/guided-fixes/download/${encodeURIComponent(token)}`,
+      { cache: 'no-store' },
       UPLOAD_TIMEOUT_MS,
     )
     if (!response.ok) {
-      const error = await response.json().catch(() => ({ detail: 'Unknown error' }))
-      throw new Error(error.detail || `HTTP ${response.status}`)
+      const error = await response.json().catch(() => ({ detail: 'Download unavailable' }))
+      throw new ApiRequestError(typeof error.detail === 'string' ? error.detail : 'Download unavailable', response.status)
     }
-    const blob = await response.blob()
-    return {
-      blob,
-      filename: parseContentDispositionFilename(response.headers.get('content-disposition')),
-      summary: parseRepairSummary(response.headers.get('x-repair-summary')),
-    }
+    return response.blob()
   },
 }
 
-/**
- * Counts-only repair summary from the backend X-Repair-Summary header
- * (URL-encoded JSON {"applied":N,"skipped":N,"failed":N}).
- */
-export interface GuidedRepairSummary {
-  applied: number
-  skipped: number
-  failed: number
+export interface GuidedFixReviewItem {
+  violation_id: string
+  before: string
+  after: string
+  locations: string[]
+  affected_count: number
+  property: string
 }
 
-/**
- * Conservatively parse the X-Repair-Summary header. Missing, malformed, or
- * non-numeric payloads yield null — the download must still work. Never
- * throws.
- */
-function parseRepairSummary(header: string | null): GuidedRepairSummary | null {
-  if (!header) return null
-  let text = header
-  try {
-    const decoded = decodeURIComponent(header)
-    if (decoded.startsWith('{')) text = decoded
-  } catch {
-    // keep the raw value; JSON.parse decides
-  }
-  try {
-    const parsed = JSON.parse(text)
-    if (typeof parsed !== 'object' || parsed === null) return null
-    const applied = parsed.applied
-    const skipped = parsed.skipped
-    const failed = parsed.failed
-    if (
-      typeof applied !== 'number' || !Number.isFinite(applied) ||
-      typeof skipped !== 'number' || !Number.isFinite(skipped) ||
-      typeof failed !== 'number' || !Number.isFinite(failed)
-    ) {
-      return null
-    }
-    return { applied, skipped, failed }
-  } catch {
-    return null
-  }
+export interface GuidedFixReview {
+  review_id: string
+  items: GuidedFixReviewItem[]
+  output_filename: string
+  limitations: string[]
+  expires_at: string
 }
 
-/**
- * Extract the download filename from a Content-Disposition header.
- * Prefers RFC 5987 `filename*=UTF-8''...` (decoded) and falls back to the
- * plain `filename="..."` form. Returns null when absent.
- */
-function parseContentDispositionFilename(header: string | null): string | null {
-  if (!header) return null
-  const star = /filename\*=UTF-8''([^;]+)/i.exec(header)
-  if (star) {
-    try {
-      return decodeURIComponent(star[1])
-    } catch {
-      // malformed percent-encoding — fall through to the plain form
-    }
-  }
-  const plain = /filename="?([^";]+)"?/i.exec(header)
-  return plain ? plain[1] : null
+export interface GuidedFixFindingSummary {
+  rule_code: string
+  count: number
+  locations: string[]
 }
+
+export interface GuidedFixVerification {
+  status: 'passed'
+  resolved: string[]
+  before_score: number
+  after_score: number
+  before_findings: GuidedFixFindingSummary[]
+  after_findings: GuidedFixFindingSummary[]
+  new_findings: GuidedFixFindingSummary[]
+  download_token: string
+  output_filename: string
+  expires_at: string
+}
+
 
 /**
  * Trigger a browser download from a Blob and always release the temporary

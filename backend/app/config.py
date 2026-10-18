@@ -118,6 +118,10 @@ class Settings(BaseSettings):
     # platform default: %LOCALAPPDATA%\AcademicComplianceAuditor\rendered-previews.
     # Tests and dev set this to a temp dir.
     PREVIEW_STORAGE_DIR: str = ""
+    # Ephemeral, verified Guided Fix DOCX outputs. Empty uses the local
+    # application-data directory; tests may override with a temporary root.
+    GUIDED_FIX_STORAGE_DIR: str = ""
+
 
     # Stale Audit recovery (Build 1). Startup reconciliation of abandoned
     # `processing` rows is enabled by default for the supported local,
