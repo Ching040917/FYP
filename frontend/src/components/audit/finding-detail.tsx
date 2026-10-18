@@ -231,19 +231,18 @@ export function FindingDetail({
             </dd>
           </div>
         )}
-        {/* The Confirmed-issue sentence is omitted whenever a Current/Required
-            comparison is shown below: for formatting rules it restates the
-            same two values in prose, so both the title and the table would
-            carry the finding. Rules with no value comparison keep it. */}
-        {!(pres.expected != null || pres.actual != null) && (
-          <div className="flex items-baseline gap-3">
-            <dt className="w-28 shrink-0 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-              Confirmed issue
-            </dt>
-            <dd className="text-sm leading-[21px] text-foreground">{pres.issue}</dd>
-          </div>
-        )}
       </dl>
+
+      {v.message?.trim() && pres.issue.trim() && pres.issue.trim() !== pres.requiredAction?.trim() && (
+        <div className="mt-4 min-w-0">
+          <h3 className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+            What ACA found
+          </h3>
+          <p className="mt-1.5 whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-sm leading-[21px] text-foreground">
+            {pres.issue}
+          </p>
+        </div>
+      )}
 
       {/* Formatting findings: one Current → Required comparison, untruncated. */}
       {pres.expected != null || pres.actual != null ? (

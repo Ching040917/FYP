@@ -78,6 +78,7 @@ Results open in the Audit Workspace:
 
 - **Score** — a weighted compliance score out of 100 for the checks your profile enables. Major findings deduct more than minor ones. Very old audits may show *Unavailable* instead of a score.
 - **Findings list** — compact rows show the finding, severity, location and current-to-required comparison where available. Use the severity and category filters to narrow the list; select a row to read its complete details.
+- **What ACA found** — the selected finding's existing explanation, when available, appears before Current and Required. Historical findings without an explanation do not show an empty section.
 - **Current and Required** — what ACA found versus what the saved profile requires, followed by the required action in Finding Details.
 - **Not checked** — a profile requirement can be switched off (for example, margins); this means the check does not apply, not that it passed.
 

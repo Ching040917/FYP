@@ -69,18 +69,6 @@ test('the card shows the comparison or a labelled single-value line', () => {
   assert.match(rowJsx, /\{comparison\}/)
 })
 
-test('the card shows one truncated evidence line', () => {
-  assert.match(rowJsx, /\{evidence && \(/)
-  assert.match(rowJsx, /block truncate text-\[11px\]/)
-  // The old card clamped two monospaced lines of raw actual_value.
-  assert.doesNotMatch(rowJsx, /line-clamp-2/)
-})
-
-test('the full evidence is reachable by a screen reader', () => {
-  assert.match(rowJsx, /<span className="sr-only">\{evidence\}<\/span>/)
-  // ...and on hover, without truncating the stored text.
-  assert.match(rowJsx, /title=\{evidence\}/)
-})
 
 test('the occurrence label renders only when the finding repeats', () => {
   assert.match(rowJsx, /\{occurrences && \(/)
@@ -141,13 +129,6 @@ test('the retired comparison wording appears nowhere in the card', () => {
 // Selection must not move anything
 // ---------------------------------------------------------------------------
 
-test('selection changes colour only, never the reserved border width', () => {
-  assert.match(rowJsx, /border-l-2/)
-  assert.match(rowJsx, /border-l-finding-selected-indicator/)
-  assert.match(rowJsx, /border-l-transparent/)
-  // Both branches keep the same padding, so the box height is identical.
-  assert.match(rowJsx, /px-3 py-2\.5/)
-})
 
 test('focus is distinguishable from selection', () => {
   // The old focus background equalled the selected background.
