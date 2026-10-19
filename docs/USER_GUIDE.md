@@ -22,7 +22,7 @@ Documents are processed locally on your machine. Your original DOCX file is read
 
 ## 4. Select a Formatting Profile
 
-Above the upload area, choose one of:
+On the Dashboard, use **Selected profile** to choose one of:
 
 - **SUC Academic Report** (recommended default)
 - **APA 7 Student Paper**
@@ -54,13 +54,21 @@ evidence only** shows **Rendered page could not be determined** without
 changing the current preview page. A page location does not establish
 rendered visibility, field freshness, numbering format or sequence.
 
-The Dashboard separates **Scored checks**, **Manual review only · Unscored**,
-**Not checked**, and **Citation style**. Headers, Footers, and Page numbers
-each show their own status; enabled page numbers also show placement.
-Use **Review full requirements** for the complete grouped inventory in a
-scrollable dialog. Opening it does not expand the Dashboard or move the
-audit-start controls. Escape or **Close** returns focus to its trigger.
-Header, Footer, and Page Number requirements never affect the score.
+The Dashboard summarizes the selected profile's coverage:
+
+- **Scored checks** (green) — requirements ACA checks automatically; these checks affect the compliance score.
+- **Manual review only · Unscored** (purple) — requirements that need human review and do not affect the numeric compliance score. ACA has not completed that manual review.
+- **Not checked by ACA** (restrained red) — requirements not included in this profile's automated checks, not requirements found to have failed.
+
+These groups describe coverage, not passed document results. **Citation style**
+is profile configuration, shown separately from the coverage groups.
+
+Use **Review full requirements** to open **Full profile requirements**, a
+scrollable modal for the **currently selected profile**. It includes the
+profile overview, formatting exemptions, Scored checks, Manual review only,
+Not checked, and Citation settings. Opening it does not expand the Dashboard
+or move the audit-start controls. Escape or **Close** returns focus to its
+trigger. Header, Footer, and Page Number requirements never affect the score.
 
 Inspect and correct these requirements manually in Word; Local AI and
 Guided Fixes do not apply. Existing History entries retain their saved
@@ -78,24 +86,39 @@ Results open in the Audit Workspace:
 
 - **Score** — a weighted compliance score out of 100 for the checks your profile enables. Major findings deduct more than minor ones. Very old audits may show *Unavailable* instead of a score.
 - **Findings list** — compact rows show the finding, severity, location and current-to-required comparison where available. Use the severity and category filters to narrow the list; select a row to read its complete details.
-- **Current and Required** — what ACA found versus what the saved profile requires, followed by the required action in Finding Details.
-- **Not checked** — a profile requirement can be switched off (for example, margins); this means the check does not apply, not that it passed.
+- **What ACA found** — the selected finding's existing explanation, when available, before its comparison values.
+- **Current and Required** — read-only report values: what the document contains and what the saved profile requires. They are not editable fields.
+- **Required action** — explains the action to take to address the selected finding.
+- **Not checked** — a requirement is not included in the selected profile's automated checks; this does not mean it passed.
+
+A proposed correction appears only through the **Guided Fixes** proposal
+workflow, not for every finding in ordinary Finding Details.
 
 ACA reports the checks it supports. **It does not guarantee institutional acceptance or complete academic compliance** — treat findings as guidance for your own review.
 
 Open the document-name disclosure in the report header to read a long filename
 without leaving the workspace. It supports keyboard activation and Escape to
-close. **Profile details** always describes that audit's saved profile snapshot,
-not a later edit to the current profile.
+close. **Profile details** opens a modal showing the **saved profile snapshot
+associated with that audit**, not the currently selected Dashboard profile.
+Later edits to, or deletion of, a live profile do not silently change the
+saved snapshot.
 
 ## 7. View Finding Evidence
 
-Selecting a finding shows its evidence:
+Selecting a finding shows its available evidence:
 
 - **Location** — the finding's location in plain language, such as a heading, paragraph, figure, or table (never internal numbering).
-- **Rendered-page preview** — a page preview of your document with the finding highlighted. This needs the optional LibreOffice integration.
-- **Extracted text** — when page preview is unavailable, the finding links to the exact paragraph in the extracted text view instead.
+- **Rendered-page preview** — a page preview of your document with highlights where supported. This needs the optional LibreOffice integration.
+- **Extracted text** — when page preview is unavailable, supported findings link to their paragraph in the extracted text view instead.
 - **Page navigation and zoom** — previous/next controls change pages; zoom and Fit page/Fit width controls change the view. The active Fit button identifies the fit mode; a manual zoom shows its percentage.
+- **Evidence details** — an inline disclosure below the Document Preview heading, available when evidence metadata exists. It shows labelled location, target and precision values, plus Availability information where applicable.
+
+**Evidence details** does not open a blocking modal. Expand or collapse it
+with its control (Enter or Space when focused); Preview remains usable while
+it is expanded, including page navigation, zoom and view-mode controls.
+Changing the selected finding updates the evidence without retaining the
+previous finding's Availability text. Limited or unavailable evidence is
+labelled truthfully; when no evidence metadata exists, no disclosure is shown.
 
 The preview is a locally generated copy of your document; the original Word file is not stored or modified.
 

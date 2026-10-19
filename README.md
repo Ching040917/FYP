@@ -40,7 +40,7 @@ After an audit, ACA shows what it found and why:
 - Links supported body findings to a rendered page preview when the optional LibreOffice integration is available, or to extracted text otherwise. Structural reviews identify stored section/story definitions without a visual region.
 - Produces a PDF report you can save or share.
 
-![Academic Compliance Auditor workspace showing findings, rendered-page evidence, expected and actual values, and PDF export.](docs/images/aca-audit-workspace.png)
+![Academic Compliance Auditor workspace showing compact findings, Document Preview with inline Evidence details, and read-only Current and Required values.](docs/images/aca-audit-workspace.png)
 
 ### Optional Header, Footer and Page Number reviews
 
