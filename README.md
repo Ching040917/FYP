@@ -36,7 +36,7 @@ Python and Node.js are not required.
 After an audit, ACA shows what it found and why:
 
 - Identifies supported formatting and citation issues, grouped by severity.
-- Shows the required value and the value found in your document (Expected and Actual).
+- Shows the value found in your document and the required value (Current and Required).
 - Links supported body findings to a rendered page preview when the optional LibreOffice integration is available, or to extracted text otherwise. Structural reviews identify stored section/story definitions without a visual region.
 - Produces a PDF report you can save or share.
 
