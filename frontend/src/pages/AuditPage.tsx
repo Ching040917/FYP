@@ -1321,6 +1321,7 @@ export function AuditPage() {
                         size="sm"
                         aria-haspopup="dialog"
                         aria-expanded={categoryOpen}
+                        aria-controls="category-panel"
                         className="max-[240px]:h-auto max-[240px]:max-w-full max-[240px]:flex-wrap max-[240px]:whitespace-normal"
                         onClick={() => setCategoryOpen((o) => !o)}
                       >
