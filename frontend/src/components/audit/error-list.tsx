@@ -1,6 +1,6 @@
 /**
  * Findings list — master pane of the Audit Workspace master-detail layout.
- * Shared with Dashboard (Build 4 owns the Dashboard-specific restyle).
+ * Filters are controlled by AuditPage across its responsive workspace panes.
  *
  * Findings are structured ruled rows, not elevated cards: 1px rules,
  * restrained radii, no shadows. Every row is a real <button> (Tab +
@@ -47,6 +47,7 @@ import {
 } from '../ui/select'
 import { cn } from '../../lib/utils'
 import { CATEGORY_LABELS, severityBadge } from '../../lib/audit/categories'
+import type { AuditResponse } from '../../types/api'
 import type {
   AuditCategory,
   AuditResult,
@@ -64,6 +65,10 @@ const SEVERITY_FILTER_OPTIONS: ReadonlyArray<{ value: ViolationSeverity; label: 
   ['major', 'minor', 'review', 'unknown'] as const
 ).map((sev) => ({ value: sev, label: severityBadge(sev).label }))
 
+export function matchesFindingFilters(finding: LayoutError, severity: ViolationSeverity | 'all', category: AuditCategory | 'all') {
+  return (severity === 'all' || finding.severity === severity) && (category === 'all' || finding.category === category)
+}
+
 export function ErrorList({
   result,
   selectedId,
@@ -71,6 +76,9 @@ export function ErrorList({
   className,
   categoryFilter,
   onCategoryFilterChange,
+  severityFilter,
+  onSeverityFilterChange,
+  auditStatus,
   locationLabels,
   locatingId,
 }: {
@@ -79,31 +87,22 @@ export function ErrorList({
   onSelect?: (e: LayoutError) => void
   className?: string
   /** Controlled category filter — shared with the category overview. */
-  categoryFilter?: AuditCategory | 'all'
-  onCategoryFilterChange?: (category: AuditCategory | 'all') => void
+  categoryFilter: AuditCategory | 'all'
+  onCategoryFilterChange: (category: AuditCategory | 'all') => void
+  severityFilter: ViolationSeverity | 'all'
+  onSeverityFilterChange: (severity: ViolationSeverity | 'all') => void
+  auditStatus: AuditResponse['status']
   /** User-facing location labels per finding id (Page N · Paragraph M). */
   locationLabels?: ReadonlyMap<string, string> | null
   /** Finding currently being located by the page mapper. */
   locatingId?: string | null
 }) {
-  const [severityFilter, setSeverityFilter] = React.useState<ViolationSeverity | 'all'>('all')
-  const [localCategoryFilter, setLocalCategoryFilter] = React.useState<AuditCategory | 'all'>('all')
-
-  const categoryFilterValue = categoryFilter ?? localCategoryFilter
-
-  const handleCategoryChange = (value: string) => {
-    const next = value as AuditCategory | 'all'
-    if (onCategoryFilterChange) onCategoryFilterChange(next)
-    else setLocalCategoryFilter(next)
-  }
-
-  const filtered = result.physical_layout_errors.filter((e) => {
-    if (severityFilter !== 'all' && e.severity !== severityFilter) return false
-    if (categoryFilterValue !== 'all' && e.category !== categoryFilterValue) return false
-    return true
-  })
+  const categoryFilterValue = categoryFilter
+  const handleCategoryChange = (value: string) => onCategoryFilterChange(value as AuditCategory | 'all')
+  const filtered = result.physical_layout_errors.filter((e) => matchesFindingFilters(e, severityFilter, categoryFilter))
 
   const scrollRef = React.useRef<HTMLDivElement>(null)
+  const severityControlRef = React.useRef<HTMLButtonElement>(null)
   const [canScrollUp, setCanScrollUp] = React.useState(false)
   const [canScrollDown, setCanScrollDown] = React.useState(false)
   // Reliable visible range only — set by IntersectionObserver over rows.
@@ -156,7 +155,8 @@ export function ErrorList({
   // The count is truthful and the reset restores both controls to "All" —
   // it never reruns the audit and never alters the findings or the score.
   const resetFilters = () => {
-    setSeverityFilter('all')
+    severityControlRef.current?.focus()
+    onSeverityFilterChange('all')
     handleCategoryChange('all')
   }
 
@@ -178,8 +178,7 @@ export function ErrorList({
         <div className="flex items-center justify-between gap-2">
           <div>
             <CardTitle className="text-base font-semibold flex items-center gap-2">
-              <MapPin className="h-4 w-4 text-primary" />
-              Findings
+              <h2 className="flex items-center gap-2"><MapPin className="h-4 w-4 text-primary" aria-hidden="true" />Findings</h2>
             </CardTitle>
             <CardDescription>
               {result.physical_layout_errors.length} findings · select to inspect evidence
@@ -195,11 +194,12 @@ export function ErrorList({
           <Filter className="h-3 w-3 shrink-0 text-muted-foreground" aria-hidden="true" />
           <Select
             value={severityFilter}
-            onValueChange={(v) => setSeverityFilter(v as ViolationSeverity | 'all')}
+            onValueChange={(v) => onSeverityFilterChange(v as ViolationSeverity | 'all')}
           >
             <SelectTrigger
+              ref={severityControlRef}
               size="sm"
-              className="min-w-0 flex-1 basis-[8.5rem] text-xs"
+              className="min-w-0 flex-1 basis-[8.5rem] text-xs focus-visible:ring-primary"
               aria-label="Filter by severity"
             >
               <SelectValue />
@@ -219,7 +219,7 @@ export function ErrorList({
           >
             <SelectTrigger
               size="sm"
-              className="min-w-0 flex-1 basis-[10rem] text-xs"
+              className="min-w-0 flex-1 basis-[10rem] text-xs focus-visible:ring-primary"
               aria-label="Filter by category"
             >
               <SelectValue />
@@ -232,6 +232,11 @@ export function ErrorList({
             </SelectContent>
           </Select>
         </div>
+        {filtersActive && (
+          <button type="button" onClick={resetFilters} className="self-start rounded text-xs font-medium text-primary underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary">
+            Clear filters
+          </button>
+        )}
         {statusLine && (
           <p className="pt-1 text-xs text-muted-foreground" aria-live="polite">
             {statusLine}
@@ -270,7 +275,9 @@ export function ErrorList({
               // The audit genuinely found nothing — distinct wording, no
               // reset control, no hidden count.
               <div className="flex h-32 items-center justify-center px-4 text-center text-xs text-muted-foreground">
-                No compliance findings were detected.
+                {auditStatus === 'processing' ? 'Findings will appear as checks finish'
+                  : auditStatus !== 'completed' ? 'No findings available from this incomplete audit'
+                  : 'No compliance findings were detected.'}
               </div>
             ) : (
               <div className="flex h-32 flex-col items-center justify-center gap-1 px-4 text-center">

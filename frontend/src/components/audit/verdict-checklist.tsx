@@ -65,6 +65,7 @@ export function VerdictChecklist({
   showDerivedNote = false,
   selectedCategory = null,
   onSelectCategory,
+  context = 'dashboard',
 }: {
   breakdown: ScoreBreakdown[]
   /** Dashboard-only caption: verdicts are presentation-derived, not returned by the backend. */
@@ -73,20 +74,27 @@ export function VerdictChecklist({
   selectedCategory?: string | null
   /** When provided, each known category renders as a semantic button (aria-pressed). */
   onSelectCategory?: (category: string) => void
+  context?: 'dashboard' | 'report'
 }) {
-  if (breakdown.length === 0) return null
+  if (breakdown.length === 0 && context !== 'report') return null
   const selectable = typeof onSelectCategory === 'function'
 
   return (
-    <section aria-label="Category verdicts">
-      <h2 className="text-component-title text-foreground">Category verdicts</h2>
+    <section aria-label={context === 'report' ? 'Category summary' : 'Category verdicts'}>
+      <h2 className="text-component-title text-foreground">{context === 'report' ? 'Category summary' : 'Category verdicts'}</h2>
+      {context === 'report' && (
+        <p className="mt-1 text-xs leading-5 text-muted-foreground">
+          Categories summarize scoring, not every requirement. Pass means no score deduction recorded.
+        </p>
+      )}
+      {breakdown.length === 0 && <p className="mt-3 text-sm text-muted-foreground">Category summary unavailable</p>}
       {showDerivedNote && (
         <p className="mt-0.5 text-[11px] leading-[16px] text-muted-foreground">
           Verdicts are derived on the client from the backend deduction values.
         </p>
       )}
       <ul
-        className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-4"
+        className={cn('mt-3 grid gap-3', context === 'report' ? 'grid-cols-1 min-[480px]:grid-cols-2' : 'grid-cols-2 md:grid-cols-3 xl:grid-cols-4')}
         role="list"
       >
         {breakdown.map((b) => {
@@ -104,7 +112,7 @@ export function VerdictChecklist({
                   className={`h-4 w-4 shrink-0 ${VERDICT_TONE[verdict]}`}
                   aria-hidden="true"
                 />
-                <span className="truncate text-[14px] font-medium text-foreground">
+                <span className={cn('text-[14px] font-medium text-foreground', context === 'report' ? 'min-w-0 [overflow-wrap:anywhere]' : 'truncate')}>
                   {label}
                 </span>
               </div>

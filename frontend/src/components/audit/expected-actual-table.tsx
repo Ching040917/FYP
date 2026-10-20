@@ -20,13 +20,13 @@ export function ExpectedActualTable({ expected, actual }: ExpectedActualTablePro
   if (expected == null && actual == null) return null
 
   return (
-    <dl className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+    <dl className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,12rem),1fr))] gap-4">
       {actual != null && (
         <div className="min-w-0">
           <dt className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
             Current
           </dt>
-          <dd className="mt-1.5 whitespace-pre-wrap break-words border-l-2 border-border pl-3 font-mono text-[13px] leading-[19px] text-foreground">
+          <dd className="mt-1.5 whitespace-pre-wrap break-words [overflow-wrap:anywhere] border-l-2 border-border pl-3 font-mono text-[13px] leading-[19px] text-foreground">
             {actual}
           </dd>
         </div>
@@ -36,7 +36,7 @@ export function ExpectedActualTable({ expected, actual }: ExpectedActualTablePro
           <dt className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
             Required
           </dt>
-          <dd className="mt-1.5 whitespace-pre-wrap break-words border-l-2 border-border pl-3 text-sm leading-[21px] text-foreground">
+          <dd className="mt-1.5 whitespace-pre-wrap break-words [overflow-wrap:anywhere] border-l-2 border-border pl-3 text-sm leading-[21px] text-foreground">
             {expected}
           </dd>
         </div>

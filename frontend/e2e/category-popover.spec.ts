@@ -107,7 +107,7 @@ test.describe('category popover @a11y', () => {
     const trigger = page.getByRole('button', { name: /^Categories · \d+/ })
     await trigger.click()
     const panel = page.locator('#category-panel')
-    const target = panel.getByRole('button', { has: page.locator('svg') }).last()
+    const target = panel.locator('button[aria-pressed]').last()
     const label = (await target.textContent()) ?? ''
     await target.click()
     await expect(target).toHaveAttribute('aria-pressed', 'true')
@@ -117,4 +117,43 @@ test.describe('category popover @a11y', () => {
     void label
     void summary
   })
+})
+
+test('Categories stays viewport-bounded after compact reflow, scrolling and resize', async ({ page }) => {
+  await openAuditWithFindings(page)
+  await page.setViewportSize({ width: 676, height: 337 })
+  const trigger = page.getByRole('button', { name: /^Categories/ })
+  await trigger.focus()
+  await page.keyboard.press('Enter')
+  const panel = page.locator('#category-panel')
+  const firstCategory = panel.locator('button[aria-pressed]').first()
+  await expect(firstCategory).toBeFocused()
+  for (const viewport of [{ width: 676, height: 337 }, { width: 768, height: 384 }, { width: 1024, height: 768 }]) {
+    await page.setViewportSize(viewport)
+    await page.evaluate(() => window.scrollTo({ top: 100, behavior: 'instant' }))
+    await expect.poll(async () => panel.evaluate((el) => {
+      const r = el.getBoundingClientRect()
+      const header = document.querySelector('header')!.getBoundingClientRect()
+      const focused = document.activeElement!.getBoundingClientRect()
+      return r.left >= 16 && r.right <= innerWidth - 16 + 1 &&
+        r.top >= header.bottom + 7 && r.bottom <= innerHeight - 16 + 1 &&
+        focused.left >= r.left && focused.right <= r.right &&
+        focused.top >= r.top && focused.bottom <= r.bottom
+    })).toBe(true)
+  }
+  await page.keyboard.press('Escape')
+  await expect(panel).toHaveCount(0)
+  await expect(trigger).toBeFocused()
+  await trigger.click()
+  await expect(panel).toBeVisible()
+  await page.mouse.click(5, 200)
+  await expect(panel).toHaveCount(0)
+  await page.setViewportSize({ width: 676, height: 337 })
+  await page.getByRole('tab', { name: 'Document', exact: true }).click()
+  await trigger.click()
+  await panel.getByRole('button', { name: 'Review major findings', exact: true }).click()
+  await expect(panel).toHaveCount(0)
+  await expect(page.getByRole('tab', { name: 'Findings', exact: true })).toHaveAttribute('aria-selected', 'true')
+  await expect(page.getByRole('combobox', { name: 'Filter by severity' })).toBeFocused()
+  await expect(page.getByRole('combobox', { name: 'Filter by severity' })).toContainText('Major')
 })

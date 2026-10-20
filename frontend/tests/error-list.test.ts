@@ -188,15 +188,6 @@ test('the filtered-empty state states a truthful hidden count and Shows 0 of N',
   assert.match(CARD, /Showing 0 of \$\{totalFindings\} findings/)
 })
 
-test('reset appears only while a filter is active and restores BOTH to All', () => {
-  assert.match(CARD, /filtersActive &&/)
-  assert.match(CARD, /const resetFilters = \(\) => \{/)
-  assert.match(CARD, /setSeverityFilter\('all'\)/)
-  assert.match(CARD, /handleCategoryChange\('all'\)/)
-  // Reset is a real button: keyboard operable, no audit re-run.
-  assert.match(CARD, /<button[\s\S]{0,200}onClick=\{resetFilters\}/)
-})
-
 test('the reset control names the action the reader understands', () => {
   assert.match(CARD, /'Reset filters'/)
   assert.match(CARD, /'Show all findings'/)

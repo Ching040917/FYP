@@ -11,6 +11,9 @@ export function ProfileRequirements({ snapshot, context }: {
   const summaries = selectedProfileSummary(snapshot)
   const overview = sections[0]
   const source = snapshot.profile_source === 'built_in' ? 'Built-in' : 'Custom'
+  const exemptions = context === 'saved'
+    ? [...new Set((snapshot.role_exemptions ?? []).filter(role => typeof role === 'string' && role.trim().length > 0))]
+    : snapshot.role_exemptions ?? []
   const coverage = sections.slice(1).map(section => {
     const heading = section.heading.startsWith('Manual') ? 'Manual review only'
       : section.heading === 'Citation style' ? 'Citation settings' : section.heading
@@ -40,12 +43,29 @@ export function ProfileRequirements({ snapshot, context }: {
           ))}
         </dl>
       </section>
-      {!!snapshot.role_exemptions?.length && (
+      {exemptions.length > 0 && (
         <section className="border-t border-border pt-4" aria-label="Formatting exemptions">
           <h3 className="text-base font-semibold text-primary">Formatting exemptions</h3>
           <p className="mt-1 text-[13px] leading-5 text-muted-foreground">Formatting exemptions recorded by this profile.</p>
-          <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[13px] leading-5">
-            {snapshot.role_exemptions.map(role => <li key={role}>{role.charAt(0).toUpperCase() + role.slice(1).toLowerCase().replace(/_/g, ' ')}</li>)}
+          <ul
+            role={context === 'saved' ? 'list' : undefined}
+            aria-label={context === 'saved' ? 'Formatting exemptions' : undefined}
+            className={context === 'saved'
+              ? 'mt-2 flex flex-wrap items-start gap-2 text-[13px] leading-5'
+              : 'mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[13px] leading-5'}
+          >
+            {exemptions.map(role => (
+              <li
+                key={role}
+                className={context === 'saved'
+                  ? 'min-w-0 max-w-full rounded-md bg-muted px-2 py-1 text-foreground [overflow-wrap:anywhere]'
+                  : undefined}
+              >
+                {context === 'saved' && role === 'UNKNOWN'
+                  ? 'Unknown (no proven content role)'
+                  : role.charAt(0).toUpperCase() + role.slice(1).toLowerCase().replace(/_/g, ' ')}
+              </li>
+            ))}
           </ul>
         </section>
       )}

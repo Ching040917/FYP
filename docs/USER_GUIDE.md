@@ -84,7 +84,7 @@ An audit that could not finish (for example, because the application was closed 
 
 Results open in the Audit Workspace:
 
-- **Score** — a weighted compliance score out of 100 for the checks your profile enables. Major findings deduct more than minor ones. Very old audits may show *Unavailable* instead of a score.
+- **Enabled-check score** — a weighted compliance score out of 100 for the scored checks your profile enables, shown only for completed audits. Processing or failed audits show **Not final**. Major findings deduct more than minor ones. Very old audits may show *Unavailable* instead of a score.
 - **Findings list** — compact rows show the finding, severity, location and current-to-required comparison where available. Use the severity and category filters to narrow the list; select a row to read its complete details.
 - **What ACA found** — the selected finding's existing explanation, when available, before its comparison values.
 - **Current and Required** — read-only report values: what the document contains and what the saved profile requires. They are not editable fields.
@@ -102,6 +102,10 @@ close. **Profile details** opens a modal showing the **saved profile snapshot
 associated with that audit**, not the currently selected Dashboard profile.
 Later edits to, or deletion of, a live profile do not silently change the
 saved snapshot.
+
+In **Profile details**, formatting exemptions are read-only list items.
+**Unknown (no proven content role)** names the saved exemption for content
+with no proven role; it is not an audit finding.
 
 ## 7. View Finding Evidence
 

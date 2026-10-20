@@ -16,7 +16,7 @@ async function openCompletedAudit(page: Page) {
   const summary = await createSyntheticAudit(page)
   await page.goto(`/audit/${summary.auditId}`)
   await page.waitForLoadState('networkidle')
-  await expect(page.getByText(/major ·|findings/).first()).toBeVisible()
+  await expect(page.locator('button[aria-pressed]:visible').first()).toBeVisible()
   return summary
 }
 

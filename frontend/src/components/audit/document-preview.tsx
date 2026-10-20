@@ -18,7 +18,7 @@
  */
 import * as React from 'react'
 import type { ReactNode } from 'react'
-import { AlertOctagon, AlertTriangle, Check, ChevronDown, FileText, Info, Loader2, ScrollText } from 'lucide-react'
+import { AlertOctagon, AlertTriangle, Check, ChevronDown, Info, Loader2, ScrollText } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import { evidencePage, evidencePrecision, evidenceTargetLabel, compactEvidenceText, compactPrecisionLabel, evidenceSummary } from '../../lib/audit/evidence-summary.ts'
 import { friendlyRuleTitle } from '../../lib/friendly-finding'
@@ -676,19 +676,9 @@ function PreviewSkeleton() {
   )
 }
 
-function PreviewHeader() {
-  return (
-    <h2 className="text-component-title text-foreground flex items-center gap-2">
-      <FileText className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
-      Document preview
-    </h2>
-  )
-}
-
 function PreviewUnavailable() {
   return (
     <div className="space-y-3">
-      <PreviewHeader />
       <div className="rounded-md border border-dashed border-border bg-card px-4 py-10 text-center">
         <p className="text-sm text-muted-foreground">
           Preview unavailable — this audit predates document preview support.
@@ -701,7 +691,6 @@ function PreviewUnavailable() {
 function PreviewLoadError() {
   return (
     <div className="space-y-3">
-      <PreviewHeader />
       <div className="rounded-md border border-dashed border-border bg-card px-4 py-10 text-center">
         <p className="text-sm text-muted-foreground">
           Document preview could not be loaded. The audit findings remain available.
@@ -714,7 +703,6 @@ function PreviewLoadError() {
 function PreviewEmpty() {
   return (
     <div className="space-y-3">
-      <PreviewHeader />
       <div className="rounded-md border border-dashed border-border bg-card px-4 py-6 text-center">
         <p className="text-sm text-muted-foreground">
           No paragraph blocks were extracted from this document.

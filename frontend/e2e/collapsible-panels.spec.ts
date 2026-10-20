@@ -24,7 +24,7 @@ async function openCompletedAudit(page: Page) {
   const summary = await createSyntheticAudit(page)
   await page.goto(`/audit/${summary.auditId}`)
   await page.waitForLoadState('networkidle')
-  await expect(page.getByText(/major ·|findings/).first()).toBeVisible()
+  await expect(page.locator('button[aria-pressed]:visible').first()).toBeVisible()
   return summary
 }
 
@@ -328,7 +328,7 @@ test.describe('collapsible audit workspace @collapsible-panels', () => {
     expect(stable.docMoved, 'document must not scroll when the preview scrolls').toBe(0)
     expect(stable.detailsMoved, 'details must not scroll when the preview scrolls').toBe(0)
 
-    await expect(page.getByText('Score', { exact: true }).first()).toBeVisible()
+    await expect(page.getByRole('group', { name: 'Score covers only the enabled checks' })).toBeVisible()
   })
 
   test('1280x800: three-column workspace expands on collapse without overflow', async ({ page }, testInfo) => {
@@ -396,7 +396,7 @@ test.describe('collapsible audit workspace @collapsible-panels', () => {
     const summary = await createAuditViaApi(page, SAMPLE_THESIS, longName)
     await page.goto(`/audit/${summary.auditId}`)
     await page.waitForLoadState('networkidle')
-    await expect(page.getByText(/major ·|findings/).first()).toBeVisible()
+    await expect(page.locator('button[aria-pressed]:visible').first()).toBeVisible()
     await expectNoHorizontalOverflow(page)
     await expect(page.getByRole('button', { name: 'Hide findings' })).toBeVisible()
     await expect(page.getByRole('button', { name: 'Focus on document' })).toBeVisible()

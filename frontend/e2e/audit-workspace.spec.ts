@@ -37,7 +37,7 @@ test.describe('audit workspace severity labels @citation', () => {
         'Read the finding counts line',
         'Read the finding row label',
       ],
-      expected: 'Counts read "0 major · 0 minor findings · 1 for review"; the row shows "Manual review".',
+      expected: 'Outcome is Manual review needed; counts read "0 Major · 0 Minor · 1 Manual review (unscored)"; the row shows "Manual review".',
       severity: 'medium',
     })
 
@@ -45,7 +45,8 @@ test.describe('audit workspace severity labels @citation', () => {
     await page.goto(`/audit/${audit.auditId}`)
     await page.waitForLoadState('networkidle')
 
-    await expect(page.getByText('0 major · 0 minor findings · 1 for review')).toBeVisible()
+    await expect(page.getByText('Manual review needed', { exact: true })).toBeVisible()
+    await expect(page.getByText('0 Major · 0 Minor · 1 Manual review (unscored)', { exact: false })).toBeVisible()
 
     const row = page.getByRole('button', { name: /Citation could match more than one entry/ }).first()
     await expect(row).toBeVisible()

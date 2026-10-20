@@ -294,9 +294,8 @@ test.describe('upload + completed audit workflow @workflow', () => {
     await page.getByRole('button', { name: /^View audit\b/ }).first().click()
     await page.waitForURL(/\/audit\//)
     await page.waitForLoadState('networkidle')
-    await expect(page.getByText(/major/).first()).toBeVisible() // counts line renders
-    const verdictSection = page.getByRole('region', { name: 'Category verdicts' }).or(page.getByText('Findings', { exact: true }).first())
-    await expect(verdictSection.first()).toBeAttached()
+    await expect(page.getByRole('heading', { name: 'Findings', exact: true })).toBeVisible()
+    await expect(page.getByRole('group', { name: 'Score covers only the enabled checks' })).toContainText(/\d+\s*\/100/)
 
     await evidenceShot(page, `audit-completed-${testInfo.project.name}.png`)
 

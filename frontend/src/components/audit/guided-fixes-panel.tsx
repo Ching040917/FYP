@@ -110,7 +110,7 @@ function GuidedDialog({
     <div role="presentation" className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-2 sm:p-4"
       onMouseDown={(e) => { if (dismissible && e.target === e.currentTarget) onDismiss() }}>
       <div ref={panelRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label={label}
-        className="flex max-h-[90dvh] w-full min-w-0 max-w-2xl flex-col overflow-hidden rounded-md border border-border bg-card shadow-xl max-[240px]:block max-[240px]:overflow-y-auto">
+        className="flex max-h-[90dvh] w-full min-w-0 max-w-2xl flex-col overflow-hidden rounded-md border border-border bg-card shadow-xl max-[240px]:block max-[240px]:overflow-y-auto [&_button:focus-visible]:ring-primary">
         {children}
       </div>
     </div>,

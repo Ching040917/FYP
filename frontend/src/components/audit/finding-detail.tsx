@@ -114,7 +114,7 @@ export function FindingDetail({
         <h3 className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
           Citation evidence
         </h3>
-        <blockquote className="mt-1.5 whitespace-pre-wrap break-words rounded border-l-2 border-ai-assisted/40 bg-ai-assisted/5 px-3 py-2 font-serif text-sm leading-[21px] text-foreground">
+        <blockquote className="mt-1.5 whitespace-pre-wrap break-words [overflow-wrap:anywhere] rounded border-l-2 border-ai-assisted/40 bg-ai-assisted/5 px-3 py-2 font-serif text-sm leading-[21px] text-foreground">
           “{pres.evidence}”
         </blockquote>
       </div>,
@@ -126,7 +126,7 @@ export function FindingDetail({
         <h3 className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
           Reference List entry
         </h3>
-        <blockquote className="mt-1.5 whitespace-pre-wrap break-words rounded border-l-2 border-border bg-muted/40 px-3 py-2 text-sm leading-[21px] text-foreground">
+        <blockquote className="mt-1.5 whitespace-pre-wrap break-words [overflow-wrap:anywhere] rounded border-l-2 border-border bg-muted/40 px-3 py-2 text-sm leading-[21px] text-foreground">
           {pres.entryPreview}
         </blockquote>
       </div>,
@@ -182,7 +182,7 @@ export function FindingDetail({
       id="finding-detail"
       aria-label="Finding detail"
       tabIndex={-1}
-      className="scroll-mt-20 rounded-md focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+      className="min-w-0 scroll-mt-20 rounded-md [overflow-wrap:anywhere] focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background"
     >
       <h2 className="text-section-title text-foreground">
         {friendlyRuleTitle(v.rule_code) ?? humanizeRuleCode(v.rule_code)}
@@ -197,7 +197,7 @@ export function FindingDetail({
           className={severityBadge(normalizeViolationSeverity(v.severity)).className}
           title={severityBadge(normalizeViolationSeverity(v.severity)).scored
             ? undefined
-            : 'Severity not recognised — not scored'}
+            : normalizeViolationSeverity(v.severity) === 'review' ? 'Manual review — not scored' : 'Severity not recognised — not scored'}
         >
           {severityBadge(normalizeViolationSeverity(v.severity)).label}
         </Badge>
@@ -216,18 +216,16 @@ export function FindingDetail({
 
       <dl className="mt-4 space-y-3">
         {location != null && (
-          <div className="flex items-baseline gap-3">
-            <dt className="w-28 shrink-0 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+          <div className="space-y-1">
+            <dt className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
               Location
             </dt>
-            {/* A long heading excerpt truncates safely, and the complete
-                value stays reachable via the title attribute. */}
             <dd
-              className="inline-flex min-w-0 items-center gap-1.5 text-sm text-foreground"
+              className="inline-flex min-w-0 items-start gap-1.5 text-sm text-foreground"
               title={location}
             >
               <MapPin className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
-              <span className="truncate">{location}</span>
+              <span className="[overflow-wrap:anywhere]">{location}</span>
             </dd>
           </div>
         )}
@@ -257,7 +255,7 @@ export function FindingDetail({
           <h3 className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
             Required action
           </h3>
-          <p className="mt-1.5 whitespace-pre-wrap break-words text-sm leading-[21px] text-foreground">
+          <p className="mt-1.5 whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-sm leading-[21px] text-foreground">
             {pres.requiredAction}
           </p>
         </div>

@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useMemo, useRef, type ReactNode, type KeyboardEvent } from 'react'
+import { useEffect, useLayoutEffect, useState, useCallback, useMemo, useRef, type ReactNode, type KeyboardEvent } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { api, downloadBlob } from '../services/api'
 import { useToast } from '../hooks/useToast'
@@ -7,7 +7,7 @@ import { Button } from '../components/ui/button'
 import { Badge } from '../components/ui/badge'
 import { ConfirmDialog } from '../components/ui/confirm-dialog'
 import { AppNav } from '../components/layout/AppNav'
-import { ErrorList } from '../components/audit/error-list'
+import { ErrorList, matchesFindingFilters } from '../components/audit/error-list'
 import { VerdictChecklist } from '../components/audit/verdict-checklist'
 import { FindingDetail } from '../components/audit/finding-detail'
 import { DocumentPreview } from '../components/audit/document-preview'
@@ -63,7 +63,7 @@ import {
 } from '../lib/pdf/section-cache.ts'
 import { cn } from '../lib/utils'
 import type { AuditDocumentStats, AuditResponse, DocumentBlock, Violation } from '../types/api'
-import type { AuditCategory, LayoutError } from '../types/audit'
+import type { AuditCategory, LayoutError, ViolationSeverity } from '../types/audit'
 import {
   ALL_ENABLED_CHECKS_PASSED,
   ENABLED_CHECKS_CAUTION,
@@ -714,15 +714,51 @@ export function AuditPage() {
   // Mobile/tablet workspace view — tabs below lg, side-by-side at lg+.
   const [mobileView, setMobileView] = useState<WorkspaceView>('findings')
   const tabRefs = useRef<Map<string, HTMLButtonElement>>(new Map())
+  const compactFocusRef = useRef<WorkspaceView | null>(null)
+  const activateCompactView = (view: WorkspaceView) => {
+    compactFocusRef.current = view
+    setMobileView(view)
+  }
+  useLayoutEffect(() => {
+    const view = compactFocusRef.current
+    if (view === null) return
+    compactFocusRef.current = null
+    const tab = tabRefs.current.get(view)
+    if (!tab || tab.getClientRects().length === 0) return
+    // Cancel an in-flight smooth scroll from the disappearing control before
+    // placing focus; it must not carry the new tab behind sticky navigation.
+    window.scrollTo({ top: window.scrollY, left: window.scrollX, behavior: 'instant' })
+    tab.focus({ preventScroll: true })
+    const rect = tab.getBoundingClientRect()
+    if (rect.top < 80 || rect.bottom > window.innerHeight - 8) tab.scrollIntoView({ block: 'start', behavior: 'instant' })
+  }, [mobileView, selectedId])
   // Ref to the detail scroll region — reset scroll position on selection change.
   const detailScrollRef = useRef<HTMLDivElement>(null)
 
-  // Category filter — single source shared by the overview and Findings.
+  // Session filters share one owner across every responsive Findings list.
   // Popover semantics: intentionally NON-MODAL (role="dialog" +
   // aria-modal="false"). The category buttons update the background Findings
   // list live while the popover is open, so trapping focus would hide that
   // feedback; Tab/Shift+Tab may therefore leave the panel freely.
   const [categoryFilter, setCategoryFilter] = useState<AuditCategory | 'all'>('all')
+  const [severityFilter, setSeverityFilter] = useState<ViolationSeverity | 'all'>('all')
+  useEffect(() => {
+    setSeverityFilter('all')
+    setCategoryFilter('all')
+    setSelectedId(null)
+  }, [auditId])
+
+  const clearFilters = () => {
+    setSeverityFilter('all')
+    setCategoryFilter('all')
+    requestAnimationFrame(() => {
+      const filter = Array.from(document.querySelectorAll<HTMLElement>('[aria-label="Filter by severity"]'))
+        .find((control) => control.getClientRects().length > 0)
+      const activeTab = tabRefs.current.get(mobileView)
+      const target = filter ?? (activeTab?.getClientRects().length ? activeTab : categoryTriggerRef.current)
+      target?.focus()
+    })
+  }
   const [categoryOpen, setCategoryOpen] = useState(false)
   // Wraps trigger + panel (outside-click containment)…
   const categoryPanelRef = useRef<HTMLDivElement>(null)
@@ -811,22 +847,50 @@ export function AuditPage() {
     }
   }, [categoryOpen])
 
-  // On open, move focus to the first meaningful interactive element — the
-  // first selectable category button inside the verdict checklist. Focus
-  // synchronously in the same effect pass (the panel mounts with this state
-  // update); a retry covers late re-renders without stealing focus back.
-  useEffect(() => {
+  // Place before focusing: a wrapped trigger must not push the panel off-screen.
+  useLayoutEffect(() => {
     if (!categoryOpen) return
-    const focusFirst = () => {
-      if (categoryDialogRef.current?.contains(document.activeElement)) return true
-      categoryDialogRef.current
-        ?.querySelector<HTMLButtonElement>('button:not([disabled])')
-        ?.focus()
-      return false
+    const panel = categoryDialogRef.current
+    const trigger = categoryTriggerRef.current
+    if (!panel || !trigger) return
+    const place = () => {
+      const headerBottom = document.querySelector('header')?.getBoundingClientRect().bottom ?? 0
+      const rect = trigger.getBoundingClientRect()
+      const width = Math.min(600, window.innerWidth - 32)
+      const maxHeight = Math.min(window.innerHeight * 0.7, window.innerHeight - headerBottom - 32)
+      if (width <= 0 || maxHeight <= 0) {
+        setCategoryOpen(false)
+        trigger.focus()
+        return false
+      }
+      const left = Math.max(16, Math.min(rect.right - width, window.innerWidth - width - 16))
+      const top = Math.max(headerBottom + 8, Math.min(rect.bottom + 8, window.innerHeight - maxHeight - 16))
+      Object.assign(panel.style, {
+        width: `${width}px`, left: `${left}px`, top: `${top}px`, maxHeight: `${maxHeight}px`,
+      })
+      return true
     }
-    focusFirst()
-    const frame = requestAnimationFrame(() => focusFirst())
-    return () => cancelAnimationFrame(frame)
+    if (place()) {
+      const initialFocus = panel.querySelector<HTMLButtonElement>('button[aria-pressed]:not([disabled])')
+        ?? panel.querySelector<HTMLButtonElement>('button:not([disabled])')
+        ?? panel
+      initialFocus.focus()
+    }
+    let frame = 0
+    const schedule = () => {
+      if (frame) return
+      frame = requestAnimationFrame(() => {
+        frame = 0
+        place()
+      })
+    }
+    window.addEventListener('resize', schedule)
+    window.addEventListener('scroll', schedule, true)
+    return () => {
+      cancelAnimationFrame(frame)
+      window.removeEventListener('resize', schedule)
+      window.removeEventListener('scroll', schedule, true)
+    }
   }, [categoryOpen])
 
   const handleCategorySelect = (category: string) => {
@@ -897,7 +961,7 @@ export function AuditPage() {
     setSelectedId(e.id)
     applyNavigation(e)
     const locatable = e.position > 0 && blocks !== null && blocks.length > 0
-    setMobileView(locatable ? 'document' : 'details')
+    activateCompactView(locatable ? 'document' : 'details')
   }
 
   // Desktop (≥1280): selection only navigates the document pane.
@@ -1144,12 +1208,12 @@ export function AuditPage() {
 
   // Preselect the first finding once a completed audit arrives.
   useEffect(() => {
-    if (!audit || audit.status !== 'completed') return
+    if (!audit || audit.id !== auditId || audit.status !== 'completed') return
     if (selectedId === null && audit.violations.length > 0) {
       setSelectedId(audit.violations[0].id)
       autoOpenDetails()
     }
-  }, [audit, selectedId])
+  }, [audit, auditId, selectedId])
 
   // Load document blocks once the audit is available.
   useEffect(() => {
@@ -1168,9 +1232,36 @@ export function AuditPage() {
   const isProcessing = audit?.status === 'processing'
   const violations = audit?.violations ?? []
   const mappedErrors = violations.map(toLayoutError)
-  // Manual-review findings: shown, never scored and never counted as
-  // major/minor (the backend ignores the REVIEW severity for scoring).
-  const reviewCount = mappedErrors.filter((e) => e.severity === 'review').length
+  const severityCounts = { major: 0, minor: 0, review: 0, unknown: 0 }
+  for (const finding of mappedErrors) severityCounts[finding.severity] += 1
+  const majorCount = typeof audit?.major_count === 'number' && Number.isInteger(audit.major_count) && audit.major_count >= 0
+    ? audit.major_count : severityCounts.major
+  const minorCount = typeof audit?.minor_count === 'number' && Number.isInteger(audit.minor_count) && audit.minor_count >= 0
+    ? audit.minor_count : severityCounts.minor
+  const reviewCount = severityCounts.review
+  const unknownCount = severityCounts.unknown
+  const outcome = audit?.status !== 'completed' ? null
+    : unknownCount > 0 ? 'Findings need review'
+    : (severityCounts.major > 0 || severityCounts.minor > 0) ? 'Findings need attention'
+    : reviewCount > 0 ? 'Manual review needed'
+    : ALL_ENABLED_CHECKS_PASSED
+  const selectedFinding = mappedErrors.find((finding) => finding.id === selectedId)
+  const selectedOutsideFilters = selectedFinding != null && !matchesFindingFilters(selectedFinding, severityFilter, categoryFilter)
+
+  const reviewPriority = () => {
+    setCategoryOpen(false)
+    setCategoryFilter('all')
+    setSeverityFilter(severityCounts.major > 0 ? 'major' : 'all')
+    setMobileView('findings')
+    setPanelSession((session) => {
+      const restored = reducePanelSession(session, { type: 'exit-focus' }, window.innerWidth)
+      return restored.visible.findings ? restored : reducePanelSession(restored, { type: 'toggle-panel', panel: 'findings' }, window.innerWidth)
+    })
+    requestAnimationFrame(() => {
+      Array.from(document.querySelectorAll<HTMLElement>('[aria-label="Filter by severity"]'))
+        .find((control) => control.getClientRects().length > 0)?.focus()
+    })
+  }
 
   const breakdown = audit?.score_breakdown ?? []
   // The "Legacy spacing adjustment" row is a presentation-only
@@ -1226,7 +1317,7 @@ export function AuditPage() {
 
       <main
         id="audit-report"
-        className="mx-auto w-full max-w-[1440px] px-4 py-6 md:px-6 md:py-8 lg:flex lg:min-h-0 lg:flex-1 lg:flex-col lg:overflow-hidden lg:pt-2 lg:pb-3"
+        className="mx-auto w-full max-w-[1440px] scroll-mt-20 px-4 py-6 md:px-6 md:py-8 lg:flex lg:min-h-0 lg:flex-1 lg:flex-col lg:overflow-hidden lg:pt-2 lg:pb-3 [&_button:focus-visible]:ring-primary"
       >
         {loading ? (
           <LoadingState />
@@ -1243,7 +1334,7 @@ export function AuditPage() {
           <>
             {/* Identity, status and score stay above counts, stored-profile
                 context and report actions; workspace height remains reserved. */}
-            <div className="shrink-0 border-b border-border pb-2 lg:pb-2">
+            <div className="shrink-0 border-b border-border pb-2 lg:pb-2 [&_button]:scroll-mt-20 [&_summary]:scroll-mt-20">
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
                 <details
                   className="group relative min-w-0 flex-1 basis-[280px]"
@@ -1263,17 +1354,39 @@ export function AuditPage() {
                   <div className="absolute left-0 top-full z-40 mt-2 w-[min(600px,calc(100vw-2rem))] rounded-md border border-border bg-card p-3 text-sm leading-5 text-foreground shadow-tonal-high">
                     <span className="font-medium">Full document name</span>
                     <p className="mt-1 break-all">{audit.filename}</p>
+                    <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
+                      <dt className="text-muted-foreground">Audited</dt>
+                      <dd>{audit.created_at ? formatAuditDateTime(audit.created_at) : 'Not recorded'}</dd>
+                      <dt className="text-muted-foreground">Audit ID</dt>
+                      <dd className="break-all font-mono">{audit.id.slice(0, 8)}</dd>
+                    </dl>
                   </div>
                 </details>
+                {audit.status === 'completed' && profileDisclosure(audit.profile_snapshot) && (
+                  <CompactDisclosure
+                    className="min-w-0 flex-1 basis-44 text-[13px] text-muted-foreground"
+                    icon={<SlidersHorizontal className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />}
+                    summary={compactProfileSummary(audit.profile_snapshot)}
+                    detailsLabel="Profile details"
+                    panelLabel="Profile details"
+                    testId="profile-summary-disclosure"
+                    panelClassName="max-w-3xl [&_button:focus-visible]:ring-primary"
+                  >
+                    <ProfileRequirements snapshot={audit.profile_snapshot!} context="saved" />
+                  </CompactDisclosure>
+                )}
                 <StatusBadge status={audit.status} />
                 <div
-                  className="flex shrink-0 items-baseline gap-1.5"
+                  role="group"
+                  className="flex min-w-0 max-w-full flex-wrap items-baseline gap-x-1.5"
                   aria-label="Score covers only the enabled checks"
                 >
                   <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-                    Score
+                    Enabled-check score
                   </span>
-                  {isScoreAvailable(audit.weighted_score) ? (
+                  {audit.status !== 'completed' ? (
+                    <span className="text-sm font-medium text-muted-foreground">Not final</span>
+                  ) : isScoreAvailable(audit.weighted_score) ? (
                     <>
                       <span className="font-mono text-lg font-semibold leading-6 text-foreground">
                         {audit.weighted_score}
@@ -1288,32 +1401,19 @@ export function AuditPage() {
                 </div>
               </div>
 
-              {/* Row 2: counts + profile disclosure + actions */}
+              {/* Row 2: interpretation, scope and report actions. */}
               <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-2 text-[13px] text-muted-foreground">
-                {audit.status === 'completed' && (
-                  <span>
-                    {audit.major_count ?? 0} major · {audit.minor_count ?? 0} minor findings
-                    {reviewCount > 0 && ` · ${reviewCount} for review`}
-                  </span>
-                )}
-                {audit.status === 'completed' && profileDisclosure(audit.profile_snapshot) && (
-                  <CompactDisclosure
-                    className="min-w-0 flex-1 basis-44 text-[13px] text-muted-foreground"
-                    icon={<SlidersHorizontal className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />}
-                    summary={compactProfileSummary(audit.profile_snapshot)}
-                    detailsLabel="Profile details"
-                    panelLabel="Profile details"
-                    testId="profile-summary-disclosure"
-                    panelClassName="max-w-3xl"
-                  >
-                    <ProfileRequirements snapshot={audit.profile_snapshot!} context="saved" />
-                  </CompactDisclosure>
-                )}
+                <div className="min-w-0 flex-1 basis-64">
+                  <p className="text-foreground">
+                    <strong className="font-medium">{outcome ?? 'Available findings'}</strong>
+                    <span className="text-muted-foreground"> · {majorCount} Major · {minorCount} Minor · {reviewCount} Manual review (unscored){unknownCount > 0 && ` · ${unknownCount} Unclassified`}</span>
+                  </p>
+                  <p className="text-xs leading-4">Only enabled scored checks contribute to the score.</p>
+                </div>
                 <div className="ml-auto flex min-w-0 max-w-full flex-wrap items-center gap-2 max-[240px]:[&_button]:h-auto max-[240px]:[&_button]:max-w-full max-[240px]:[&_button]:flex-wrap max-[240px]:[&_button]:whitespace-normal">
                   {/* Category overview trigger — compact, never expanded by default.
                       Exposes popover semantics: haspopup="dialog" + aria-expanded +
                       aria-controls relationship to the dialog panel below. */}
-                  {breakdown.length > 0 && (
                     <div className="relative" ref={categoryPanelRef}>
                       <Button
                         ref={categoryTriggerRef}
@@ -1337,18 +1437,30 @@ export function AuditPage() {
                           id="category-panel"
                           role="dialog"
                           aria-modal="false"
+                          tabIndex={-1}
                           aria-label="Filter findings by category"
-                          className="absolute right-0 top-full z-40 mt-2 max-h-[70vh] w-[min(600px,90vw)] overflow-y-auto rounded-md border border-border bg-card p-4 shadow-tonal-high"
+                          className="fixed z-40 overflow-y-auto rounded-md border border-border bg-card p-4 shadow-tonal-high [overflow-wrap:anywhere] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
                         >
                           <VerdictChecklist
+                            context="report"
                             breakdown={breakdown}
                             selectedCategory={categoryFilter}
                             onSelectCategory={handleCategorySelect}
                           />
+                          {violations.length > 0 && (
+                            <Button variant="outline" size="sm" className="mt-3" onClick={reviewPriority}>
+                              {severityCounts.major > 0 ? 'Review major findings' : 'Review findings'}
+                            </Button>
+                          )}
+                          <div className="mt-4 space-y-2 border-t border-border pt-3 text-xs leading-5 text-muted-foreground">
+                            <p>Manual review is unscored. The score is not a measure of academic quality; review unsupported requirements yourself.</p>
+                            {!audit.profile_snapshot && <p>Saved requirements unavailable for this older audit</p>}
+                            <p>Guided Fixes supports selected candidate types only and checks safety before changes.</p>
+                            <p>The PDF includes the saved report, not the current filters.</p>
+                          </div>
                         </div>
                       )}
                     </div>
-                  )}
 
                   {audit.status === 'completed' && (
                     <GuidedFixesPanel
@@ -1394,6 +1506,18 @@ export function AuditPage() {
 
             {isProcessing && <ProcessingBanner pollAttempts={pollAttempts} />}
             {audit.status === 'failed' && <FailedBanner />}
+            <div role="status" aria-live="polite" aria-atomic="true" className="shrink-0">
+              {selectedOutsideFilters ? (
+                <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border border-border bg-card px-3 py-2 text-xs text-muted-foreground">
+                  <span>Selected finding is outside these filters.</span>
+                  <button type="button" onClick={clearFilters} className="rounded font-medium text-primary underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary">
+                    Show selected finding
+                  </button>
+                </div>
+              ) : selectedFinding ? (
+                <span className="sr-only">The selected finding is included in these results.</span>
+              ) : null}
+            </div>
 
             {/* ────────────── Review workspace ──────────────
                 Remaining-height region: the report header above is `shrink-0`
@@ -1406,8 +1530,8 @@ export function AuditPage() {
               id="audit-workspace"
               className="mt-3 lg:mt-2 lg:min-h-0 lg:flex-1 xl:flex xl:flex-col"
             >
-              {/* Mobile/tablet: tabbed workspace (single active panel for SR). */}
-              <div className="lg:hidden">
+              {/* Replacing compact panels must not anchor scrolling to a disappearing finding row. */}
+              <div className="lg:hidden [overflow-anchor:none]">
                 <div
                   role="tablist"
                   aria-label="Audit workspace views"
@@ -1430,7 +1554,7 @@ export function AuditPage() {
                         onClick={() => setMobileView(tab.id)}
                         onKeyDown={(e) => handleTabKeyDown(e, i)}
                         className={cn(
-                          'min-w-0 flex-1 rounded px-3 py-1.5 text-sm transition-colors max-[240px]:break-words max-[240px]:px-1 max-[240px]:text-[11px]',
+                          'min-w-0 scroll-mt-20 flex-1 rounded px-3 py-1.5 text-sm transition-colors max-[240px]:break-words max-[240px]:px-1 max-[240px]:text-[11px]',
                           'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary',
                           selected
                             ? 'bg-card font-medium text-foreground ring-1 ring-border'
@@ -1450,7 +1574,7 @@ export function AuditPage() {
                   aria-labelledby="tab-findings"
                   hidden={mobileView !== 'findings'}
                   tabIndex={0}
-                  className="mt-4 space-y-6 focus:outline-none"
+                  className="mt-4 scroll-mt-20 space-y-6 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
                 >
                   {audit.status === 'completed' && violations.length === 0 ? (
                     <NoFindingsState />
@@ -1461,6 +1585,9 @@ export function AuditPage() {
                       onSelect={handleMobileSelect}
                       categoryFilter={categoryFilter}
                       onCategoryFilterChange={setCategoryFilter}
+                      severityFilter={severityFilter}
+                      onSeverityFilterChange={setSeverityFilter}
+                      auditStatus={audit.status}
                       locationLabels={locationLabels}
                       locatingId={locatingId}
                     />
@@ -1475,7 +1602,7 @@ export function AuditPage() {
                   aria-labelledby="tab-document"
                   hidden={mobileView !== 'document'}
                   tabIndex={0}
-                  className="mt-4 space-y-3 focus:outline-none"
+                  className="mt-4 scroll-mt-20 space-y-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
                 >
                   <DocumentPreview
                     blocks={blocks}
@@ -1507,12 +1634,12 @@ export function AuditPage() {
                   />
                   <div className="flex flex-wrap items-center gap-2">
                     {selectedViolation && (
-                      <Button onClick={() => setMobileView('details')} variant="outline" size="sm">
+                      <Button onClick={() => activateCompactView('details')} variant="outline" size="sm">
                         <ChevronDown className="h-4 w-4" aria-hidden="true" />
                         View finding details
                       </Button>
                     )}
-                    <Button onClick={() => setMobileView('findings')} variant="ghost" size="sm">
+                    <Button onClick={() => activateCompactView('findings')} variant="ghost" size="sm">
                       Back to findings
                     </Button>
                   </div>
@@ -1525,11 +1652,11 @@ export function AuditPage() {
                   aria-labelledby="tab-details"
                   hidden={mobileView !== 'details'}
                   tabIndex={0}
-                  className="mt-4 space-y-6 focus:outline-none"
+                  className="mt-4 scroll-mt-20 space-y-6 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
                 >
                   {renderDetailStack(audit)}
                   <div>
-                    <Button onClick={() => setMobileView('findings')} variant="ghost" size="sm">
+                    <Button onClick={() => activateCompactView('findings')} variant="ghost" size="sm">
                       Back to findings
                     </Button>
                   </div>
@@ -1554,6 +1681,9 @@ export function AuditPage() {
                       onSelect={handleTabletSelect}
                       categoryFilter={categoryFilter}
                       onCategoryFilterChange={setCategoryFilter}
+                      severityFilter={severityFilter}
+                      onSeverityFilterChange={setSeverityFilter}
+                      auditStatus={audit.status}
                       locationLabels={locationLabels}
                       locatingId={locatingId}
                       className="lg:h-full lg:min-h-0 lg:flex-1 lg:overflow-hidden"
@@ -1624,6 +1754,9 @@ export function AuditPage() {
                         onSelect={handleDesktopSelect}
                         categoryFilter={categoryFilter}
                         onCategoryFilterChange={setCategoryFilter}
+                        severityFilter={severityFilter}
+                        onSeverityFilterChange={setSeverityFilter}
+                        auditStatus={audit.status}
                         locationLabels={locationLabels}
                         locatingId={locatingId}
                         className="lg:h-full lg:min-h-0 lg:flex-1 lg:overflow-hidden"
@@ -1914,7 +2047,8 @@ function InterruptedPanel({
 
 function LoadingState() {
   return (
-    <div className="space-y-6" role="status" aria-busy="true">
+    <div className="space-y-6" role="status" aria-label="Loading audit report" aria-busy="true">
+      <span className="sr-only">Loading audit report…</span>
       <div className="h-6 w-1/3 rounded bg-muted animate-pulse" />
       <div className="h-4 w-2/3 rounded bg-muted animate-pulse" />
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[9fr_16fr] xl:grid-cols-[2fr_3fr]">

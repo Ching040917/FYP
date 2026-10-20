@@ -149,3 +149,101 @@ test('saved Profile details uses stored identity and values, never a live-profil
   await page.getByRole('button', { name: 'Profile details', exact: true }).click()
   await expect(dialog).toContainText(name)
 })
+
+test('saved formatting exemptions expose separate noninteractive list items without changing the audit', async ({ page }) => {
+  const audit = await createSyntheticAudit(page)
+  const before = await (await page.request.get(`/api/audit/${audit.auditId}`)).json()
+  const writes: string[] = []
+  page.on('request', request => {
+    if (/^(POST|PUT|PATCH|DELETE)$/.test(request.method()) && new URL(request.url()).pathname.startsWith('/api/')) writes.push(request.url())
+  })
+  await page.setViewportSize(sizes[0])
+  await page.goto(`/audit/${audit.auditId}`)
+  const trigger = page.getByRole('button', { name: 'Profile details', exact: true })
+  await trigger.click()
+  const dialog = page.getByRole('dialog', { name: 'Profile details', exact: true })
+  const list = dialog.getByRole('list', { name: 'Formatting exemptions', exact: true })
+  const items = list.getByRole('listitem')
+  await expect(items).toHaveText([
+    'Cover', 'Displayed equation', 'Empty', 'Field only', 'Figure host', 'Subtitle',
+    'Table of contents entry', 'Table of contents heading', 'Title', 'Unknown (no proven content role)',
+  ])
+  await expect(items).toHaveCount(before.profile_snapshot.role_exemptions.length)
+  await expect(list.getByRole('button')).toHaveCount(0)
+  await expect(list.getByRole('link')).toHaveCount(0)
+  expect(await items.evaluateAll(elements => elements.every(el => (el as HTMLElement).tabIndex < 0))).toBe(true)
+  for (const key of ['Tab', 'Tab', 'Shift+Tab', 'Shift+Tab']) {
+    await page.keyboard.press(key)
+    expect(await list.evaluate(el => el.contains(document.activeElement))).toBe(false)
+    expect(await dialog.evaluate(el => el.contains(document.activeElement))).toBe(true)
+  }
+  await page.keyboard.press('Escape')
+  await expect(trigger).toBeFocused()
+  const after = await (await page.request.get(`/api/audit/${audit.auditId}`)).json()
+  expect(after.profile_snapshot).toEqual(before.profile_snapshot)
+  expect(after.violations).toEqual(before.violations)
+  expect(after.weighted_score).toBe(before.weighted_score)
+  expect(after.status).toBe(before.status)
+  expect(writes).toEqual([])
+})
+
+test('saved formatting exemptions preserve set order, omit empty sections and wrap long unmapped labels', async ({ page }) => {
+  const audit = await createSyntheticAudit(page)
+  const stored = await (await page.request.get(`/api/audit/${audit.auditId}`)).json()
+  // Presentation-only snapshots: these are not backend classification/detection fixtures.
+  const longRole = 'A'.repeat(400)
+  const cases = [
+    { roles: [] as string[], labels: [] as string[] },
+    { roles: ['COVER'], labels: ['Cover'] },
+    {
+      roles: ['TABLE_OF_CONTENTS_HEADING', 'DEPARTMENT_CONTEXT', longRole, 'UNKNOWN', 'COVER', 'COVER', '', '   '],
+      labels: ['Table of contents heading', 'Department context', `A${'a'.repeat(399)}`, 'Unknown (no proven content role)', 'Cover'],
+    },
+  ]
+  let roles: string[] = []
+  await page.route(`**/api/audit/${audit.auditId}`, route => route.fulfill({
+    json: { ...stored, profile_snapshot: { ...stored.profile_snapshot, role_exemptions: roles } },
+  }))
+  for (const scenario of cases) {
+    roles = scenario.roles
+    for (const size of [{ width: 1366, height: 768 }, { width: 1024, height: 768 }, { width: 676, height: 339 }]) {
+      await page.setViewportSize(size)
+      await page.goto(`/audit/${audit.auditId}`)
+      await page.getByRole('button', { name: 'Profile details', exact: true }).click()
+      const dialog = page.getByRole('dialog', { name: 'Profile details', exact: true })
+      const section = dialog.getByRole('region', { name: 'Formatting exemptions', exact: true })
+      const list = section.getByRole('list', { name: 'Formatting exemptions', exact: true })
+      if (scenario.labels.length === 0) {
+        await expect(section).toHaveCount(0)
+      } else {
+        const items = list.getByRole('listitem')
+        await expect(items).toHaveText(scenario.labels)
+        await expect(items).toHaveCount(scenario.labels.length)
+        for (const item of await items.all()) {
+          await item.scrollIntoViewIfNeeded()
+          const bounds = await item.evaluate(el => {
+            const r = el.getBoundingClientRect()
+            const container = el.parentElement!.getBoundingClientRect()
+            return { left: r.left, right: r.right, containerLeft: container.left, containerRight: container.right,
+              scroll: el.scrollWidth, client: el.clientWidth, height: r.height, line: Number.parseFloat(getComputedStyle(el).lineHeight) }
+          })
+          expect(bounds.left).toBeGreaterThanOrEqual(bounds.containerLeft - 1)
+          expect(bounds.right).toBeLessThanOrEqual(bounds.containerRight + 1)
+          expect(bounds.scroll).toBeLessThanOrEqual(bounds.client + 1)
+          if (await item.textContent() === scenario.labels[2] && scenario.labels.length > 1) expect(bounds.height).toBeGreaterThan(bounds.line * 2)
+        }
+        // A single short item does not stretch across the section.
+        if (scenario.labels.length === 1) {
+          const item = (await items.first().boundingBox())!
+          const container = (await list.boundingBox())!
+          expect(Math.abs(item.x - container.x)).toBeLessThanOrEqual(1)
+          expect(item.width).toBeLessThan(container.width / 2)
+        }
+      }
+      await assertBounds(page, dialog)
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true)
+      await page.keyboard.press('Escape')
+      await expect(page.getByRole('button', { name: 'Profile details', exact: true })).toBeFocused()
+    }
+  }
+})
