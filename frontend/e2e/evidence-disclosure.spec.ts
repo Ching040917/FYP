@@ -53,7 +53,7 @@ test('native Evidence toggle is nonmodal and Preview controls remain interactive
   await preview.getByRole('button', { name: 'Fit page', exact: true }).click()
   await expect(details).toHaveJSProperty('open', true)
   await page.getByRole('button', { name: 'Profile details', exact: true }).click()
-  await expect(page.getByRole('dialog', { name: 'Profile details', exact: true })).toContainText('Saved audit profile.')
+  await expect(page.getByRole('dialog', { name: 'Profile details', exact: true })).toBeVisible()
   await page.keyboard.press('Escape')
   await expect(details).toHaveJSProperty('open', true)
 })

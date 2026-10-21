@@ -103,6 +103,11 @@ const WORKSPACE_TABS = [
   { id: 'details', label: 'Details' },
 ] as const
 type WorkspaceView = (typeof WORKSPACE_TABS)[number]['id']
+const COMPACT_REVEAL_INPUTS = ['pointerdown', 'touchstart', 'wheel', 'keydown'] as const
+const COMPACT_REVEAL_KEYS: readonly string[] = [
+  'Tab', 'Enter', 'Escape', ' ', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
+  'Home', 'End', 'PageUp', 'PageDown',
+]
 
 function toLayoutError(v: Violation): LayoutError {
   const loc = (v.location ?? {}) as Record<string, unknown>
@@ -715,7 +720,9 @@ export function AuditPage() {
   const [mobileView, setMobileView] = useState<WorkspaceView>('findings')
   const tabRefs = useRef<Map<string, HTMLButtonElement>>(new Map())
   const compactFocusRef = useRef<WorkspaceView | null>(null)
+  const compactRevealCancelRef = useRef<(() => void) | null>(null)
   const activateCompactView = (view: WorkspaceView) => {
+    compactRevealCancelRef.current?.()
     compactFocusRef.current = view
     setMobileView(view)
   }
@@ -725,12 +732,36 @@ export function AuditPage() {
     compactFocusRef.current = null
     const tab = tabRefs.current.get(view)
     if (!tab || tab.getClientRects().length === 0) return
-    // Cancel an in-flight smooth scroll from the disappearing control before
-    // placing focus; it must not carry the new tab behind sticky navigation.
+    // Native focus scrolling can deliver a queued delta after instant cancellation.
+    // Focus immediately, then give this explicit handoff one frame-owned placement.
     window.scrollTo({ top: window.scrollY, left: window.scrollX, behavior: 'instant' })
     tab.focus({ preventScroll: true })
-    const rect = tab.getBoundingClientRect()
-    if (rect.top < 80 || rect.bottom > window.innerHeight - 8) tab.scrollIntoView({ block: 'start', behavior: 'instant' })
+    const cancelReveal = () => {
+      cancelAnimationFrame(frame)
+      for (const input of COMPACT_REVEAL_INPUTS) window.removeEventListener(input, cancelOnInput, true)
+      tab.removeEventListener('blur', cancelReveal)
+      window.removeEventListener('blur', cancelReveal)
+      document.removeEventListener('visibilitychange', cancelReveal)
+      if (compactRevealCancelRef.current === cancelReveal) compactRevealCancelRef.current = null
+    }
+    const cancelOnInput = (event: Event) => {
+      if (event instanceof window.KeyboardEvent && !COMPACT_REVEAL_KEYS.includes(event.key)) return
+      cancelReveal()
+    }
+    const frame = requestAnimationFrame(() => {
+      const current = compactRevealCancelRef.current === cancelReveal
+      cancelReveal()
+      if (!current || document.visibilityState !== 'visible' || !tab.isConnected ||
+        tab.getClientRects().length === 0 || document.activeElement !== tab) return
+      const rect = tab.getBoundingClientRect()
+      if (rect.top < 80 || rect.bottom > window.innerHeight - 8) tab.scrollIntoView({ block: 'start', behavior: 'instant' })
+    })
+    compactRevealCancelRef.current = cancelReveal
+    for (const input of COMPACT_REVEAL_INPUTS) window.addEventListener(input, cancelOnInput, { capture: true, passive: true })
+    tab.addEventListener('blur', cancelReveal)
+    window.addEventListener('blur', cancelReveal)
+    document.addEventListener('visibilitychange', cancelReveal)
+    return cancelReveal
   }, [mobileView, selectedId])
   // Ref to the detail scroll region — reset scroll position on selection change.
   const detailScrollRef = useRef<HTMLDivElement>(null)
@@ -1369,6 +1400,7 @@ export function AuditPage() {
                     summary={compactProfileSummary(audit.profile_snapshot)}
                     detailsLabel="Profile details"
                     panelLabel="Profile details"
+                    panelContext="Saved audit configuration · Read-only. Later profile edits or deletion do not change this snapshot."
                     testId="profile-summary-disclosure"
                     panelClassName="max-w-3xl [&_button:focus-visible]:ring-primary"
                   >

@@ -404,3 +404,36 @@ test('details retain requirement values and scopes once within semantic areas', 
   const unchecked = sections.find((section) => section.heading === 'Not checked')!
   assert.ok(unchecked.groups?.find((group) => group.heading === 'Margins')?.items.some((item) => item.text === 'Right margin: Not checked'))
 })
+
+test('empty requirement groups expose no placeholder rows or inflated counts', () => {
+  const sections = profileDetailSections(snapshot())
+  assert.deepEqual(sections.find(section => section.heading === 'Scored checks')!.items, [])
+  assert.deepEqual(sections.find(section => section.heading === 'Scored checks')!.groups, [])
+  assert.deepEqual(sections.find(section => section.heading === 'Manual review only · Unscored')!.items, [])
+  assert.equal(enabledCheckCount(snapshot()), 0)
+})
+
+test('fully configured controls leave no fabricated unchecked row', () => {
+  const sections = profileDetailSections(snapshot({
+    margins: { left_in: 1, right_in: 1, top_in: 1, bottom_in: 1 },
+    references: {
+      check_heading_text: true, heading_text: 'References', check_heading_bold: true,
+      check_heading_alignment: true, heading_alignment: 'center', check_start_on_new_page: true,
+      check_hanging_indent: true, hanging_indent_in: 0.5, check_line_spacing: true, line_spacing: 2,
+      check_space_before: true, space_before_pt: 0, check_space_after: true, space_after_pt: 0,
+      check_font_family: true, font_family: 'Times New Roman', check_font_size: true, font_size_pt: 12,
+      check_alignment: true, alignment: 'left', check_reference_order: true, check_doi_format: true,
+    },
+    citation_matching: {
+      check_citations_have_references: true, check_references_are_cited: true,
+      check_author_year_consistency: true, check_year_suffixes: true,
+      check_duplicate_references: true, flag_ambiguous_matches: true,
+    },
+    headers: { check_header_requirements: true }, footers: { check_footer_requirements: true },
+    page_numbers: { check_page_number_requirements: true },
+  }))
+  const off = sections.find(section => section.heading === 'Not checked')!
+  assert.deepEqual(off.items, [])
+  assert.deepEqual(off.groups, [])
+  assert.equal(sections.find(section => section.heading === 'Manual review only · Unscored')!.items.length, 4)
+})

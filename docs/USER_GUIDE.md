@@ -64,11 +64,18 @@ These groups describe coverage, not passed document results. **Citation style**
 is profile configuration, shown separately from the coverage groups.
 
 Use **Review full requirements** to open **Full profile requirements**, a
-scrollable modal for the **currently selected profile**. It includes the
-profile overview, formatting exemptions, Scored checks, Manual review only,
-Not checked, and Citation settings. Opening it does not expand the Dashboard
-or move the audit-start controls. Escape or **Close** returns focus to its
-trigger. Header, Footer, and Page Number requirements never affect the score.
+read-only modal for the **currently selected profile**, for your next audit.
+After the compact profile overview, **Scored checks**, **Manual review only**
+and **Not checked** remain expanded. Their counts describe configured items,
+not executed checks or passed results; empty groups show **None**.
+Formatting exemptions and **Profile information** follow, with citation and
+table policies visible and the optional **Profile description** expandable.
+If full settings cannot be loaded, the modal explicitly identifies the
+available listed requirements as a **summary only**, without inferred counts.
+The context and **Close** remain visible while the body scrolls. Opening it
+does not expand the Dashboard or move the audit-start controls. Escape or
+**Close** returns focus to its trigger. Header, Footer, and Page Number
+requirements never affect the score.
 
 Inspect and correct these requirements manually in Word; Local AI and
 Guided Fixes do not apply. Existing History entries retain their saved
@@ -91,6 +98,11 @@ Results open in the Audit Workspace:
 - **Required action** — explains the action to take to address the selected finding.
 - **Not checked** — a requirement is not included in the selected profile's automated checks; this does not mean it passed.
 
+In narrow windows and at high browser zoom, finding navigation keeps the
+active workspace tab visible below the sticky navigation. **Back to findings**
+restores focus to **Findings**. Background audit updates do not move keyboard
+focus.
+
 A proposed correction appears only through the **Guided Fixes** proposal
 workflow, not for every finding in ordinary Finding Details.
 
@@ -103,9 +115,13 @@ associated with that audit**, not the currently selected Dashboard profile.
 Later edits to, or deletion of, a live profile do not silently change the
 saved snapshot.
 
-In **Profile details**, formatting exemptions are read-only list items.
-**Unknown (no proven content role)** names the saved exemption for content
-with no proven role; it is not an audit finding.
+Both configuration dialogs show formatting exemptions as neutral, read-only
+list items. **Unknown (no proven content role)** names the exemption for
+content with no proven role; it is not an audit finding. Saved configuration
+remains read-only, and its historical context stays visible while scrolling.
+Audits without a saved snapshot have no **Profile details** action; Categories
+states that saved requirements are unavailable rather than substituting a
+current profile.
 
 ## 7. View Finding Evidence
 

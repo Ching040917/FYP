@@ -298,7 +298,7 @@ export function profileDetailSections(
     const groups = areas.filter((area) => area[kind].length > 0)
       .map((area) => ({ heading: area.heading, items: listed(area[kind], tone) }))
     const items = groups.flatMap((group) => group.items)
-    return { groups, items: items.length ? items : [{ text: 'None', tone: 'muted' as const }] }
+    return { groups, items }
   }
   const manual = manualCheckParts(snapshot)
   return [
@@ -306,10 +306,10 @@ export function profileDetailSections(
       heading: 'Profile',
       items: listed([
         snapshot.profile_name || 'Selected profile',
-        `Source: ${snapshot.profile_source === 'built_in' ? 'Built-in · Read-only' : 'Custom'} · Version ${snapshot.profile_version}`,
+        `Source: ${snapshot.profile_source === 'built_in' ? 'Built-in · Read-only' : snapshot.profile_source === 'custom' ? 'Custom' : snapshot.profile_source?.trim() || 'Not recorded'}${snapshot.profile_version != null ? ` · Version ${snapshot.profile_version}` : ''}`,
         ...(snapshot.description ? [snapshot.description] : []),
         ...(snapshot.role_exemptions?.length ? [`Formatting exemptions: ${snapshot.role_exemptions.map((role) => role.replace(/_/g, ' ')).join(', ')}`] : []),
-        ...(snapshot.table_eligibility ? [`Table classification: ${snapshot.table_eligibility === 'scholarly' ? 'Scholarly' : snapshot.table_eligibility === 'both' ? 'Administrative and scholarly' : 'Administrative'}`] : []),
+        ...(snapshot.table_eligibility ? [`Table classification: ${snapshot.table_eligibility === 'scholarly' ? 'Scholarly' : snapshot.table_eligibility === 'both' ? 'Administrative and scholarly' : snapshot.table_eligibility === 'administrative' ? 'Administrative' : snapshot.table_eligibility}`] : []),
         ...(snapshot.citation_matching?.allow_personal_communication !== undefined
           ? [`Personal communication citations: ${snapshot.citation_matching.allow_personal_communication ? 'Allowed without a Reference List entry' : 'Require a Reference List entry'}`] : []),
       ], 'plain'),
@@ -320,7 +320,7 @@ export function profileDetailSections(
     },
     {
       heading: 'Manual review only · Unscored',
-      items: manual.length ? listed(manual, 'muted') : [{ text: 'None', tone: 'muted' }],
+      items: listed(manual, 'muted'),
       ...(pageElementCheckParts(snapshot).length ? { note: PAGE_ELEMENTS_HELP_TEXT } : {}),
     },
     { heading: 'Not checked', ...grouped('unchecked', 'muted') },

@@ -5,8 +5,9 @@ import { Button } from '../ui/button'
 import { cn } from '../../lib/utils'
 
 /** Native modality supplies inertness; explicit Tab cycling keeps focus inside the content. */
-export function SupportingDetailsDialog({ title, onClose, children, id, className }: {
+export function SupportingDetailsDialog({ title, context, onClose, children, id, className }: {
   title: string
+  context?: string
   onClose: () => void
   children: React.ReactNode
   id?: string
@@ -58,12 +59,23 @@ export function SupportingDetailsDialog({ title, onClose, children, id, classNam
         const next = current < 0 ? (event.shiftKey ? controls.length - 1 : 0)
           : (current + (event.shiftKey ? -1 : 1) + controls.length) % controls.length
         controls[next].focus({ preventScroll: true })
+        const focused = controls[next]
+        const body = bodyRef.current
+        if (body && focused !== body && body.contains(focused)) {
+          const bounds = focused.getBoundingClientRect()
+          const viewport = body.getBoundingClientRect()
+          if (bounds.top < viewport.top + 2) body.scrollTop += bounds.top - viewport.top - 2
+          else if (bounds.bottom > viewport.bottom - 2) body.scrollTop += bounds.bottom - viewport.bottom + 2
+        }
       }}
       onCancel={event => { event.preventDefault(); onClose() }}
       onPointerDown={event => { pointerStartedOutside.current = event.target === event.currentTarget && outside(event) }}
       onClick={event => { if (event.target === event.currentTarget && pointerStartedOutside.current && outside(event)) onClose() }}>
       <div className="flex shrink-0 flex-wrap items-start justify-between gap-2 border-b border-border px-4 py-3">
-        <h2 id={titleId} className="min-w-0 flex-1 basis-40 break-words text-base font-semibold [overflow-wrap:anywhere]">{title}</h2>
+        <div className="min-w-0 flex-1 basis-40">
+          <h2 id={titleId} className="break-words text-base font-semibold [overflow-wrap:anywhere]">{title}</h2>
+          {context && <p className="mt-1 text-[13px] leading-5 text-muted-foreground">{context}</p>}
+        </div>
         <Button ref={closeRef} autoFocus type="button" variant="outline" size="sm" className="shrink-0 gap-1" onClick={onClose}>
           <X className="h-3.5 w-3.5" aria-hidden="true" />Close
         </Button>

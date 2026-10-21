@@ -809,11 +809,13 @@ export function UploadCard({ onResult, onReset, trySampleSignal = 0 }: UploadCar
                     >
                       Review full requirements
                     </Button>
-                    {showFullRequirements && <SupportingDetailsDialog title="Full profile requirements" onClose={() => setShowFullRequirements(false)}>
+                    {showFullRequirements && <SupportingDetailsDialog title="Full profile requirements" context="Selected profile for your next audit · Read-only. No document results are shown here." onClose={() => setShowFullRequirements(false)}>
                       {opt.snapshot ? (
                         <ProfileRequirements snapshot={opt.snapshot} context="current" />
                       ) : (
                         <>
+                          <p className="mb-3 text-sm leading-5">Full profile settings unavailable. Only the listed summary requirements are shown.</p>
+                          <h3 className="mb-2 break-words font-medium [overflow-wrap:anywhere]">{opt.displayName}</h3>
                           {opt.description && <p className="break-words">{opt.description}</p>}
                           <ul className="list-disc space-y-0.5 pl-4">
                             {opt.keyRequirements.map((req) => <li key={req}>{req}</li>)}

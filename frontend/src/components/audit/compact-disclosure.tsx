@@ -44,6 +44,8 @@ export interface CompactDisclosureProps {
   children: React.ReactNode
   /** Visible dialog title and accessible name. */
   panelLabel: string
+  /** Persistent read-only context beneath the dialog title. */
+  panelContext?: string
   /** Trigger text. */
   detailsLabel: string
   /** Extra classes for the outer wrapper (sizing within the parent flex). */
@@ -58,6 +60,7 @@ export function CompactDisclosure({
   icon,
   children,
   panelLabel,
+  panelContext,
   detailsLabel,
   className,
   panelClassName,
@@ -111,7 +114,7 @@ export function CompactDisclosure({
         <Chevron className="h-3 w-3" aria-hidden="true" />
       </Button>
       {open && (
-        <SupportingDetailsDialog id={panelId} title={panelLabel} onClose={close} className={cn('max-w-[560px]', panelClassName)}>
+        <SupportingDetailsDialog id={panelId} title={panelLabel} context={panelContext} onClose={close} className={cn('max-w-[560px]', panelClassName)}>
           {children}
         </SupportingDetailsDialog>
       )}
@@ -151,7 +154,8 @@ export function DisclosureSections({ sections }: { sections: DisclosureSection[]
         <section key={section.heading} aria-label={section.heading} className="border-t border-border pt-4">
           <h3 className="text-base font-semibold text-primary">{section.heading}</h3>
           {section.note && <p className="mt-2 text-[13px] leading-5 text-muted-foreground">{section.note}</p>}
-          <div data-requirement-groups className={cn('mt-3 grid grid-cols-1 gap-4', (section.groups?.length ?? 0) > 1 && 'min-[1100px]:grid-cols-2')}>
+          {section.items.length === 0 ? <p className="mt-3 text-[13px] leading-5 text-muted-foreground">None</p> : (
+          <div data-requirement-groups className="mt-3 grid grid-cols-[repeat(auto-fit,minmax(min(100%,20rem),1fr))] gap-4">
           {(section.groups?.length ? section.groups : [{ heading: '', items: section.items }]).map((group) => (
             <div key={group.heading} className="min-w-0">
               {group.heading && <h4 className="text-[13px] font-medium text-foreground">{group.heading}</h4>}
@@ -175,6 +179,7 @@ export function DisclosureSections({ sections }: { sections: DisclosureSection[]
             </div>
           ))}
           </div>
+          )}
         </section>
       ))}
     </div>
