@@ -477,7 +477,7 @@ def test_specific_action_when_values_exist(client, test_engine):
                      "expected_value": "0pt", "actual_value": "18pt"}],
     )
     text = _pdf_text(_export(client, audit_id).content)
-    assert "Change space before for Paragraph 19 from 18 pt to 0 pt." in text
+    assert "Change the space before at Paragraph 19 from 18 pt to 0 pt." in text
 
 
 def test_pdf_never_exposes_banned_tokens(client, test_engine):
@@ -630,10 +630,13 @@ def test_complete_register_columns_and_severity_order(client, test_engine):
     assert "Smith (2024)" in register
     assert "One unambiguous entry" in register
 
-def test_actionable_minor_register_rows_keep_actions_once_and_leave_manual_cards_unduplicated(client, test_engine):
+def test_register_repeats_supported_actions_for_every_severity_without_mutation(client, test_engine):
     from app.services.pdf_report import _REQUIRED_ACTIONS
 
     findings = [
+        {"rule_code": "FONT_SIZE", "severity": "MAJOR",
+         "location": {"paragraph_index": 0}, "message": "Size differs.",
+         "actual_value": "14pt", "expected_value": "16pt"},
         {"rule_code": "REFERENCE_DOI_FORMAT", "severity": "MINOR",
          "location": {"paragraph_index": 1}, "message": "DOI presentation differs.",
          "actual_value": "doi:10.1234/abc", "expected_value": "https://doi.org/<doi>"},
@@ -648,20 +651,41 @@ def test_actionable_minor_register_rows_keep_actions_once_and_leave_manual_cards
         {"rule_code": "SOME_FUTURE_RULE", "severity": "ARCHIVE",
          "location": {}, "message": "Saved legacy observation.",
          "actual_value": None, "expected_value": None},
+        {"rule_code": "LINE_SPACING", "severity": "ARCHIVE",
+         "location": {"paragraph_index": 4}, "message": "Saved spacing.",
+         "actual_value": "1.0", "expected_value": "1.75"},
+        {"rule_code": "ANOTHER_FUTURE_RULE", "severity": "ARCHIVE",
+         "location": {"paragraph_index": 5}, "message": "Saved requirement.",
+         "actual_value": "legacy current", "expected_value": "legacy required"},
     ]
     audit_id = _seed_audit(test_engine, weighted_score=96, violations=findings)
     before = client.get(f"/api/audit/{audit_id}").json()
     text = _pdf_text(_export(client, audit_id).content)
-    register = text.split("Appendix — Findings Register", 1)[1].split("Appendix: Full Profile Requirements", 1)[0]
+    appendix = text.split("Appendix — Findings Register", 1)[1].split("Document Statistics", 1)[0]
+    disclosure = (
+        "Actions are recommended user steps, not automatic fixes. Available guidance is "
+        "repeated beside each finding, including findings detailed earlier. If no supported "
+        "guidance is available, no Action row is shown. For repeated findings, check each "
+        "recorded occurrence."
+    )
+    assert disclosure in appendix
+    register = appendix.split("Scored and Historical Findings Register", 1)[1]
     for code in ("REFERENCE_DOI_FORMAT", "REFERENCE_ORDER"):
         action = _REQUIRED_ACTIONS[code]
         assert text.count(action) == 1
         assert f"Action {action}" in register
     assert "https://doi.org/<doi>" in register
     assert "Smith before Adams" in register
-    assert register.count("Action") == 2
-    assert "Action Review the footer in Word; insert an automatic page number if required." in text
-    assert "Action Review the footer in Word" not in register
+    assert register.count("Action") == 6
+    manual_action = "Review the footer in Word; insert an automatic page number if required."
+    assert f"Action {manual_action}" in register
+    assert text.count(manual_action) == 2  # panel and independently usable register
+    major_action = "Change the font size for the affected text at Paragraph 1 from 14 pt to 16 pt."
+    assert f"Action {major_action}" in register
+    assert text.count(major_action) == 2
+    assert "Change the line spacing at Paragraph 5 from 1.0 to 1.75." in register
+    assert "Action Review the saved requirement at this location before making changes." in register
+    assert "Unclassified Some future rule Document-wide Not recorded Not recorded Action" not in register
     assert "Saved legacy observation." not in register  # only Current/Required are shown
     assert text.count("Manual review · Unscored") >= 1
     assert client.get(f"/api/audit/{audit_id}").json() == before
@@ -675,11 +699,103 @@ def test_long_minor_action_wraps_without_losing_the_saved_value(client, test_eng
         "actual_value": observed, "expected_value": "Times New Roman",
     }])
     text = _pdf_text(_export(client, audit_id).content)
-    register = text.split("Appendix — Findings Register", 1)[1].split("Appendix: Full Profile Requirements", 1)[0]
+    register = text.split("Scored and Historical Findings Register", 1)[1].split("Document Statistics", 1)[0]
     assert register.count("Action") == 1
-    assert "Change font for Paragraph 1 from" in register
+    assert "Change the font for the affected text at Paragraph 1 from" in register
     assert observed in re.sub(r"\s+", "", register)
     assert "to Times New Roman." in register
+
+
+def test_register_measured_pairs_remain_on_one_page_with_long_saved_values(client, test_engine):
+    """Pairing uses actual wrapped heights, even beyond the former char limits."""
+    from pypdf import PdfReader
+    from app.services.pdf_report import _pdf_finding_action
+
+    findings = [{
+        "rule_code": "SPACE_BEFORE", "severity": "MINOR",
+        "location": {"paragraph_index": index},
+        "message": "Synthetic pagination finding.",
+        "actual_value": f"CURRENT-{index:02d} " + "saved evidence " * 24,
+        "expected_value": "0pt",
+    } for index in range(30)]
+    audit_id = _seed_audit(test_engine, violations=findings, weighted_score=70)
+    before = client.get(f"/api/audit/{audit_id}").json()
+    response = _export(client, audit_id)
+    assert response.status_code == 200
+    reader = PdfReader(io.BytesIO(response.content))
+    register_pages = [re.sub(r"\s+", " ", page.extract_text() or "")
+                      for page in reader.pages
+                      if float(page.mediabox.width) > float(page.mediabox.height)]
+    assert len(register_pages) >= 3
+    for page in register_pages:
+        assert "Scored and Historical Findings Register" in page
+        assert "Status Finding Location Current Required" in page
+    sequence = []
+    for finding in findings:
+        action = _pdf_finding_action(SimpleNamespace(**finding))
+        assert len(action) > 240
+        assert len(finding["actual_value"]) > 300
+        matching = [page for page in register_pages
+                    if finding["actual_value"].strip() in page]
+        assert len(matching) == 1
+        assert f"Action {action}" in matching[0]
+        assert matching[0].index(finding["actual_value"].strip()) < matching[0].index(f"Action {action}")
+    for page in register_pages:
+        sequence.extend(re.findall(r"Minor Space before the paragraph does not match.*?CURRENT-(\d+)", page))
+    # Saved grouping/order must not change when pairs move to a fresh frame.
+    assert sequence == [f"{index:02d}" for index in range(30)]
+    pages = [re.sub(r"\s+", " ", page.extract_text() or "") for page in reader.pages]
+    for index, page in enumerate(pages, 1):
+        assert f"Page {index} of {len(pages)}" in page
+    assert float(reader.pages[-1].mediabox.width) < float(reader.pages[-1].mediabox.height)
+    assert client.get(f"/api/audit/{audit_id}").json() == before
+
+
+@pytest.mark.parametrize("oversized", ["action", "comparison"])
+def test_oversized_register_fragments_keep_association_context_and_complete_text(
+    client, test_engine, monkeypatch, oversized,
+):
+    """Synthetic guidance isolates pagination from the action wording policy."""
+    from pypdf import PdfReader
+    from app.services import pdf_report
+
+    guidance = ("ACTION-START " + "SyntheticGuidanceToken " * 800 + "ACTION-END"
+                if oversized == "action" else "ACTION-START Check the saved requirement. ACTION-END")
+    current = ("COMPARE-START " + "SyntheticEvidenceToken " * 400 + "COMPARE-END"
+               if oversized == "comparison" else "COMPARE-START COMPARE-END")
+    monkeypatch.setattr(pdf_report, "_pdf_finding_action", lambda v, audit=None: guidance)
+    audit_id = _seed_audit(test_engine, violations=[{
+        "rule_code": "FONT_CONSISTENCY", "severity": "MINOR",
+        "location": {"paragraph_index": 0}, "message": "Synthetic pagination finding.",
+        "actual_value": current, "expected_value": "Times New Roman",
+    }])
+    response = _export(client, audit_id)
+    assert response.status_code == 200
+    reader = PdfReader(io.BytesIO(response.content))
+    pages = [re.sub(r"\s+", " ", page.extract_text() or "")
+             for page in reader.pages
+             if float(page.mediabox.width) > float(page.mediabox.height)]
+    assert len(pages) >= 3
+    for page in pages:
+        assert "Scored and Historical Findings Register" in page
+        assert "Status Finding Location Current Required" in page
+    register = " ".join(pages)
+    assert register.count("COMPARE-START") == 1
+    assert register.count("COMPARE-END") == 1
+    assert register.count("ACTION-START") == 1
+    assert register.count("ACTION-END") == 1
+    comparison_end = next(index for index, page in enumerate(pages) if "COMPARE-END" in page)
+    action_start = next(index for index, page in enumerate(pages) if "ACTION-START" in page)
+    assert comparison_end == action_start
+    assert pages[action_start].index("COMPARE-END") < pages[action_start].index("ACTION-START")
+    if oversized == "action":
+        assert register.count("SyntheticGuidanceToken") == 800
+        for page in pages[action_start + 1:]:
+            assert "Action (continued) Font family does not match — Paragraph 1" in page
+            assert "SyntheticGuidanceToken" in page or "ACTION-END" in page
+            assert "Minor Font family" not in page  # context is not another finding
+    else:
+        assert register.count("SyntheticEvidenceToken") == 400
 
 
 def test_minor_frequency_counts_saved_findings_not_occurrences():
@@ -1053,42 +1169,24 @@ def test_every_production_rule_has_a_friendly_pdf_title():
 
 
 
-def test_every_production_rule_has_a_safe_required_action():
-    """`_friendly_required_action` must never KeyError or fall back to the
-    generic sentence for a code ACA can actually emit."""
-    from app.services.pdf_report import (
-        _CITATION_MATCH_RULES,
-        _REQUIRED_ACTIONS,
-        _friendly_required_action,
-    )
-
-    generic = "Review the finding and apply the required formatting."
-    for code in _PRODUCTION_RULE_CODES:
-        v = LayoutViolation(
-            rule_code=code, severity="MINOR",
-            location={"paragraph_index": 3},
-            message="Deterministic message.",
-            expected_value="12pt", actual_value="11pt",
-        )
-        action = _friendly_required_action(v, "Paragraph 4", ("Affected content", "Entire paragraph"))
-        assert action, f"{code} produced an empty required action"
-        if code not in ("IMAGE_CAPTION_MISSING", "IMAGE_ALT_TEXT_MISSING"):
-            assert action != generic, f"{code} fell back to the generic action"
-
-
-def test_unknown_production_code_gets_a_safe_humanised_fallback():
-    """A hypothetical future code must not crash or print raw internals."""
-    from app.services.pdf_report import _friendly_required_action, _rule_name
-
-    v = LayoutViolation(
-        rule_code="SOME_FUTURE_RULE", severity="MINOR",
-        location={"paragraph_index": 1}, message="m",
-        expected_value=None, actual_value=None,
-    )
-    action = _friendly_required_action(v, "Paragraph 2", None)
-    assert action
-    assert "SOME_FUTURE_RULE" not in action
-    assert _rule_name("SOME_FUTURE_RULE") == "Some future rule"
+@pytest.mark.parametrize("current", [None, "", "   ", "saved current"])
+@pytest.mark.parametrize("required", [None, "", "   ", "saved requirement"])
+def test_unknown_historical_register_guidance_uses_only_nonblank_saved_requirement(
+    client, test_engine, current, required,
+):
+    audit_id = _seed_audit(test_engine, violations=[{
+        "rule_code": "SOME_FUTURE_RULE", "severity": "ARCHIVE",
+        "location": {"paragraph_index": 1}, "message": "Legacy observation.",
+        "actual_value": current, "expected_value": required,
+    }])
+    text = _pdf_text(_export(client, audit_id).content)
+    register = text.split("Scored and Historical Findings Register", 1)[1].split("Document Statistics", 1)[0]
+    assert "Unclassified Some future rule Paragraph 2" in register
+    assert register.count("Action") == int(bool(required and required.strip()))
+    if required and required.strip():
+        assert "Action Review the saved requirement at this location before making changes." in register
+    assert "Change" not in register
+    assert "from Not recorded" not in register
 
 
 @pytest.mark.parametrize(
@@ -1131,7 +1229,7 @@ def test_structural_reviews_export_friendly_details_without_changing_saved_value
 ):
     """Display saved structural outcomes plainly without rerunning or rewriting them."""
     from app.services import page_element_rules
-    from app.services.pdf_report import required_action, _friendly_required_action
+    from app.services.pdf_report import _pdf_finding_action
 
     def no_reaudit(*args, **kwargs):
         raise AssertionError("History/PDF must not rerun structural rules")
@@ -1168,12 +1266,13 @@ def test_structural_reviews_export_friendly_details_without_changing_saved_value
     assert target in text
     assert "Structural evidence only: Rendered page could not be determined" in text
     assert "no exact header/footer highlight" in text.lower()
-    displayed_action = f"In Word, check this section’s {label.lower()}"
-    if state != "unresolved":
-        change = ("insert a page-number field if needed" if code == "PAGE_NUMBER_FIELD_REQUIRED"
-                  else "add text or a supported field if needed")
-        displayed_action += f" and {change}"
-    displayed_action += ". Verify the rendered document manually."
+    if state == "unresolved":
+        displayed_action = f"Review the {label.lower()} in Word; supported evidence could not verify this requirement."
+    elif code == "PAGE_NUMBER_FIELD_REQUIRED":
+        displayed_action = f"Review the {label.lower()} in Word; insert an automatic page number if required."
+    else:
+        displayed_action = f"Review the {label.lower()} in Word; add the required content if needed."
+    assert text.count(displayed_action) == 2
     assert current not in text
     assert required not in text
     assert action not in text
@@ -1186,8 +1285,7 @@ def test_structural_reviews_export_friendly_details_without_changing_saved_value
     assert "Figure" not in text
     assert "Starting original document page" not in text
     saved = SimpleNamespace(**finding)
-    assert required_action(saved) == displayed_action
-    assert _friendly_required_action(saved, target, None) == displayed_action
+    assert _pdf_finding_action(saved) == displayed_action
     assert client.get(f"/api/audit/{audit_id}").json() == before
 
 

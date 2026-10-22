@@ -188,6 +188,12 @@ unscored manual requirements, and requirements that were not checked.
 **Formatting Issue Summary** groups saved Minor findings by rule and required
 value, with observed values and proven pages. The complete Findings Registers
 retain each saved finding, its Current and Required values, and its location.
+Each finding with supported guidance has an adjacent **Action** sub-row,
+including Major findings, unscored Manual reviews, and historical findings.
+Actions are recommended user steps, not automatic repairs or Guided Fix
+eligibility. Missing guidance produces no Action row. For consolidated
+findings, check every recorded occurrence. Long register actions continue
+with **Action (continued)** and the finding title and location for context.
 Full saved requirements appear once in **Appendix: Full Profile Requirements**;
 the report ends with scope, limitations, privacy, and document-safety notes.
 

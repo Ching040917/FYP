@@ -401,24 +401,6 @@ def _citation_action(v) -> str:
     )
 
 
-def required_action(v) -> str:
-    """Action text for a single violation."""
-    if v.rule_code in PAGE_ELEMENT_RULES:
-        return _page_element_display(v)[2]
-    if v.rule_code == "CITATION_MISMATCH":
-        return _citation_action(v)
-    if v.rule_code in _REFERENCE_FORMAT_RULES:
-        return _reference_format_action(v.rule_code, v.expected_value)
-    loc = location_text(v.location)
-    if v.expected_value and v.actual_value and loc != "—":
-        prop = _PROP_NAME.get(v.rule_code, "value")
-        return (
-            f"Change {prop} for {loc} from "
-            f"{_student_clean(v.actual_value)} to {_student_clean(v.expected_value)}."
-        )
-    return _REQUIRED_ACTIONS.get(v.rule_code, "Review the finding and apply the required formatting.")
-
-
 _LOCATION_KEYS = (
     ("paragraph_index", "Paragraph {n}"),
     ("section_index", "Section {n}"),
@@ -717,69 +699,91 @@ def _is_missing_reference_section(location) -> bool:
     return isinstance(loc, dict) and loc.get("missing_references_section") is True
 
 
-def _friendly_required_action(violation, friendly_loc, affected_info):
-    """
-    Friendly Required Action without Run. Uses ordinary-user wording.
-
-    Examples:
-      - Whole paragraph: "Change the font size of Paragraph 14 from 12 pt to 16 pt."
-      - Part with excerpt: "Change “1. Introduction” in Paragraph 14 from 12 pt to 16 pt."
-      - Heading: "Review Heading “3.2 System Architecture” and change..."
-    """
-    code = violation.rule_code
+def _pdf_finding_action(v, audit=None) -> str | None:
+    """Resolve supported PDF guidance from saved evidence, never a guessed repair."""
+    code = v.rule_code
+    location = v.location or {}
+    if v.severity == "REVIEW" and location.get("structural_story") is True:
+        kind = {"header": "header", "footer": "footer", "either": "header or footer"}.get(
+            location.get("story_type"), "header or footer")
+        if location.get("evidence_state") == "unresolved":
+            return f"Review the {kind} in Word; supported evidence could not verify this requirement."
+        if code == "PAGE_NUMBER_FIELD_REQUIRED":
+            return f"Review the {kind} in Word; insert an automatic page number if required."
+        return f"Review the {kind} in Word; add the required content if needed."
     if code in PAGE_ELEMENT_RULES:
-        return _page_element_display(violation)[2]
-    exp = _student_clean(violation.expected_value) if violation.expected_value else None
-    act = _student_clean(violation.actual_value) if violation.actual_value else None
-
-    # Document-wide finding (citations but no References section): the
-    # action is to add the section, not to fix one citation.
-    if code == "CITATION_MISMATCH" and _is_missing_reference_section(violation.location):
-        return "Add a References section and list every source cited in the text."
-
-    # Citation has its own friendly action.
+        return _page_element_display(v)[2]
     if code == "CITATION_MISMATCH":
-        return _citation_action(violation)
-
-    # Citation/Reference matching findings carry fixed, non-formatting copy.
+        if _is_missing_reference_section(location):
+            return "Add a References section and list every source cited in the text."
+        return _citation_action(v)
     if code in _CITATION_MATCH_RULES:
         return _REQUIRED_ACTIONS[code]
 
-    # Reference List formatting rules carry fixed, student-usable copy —
-    # except the hanging indent, which names the configured value.
+    required = _student_clean(v.expected_value)
+    current = _student_clean(v.actual_value)
     if code in _REFERENCE_FORMAT_RULES:
-        return _reference_format_action(code, violation.expected_value)
+        return _reference_format_action(code, required)
+    if code in ("TABLE_CAPTION_MISSING", "IMAGE_CAPTION_MISSING"):
+        label, obj = ("Table", "table") if code == "TABLE_CAPTION_MISSING" else ("Figure", "image")
+        return (
+            f"In Word, use References → Insert Caption to add a {label} caption for this {obj}. "
+            f"Write a description of the actual {obj}; do not insert <description> literally."
+        )
+    if code == "MANUAL_CAPTION":
+        return (
+            "Use Word’s References → Insert Caption feature for this object, preserving the "
+            "existing description and replacing the typed label and number with an automatic caption."
+        )
+    if code == "IMAGE_ALT_TEXT_MISSING":
+        return "Add a concise description of the image in Word’s Alt Text pane for screen-reader users."
+    if code == "HEADING_HIERARCHY":
+        return (
+            "Review the heading structure at this location. Use Heading 1 for the first heading "
+            "and consecutive levels thereafter; add or restyle headings as appropriate to the document structure."
+        )
 
-    # Use friendly location without Run.
-    loc_label = friendly_loc  # e.g. "Paragraph 14", "Heading “...”", "Table 3"
-    # If we have affected text excerpt, prefer it; else use location.
-    affected_label, affected_value = affected_info if affected_info else (None, None)
+    # Non-scalar _PROP_NAME rules have already taken their dedicated branches.
+    if code in _PROP_NAME:
+        prop = _PROP_NAME[code]
+        if not required:
+            return (
+                f"Review the saved {prop} finding in the original document; "
+                "the required value was not recorded."
+            )
+        if code in ("FONT_CONSISTENCY", "FONT_SIZE"):
+            # layout_engine emits pairs as "Times New Roman 12pt, Calibri 11pt".
+            # Recognize that presentation, not an invented schema for arbitrary text.
+            pair = r"[^,]+? \d+(?:\.\d+)? pt"
+            message = v.message or ""
+            choice = (
+                re.fullmatch(rf"{pair}(?:, {pair})*", required) is not None
+                or "allowed font-and-size combination" in message
+                or "not an allowed combination" in message
+                or any(separator in required.lower() for separator in (",", ";", " or ", " / "))
+            )
+            scalar_size = re.fullmatch(r"\d+(?:\.\d+)?(?: pt)?", required) is not None
+            if choice or (code == "FONT_SIZE" and not scalar_size) or (
+                code == "FONT_CONSISTENCY" and scalar_size
+            ):
+                return (
+                    "Choose a permitted font-and-size combination from the saved Required value "
+                    "and apply it to the affected text at this location."
+                )
+        loc = friendly_location_text(location, getattr(audit, "document_blocks", None))
+        target = (
+            f"for the affected text at {loc}"
+            if code in ("FONT_CONSISTENCY", "FONT_SIZE") else f"at {loc}"
+        )
+        if current:
+            return f"Change the {prop} {target} from {current} to {required}."
+        return f"Set the {prop} {target} to {required}."
 
-    # Whole paragraph affected → "Change space before for Paragraph 19 from 18 pt to 0 pt."
-    if affected_label == "Affected content" and affected_value == "Entire paragraph":
-        prop = _PROP_NAME.get(code, "value")
-        if exp and act:
-            return f"Change {prop} for {loc_label} from {act} to {exp}."
-        if exp:
-            return f"Update {loc_label} to meet the required {prop} ({exp})."
-        return _REQUIRED_ACTIONS.get(code, "Review the finding and apply the required formatting.")
-
-    # Part of paragraph with excerpt → "Change “excerpt” in Paragraph 14 from X to Y."
-    if affected_label == "Affected text" and affected_value:
-        prop = _PROP_NAME.get(code, "value")
-        if exp and act:
-            return f"Change {affected_value} in {loc_label} from {act} to {exp}."
-        if exp:
-            return f"Update {affected_value} in {loc_label} to {exp}."
-        return f"Review {affected_value} in {loc_label}."
-
-    # Generic fallback with friendly location.
-    prop = _PROP_NAME.get(code, "value")
-    if exp and act and loc_label != "—" and loc_label != "Entire document":
-        return f"Review {loc_label} and change the {prop} from {act} to {exp}."
-    if exp and loc_label != "—":
-        return f"Review {loc_label} and update to {exp}."
-    return _REQUIRED_ACTIONS.get(code, "Review the finding and apply the required formatting.")
+    if code in _REQUIRED_ACTIONS:
+        return _REQUIRED_ACTIONS[code]
+    if required:
+        return "Review the saved requirement at this location before making changes."
+    return None
 
 
 def split_apa_suggestion(suggestion: str) -> dict:
@@ -855,16 +859,131 @@ def _symbol(kind, color, size=14):
     return icon
 
 
+def _appendix_frame():
+    """Use the same padded landscape frame for layout measurement and output."""
+    return Frame(_MARGIN, 18 * mm, _LAND_W - 2 * _MARGIN,
+                 _LAND_H - 34 * mm, id="appendix-body")
+
+
+class _RegisterTable(Table):
+    """Keep finding/action association while delegating text splitting to ReportLab."""
+
+    def _listCellGeom(self, value, width, style, *args, **kwargs):
+        # ReportLab 4.0.7's in-row splitter passes the first column's width,
+        # not the span width. Use guidance's actual displayed width instead.
+        width = getattr(style, "registerSpanWidth", width)
+        return super()._listCellGeom(value, width, style, *args, **kwargs)
+
+    def _splitCell(self, value, style, oldHeight, newHeight, width):
+        width = getattr(style, "registerSpanWidth", width)
+        return super()._splitCell(value, style, oldHeight, newHeight, width)
+
+    @staticmethod
+    def _flowables(value):
+        return list(value) if isinstance(value, (list, tuple)) else [value]
+
+    def _native_split(self, width, height, in_row=False):
+        original = self.splitByRow
+        try:
+            self.splitByRow = 0 if in_row else 1
+            parts = super().split(width, height)
+        finally:
+            self.splitByRow = original
+        for part in parts:
+            part.splitByRow = original
+        return parts
+
+    def _fragment_rows(self, parts):
+        """ReportLab duplicates exactly one data row on an in-row split."""
+        repeated = self.repeatRows
+        count = len(parts[0]._cellvalues)
+        split_row = (count + len(parts[1]._cellvalues) - repeated
+                     > len(self._cellvalues))
+        first = self._register_rows[:count]
+        rest = self._register_rows[count - int(split_row):]
+        return first, self._register_rows[:repeated] + rest
+
+    def split(self, availWidth, availHeight):
+        parts = self._native_split(availWidth, availHeight)
+        if len(parts) != 2 or not hasattr(self, "_register_rows"):
+            return parts
+        first, rest = self._fragment_rows(parts)
+        # NOSPLIT prevents a boundary break, but ReportLab may still retry an
+        # in-row split inside that same pair. Reject both kinds of break for a
+        # pair measured to fit a fresh frame, retaining any preceding findings.
+        split_in_row = (len(parts[0]._cellvalues) + len(parts[1]._cellvalues)
+                        - self.repeatRows > len(self._cellvalues))
+        split_index = len(parts[0]._cellvalues) - int(split_in_row)
+        role = self._register_rows[split_index][0]
+        comparison_index = None
+        if role == "action":
+            comparison_index = split_index - 1
+        elif (split_in_row and role == "finding"
+              and split_index + 1 < len(self._register_rows)
+              and self._register_rows[split_index + 1][0] == "action"):
+            comparison_index = split_index
+        if comparison_index is not None and self._register_rows[comparison_index][0] == "finding":
+            header_height = sum(self._rowHeights[:self.repeatRows])
+            pair_height = sum(self._rowHeights[comparison_index:comparison_index + 2])
+            if header_height + pair_height <= _appendix_frame()._aH:
+                if comparison_index == self.repeatRows:
+                    return []
+                parts = self._native_split(
+                    availWidth, sum(self._rowHeights[:comparison_index]))
+                if len(parts) != 2:
+                    return []
+                first, rest = self._fragment_rows(parts)
+        headers = self.repeatRows
+        # Native row-first splitting prefers the comparison/action boundary,
+        # even when the first lines of an oversized Action fit beside it.
+        if first[-1][0] == "finding" and rest[headers][0] == "action":
+            parts = self._native_split(availWidth, availHeight, in_row=True)
+            if len(parts) == 2:
+                first, rest = self._fragment_rows(parts)
+            if len(parts) != 2 or first[-1][0] != "action":
+                if availHeight < _appendix_frame()._aH - 0.01:
+                    return []
+                # Leave a final comparison fragment for the next fresh frame,
+                # where its Action can start. Paragraph splitting retains text.
+                action_index = next(i for i, row in enumerate(self._register_rows)
+                                    if row == rest[headers])
+                style = self._cellStyles[action_index][1]
+                guidance = self._flowables(self._cellvalues[action_index][1])
+                leading = max((v.style.leading for v in guidance
+                               if isinstance(v, Paragraph)), default=12.15)
+                minimum = 2 * leading + style.topPadding + style.bottomPadding
+                parts = self._native_split(availWidth, availHeight - minimum, in_row=True)
+                if len(parts) != 2:
+                    return []
+                first, rest = self._fragment_rows(parts)
+        parts[0]._register_rows = first
+        parts[1]._register_rows = rest
+        if rest[headers][0] == "action":
+            continuation = parts[1]
+            continuation._cellvalues[headers][0] = _p(
+                "Action (continued)", size=8, font="Helvetica-Bold", color=NAVY)
+            context = _p(rest[headers][1], size=8, font="Helvetica-Bold", color=MUTED)
+            context._register_context = True
+            guidance = [v for v in self._flowables(continuation._cellvalues[headers][1])
+                        if not getattr(v, "_register_context", False)]
+            continuation._cellvalues[headers][1] = [context] + guidance
+            # Added context must be remeasured, not clipped to native heights.
+            continuation._argH[headers] = None
+            continuation._rowHeights[headers] = None
+        return parts
+
+
 def _report_table(headers, rows, widths, size=8.5, accent=NAVY, title=None, padding=5,
-                  action_rows=(), paired_rows=()):
+                  action_rows=(), register_contexts=None):
     """Quiet, splittable tables with repeated labels and wrapped cells."""
     header_row = 1 if title else 0
     data = [[_p(title, size=10, font="Helvetica-Bold", color=accent)] + [""] * (len(headers) - 1)] if title else []
     data.append([_p(label, size=8, font="Helvetica-Bold", color=accent) for label in headers])
     data.extend([value if isinstance(value, (Paragraph, Table, list)) else _p(value, size=size)
                  for value in row] for row in rows)
-    table = Table(data, colWidths=[width * mm for width in widths], repeatRows=header_row + 1,
-                  splitInRow=1, hAlign="LEFT")
+    table_type = _RegisterTable if register_contexts is not None else Table
+    table = table_type(data, colWidths=[width * mm for width in widths],
+                       repeatRows=header_row + 1, splitInRow=1, hAlign="LEFT")
     style = [
         ("BACKGROUND", (0, 0), (-1, header_row), PAPER),
         ("LINEBELOW", (0, header_row), (-1, header_row), 0.8, accent),
@@ -880,16 +999,37 @@ def _report_table(headers, rows, widths, size=8.5, accent=NAVY, title=None, padd
         style.append(("SPAN", (0, 0), (-1, 0)))
     for index in action_rows:
         row = header_row + 1 + index
-        style.extend([
-            ("SPAN", (1, row), (-1, row)),
-            ("BACKGROUND", (0, row), (-1, row), colors.HexColor("#F1F5FA")),
-        ])
-    # Short comparison/action pairs stay together at page breaks; unusually
-    # long values retain in-row splitting instead of overflowing the page.
-    for index in paired_rows:
-        row = header_row + 1 + index
-        style.append(("NOSPLIT", (0, row - 1), (-1, row)))
+        style.append(("SPAN", (1, row), (-1, row)))
+    if register_contexts is not None:
+        # Both rows share a finding-ordinal background and one final separator.
+        style = [command for command in style
+                 if command[0] != "ROWBACKGROUNDS"
+                 and not (command[0] == "LINEBELOW" and command[1][1] > header_row)]
+        ordinal = -1
+        for index in range(len(rows)):
+            if index not in action_rows:
+                ordinal += 1
+            row = header_row + 1 + index
+            background = colors.white if ordinal % 2 == 0 else colors.HexColor("#F1F5FA")
+            style.append(("BACKGROUND", (0, row), (-1, row), background))
+            if index + 1 not in action_rows:
+                style.append(("LINEBELOW", (0, row), (-1, row), 0.3, LIGHT))
+        table._register_rows = ([("header", "")] * (header_row + 1)
+                                + register_contexts)
     table.setStyle(TableStyle(style))
+    if register_contexts is not None:
+        for index in action_rows:
+            row = header_row + 1 + index
+            table._cellStyles[row][1].registerSpanWidth = sum(table._colWidths[1:])
+        frame = _appendix_frame()
+        table.wrap(frame._aW, frame._aH)
+        header_height = sum(table._rowHeights[:header_row + 1])
+        pairs = []
+        for index in action_rows:
+            row = header_row + 1 + index
+            if header_height + sum(table._rowHeights[row - 1:row + 1]) <= frame._aH:
+                pairs.append(("NOSPLIT", (0, row - 1), (-1, row)))
+        table.setStyle(TableStyle(pairs))
     return table
 
 
@@ -951,20 +1091,12 @@ def _priority_table(v, audit=None):
     rows = [("Location", _finding_location(v, audit))]
     if not manual:
         rows.append(("Finding", _student_clean(v.message)))
-    action = _friendly_required_action(
-        v, friendly_location_text(v.location, blocks), _affected_text_info(v, blocks))
+    action = _pdf_finding_action(v, audit)
     structural = (v.location or {}).get("structural_story") is True
-    if manual and structural:
-        kind = {"header": "header", "footer": "footer", "either": "header or footer"}.get(
-            (v.location or {}).get("story_type"), "header or footer")
-        if (v.location or {}).get("evidence_state") == "unresolved":
-            action = f"Review the {kind} in Word; supported evidence could not verify this requirement."
-        elif v.rule_code == "PAGE_NUMBER_FIELD_REQUIRED":
-            action = f"Review the {kind} in Word; insert an automatic page number if required."
-        else:
-            action = f"Review the {kind} in Word; add the required content if needed."
     rows.extend([("Found" if manual else "Current", current),
-                 ("Expected" if manual else "Required", required), ("Action", action)])
+                 ("Expected" if manual else "Required", required)])
+    if action:
+        rows.append(("Action", action))
     affected = _affected_text_info(v, blocks)
     if affected:
         rows.append(affected)
@@ -1045,7 +1177,7 @@ def _appendix_table(entries, audit=None, title=None):
     """Complete register: severity order and stable saved order within each group."""
     rows = []
     action_rows = []
-    paired_rows = []
+    register_contexts = []
     for v in entries:
         location = _finding_location(v, audit)
         location = (location.replace("\nOriginal document page: ", " · Original page ")
@@ -1061,24 +1193,19 @@ def _appendix_table(entries, audit=None, title=None):
         finding = _rule_name(v.rule_code)
         # The register is a concise factual comparison, not a second detail panel.
         rows.append((status, finding, location, current, required))
-        # Major and REVIEW findings already have an Action in their detail
-        # panels. Minor (and actionable historical) findings have only this
-        # complete register; keep each correction beside its saved finding.
-        if v.severity not in ("MAJOR", "REVIEW") and (v.rule_code in _REQUIRED_ACTIONS or v.expected_value):
-            action = _friendly_required_action(
-                v, friendly_location_text(v.location, getattr(audit, "document_blocks", None)),
-                _affected_text_info(v, getattr(audit, "document_blocks", None)))
-            if action:
-                action_rows.append(len(rows))
-                if len(action) <= 240 and max(map(len, (location, current, required))) <= 300:
-                    paired_rows.append(len(rows))
-                rows.append((_p("Action", size=8, font="Helvetica-Bold", color=NAVY),
-                             _p(action, size=9), "", "", ""))
+        context = f"{finding} — {friendly_location_text(v.location, getattr(audit, 'document_blocks', None))}"
+        register_contexts.append(("finding", context))
+        action = _pdf_finding_action(v, audit)
+        if action and action.strip():
+            action_rows.append(len(rows))
+            rows.append((_p("Action", size=8, font="Helvetica-Bold", color=NAVY),
+                         _p(action, size=9), "", "", ""))
+            register_contexts.append(("action", context))
     table = _report_table(("Status", "Finding", "Location", "Current", "Required"),
                           rows, (27, 57, 63, 60, 60), size=8,
                           accent=PURPLE if title == "Manual Review Register" else NAVY,
                           title=title, padding=4, action_rows=action_rows,
-                          paired_rows=paired_rows)
+                          register_contexts=register_contexts)
     return table
 
 
@@ -1804,7 +1931,11 @@ def generate_audit_pdf(audit, violations, citation_issues, profile_snapshot=None
             "Order: Major findings in saved order, then Minor findings grouped by saved rule and "
             "required value (first appearance; saved order within each group), then historical "
             "unclassified findings. Manual reviews follow in their own register in saved order. "
-            "Counts represent saved findings; consolidated occurrence counts are retained.",
+            "Counts represent saved findings; consolidated occurrence counts are retained. "
+            "Actions are recommended user steps, not automatic fixes. Available guidance is "
+            "repeated beside each finding, including findings detailed earlier. If no supported "
+            "guidance is available, no Action row is shown. For repeated findings, check each "
+            "recorded occurrence.",
             size=8.5, color=MUTED))
         minor_groups = defaultdict(list)
         for v in minor:
@@ -1880,9 +2011,8 @@ def generate_audit_pdf(audit, violations, citation_issues, profile_snapshot=None
         PageTemplate(id="main", frames=[Frame(
             _MARGIN, 18 * mm, _PAGE_W - 2 * _MARGIN, _PAGE_H - 34 * mm, id="body",
         )], onPage=_on_page),
-        PageTemplate(id="appendix", pagesize=(_LAND_W, _LAND_H), frames=[Frame(
-            _MARGIN, 18 * mm, _LAND_W - 2 * _MARGIN, _LAND_H - 34 * mm, id="appendix-body",
-        )], onPage=_on_landscape),
+        PageTemplate(id="appendix", pagesize=(_LAND_W, _LAND_H),
+                     frames=[_appendix_frame()], onPage=_on_landscape),
     ])
     doc.build(story, canvasmaker=_TotalPagesCanvas)
     return buf.getvalue()

@@ -32,7 +32,7 @@ from app.services.layout_violation import LayoutViolation
 from app.services.pdf_report import (
     _REQUIRED_ACTIONS,
     _RULE_NAME,
-    _friendly_required_action,
+    _pdf_finding_action,
 )
 from app.services.profile_preset_adapter import EffectiveProfileConfig
 from app.services.profile_registry import SUC_PROFILE_ID, get_builtin_profile
@@ -551,9 +551,7 @@ def test_pdf_title_and_action_match_the_approved_wording():
         expected_value="Arrange Reference List entries alphabetically by author",
         actual_value="Adams, A. (2021). Title.",
     )
-    action = _friendly_required_action(
-        violation, "Paragraph 4", ("Affected content", "Entire paragraph"),
-    )
+    action = _pdf_finding_action(violation)
     assert action == _REQUIRED_ACTIONS["REFERENCE_ORDER"]
     assert "APA 7" not in action
 
