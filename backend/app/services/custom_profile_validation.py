@@ -14,6 +14,7 @@ paths. Messages are friendly English — never exception names, stack
 traces, filesystem paths, fingerprint values, or registry internals.
 """
 import copy
+import math
 from typing import Any, Dict, List
 
 from app.services.profile_registry import BUILTIN_PROFILES
@@ -30,6 +31,7 @@ CUSTOM_PROFILE_SCHEMA_VERSION = 1
 # The editor's enabled-margin product range. Disabled margins are null.
 EDITOR_MARGIN_MIN_IN = 0.25
 EDITOR_MARGIN_MAX_IN = 4.0
+EDITOR_DESCRIPTION_MAX_LENGTH = 500
 
 _MARGIN_FIELDS = (
     ("margin_left_in", "margins.left"),
@@ -159,7 +161,7 @@ def validate_custom_profile(payload: Any) -> Dict[str, Any]:
     data = copy.deepcopy(payload)
 
     if "schema_version" in data:
-        if data["schema_version"] != CUSTOM_PROFILE_SCHEMA_VERSION:
+        if type(data["schema_version"]) is not int or data["schema_version"] != CUSTOM_PROFILE_SCHEMA_VERSION:
             return {
                 "valid": False,
                 "errors": [{
@@ -168,6 +170,21 @@ def validate_custom_profile(payload: Any) -> Dict[str, Any]:
                 }],
             }
         data.pop("schema_version")
+
+    # Even retained nested heading metadata must be JSON-serializable in the
+    # normalized response. Reject non-finite numbers before snapshot hashing.
+    pending = [("", data)]
+    while pending:
+        path, value = pending.pop()
+        if isinstance(value, float) and not math.isfinite(value):
+            return {
+                "valid": False,
+                "errors": [_translate(path, "must be a finite number")],
+            }
+        if isinstance(value, dict):
+            pending.extend((f"{path}.{key}".lstrip("."), child) for key, child in value.items())
+        elif isinstance(value, (list, tuple)):
+            pending.extend((f"{path}[{index}]", child) for index, child in enumerate(value))
 
     try:
         profile = profile_from_dict(data)
@@ -197,6 +214,17 @@ def validate_custom_profile(payload: Any) -> Dict[str, Any]:
 
 def _editor_checks(profile: Any) -> List[Dict[str, str]]:
     errors: List[Dict[str, str]] = []
+
+    if len(profile.description) > EDITOR_DESCRIPTION_MAX_LENGTH:
+        errors.append({
+            "field": "general.description",
+            "message": "Description must be 500 characters or fewer.",
+        })
+    if not isinstance(profile.heading.inherit_body_font, bool):
+        errors.append({
+            "field": "headings.level_1.font",
+            "message": "Choose whether headings use the body font.",
+        })
 
     if profile.profile_source == "built_in":
         errors.append({
@@ -251,6 +279,10 @@ def _editor_checks(profile: Any) -> List[Dict[str, str]]:
 
 
 def _translate(path: str, message: str) -> Dict[str, str]:
+    # Collection item paths still target the visible pair editor.
+    collection = path.split("[", 1)[0]
+    if collection in _FONT_FIELD_PATHS:
+        path = collection
     if path in _FONT_GROUP_FIELDS:
         if "must be a JSON object" in message:
             return {"field": path, "message": "This section is not well formed."}
@@ -263,6 +295,8 @@ def _translate(path: str, message: str) -> Dict[str, str]:
 
 def _font_message(message: str) -> str:
     lower = message.lower()
+    if "finite" in lower:
+        return "Enter a finite numeric font size in points."
     if "not in the allowed set" in lower:
         return "Choose a font and size from the accepted list."
     if "inherit_body_font" in lower:

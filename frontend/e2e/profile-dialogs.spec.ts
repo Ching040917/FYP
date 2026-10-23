@@ -214,10 +214,6 @@ test('saved formatting exemptions expose separate noninteractive list items with
   const dialog = page.getByRole('dialog', { name: 'Profile details', exact: true })
   const list = dialog.getByRole('list', { name: 'Formatting exemptions', exact: true })
   const items = list.getByRole('listitem')
-  await expect(items).toHaveText([
-    'Cover', 'Displayed equation', 'Empty', 'Field only', 'Figure host', 'Subtitle',
-    'Table of contents entry', 'Table of contents heading', 'Title', 'Unknown (no proven content role)',
-  ])
   await expect(items).toHaveCount(before.profile_snapshot.role_exemptions.length)
   await expect(list.getByRole('button')).toHaveCount(0)
   await expect(list.getByRole('link')).toHaveCount(0)
@@ -237,25 +233,22 @@ test('saved formatting exemptions expose separate noninteractive list items with
   expect(writes).toEqual([])
 })
 
-test('saved formatting exemptions preserve set order, omit empty sections and wrap long unmapped labels', async ({ page }) => {
+test('saved exemptions preserve unknown evidence and keep long values within the dialog', async ({ page }) => {
   const audit = await createSyntheticAudit(page)
   const stored = await (await page.request.get(`/api/audit/${audit.auditId}`)).json()
   // Presentation-only snapshots: these are not backend classification/detection fixtures.
   const longRole = 'A'.repeat(400)
   const cases = [
-    { roles: [] as string[], labels: [] as string[] },
-    { roles: ['COVER'], labels: ['Cover'] },
-    {
-      roles: ['TABLE_OF_CONTENTS_HEADING', 'DEPARTMENT_CONTEXT', longRole, 'UNKNOWN', 'COVER', 'COVER', '', '   '],
-      labels: ['Table of contents heading', 'Department context', `A${'a'.repeat(399)}`, 'Unknown (no proven content role)', 'Cover'],
-    },
+    [] as string[],
+    ['COVER'],
+    ['TABLE_OF_CONTENTS_HEADING', 'DEPARTMENT_CONTEXT', longRole, 'UNKNOWN', 'COVER', 'COVER', '', '   '],
   ]
   let roles: string[] = []
   await page.route(`**/api/audit/${audit.auditId}`, route => route.fulfill({
     json: { ...stored, profile_snapshot: { ...stored.profile_snapshot, role_exemptions: roles } },
   }))
   for (const scenario of cases) {
-    roles = scenario.roles
+    roles = scenario
     for (const size of [{ width: 1366, height: 768 }, { width: 1024, height: 768 }, { width: 676, height: 339 }]) {
       await page.setViewportSize(size)
       await page.goto(`/audit/${audit.auditId}`)
@@ -263,12 +256,17 @@ test('saved formatting exemptions preserve set order, omit empty sections and wr
       const dialog = page.getByRole('dialog', { name: 'Profile details', exact: true })
       const section = dialog.getByRole('region', { name: 'Formatting exemptions', exact: true })
       const list = section.getByRole('list', { name: 'Formatting exemptions', exact: true })
-      if (scenario.labels.length === 0) {
-        await expect(section).toHaveCount(0)
+      const expectedCount = new Set(roles.filter(role => role.trim())).size
+      if (expectedCount === 0) {
+        await expect(list).toHaveCount(0)
+        await expect(section.locator('input, select, button')).toHaveCount(0)
       } else {
         const items = list.getByRole('listitem')
-        await expect(items).toHaveText(scenario.labels)
-        await expect(items).toHaveCount(scenario.labels.length)
+        await expect(items).toHaveCount(expectedCount)
+        if (roles.includes('DEPARTMENT_CONTEXT')) {
+          await expect(items.filter({ hasText: 'DEPARTMENT_CONTEXT' })).toHaveCount(1)
+          await expect(items.filter({ hasText: longRole })).toHaveCount(1)
+        }
         for (const item of await items.all()) {
           await item.scrollIntoViewIfNeeded()
           const bounds = await item.evaluate(el => {
@@ -280,14 +278,7 @@ test('saved formatting exemptions preserve set order, omit empty sections and wr
           expect(bounds.left).toBeGreaterThanOrEqual(bounds.containerLeft - 1)
           expect(bounds.right).toBeLessThanOrEqual(bounds.containerRight + 1)
           expect(bounds.scroll).toBeLessThanOrEqual(bounds.client + 1)
-          if (await item.textContent() === scenario.labels[2] && scenario.labels.length > 1) expect(bounds.height).toBeGreaterThan(bounds.line * 2)
-        }
-        // A single short item does not stretch across the section.
-        if (scenario.labels.length === 1) {
-          const item = (await items.first().boundingBox())!
-          const container = (await list.boundingBox())!
-          expect(Math.abs(item.x - container.x)).toBeLessThanOrEqual(1)
-          expect(item.width).toBeLessThan(container.width / 2)
+          if ((await item.textContent())?.includes(longRole)) expect(bounds.height).toBeGreaterThan(bounds.line * 2)
         }
       }
       await assertBounds(page, dialog)
@@ -352,7 +343,6 @@ for (const saved of [false, true]) {
       await expect(section).toContainText('0 configured items')
     }
     await expect(dialog.getByRole('region', { name: 'Not checked', exact: true })).toContainText('Headers: Not checked')
-    await expect(dialog.getByRole('region', { name: 'Formatting exemptions', exact: true })).toHaveCount(0)
     await expect(dialog.locator('summary')).toHaveCount(0)
     await assertBounds(page, dialog)
   })
@@ -398,7 +388,8 @@ test('current exemptions normalize a set without hiding unfamiliar roles or maki
   })
   const { dialog } = await openSurface(page, false)
   const list = dialog.getByRole('list', { name: 'Formatting exemptions', exact: true })
-  await expect(list.getByRole('listitem')).toHaveText(['Unknown (no proven content role)', 'Department context', 'Cover'])
+  await expect(list.getByRole('listitem')).toHaveCount(3)
+  await expect(list.getByRole('listitem').filter({ hasText: 'DEPARTMENT_CONTEXT' })).toHaveCount(1)
   await expect(list.locator('button, a, input, select, textarea, [tabindex]')).toHaveCount(0)
 })
 

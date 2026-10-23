@@ -1,4 +1,5 @@
 import type { AuditSubmitResponse, AuditResponse, AuditListItem, DocumentBlock, FormattingProfile, ProfileValidationResult } from '../types/api'
+import { isProfileObject } from '../lib/custom-profile-store/store.ts'
 
 const API_BASE = '/api'
 
@@ -146,7 +147,12 @@ export const api = {
       {},
       POLL_TIMEOUT_MS,
     )
-    const body = await handleResponse<{ profile: Record<string, unknown> }>(response)
+    const body = await handleResponse<unknown>(response)
+    if (!isProfileObject(body) || !isProfileObject(body.profile) ||
+        body.profile.profile_id !== profileId || body.profile.profile_source !== 'built_in' ||
+        typeof body.profile.profile_name !== 'string') {
+      throw new Error('The source profile could not be read. Please retry copying it.')
+    }
     return body.profile
   },
 
@@ -162,11 +168,46 @@ export const api = {
         { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) },
         UPLOAD_TIMEOUT_MS,
       )
-      const body = await response.json().catch(() => null)
-      if (!response.ok || body === null) {
+      const body: unknown = await response.json().catch(() => null)
+      if (!isProfileObject(body)) return { valid: false, unreachable: true }
+      if (body.valid === false && (response.ok || response.status === 422) &&
+          Array.isArray(body.errors) && body.errors.length > 0 &&
+          body.errors.every((error) => isProfileObject(error) && typeof error.field === 'string' && typeof error.message === 'string')) {
+        return { valid: false, errors: body.errors as { field: string; message: string }[] }
+      }
+      if (!response.ok || body.valid !== true || !isProfileObject(body.profile)) return { valid: false, unreachable: true }
+      const profile = body.profile
+      const groups = ['body', 'heading', 'margins', 'references', 'captions', 'lists', 'role_policy', 'citation_matching', 'headers', 'footers', 'page_numbers']
+      if (typeof profile.profile_id !== 'string' || !profile.profile_id.trim() || profile.profile_id !== payload.profile_id || profile.profile_source !== 'custom' ||
+          typeof profile.profile_name !== 'string' || !profile.profile_name.trim() ||
+          typeof profile.description !== 'string' || profile.citation_style !== 'APA 7' ||
+          typeof profile.profile_version !== 'number' || !Number.isInteger(profile.profile_version) || profile.profile_version < 1 ||
+          groups.some((key) => !isProfileObject(profile[key]))) {
         return { valid: false, unreachable: true }
       }
-      return body as ProfileValidationResult
+      for (const key of groups) {
+        const group = profile[key] as Record<string, unknown>
+        for (const [field, value] of Object.entries(group)) {
+          if ((field.startsWith('check_') || field === 'inherit_body_font' || field === 'allow_heading_aliases' ||
+              field === 'heading_bold' || field === 'flag_ambiguous_matches' || field === 'allow_personal_communication') &&
+              typeof value !== 'boolean' && !(key === 'references' && field === 'check_line_spacing' && value === null)) {
+            return { valid: false, unreachable: true }
+          }
+          if ((field.endsWith('_pt') || field.endsWith('_in') || field === 'line_spacing') && value !== null &&
+              (typeof value !== 'number' || !Number.isFinite(value))) return { valid: false, unreachable: true }
+          if (field === 'allowed_font_combos' && value !== null &&
+              (!Array.isArray(value) || !value.every((pair) => Array.isArray(pair) && pair.length === 2 &&
+                typeof pair[0] === 'string' && typeof pair[1] === 'number' && Number.isFinite(pair[1])))) {
+            return { valid: false, unreachable: true }
+          }
+          if ((field === 'font_family' || field === 'heading_text' || field === 'alignment' || field === 'heading_alignment') &&
+              value !== null && typeof value !== 'string') return { valid: false, unreachable: true }
+        }
+      }
+      const rolePolicy = profile.role_policy as Record<string, unknown>
+      if (!Array.isArray(rolePolicy.exempt_roles) || !rolePolicy.exempt_roles.every((role) => typeof role === 'string') ||
+          !['administrative', 'scholarly', 'both'].includes(rolePolicy.table_eligibility as string)) return { valid: false, unreachable: true }
+      return { valid: true, profile }
     } catch {
       return { valid: false, unreachable: true }
     }

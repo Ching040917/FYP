@@ -28,7 +28,64 @@ On the Dashboard, use **Selected profile** to choose one of:
 - **APA 7 Student Paper**
 - One of your **custom profiles**, if you have created any
 
-You can create custom profiles with your own font, spacing, margins, and citation settings. Each profile is validated in-app before it can be saved, and your selection is remembered for next time.
+Create, copy, and edit profiles from **Manage custom profiles**. The grouped
+single-page editor keeps new profiles as drafts: creating or copying does not
+save anything. A built-in copy must load successfully; a failed copy never
+silently becomes a blank profile.
+
+### Saving and leaving the editor
+
+**Save custom profile** checks the current fields, validates and normalizes
+the complete candidate with ACA's validation endpoint, checks its saved
+revision, and writes it to this browser's persistent storage. Only a successful
+persistent write counts as saved. Profiles are not stored on the server or
+synced to another device. Private browsing, browser cleanup, or removing site
+data can remove them.
+
+Names must be nonblank and unique after trimming and case-insensitive
+comparison. Descriptions are optional, up to 500 characters. Validation shows
+linked errors above the editor and beside the affected fields. Disabled
+requirements retain their configured values but are not enforced.
+
+Leaving a dirty draft, switching profiles, creating another profile, or deleting
+the edited profile offers **Save and continue**, **Discard changes**, or
+**Continue editing**. Save and continue leaves only after a successful save.
+Browser reload and close use the browser's own unsaved-change prompt.
+
+### Recovery and another open tab
+
+The editor attempts to retain a complete tab-local recovery draft, including
+the name, description, raw numeric input, profile identity, and original saved
+revision. After reloading, choose **Restore recovered draft** or **Discard
+recovered draft**. Recovery is not a persistent save, does not synchronize tabs,
+and cannot be guaranteed after the browser removes session data.
+
+If another tab changes the saved store, an open dirty draft is not silently
+rebased or overwritten. Review the latest saved version, then explicitly reload
+it or authorize your draft against the reviewed revision. A profile deleted
+elsewhere cannot be resurrected by saving an old draft.
+
+Storage failures, recovery failures, damaged data, and newer unsupported store
+versions are disclosed. Memory-only fallback never claims a persistent save.
+Persistent writes require browser storage and Web Locks; when either is
+unavailable, retain the draft and resolve the reported browser limitation.
+Damaged stored bytes are not silently overwritten on load. Unrecoverable data
+requires an explicit reset; newer-version data is not reset or overwritten by
+this editor.
+
+### Deletion and saved requirements
+
+Deletion requires confirmation. Deleting the selected custom profile returns
+the Dashboard selector to **SUC Academic Report**; deleting another profile
+does not change the selection. Editing or deleting a custom profile never
+changes a historical audit's saved requirements. Older audits without a saved
+snapshot report that requirements are unavailable instead of substituting the
+current profile.
+
+**Formatting exemptions** are read-only recorded metadata. ACA still uses
+fixed paragraph-role eligibility and its existing scholarly-table policy;
+these recorded values do not configure enforcement. Only the Reference List
+settings already exposed by this editor are supported in this phase.
 
 ### Optional structural reviews
 

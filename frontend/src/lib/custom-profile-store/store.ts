@@ -58,10 +58,12 @@ export type StoreLoadResult =
       firstRun: boolean
       /** True when the loaded envelope is from a future schema version. */
       readonly: boolean
+      /** An unreadable sibling copy is retained until a deliberate mutation/reset. */
+      damagedCopies?: Array<'active' | 'recovery'>
     }
   | {
       ok: false
-      reason: 'both-corrupted'
+      reason: 'both-corrupted' | 'unavailable' | 'unsupported-version'
       /** Raw active value preserved for optional local export. */
       corruptedActive: string | null
       /** Raw recovery value preserved for optional local export. */
@@ -70,10 +72,13 @@ export type StoreLoadResult =
 
 export type WriteResult =
   | { ok: true; envelope: StoreEnvelope }
-  | { ok: false; reason: 'stale-revision' | 'invalid-envelope' | 'readonly' }
+  | { ok: false; reason: 'stale-revision' | 'invalid-envelope' | 'readonly' | 'unavailable' | 'corrupted' | 'not-persistent' | 'locking-unavailable' | 'write-failed' }
 
 /** Minimal injected adapter — keeps core logic free of globals. */
 export interface StoreAdapter {
+  readonly persistent: boolean
+  /** Origin-scoped serialization; the live revision is checked inside it. */
+  readonly withExclusiveWrite?: <T>(write: () => T | Promise<T>) => Promise<T>
   get(key: string): string | null
   set(key: string, value: string): void
   /** Subscribe to external (other-tab) key changes; returns unsubscribe. */
@@ -107,16 +112,17 @@ export function generateProfileId(): string {
 // Envelope structure validation (local well-formedness only)
 // ---------------------------------------------------------------------------
 
-function isRecord(v: unknown): v is Record<string, unknown> {
+export function isProfileObject(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v)
 }
 
 function isStoredProfile(v: unknown): v is StoredCustomProfile {
-  if (!isRecord(v)) return false
-  if (typeof v.id !== 'string' || v.id.length === 0) return false
-  if (typeof v.name !== 'string' || v.name.length === 0) return false
+  if (!isProfileObject(v)) return false
+  if (typeof v.id !== 'string' || v.id.trim().length === 0) return false
+  if (typeof v.name !== 'string' || v.name.trim().length === 0) return false
   if (typeof v.description !== 'string') return false
-  if (!isRecord(v.payload)) return false
+  if (v.sourceId !== undefined && typeof v.sourceId !== 'string') return false
+  if (!isProfileObject(v.payload)) return false
   const state = v.validationState
   if (state !== 'draft' && state !== 'locally_valid' && state !== 'backend_confirmed' && state !== 'invalid') {
     return false
@@ -127,9 +133,9 @@ function isStoredProfile(v: unknown): v is StoredCustomProfile {
 
 /** Locally validate envelope structure. NOT authoritative backend validation. */
 export function isWellFormedEnvelope(v: unknown): v is StoreEnvelope {
-  if (!isRecord(v)) return false
-  if (typeof v.schema_version !== 'number' || v.schema_version < 1) return false
-  if (typeof v.revision !== 'number' || !Number.isFinite(v.revision) || v.revision < 0) return false
+  if (!isProfileObject(v)) return false
+  if (typeof v.schema_version !== 'number' || !Number.isInteger(v.schema_version) || v.schema_version < 1) return false
+  if (typeof v.revision !== 'number' || !Number.isSafeInteger(v.revision) || v.revision < 0) return false
   if (typeof v.updated_at !== 'string' || v.updated_at.length === 0) return false
   if (!Array.isArray(v.profiles)) return false
   for (const p of v.profiles) {
@@ -141,12 +147,12 @@ export function isWellFormedEnvelope(v: unknown): v is StoreEnvelope {
 
 /** True when the envelope uses a schema version this build understands. */
 export function isCurrentSchemaVersion(v: unknown): boolean {
-  return isRecord(v) && v.schema_version === CUSTOM_STORE_SCHEMA_VERSION
+  return isProfileObject(v) && v.schema_version === CUSTOM_STORE_SCHEMA_VERSION
 }
 
 /** True when the envelope predates (is older than) this build's schema. */
 export function isLegacySchemaVersion(v: unknown): boolean {
-  return isRecord(v) && typeof v.schema_version === 'number' && v.schema_version < CUSTOM_STORE_SCHEMA_VERSION
+  return isProfileObject(v) && typeof v.schema_version === 'number' && v.schema_version < CUSTOM_STORE_SCHEMA_VERSION
 }
 
 // ---------------------------------------------------------------------------
@@ -237,10 +243,6 @@ export function upsertProfile(
   if (nameClash) {
     return { ok: false, reason: 'duplicate-name' }
   }
-  const idClash = envelope.profiles.some((p) => p.id === profile.id)
-  if (idClash && !envelope.profiles.some((p) => p.id === profile.id && p.name === profile.name)) {
-    // Replacing the same id is allowed only for the identical profile.
-  }
   const next = cloneEnvelope(envelope)
   const idx = next.profiles.findIndex((p) => p.id === profile.id)
   const stored = {
@@ -268,7 +270,10 @@ export function renameProfile(
   if (isNameTaken(envelope, trimmed, id)) return { ok: false, reason: 'duplicate-name' }
   const next = cloneEnvelope(envelope)
   const idx = next.profiles.findIndex((p) => p.id === id)
-  next.profiles[idx] = { ...next.profiles[idx], name: trimmed }
+  next.profiles[idx] = {
+    ...next.profiles[idx], name: trimmed,
+    payload: { ...next.profiles[idx].payload, profile_name: trimmed },
+  }
   return { ok: true, envelope: next }
 }
 
@@ -288,7 +293,7 @@ export function duplicateProfile(
   }
   const isBuiltIn = 'profile_source' in source && source.profile_source === 'built_in'
   const payload: Record<string, unknown> =
-    'payload' in source && isRecord(source.payload)
+    'payload' in source && isProfileObject(source.payload)
       ? structuredCloneSafe(source.payload)
       : {
           profile_name: trimmed,
@@ -308,6 +313,10 @@ export function duplicateProfile(
     validationState: 'locally_valid',
     updatedAt: now,
   }
+  profile.payload.profile_id = profile.id
+  profile.payload.profile_name = profile.name
+  profile.payload.description = profile.description
+  profile.payload.profile_source = 'custom'
   if (isBuiltIn && !('payload' in source)) {
     // Built-in listings have no payload in this build — mark as needing a
     // source-copy payload from the backend before it can be submitted.
@@ -325,9 +334,8 @@ export function deleteProfile(
   if (!findProfile(envelope, id)) return { ok: false, reason: 'not-found' }
   const next = cloneEnvelope(envelope)
   next.profiles = next.profiles.filter((p) => p.id !== id)
-  if (next.selected_id === id) {
-    // Deleting the selected custom profile resets selection to recommended.
-    next.selected_id = RECOMMENDED_BUILTIN_ID
+  if (next.selected_id === `custom:${id}`) {
+    next.selected_id = `builtin:${RECOMMENDED_BUILTIN_ID}`
   }
   return { ok: true, envelope: next }
 }
@@ -368,22 +376,35 @@ export function canSubmitProfile(profile: StoredCustomProfile | undefined): bool
  * - Both invalid → corrupted state with raw values preserved for export.
  */
 export function loadStore(adapter: StoreAdapter): StoreLoadResult {
-  const rawActive = adapter.get(ACTIVE_KEY)
-  const rawRecovery = adapter.get(RECOVERY_KEY)
+  let rawActive: string | null
+  let rawRecovery: string | null
+  try {
+    rawActive = adapter.get(ACTIVE_KEY)
+    rawRecovery = adapter.get(RECOVERY_KEY)
+  } catch {
+    return { ok: false, reason: 'unavailable', corruptedActive: null, corruptedRecovery: null }
+  }
 
   if (rawActive === null && rawRecovery === null) {
     return { ok: true, envelope: emptyEnvelope(), recovered: false, firstRun: true, readonly: false }
   }
 
-  const active = parseEnvelope(rawActive)
-  const recovery = parseEnvelope(rawRecovery)
+  let activeValue: unknown = null
+  let recoveryValue: unknown = null
+  try { if (rawActive !== null) activeValue = JSON.parse(rawActive) } catch { /* retained below */ }
+  try { if (rawRecovery !== null) recoveryValue = JSON.parse(rawRecovery) } catch { /* retained below */ }
+  const active = isWellFormedEnvelope(activeValue) ? activeValue : null
+  const recovery = isWellFormedEnvelope(recoveryValue) ? recoveryValue : null
+  if ([activeValue, recoveryValue].some((value) =>
+    isProfileObject(value) && typeof value.schema_version === 'number' &&
+    value.schema_version > CUSTOM_STORE_SCHEMA_VERSION && !isWellFormedEnvelope(value))) {
+    return { ok: false, reason: 'unsupported-version', corruptedActive: rawActive, corruptedRecovery: rawRecovery }
+  }
 
   // Unsupported FUTURE schema versions are read-only.
-  if (active && !isCurrentSchemaVersion(active)) {
-    return { ok: true, envelope: active, recovered: false, firstRun: false, readonly: true }
-  }
-  if (!active && recovery && !isCurrentSchemaVersion(recovery)) {
-    return { ok: true, envelope: recovery, recovered: true, firstRun: false, readonly: true }
+  if ((active && !isCurrentSchemaVersion(active)) || (recovery && !isCurrentSchemaVersion(recovery))) {
+    const future = active && !isCurrentSchemaVersion(active) ? active : recovery!
+    return { ok: true, envelope: future, recovered: future === recovery, firstRun: false, readonly: true }
   }
 
   if (active && recovery) {
@@ -396,10 +417,12 @@ export function loadStore(adapter: StoreAdapter): StoreLoadResult {
     }
   }
   if (active) {
-    return { ok: true, envelope: active, recovered: false, firstRun: false, readonly: false }
+    return { ok: true, envelope: active, recovered: false, firstRun: false, readonly: false,
+      ...(rawRecovery !== null ? { damagedCopies: ['recovery'] as Array<'active' | 'recovery'> } : {}) }
   }
   if (recovery) {
-    return { ok: true, envelope: recovery, recovered: true, firstRun: false, readonly: false }
+    return { ok: true, envelope: recovery, recovered: true, firstRun: false, readonly: false,
+      ...(rawActive !== null ? { damagedCopies: ['active'] as Array<'active' | 'recovery'> } : {}) }
   }
 
   return { ok: false, reason: 'both-corrupted', corruptedActive: rawActive, corruptedRecovery: rawRecovery }
@@ -419,48 +442,42 @@ function parseEnvelope(raw: string | null): StoreEnvelope | null {
 }
 
 /**
- * Persist an envelope with stale-write protection.
- * Writes the CURRENT confirmed active envelope to recovery BEFORE replacing
- * the active value. Refuses when `expectedRevision` no longer matches.
+ * All persistent mutations are serialized by the adapter's origin-scoped lock.
+ * Validation may happen before acquiring it; the baseline is rechecked here.
  */
-export function saveStore(
+export async function saveStore(
   adapter: StoreAdapter,
   envelope: StoreEnvelope,
   expectedRevision: number,
-): WriteResult {
-  const current = parseEnvelope(adapter.get(ACTIVE_KEY))
-  // Read-only when the stored store uses a future schema version we cannot
-  // safely write into.
-  if (current && !isCurrentSchemaVersion(current)) {
-    return { ok: false, reason: 'readonly' }
+): Promise<WriteResult> {
+  if (!adapter.persistent) return { ok: false, reason: 'not-persistent' }
+  if (!adapter.withExclusiveWrite) return { ok: false, reason: 'locking-unavailable' }
+  try {
+    return await adapter.withExclusiveWrite(() => {
+      const loaded = loadStore(adapter)
+      if (!loaded.ok) return { ok: false, reason: loaded.reason === 'unsupported-version' ? 'readonly' : loaded.reason === 'unavailable' ? 'unavailable' : 'corrupted' } as WriteResult
+      if (loaded.readonly) return { ok: false, reason: 'readonly' } as WriteResult
+      const current = loaded.envelope
+      if (current.revision !== expectedRevision) return { ok: false, reason: 'stale-revision' } as WriteResult
+      if (!isWellFormedEnvelope(envelope) || envelope.revision !== expectedRevision + 1) {
+        return { ok: false, reason: 'invalid-envelope' } as WriteResult
+      }
+      if (!isCurrentSchemaVersion(envelope)) return { ok: false, reason: 'readonly' } as WriteResult
+      // Retain the last usable committed copy before replacing active. A failed
+      // recovery write never touches active; a failed active write leaves recovery.
+      const previous = serializeEnvelope(current)
+      const serialized = serializeEnvelope(envelope)
+      try {
+        if (!loaded.firstRun) adapter.set(RECOVERY_KEY, previous)
+        adapter.set(ACTIVE_KEY, serialized)
+      } catch {
+        return { ok: false, reason: 'write-failed' } as WriteResult
+      }
+      return { ok: true, envelope: structuredCloneSafe(envelope) } as WriteResult
+    })
+  } catch {
+    return { ok: false, reason: 'unavailable' }
   }
-  if (current && current.revision !== expectedRevision) {
-    return { ok: false, reason: 'stale-revision' }
-  }
-  if (!isWellFormedEnvelope(envelope)) {
-    return { ok: false, reason: 'invalid-envelope' }
-  }
-  if (!isCurrentSchemaVersion(envelope)) {
-    return { ok: false, reason: 'readonly' }
-  }
-  // Back up the last confirmed active envelope before replacing it.
-  if (current) {
-    adapter.set(RECOVERY_KEY, serializeEnvelope(current))
-  }
-  adapter.set(ACTIVE_KEY, serializeEnvelope(envelope))
-  return { ok: true, envelope }
-}
-
-/**
- * Apply a pending change after a conflict-free save. Concurrency-safe wrapper:
- * composes an operation with an expected revision and persists it.
- */
-export function commitChange(
-  adapter: StoreAdapter,
-  envelope: StoreEnvelope,
-  expectedRevision: number,
-): WriteResult {
-  return saveStore(adapter, envelope, expectedRevision)
 }
 
 /**
@@ -497,14 +514,24 @@ export function handleStorageEvent(
   return { conflict: false, envelope: null }
 }
 
-/**
- * Reset corrupted storage after the user accepts. Writes a clean envelope to
- * both keys and clears recovery.
- */
-export function acceptReset(adapter: StoreAdapter): StoreEnvelope {
-  const clean = emptyEnvelope()
-  clean.selected_id = RECOMMENDED_BUILTIN_ID
-  adapter.set(RECOVERY_KEY, serializeEnvelope(clean))
-  adapter.set(ACTIVE_KEY, serializeEnvelope(clean))
-  return clean
+/** Explicit user-confirmed reset only; never downgrades unsupported data. */
+export async function acceptReset(adapter: StoreAdapter): Promise<WriteResult> {
+  if (!adapter.persistent) return { ok: false, reason: 'not-persistent' }
+  if (!adapter.withExclusiveWrite) return { ok: false, reason: 'locking-unavailable' }
+  try {
+    return await adapter.withExclusiveWrite(() => {
+      const loaded = loadStore(adapter)
+      if (loaded.ok) return { ok: false, reason: loaded.readonly ? 'readonly' : 'stale-revision' } as WriteResult
+      if (loaded.reason !== 'both-corrupted') return { ok: false, reason: loaded.reason === 'unsupported-version' ? 'readonly' : 'unavailable' } as WriteResult
+      const clean = emptyEnvelope()
+      clean.selected_id = `builtin:${RECOMMENDED_BUILTIN_ID}`
+      clean.revision = 1
+      clean.updated_at = new Date().toISOString()
+      try {
+        adapter.set(ACTIVE_KEY, serializeEnvelope(clean))
+        adapter.set(RECOVERY_KEY, serializeEnvelope(clean))
+        return { ok: true, envelope: clean } as WriteResult
+      } catch { return { ok: false, reason: 'write-failed' } as WriteResult }
+    })
+  } catch { return { ok: false, reason: 'unavailable' } }
 }

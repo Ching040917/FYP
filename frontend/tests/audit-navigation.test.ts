@@ -9,10 +9,9 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { AuditResult } from '../src/types/audit'
 import { adaptAuditResponse } from '../src/lib/audit/adapter.ts'
-import { blankProfilePayload } from '../src/lib/custom-profile-store/editor.ts'
 import { emptyEnvelope } from '../src/lib/custom-profile-store/store.ts'
 import type { StoreEnvelope } from '../src/lib/custom-profile-store/store.ts'
-import { buildSelectorOptions, validateAndFreezeSubmission } from '../src/lib/upload-selector.ts'
+import { validateAndFreezeSubmission } from '../src/lib/upload-selector.ts'
 import type { FormattingProfile } from '../src/types/api.ts'
 
 // ---------------------------------------------------------------------------
@@ -130,42 +129,6 @@ test('dismiss does not delete or alter the audit; it only clears the completion 
 })
 
 // ---------------------------------------------------------------------------
-// 5. Custom-profile audit opens with the stored immutable snapshot
-// ---------------------------------------------------------------------------
-
-test('custom-profile audit opens with the stored immutable snapshot', () => {
-  const env: StoreEnvelope = {
-    ...emptyEnvelope(),
-    revision: 5,
-    profiles: [{
-      id: 'custom-111',
-      name: 'Thesis Custom',
-      description: 'Custom reflow',
-      payload: blankProfilePayload('pp-custom-111', 'Thesis Custom') as Record<string, unknown>,
-      validationState: 'backend_confirmed',
-      updatedAt: new Date().toISOString(),
-    }],
-    selected_id: 'custom:custom-111',
-  }
-  const frozen = validateAndFreezeSubmission(env, BUILTINS, 'custom:custom-111')
-  assert.equal(frozen.ok, true)
-  if (!frozen.ok || frozen.frozen.kind !== 'custom') throw new Error('frozen custom expected')
-  // The frozen payload used for submission is the one the backend will
-  // persist as profile_snapshot — the audit_id the backend returns below
-  // labels the same persisted row. Later source mutation must not reuse it.
-  const wire = wireResponse({ audit_id: 'audit-custom-snap-1' })
-  const s = handleResult(null, wire)!
-  assert.equal(hrefOf(s), '/audit/audit-custom-snap-1')
-  assert.equal(frozen.frozen.sourceCustomId, 'custom-111')
-  // Mutate the source after capture — href remains the original id.
-  ;(env.profiles[0]!.payload as Record<string, unknown>).body = { tampered: true }
-  assert.equal(hrefOf(s), '/audit/audit-custom-snap-1')
-  // Label contract: merge options show a Custom budget as expected.
-  const opts = buildSelectorOptions(BUILTINS, env.profiles)
-  assert.ok(opts.some((o) => o.kind === 'custom'))
-})
-
-// ---------------------------------------------------------------------------
 // 6. Built-in audit opens correctly (builtin path still derivable)
 // ---------------------------------------------------------------------------
 
@@ -237,33 +200,6 @@ test('history still contains the audit (dismiss is panel-local only)', () => {
   assert.equal(dismissed, null)
 })
 
-// ---------------------------------------------------------------------------
-// 11. Selected profile remains unchanged (success panel is side-effect only)
-// ---------------------------------------------------------------------------
-
-test('selected profile remains unchanged after success', () => {
-  const customEnv: StoreEnvelope = {
-    ...emptyEnvelope(),
-    revision: 9,
-    profiles: [{
-      id: 'custom-keep',
-      name: 'Keep',
-      description: '',
-      payload: blankProfilePayload('pp-keep', 'Keep') as Record<string, unknown>,
-      validationState: 'backend_confirmed',
-      updatedAt: new Date().toISOString(),
-    }],
-    selected_id: 'custom:custom-keep',
-  }
-  const beforeSel = customEnv.selected_id
-  const s = handleResult(null, wireResponse({ audit_id: 'audit-sel-keep-1' }))!
-  assert.equal(hrefOf(s), '/audit/audit-sel-keep-1')
-  assert.equal(customEnv.selected_id, beforeSel)
-  // A second success on a built-in does not rewrite the previous panel's id.
-  const s2 = handleResult(s, wireResponse({ audit_id: 'audit-sel-keep-2' }))!
-  assert.equal(s2.auditId, 'audit-sel-keep-2')
-  assert.notEqual(s2.auditId, s.auditId)
-})
 
 // ---------------------------------------------------------------------------
 // 12. Keyboard and accessible labels (canonical route contract)

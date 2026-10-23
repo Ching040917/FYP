@@ -8,13 +8,22 @@
 import { ACTIVE_KEY, RECOVERY_KEY, type StorageEventPayload, type StoreAdapter } from './store.ts'
 
 export class LocalStorageStoreAdapter implements StoreAdapter {
+  readonly persistent = true
+  readonly withExclusiveWrite: StoreAdapter['withExclusiveWrite']
   private readonly listeners = new Set<(key: string) => void>()
+  private readonly storage: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>
 
   constructor(
-    private readonly storage: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>,
-    private readonly subscribe: (fn: (e: StorageEventPayload) => void) => () => void,
+    storage: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>,
+    subscribe: (fn: (e: StorageEventPayload) => void) => () => void,
+    locks?: Pick<LockManager, 'request'>,
   ) {
-    this.unsubscribe = this.subscribe(this.handleEvent)
+    this.storage = storage
+    this.unsubscribe = subscribe(this.handleEvent)
+    this.withExclusiveWrite = locks
+      ? async <T>(write: () => T | Promise<T>): Promise<T> =>
+          await locks.request('custom-profiles:write', { mode: 'exclusive' }, write)
+      : undefined
   }
 
   private readonly unsubscribe: () => void
@@ -53,19 +62,22 @@ export class LocalStorageStoreAdapter implements StoreAdapter {
  */
 export function createBrowserStoreAdapter(): LocalStorageStoreAdapter | null {
   try {
+    const storage = window.localStorage
     const probeKey = 'custom-profiles:probe'
-    window.localStorage.setItem(probeKey, '1')
-    window.localStorage.removeItem(probeKey)
+    storage.setItem(probeKey, '1')
+    storage.removeItem(probeKey)
+    return new LocalStorageStoreAdapter(
+      storage,
+      (fn) => {
+        const handler = (e: StorageEvent) => {
+          if (e.storageArea === storage) fn({ key: e.key, newValue: e.newValue })
+        }
+        window.addEventListener('storage', handler)
+        return () => window.removeEventListener('storage', handler)
+      },
+      typeof navigator !== 'undefined' ? navigator.locks : undefined,
+    )
   } catch {
     return null
   }
-  return new LocalStorageStoreAdapter(
-    window.localStorage,
-    (fn) => {
-      window.addEventListener('storage', (e) => fn({ key: e.key, newValue: e.newValue }))
-      return () => {
-        window.removeEventListener('storage', () => {})
-      }
-    },
-  )
 }

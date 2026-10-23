@@ -203,17 +203,18 @@ export function resolveUploadSelection(
   if (!rawSelectedId) {
     return { selectedValue: recoValue, stale: false }
   }
+  const unavailableSelection: ResolveUploadSelectionResult = {
+    selectedValue: recoValue,
+    stale: !firstVisit,
+    ...(recoValue ? { normalizedPersisted: recoValue } : {}),
+    ...(!firstVisit ? { friendlyMessage: staleFriendlyMessage() } : {}),
+  }
 
   const decoded = decodeSelectorIdentity(rawSelectedId)
   if (!decoded) {
     // Malformed → reset to recommended, this is considered stale since the
     // user had *something* stored that we cannot interpret.
-    if (firstVisit) return { selectedValue: recoValue, stale: false }
-    return {
-      selectedValue: recoValue,
-      stale: true,
-      friendlyMessage: staleFriendlyMessage(),
-    }
+    return unavailableSelection
   }
 
   // Normalize legacy raw built-ins on resolution.
@@ -238,12 +239,7 @@ export function resolveUploadSelection(
       }
     }
     // Unknown/stale built-in
-    if (firstVisit) return { selectedValue: recoValue, stale: false }
-    return {
-      selectedValue: recoValue,
-      stale: true,
-      friendlyMessage: staleFriendlyMessage(),
-    }
+    return unavailableSelection
   }
 
   // decoded.kind === 'custom'
@@ -253,12 +249,7 @@ export function resolveUploadSelection(
   if (hit) {
     return { selectedValue: canonical, stale: false }
   }
-  if (firstVisit) return { selectedValue: recoValue, stale: false }
-  return {
-    selectedValue: recoValue,
-    stale: true,
-    friendlyMessage: staleFriendlyMessage(),
-  }
+  return unavailableSelection
 }
 
 export function staleFriendlyMessage(): string {
@@ -315,6 +306,7 @@ export function validateAndFreezeSubmission(
   envelope: StoreEnvelope,
   builtinProfiles: FormattingProfile[],
   selectedValue: string | null,
+  storage: { persistent: boolean; readonly: boolean } = { persistent: false, readonly: true },
 ): ValidateSubmissionResult {
   if (!selectedValue) {
     const reco = recommendedBuiltinId(builtinProfiles)
@@ -362,6 +354,9 @@ export function validateAndFreezeSubmission(
   }
 
   // custom
+  if (!storage.persistent || storage.readonly || envelope.schema_version !== 1) {
+    return { ok: false, reason: 'stale', friendlyMessage: 'Custom requirements must be read from a supported, persistent browser save before submission.' }
+  }
   const profile = envelope.profiles.find(
     (p) => p.id === decoded.id,
   )
@@ -381,12 +376,20 @@ export function validateAndFreezeSubmission(
       resetToRecommended: true,
     }
   }
+  const frozenPayload = deepCopyRecord(profile.payload)
+  const freeze = (value: unknown): void => {
+    if (value !== null && typeof value === 'object') {
+      for (const child of Object.values(value)) freeze(child)
+      Object.freeze(value)
+    }
+  }
+  freeze(frozenPayload)
   return {
     ok: true,
     frozen: {
       kind: 'custom',
       identity: decoded,
-      payload: deepCopyRecord(profile.payload as Record<string, unknown>),
+      payload: frozenPayload,
       sourceCustomId: profile.id,
       envelopeRevision: envelope.revision,
     },

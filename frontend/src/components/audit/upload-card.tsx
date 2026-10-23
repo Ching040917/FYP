@@ -56,12 +56,13 @@ import type { AuditResult } from '../../types/audit'
 import type { FormattingProfile } from '../../types/api'
 import {
   RECOMMENDED_BUILTIN_ID,
+  emptyEnvelope,
+  loadStore,
   saveStore,
   setSelectedProfile,
   type StoreEnvelope,
   type StoredCustomProfile,
 } from '../../lib/custom-profile-store/store.ts'
-import { loadEnvelope } from '../../lib/custom-profile-store/editor.ts'
 import { createBrowserStoreAdapter } from '../../lib/custom-profile-store/localstorage-adapter.ts'
 import { selectedProfileSummary } from '../../lib/audit/enabled-checks-wording'
 import { ProfileRequirements } from './profile-requirements'
@@ -113,19 +114,24 @@ export function UploadCard({ onResult, onReset, trySampleSignal = 0 }: UploadCar
 
   const loadEnvelopeState = React.useCallback((): StoreEnvelope => {
     const adapter = adapterRef.current
-    if (!adapter) {
-      return {
-        schema_version: 1,
-        revision: 0,
-        updated_at: new Date(0).toISOString(),
-        profiles: [],
-        selected_id: null,
-      }
+    const loaded = adapter ? loadStore(adapter) : null
+    if (!loaded?.ok || loaded.readonly || !adapter?.persistent) {
+      setCustomProfilesWarning((loaded?.ok && loaded.readonly) || (loaded && !loaded.ok && loaded.reason === 'unsupported-version')
+        ? 'Saved custom profiles use a newer format and cannot be used by this version.'
+        : 'Saved custom profiles could not be read. Stored data has not been reset; built-in profiles remain available.')
+      const builtinsOnly = emptyEnvelope()
+      setEnvelope(builtinsOnly)
+      setEnvelopeRevision(0)
+      return builtinsOnly
     }
-    const env = loadEnvelope(adapter)
-    setEnvelope(env)
-    setEnvelopeRevision(env.revision)
-    return env
+    setCustomProfilesWarning(loaded.recovered
+      ? 'Custom profiles were recovered from the last usable browser copy. Review them in Manage profiles.'
+      : loaded.damagedCopies?.length
+        ? 'A damaged backup copy of custom profiles was retained. The usable saved copy remains available.'
+        : null)
+    setEnvelope(loaded.envelope)
+    setEnvelopeRevision(loaded.envelope.revision)
+    return loaded.envelope
   }, [])
 
   const syncFromSources = React.useCallback(
@@ -154,11 +160,14 @@ export function UploadCard({ onResult, onReset, trySampleSignal = 0 }: UploadCar
             revision: next.revision + 1,
             updated_at: new Date().toISOString(),
           }
-          const res = saveStore(adapter, withBump, env.revision)
-          if (res.ok) {
-            setEnvelope(withBump)
-            setEnvelopeRevision(withBump.revision)
-          }
+          void saveStore(adapter, withBump, env.revision).then((res) => {
+            if (res.ok) {
+              setEnvelope(res.envelope)
+              setEnvelopeRevision(res.envelope.revision)
+            } else {
+              setCustomProfilesWarning('The profile selection is in use for this session but could not be saved in this browser.')
+            }
+          })
         }
       }
       const wasStale = result.stale
@@ -178,6 +187,10 @@ export function UploadCard({ onResult, onReset, trySampleSignal = 0 }: UploadCar
       setCustomProfilesWarning(
         'Saved custom profiles are unavailable in this browser session.',
       )
+    }
+    return () => {
+      adapter?.destroy()
+      adapterRef.current = null
     }
   }, [])
 
@@ -261,7 +274,7 @@ export function UploadCard({ onResult, onReset, trySampleSignal = 0 }: UploadCar
   ])
 
   const tryPersistSelection = React.useCallback(
-    (value: string, env: StoreEnvelope) => {
+    async (value: string, env: StoreEnvelope) => {
       const adapter = adapterRef.current
       if (!adapter) {
         setSelection(value)
@@ -274,24 +287,24 @@ export function UploadCard({ onResult, onReset, trySampleSignal = 0 }: UploadCar
         revision: next.revision + 1,
         updated_at: new Date().toISOString(),
       }
-      const res = saveStore(adapter, withBump, env.revision)
+      const res = await saveStore(adapter, withBump, env.revision)
       if (!res.ok) {
         if (res.reason === 'stale-revision') {
-          const live = loadEnvelope(adapter)
-          setEnvelope(live)
-          setEnvelopeRevision(live.revision)
+          const live = loadEnvelopeState()
           syncFromSources(profiles, live, { notifyStale: false })
           showToast(
             'Profile selection changed in another tab. Review the current selection before continuing.',
             'info',
           )
+        } else {
+          setCustomProfilesWarning('The profile selection is in use for this session but could not be saved in this browser.')
         }
         return
       }
-      setEnvelope(withBump)
-      setEnvelopeRevision(withBump.revision)
+      setEnvelope(res.envelope)
+      setEnvelopeRevision(res.envelope.revision)
     },
-    [profiles, setSelection, showToast, syncFromSources],
+    [loadEnvelopeState, profiles, setSelection, showToast, syncFromSources],
   )
 
   const handleSelectionChange = React.useCallback(
@@ -355,6 +368,7 @@ export function UploadCard({ onResult, onReset, trySampleSignal = 0 }: UploadCar
         liveEnv as StoreEnvelope,
         profiles,
         selectedValueRef.current,
+        { persistent: adapterRef.current?.persistent === true, readonly: false },
       )
       if (!frozenResult.ok) {
         if (frozenResult.resetToRecommended) {
@@ -412,6 +426,7 @@ export function UploadCard({ onResult, onReset, trySampleSignal = 0 }: UploadCar
         env as StoreEnvelope,
         profiles,
         selectedValueRef.current,
+        { persistent: adapterRef.current?.persistent === true, readonly: false },
       )
       if (!liveResult.ok) {
         if (liveResult.resetToRecommended) {

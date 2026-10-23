@@ -5,6 +5,10 @@ profile_from_dict + resolve_snapshot, friendly stable field identifiers,
 friendly English messages, deterministic normalized output, and NO side
 effects (no Audit, no DB row, no registry change, no files).
 """
+import json
+
+import pytest
+
 from app.services.profile_registry import (
     APA_PROFILE_ID,
     SUC_PROFILE_ID,
@@ -443,3 +447,79 @@ def test_page_element_enabled_settings_survive_api_validation_without_mutation(c
     for group in ("headers", "footers", "page_numbers"):
         assert result["profile"][group] == payload[group]
     assert payload["schema_version"] == 1
+
+
+@pytest.mark.parametrize(("group", "value", "field"), [
+    ("heading", {"allowed_font_combos": [42]}, "headings.level_1.font"),
+    ("body", {"allowed_font_combos": "not-pairs"}, "body.font_pairs"),
+    ("body", {"allowed_font_combos": [[["nested"], 12]]}, "body.font_pairs"),
+    ("role_policy", {"exempt_roles": 42}, "role_policy.exempt_roles"),
+    ("role_policy", {"exempt_roles": [{}]}, "role_policy.exempt_roles"),
+    ("body", {"font_family": True}, "body.font_pairs"),
+    ("heading", {"inherit_body_font": "yes"}, "headings.level_1.font"),
+])
+def test_malformed_nested_values_return_field_errors(client, group, value, field):
+    response = client.post(URL, json=_blank_payload(**{group: value}))
+    assert response.status_code == 422
+    result = response.json()
+    assert result["valid"] is False
+    assert field in {error["field"] for error in result["errors"]}
+
+
+@pytest.mark.parametrize(("group", "value", "field"), [
+    ("body", {"line_spacing": float("inf")}, "body.line_spacing"),
+    ("heading", {"allowed_font_combos": [["Arial", float("nan")]]}, "headings.level_1.font"),
+    ("heading", {"level_1": {"retained_metadata": float("-inf")}}, "heading.level_1.retained_metadata"),
+])
+def test_nonfinite_values_cannot_escape_into_normalized_json(client, group, value, field):
+    response = client.post(
+        URL,
+        content=json.dumps(_blank_payload(**{group: value})),
+        headers={"Content-Type": "application/json"},
+    )
+    assert response.status_code == 422
+    result = response.json()
+    assert result["valid"] is False
+    assert result["errors"][0]["field"] == field
+
+
+def test_description_boundary_matches_editor_without_truncation(client):
+    description = "Ω" * 500
+    valid = client.post(URL, json=_blank_payload(description=description))
+    assert valid.status_code == 200
+    assert valid.json()["profile"]["description"] == description
+    invalid = client.post(URL, json=_blank_payload(description=description + "Ω"))
+    assert invalid.status_code == 422
+    assert invalid.json()["errors"][0]["field"] == "general.description"
+
+
+def test_schema_version_boolean_is_not_version_one(client):
+    response = client.post(URL, json=_blank_payload(schema_version=True))
+    assert response.status_code == 422
+    assert response.json()["errors"][0]["field"] == "general.version"
+
+
+def test_validation_preserves_supported_disabled_and_unknown_role_metadata(client):
+    references = {
+        "check_font_family": False,
+        "font_family": "Georgia",
+        "check_line_spacing": None,
+        "line_spacing": 2,
+        "check_heading_bold": True,
+        "heading_bold": False,
+    }
+    role_policy = {"exempt_roles": ["UNKNOWN", "UNRECOGNIZED_ROLE"], "table_eligibility": "both"}
+    response = client.post(URL, json=_blank_payload(
+        references=references,
+        role_policy=role_policy,
+        body={"first_line_indent_in": 0.5},
+        heading={"level_1": {"alignment": "center", "retained_metadata": {"key": "value"}}},
+    ))
+    assert response.status_code == 200
+    normalized = response.json()["profile"]
+    assert all(normalized["references"][key] == value for key, value in references.items())
+    assert set(normalized["role_policy"]["exempt_roles"]) == set(role_policy["exempt_roles"])
+    assert normalized["body"]["first_line_indent_in"] == 0.5
+    assert normalized["heading"]["level_1"] == {
+        "alignment": "center", "retained_metadata": {"key": "value"},
+    }

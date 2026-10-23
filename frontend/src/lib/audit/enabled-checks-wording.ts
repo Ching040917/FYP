@@ -21,6 +21,24 @@ export const ENABLED_CHECKS_CAUTION =
 export const PAGE_ELEMENTS_HELP_TEXT =
   'Checks stored Normal-pages definitions in every document section. Does not verify rendered visibility or numbering. First-page and even-page definitions are not checked. Unsupported evidence is reported for manual review.'
 
+export const RECORDED_ROLE_POLICY_NOTICE =
+  'Recorded profile metadata only. ACA uses fixed paragraph-role eligibility and checks table captions only for tables classified as scholarly. These stored values do not configure enforcement in this version.'
+
+// Display vocabulary only: this list does not implement eligibility policy.
+const RECORDED_ROLE_NAMES: Record<string, true> = {
+  BODY: true, APPENDIX_BODY: true, HEADING_1: true, HEADING_2: true, HEADING_3: true,
+  REFERENCES_HEADING: true, APPENDIX_HEADING: true, LIST_ITEM: true, REFERENCE_ENTRY: true,
+  CAPTION_TABLE: true, CAPTION_FIGURE: true, COVER: true, TITLE: true, SUBTITLE: true,
+  TABLE_OF_CONTENTS_HEADING: true, TABLE_OF_CONTENTS_ENTRY: true, DISPLAYED_EQUATION: true,
+  FIGURE_HOST: true, EMPTY: true, FIELD_ONLY: true, UNKNOWN: true,
+}
+
+export function recordedRoleLabel(role: string): string {
+  if (role === 'UNKNOWN') return 'Unknown (no proven content role)'
+  if (!Object.prototype.hasOwnProperty.call(RECORDED_ROLE_NAMES, role)) return `Unrecognized role: ${role}`
+  return role.charAt(0).toUpperCase() + role.slice(1).toLowerCase().replace(/_/g, ' ')
+}
+
 export type PageElementProfileGroups = Pick<ProfileSnapshot, 'headers' | 'footers' | 'page_numbers'>
 
 /** These are unscored requirements, not additional scored categories. */
@@ -308,7 +326,7 @@ export function profileDetailSections(
         snapshot.profile_name || 'Selected profile',
         `Source: ${snapshot.profile_source === 'built_in' ? 'Built-in · Read-only' : snapshot.profile_source === 'custom' ? 'Custom' : snapshot.profile_source?.trim() || 'Not recorded'}${snapshot.profile_version != null ? ` · Version ${snapshot.profile_version}` : ''}`,
         ...(snapshot.description ? [snapshot.description] : []),
-        ...(snapshot.role_exemptions?.length ? [`Formatting exemptions: ${snapshot.role_exemptions.map((role) => role.replace(/_/g, ' ')).join(', ')}`] : []),
+        ...(snapshot.role_exemptions?.length ? [`Formatting exemptions: ${snapshot.role_exemptions.map(recordedRoleLabel).join(', ')}`] : []),
         ...(snapshot.table_eligibility ? [`Table classification: ${snapshot.table_eligibility === 'scholarly' ? 'Scholarly' : snapshot.table_eligibility === 'both' ? 'Administrative and scholarly' : snapshot.table_eligibility === 'administrative' ? 'Administrative' : snapshot.table_eligibility}`] : []),
         ...(snapshot.citation_matching?.allow_personal_communication !== undefined
           ? [`Personal communication citations: ${snapshot.citation_matching.allow_personal_communication ? 'Allowed without a Reference List entry' : 'Require a Reference List entry'}`] : []),

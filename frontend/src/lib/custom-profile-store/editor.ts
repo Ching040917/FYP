@@ -12,16 +12,16 @@
  */
 import type { FormattingProfile, ProfileSnapshot, ProfileValidationError } from '../../types/api'
 import {
-  emptyEnvelope,
   generateProfileId,
-  loadStore,
   saveStore,
   upsertProfile,
   deleteProfile,
   type StoreAdapter,
   type StoreEnvelope,
   type StoredCustomProfile,
+  type WriteResult,
 } from './store.ts'
+import type { DraftUiState } from './draft-recovery.ts'
 import {
   PAGE_ELEMENTS_HELP_TEXT,
   pageElementCheckParts,
@@ -42,7 +42,7 @@ export const APA_BUILTIN_ID = 'apa7-student-paper'
 export const CREATION_LABELS: Record<CreationKind, string> = {
   'copy-suc': 'Copy SUC Academic Report',
   'copy-apa': 'Copy APA 7 Student Paper',
-  blank: 'Start with no enabled requirements',
+  blank: 'Start with blank formatting and APA citation defaults',
 }
 
 /** Default display names for each creation path. */
@@ -353,7 +353,7 @@ export function copyProfilePayload(
   p.profile_source = 'custom'
   // A source payload that predates the citation controls gets the documented
   // defaults — never an absent group that would silently drop the toggles.
-  if (!p.citation_matching || typeof p.citation_matching !== 'object') {
+  if (!Object.prototype.hasOwnProperty.call(p, 'citation_matching')) {
     p.citation_matching = { ...DEFAULT_CITATION_MATCHING }
   }
   defaultMissingPageElements(p)
@@ -367,17 +367,22 @@ export function copyProfilePayload(
  */
 export function buildSavePayload(
   draft: StoredCustomProfile,
+  ui?: DraftUiState,
 ): Record<string, unknown> {
-  const payload = cloneRecord(draft.payload)
+  let payload = cloneRecord(draft.payload)
+  if (ui?.body) payload = applyBodyUiPatch(payload, ui.body)
+  if (ui?.heading) payload = applyHeadingUiPatch(payload, ui.heading)
+  if (ui?.margins) payload = applyMarginsUiPatch(payload, ui.margins)
+  if (ui?.references) payload = applyReferencesUiPatch(payload, ui.references)
+  if (ui?.captions) payload = applyCaptionsUiPatch(payload, ui.captions)
+  if (ui?.lists) payload = applyListsUiPatch(payload, ui.lists)
+  if (ui?.citation) payload = applyCitationUiPatch(payload, ui.citation)
+  payload.profile_id = draft.id
   payload.profile_name = draft.name.trim()
   payload.description = draft.description
   payload.profile_source = 'custom'
   payload.citation_style = CITATION_STYLE
-  // Always send the citation controls; a draft without them would fall back
-  // to the backend defaults instead of the user's intent.
-  payload.citation_matching = citationMatchingFromUiModel(
-    citationMatchingToUiModel(payload.citation_matching),
-  )
+  if (!Object.prototype.hasOwnProperty.call(payload, 'citation_matching')) payload.citation_matching = { ...DEFAULT_CITATION_MATCHING }
   defaultMissingPageElements(payload)
   return payload
 }
@@ -551,7 +556,7 @@ export type MarginsUiModel = Record<MarginSide, { enabled: boolean; value: strin
  */
 export interface ReferencesUiModel {
   headingTextEnabled: boolean
-  headingText: ReferenceHeadingText
+  headingText: ReferenceHeadingText | ''
   allowHeadingAliases: boolean
   /** True when the heading's bold or regular state is required. */
   headingBoldEnabled: boolean
@@ -607,11 +612,12 @@ const numStr = (n: unknown): string => {
   return ''
 }
 
-const parseNum = (s: string): number | null => {
+// Invalid typed text is retained for validation, never converted to no requirement.
+const parseNum = (s: string): number | string | null => {
   const t = s.trim()
   if (t === '') return null
   const n = Number(t)
-  return Number.isFinite(n) ? n : null
+  return Number.isFinite(n) ? n : s
 }
 
 const asNumList = (v: unknown): [string, number][] => {
@@ -620,7 +626,7 @@ const asNumList = (v: unknown): [string, number][] => {
   for (const item of v) {
     if (Array.isArray(item) && item.length === 2) {
       const size = parseNum(String(item[1]))
-      if (item[0] != null && size != null) out.push([String(item[0]), size])
+      if (typeof item[0] === 'string' && typeof size === 'number') out.push([item[0], size])
     }
   }
   return out
@@ -648,7 +654,7 @@ export function bodyToUiModel(body: BodyGroup): BodyUiModel {
     fontExactMode: exact && combos.length === 0,
     pairs,
     alignmentEnabled: body.alignment != null,
-    alignment: (body.alignment as AlignmentValue) ?? '',
+    alignment: asAlignment(body.alignment),
     lineSpacingEnabled: body.line_spacing != null,
     lineSpacing: numStr(body.line_spacing),
     spaceBeforeEnabled: body.space_before_pt != null,
@@ -668,18 +674,13 @@ export function bodyFromUiModel(ui: BodyUiModel): BodyGroup {
     alignment: ui.alignmentEnabled && ui.alignment ? ui.alignment : null,
     space_before_pt: ui.spaceBeforeEnabled ? parseNum(ui.spaceBefore) : null,
     space_after_pt: ui.spaceAfterEnabled ? parseNum(ui.spaceAfter) : null,
-    // First-line indentation is not consumed by the deterministic adapter in
-    // this release — never save a misleading value (Build 4 rule).
-    first_line_indent_in: null,
   }
   if (ui.fontEnabled) {
-    const pairs = ui.pairs
-      .map((p) => [p.family.trim(), parseNum(p.size)] as [string, number | null])
-      .filter((p): p is [string, number] => p[0] !== '' && p[1] !== null)
+    const pairs = ui.pairs.map((p) => [p.family.trim(), parseNum(p.size)])
     if (ui.fontExactMode && pairs.length === 1) {
       body.font_family = pairs[0][0]
       body.font_size_pt = pairs[0][1]
-    } else if (pairs.length >= 1) {
+    } else {
       body.allowed_font_combos = pairs
     }
   }
@@ -690,7 +691,7 @@ const levelToUiModel = (level: unknown): HeadingLevelModel => {
   const l = asLevel(level)
   return {
     alignmentEnabled: l.alignment != null,
-    alignment: (l.alignment as AlignmentValue) ?? '',
+    alignment: asAlignment(l.alignment),
     bold: l.bold === true,
     italic: l.italic === true,
   }
@@ -727,7 +728,7 @@ export function headingToUiModel(heading: HeadingGroup): HeadingUiModel {
     fontExactMode: exact && combos.length === 0,
     pairs,
     alignmentEnabled: heading.alignment != null,
-    alignment: (heading.alignment as AlignmentValue) ?? '',
+    alignment: asAlignment(heading.alignment),
     spaceBeforeEnabled: heading.space_before_pt != null,
     spaceBefore: numStr(heading.space_before_pt),
     spaceAfterEnabled: heading.space_after_pt != null,
@@ -761,13 +762,11 @@ export function headingFromUiModel(
     level_3: uiModelToLevel(ui.level3),
   }
   if (ui.fontBehavior === 'explicit') {
-    const pairs = ui.pairs
-      .map((p) => [p.family.trim(), parseNum(p.size)] as [string, number | null])
-      .filter((p): p is [string, number] => p[0] !== '' && p[1] !== null)
+    const pairs = ui.pairs.map((p) => [p.family.trim(), parseNum(p.size)])
     if (ui.fontExactMode && pairs.length === 1) {
       heading.font_family = pairs[0][0]
       heading.font_size_pt = pairs[0][1]
-    } else if (pairs.length >= 1) {
+    } else {
       heading.allowed_font_combos = pairs
     }
   }
@@ -807,10 +806,10 @@ export function marginsFromUiModel(ui: MarginsUiModel): MarginGroup {
 }
 
 /** Coerce a stored heading word to the fixed vocabulary (lowercase). */
-const asHeadingText = (v: unknown): ReferenceHeadingText => {
+const asHeadingText = (v: unknown): ReferenceHeadingText | '' => {
   const normalized = typeof v === 'string' ? v.trim().toLowerCase() : ''
   const match = REFERENCE_HEADING_TEXT_OPTIONS.find((o) => o === normalized)
-  return match ?? 'references'
+  return match ?? ''
 }
 
 /** Coerce a stored alignment to the shared vocabulary ('' = not set). */
@@ -860,35 +859,34 @@ export function referencesToUiModel(references: ReferencesGroup): ReferencesUiMo
 /**
  * Build the schema-backed References group from the editable UI model.
  *
- * `check_line_spacing` is always written explicitly so a user who turns the
- * line-spacing check off really turns it off; the backend reads a missing or
- * null toggle as "enforce whenever a value is stored". Aliases follow their
- * parent heading-text check, exactly as the dependent citation toggles do.
+ * The standalone converter expresses the current controls. The canonical
+ * candidate applies only deliberate field deltas, retaining a missing/null
+ * legacy line switch and inactive configured values until explicitly edited.
  */
 export function referencesFromUiModel(ui: ReferencesUiModel): ReferencesGroup {
   return {
-    line_spacing: ui.lineSpacingEnabled ? parseNum(ui.lineSpacing) : null,
+    line_spacing: parseNum(ui.lineSpacing),
     check_line_spacing: ui.lineSpacingEnabled,
-    hanging_indent_in: ui.hangingIndentEnabled ? parseNum(ui.hangingIndent) : null,
+    hanging_indent_in: parseNum(ui.hangingIndent),
     check_hanging_indent: ui.hangingIndentEnabled,
     check_heading_text: ui.headingTextEnabled,
-    heading_text: ui.headingTextEnabled ? ui.headingText.toLowerCase() : null,
-    allow_heading_aliases: ui.headingTextEnabled && ui.allowHeadingAliases,
+    heading_text: ui.headingText || null,
+    allow_heading_aliases: ui.allowHeadingAliases,
     check_heading_bold: ui.headingBoldEnabled,
     heading_bold: ui.headingBold,
     check_heading_alignment: ui.headingAlignmentEnabled,
-    heading_alignment: ui.headingAlignmentEnabled ? ui.headingAlignment || null : null,
+    heading_alignment: ui.headingAlignment || null,
     check_start_on_new_page: ui.startOnNewPageEnabled,
     check_space_before: ui.spaceBeforeEnabled,
-    space_before_pt: ui.spaceBeforeEnabled ? parseNum(ui.spaceBefore) : null,
+    space_before_pt: parseNum(ui.spaceBefore),
     check_space_after: ui.spaceAfterEnabled,
-    space_after_pt: ui.spaceAfterEnabled ? parseNum(ui.spaceAfter) : null,
+    space_after_pt: parseNum(ui.spaceAfter),
     check_font_family: ui.fontFamilyEnabled,
-    font_family: ui.fontFamilyEnabled ? ui.fontFamily.trim() || null : null,
+    font_family: ui.fontFamily.trim() || null,
     check_font_size: ui.fontSizeEnabled,
-    font_size_pt: ui.fontSizeEnabled ? parseNum(ui.fontSize) : null,
+    font_size_pt: parseNum(ui.fontSize),
     check_alignment: ui.alignmentEnabled,
-    alignment: ui.alignmentEnabled ? ui.alignment || null : null,
+    alignment: ui.alignment || null,
     check_reference_order: ui.referenceOrderEnabled,
     check_doi_format: ui.doiFormatEnabled,
   }
@@ -927,6 +925,103 @@ export function listsFromUiModel(ui: ListUiModel): ListGroup {
   }
 }
 
+/** Overlay only deliberate UI changes; projections are never a storage schema. */
+function patchGroup<T extends object>(
+  payload: Record<string, unknown>,
+  key: string,
+  ui: T,
+  project: (group: Record<string, unknown>) => T,
+  convert: (ui: T) => Record<string, unknown>,
+  fields: Partial<Record<keyof T, readonly string[]>>,
+): Record<string, unknown> {
+  const raw = asLevel(payload[key])
+  const before = project(raw)
+  let converted: Record<string, unknown> | undefined
+  const patch: Record<string, unknown> = {}
+  for (const field of Object.keys(fields) as (keyof T)[]) {
+    if (JSON.stringify(before[field]) === JSON.stringify(ui[field])) continue
+    converted ??= convert(ui)
+    for (const target of fields[field] ?? []) patch[target] = converted[target]
+  }
+  if (Object.keys(patch).length === 0) return payload
+  return { ...payload, [key]: { ...cloneRecord(raw), ...patch } }
+}
+
+const fontKeys = ['font_family', 'font_size_pt', 'allowed_font_combos'] as const
+
+export function applyBodyUiPatch(payload: Record<string, unknown>, ui: BodyUiModel): Record<string, unknown> {
+  return patchGroup(payload, 'body', ui, bodyToUiModel, bodyFromUiModel, {
+    fontEnabled: fontKeys, fontExactMode: fontKeys, pairs: fontKeys,
+    alignmentEnabled: ['alignment'], alignment: ['alignment'],
+    lineSpacingEnabled: ['line_spacing'], lineSpacing: ['line_spacing'],
+    spaceBeforeEnabled: ['space_before_pt'], spaceBefore: ['space_before_pt'],
+    spaceAfterEnabled: ['space_after_pt'], spaceAfter: ['space_after_pt'],
+  })
+}
+
+export function applyHeadingUiPatch(payload: Record<string, unknown>, ui: HeadingUiModel): Record<string, unknown> {
+  let result = patchGroup(payload, 'heading', ui, headingToUiModel,
+    (value) => headingFromUiModel(value, value.alignmentEnabled ? value.alignment || null : null), {
+      fontBehavior: ['inherit_body_font', ...fontKeys], fontExactMode: fontKeys, pairs: fontKeys,
+      alignmentEnabled: ['alignment'], alignment: ['alignment'],
+      spaceBeforeEnabled: ['space_before_pt'], spaceBefore: ['space_before_pt'],
+      spaceAfterEnabled: ['space_after_pt'], spaceAfter: ['space_after_pt'],
+    })
+  const before = headingToUiModel(asLevel(payload.heading))
+  for (const [field, key] of [['level1', 'level_1'], ['level2', 'level_2'], ['level3', 'level_3']] as const) {
+    const patch: Record<string, unknown> = {}
+    for (const member of ['bold', 'italic'] as const) {
+      if (before[field][member] !== ui[field][member]) patch[member] = ui[field][member]
+    }
+    if (Object.keys(patch).length) {
+      const group = asLevel(result.heading)
+      result = { ...result, heading: { ...group, [key]: { ...cloneRecord(asLevel(group[key])), ...patch } } }
+    }
+  }
+  return result
+}
+
+export function applyMarginsUiPatch(payload: Record<string, unknown>, ui: MarginsUiModel): Record<string, unknown> {
+  return patchGroup(payload, 'margins', ui, marginsToUiModel, marginsFromUiModel, {
+    left: ['margin_left_in'], right: ['margin_right_in'], top: ['margin_top_in'], bottom: ['margin_bottom_in'],
+  })
+}
+
+export function applyReferencesUiPatch(payload: Record<string, unknown>, ui: ReferencesUiModel): Record<string, unknown> {
+  return patchGroup(payload, 'references', ui, referencesToUiModel, referencesFromUiModel, {
+    headingTextEnabled: ['check_heading_text'], headingText: ['heading_text'],
+    allowHeadingAliases: ['allow_heading_aliases'], headingBoldEnabled: ['check_heading_bold'], headingBold: ['heading_bold'],
+    headingAlignmentEnabled: ['check_heading_alignment'], headingAlignment: ['heading_alignment'],
+    startOnNewPageEnabled: ['check_start_on_new_page'],
+    hangingIndentEnabled: ['check_hanging_indent'], hangingIndent: ['hanging_indent_in'],
+    lineSpacingEnabled: ['check_line_spacing'], lineSpacing: ['line_spacing'],
+    spaceBeforeEnabled: ['check_space_before'], spaceBefore: ['space_before_pt'],
+    spaceAfterEnabled: ['check_space_after'], spaceAfter: ['space_after_pt'],
+    fontFamilyEnabled: ['check_font_family'], fontFamily: ['font_family'],
+    fontSizeEnabled: ['check_font_size'], fontSize: ['font_size_pt'],
+    alignmentEnabled: ['check_alignment'], alignment: ['alignment'],
+    referenceOrderEnabled: ['check_reference_order'], doiFormatEnabled: ['check_doi_format'],
+  })
+}
+
+export function applyCaptionsUiPatch(payload: Record<string, unknown>, ui: CaptionUiModel): Record<string, unknown> {
+  return patchGroup(payload, 'captions', ui, captionsToUiModel, captionsFromUiModel, {
+    spaceBeforeEnabled: ['space_before_pt'], spaceBefore: ['space_before_pt'],
+    spaceAfterEnabled: ['space_after_pt'], spaceAfter: ['space_after_pt'],
+  })
+}
+
+export function applyListsUiPatch(payload: Record<string, unknown>, ui: ListUiModel): Record<string, unknown> {
+  return patchGroup(payload, 'lists', ui, listsToUiModel, listsFromUiModel, {
+    spaceAfterEnabled: ['space_after_pt'], spaceAfter: ['space_after_pt'],
+  })
+}
+
+export function applyCitationUiPatch(payload: Record<string, unknown>, ui: CitationMatchingUiModel): Record<string, unknown> {
+  const fields = Object.fromEntries(CITATION_MATCHING_FIELDS.map((field) => [field, [field]]))
+  return patchGroup(payload, 'citation_matching', ui, citationMatchingToUiModel, citationMatchingFromUiModel, fields)
+}
+
 /**
  * Apply a convenience margin preset. Presets are NOT universal standards —
  * they only pre-fill the four controls, which remain editable and must pass
@@ -950,16 +1045,6 @@ export function applyMarginPreset(preset: MarginPreset): MarginsUiModel {
   }
 }
 
-/** Deep-clone a payload then replace one top-level group. */
-export function setPayloadGroup(
-  payload: Record<string, unknown>,
-  groupKey: string,
-  group: Record<string, unknown>,
-): Record<string, unknown> {
-  const next = cloneRecord(payload)
-  next[groupKey] = group
-  return next
-}
 
 // ---------------------------------------------------------------------------
 // Lightweight client-side validation for requirements (Build 4)
@@ -993,10 +1078,8 @@ export function validateRequirements(
           break
         }
         const size = parseNum(p.size)
-        if (size === null) {
-          errors.push({ field: 'body.font_pairs', message: 'Enter a numeric font size in points.' })
-          break
-        }
+        if (typeof size !== 'number') { errors.push({ field: 'body.font_pairs', message: 'Enter a numeric font size in points.' })
+        break }
         if (size < FONT_SIZE_MIN || size > FONT_SIZE_MAX) {
           errors.push({
             field: 'body.font_pairs',
@@ -1019,7 +1102,7 @@ export function validateRequirements(
 
   // Body line spacing
   const ls = body.lineSpacingEnabled ? parseNum(body.lineSpacing) : null
-  if (body.lineSpacingEnabled && (ls === null || ls < LINE_SPACING_MIN || ls > LINE_SPACING_MAX)) {
+  if (body.lineSpacingEnabled && (typeof ls !== 'number' || ls < LINE_SPACING_MIN || ls > LINE_SPACING_MAX)) {
     errors.push({
       field: 'body.line_spacing',
       message: `Enter line spacing between ${LINE_SPACING_MIN} and ${LINE_SPACING_MAX}.`,
@@ -1033,7 +1116,7 @@ export function validateRequirements(
   ] as const) {
     const enabled = field === 'body.space_before' ? body.spaceBeforeEnabled : body.spaceAfterEnabled
     const value = enabled ? parseNum(label) : null
-    if (enabled && (value === null || value < SPACING_PT_MIN || value > SPACING_PT_MAX)) {
+    if (enabled && (typeof value !== 'number' || value < SPACING_PT_MIN || value > SPACING_PT_MAX)) {
       errors.push({
         field,
         message: `Enter paragraph spacing between ${SPACING_PT_MIN} and ${SPACING_PT_MAX} pt.`,
@@ -1041,8 +1124,9 @@ export function validateRequirements(
     }
   }
 
-  // Heading inheritance requires body font enabled.
-  if (heading.fontBehavior === 'inherit' && !body.fontEnabled) {
+  const rawBody = asLevel(payload.body)
+  if (heading.fontBehavior === 'inherit' && rawBody.font_family == null &&
+      rawBody.font_size_pt == null && !body.fontEnabled) {
     errors.push({
       field: 'headings.level_1.font',
       message: 'Heading 1 cannot inherit the body font when no body font is enabled.',
@@ -1067,13 +1151,11 @@ export function validateRequirements(
           break
         }
         const size = parseNum(p.size)
-        if (size === null) {
-          errors.push({
-            field: 'headings.level_1.font',
-            message: 'Enter a numeric font size in points.',
-          })
-          break
-        }
+        if (typeof size !== 'number') { errors.push({
+          field: 'headings.level_1.font',
+          message: 'Enter a numeric font size in points.',
+        })
+        break }
         if (size < FONT_SIZE_MIN || size > FONT_SIZE_MAX) {
           errors.push({
             field: 'headings.level_1.font',
@@ -1103,7 +1185,7 @@ export function validateRequirements(
       ? heading.spaceBeforeEnabled
       : heading.spaceAfterEnabled
     const value = enabled ? parseNum(label) : null
-    if (enabled && (value === null || value < SPACING_PT_MIN || value > SPACING_PT_MAX)) {
+    if (enabled && (typeof value !== 'number' || value < SPACING_PT_MIN || value > SPACING_PT_MAX)) {
       errors.push({
         field,
         message: `Enter heading spacing between ${SPACING_PT_MIN} and ${SPACING_PT_MAX} pt.`,
@@ -1116,7 +1198,7 @@ export function validateRequirements(
     const m = margins[side]
     if (!m.enabled) continue
     const value = parseNum(m.value)
-    if (value === null || value < MARGIN_MIN_IN || value > MARGIN_MAX_IN) {
+    if (typeof value !== 'number' || value < MARGIN_MIN_IN || value > MARGIN_MAX_IN) {
       errors.push({
         field: `margins.${side}`,
         message: `Enter a margin between ${MARGIN_MIN_IN} and ${MARGIN_MAX_IN} in.`,
@@ -1128,14 +1210,14 @@ export function validateRequirements(
   // validated only while its check is switched on.
   const references = referencesToUiModel((payload.references ?? {}) as ReferencesGroup)
   const refLs = references.lineSpacingEnabled ? parseNum(references.lineSpacing) : null
-  if (references.lineSpacingEnabled && (refLs === null || refLs < REFERENCES_LINE_SPACING_MIN || refLs > REFERENCES_LINE_SPACING_MAX)) {
+  if (references.lineSpacingEnabled && references.lineSpacing !== '' && (typeof refLs !== 'number' || refLs < REFERENCES_LINE_SPACING_MIN || refLs > REFERENCES_LINE_SPACING_MAX)) {
     errors.push({
       field: 'references.line_spacing',
       message: `Enter reference line spacing between ${REFERENCES_LINE_SPACING_MIN} and ${REFERENCES_LINE_SPACING_MAX}.`,
     })
   }
   const refIndent = references.hangingIndentEnabled ? parseNum(references.hangingIndent) : null
-  if (references.hangingIndentEnabled && (refIndent === null || refIndent < REFERENCES_INDENT_MIN_IN || refIndent > REFERENCES_INDENT_MAX_IN)) {
+  if (references.hangingIndentEnabled && references.hangingIndent !== '' && (typeof refIndent !== 'number' || refIndent < REFERENCES_INDENT_MIN_IN || refIndent > REFERENCES_INDENT_MAX_IN)) {
     errors.push({
       field: 'references.hanging_indent_in',
       message: `Enter a hanging indent between ${REFERENCES_INDENT_MIN_IN} and ${REFERENCES_INDENT_MAX_IN} in.`,
@@ -1149,7 +1231,7 @@ export function validateRequirements(
       ? references.spaceBeforeEnabled
       : references.spaceAfterEnabled
     const parsed = enabled ? parseNum(value) : null
-    if (enabled && (parsed === null || parsed < SPACING_PT_MIN || parsed > SPACING_PT_MAX)) {
+    if (enabled && value !== '' && (typeof parsed !== 'number' || parsed < SPACING_PT_MIN || parsed > SPACING_PT_MAX)) {
       errors.push({
         field,
         message: `Enter spacing between ${SPACING_PT_MIN} and ${SPACING_PT_MAX} pt.`,
@@ -1157,21 +1239,21 @@ export function validateRequirements(
     }
   }
   const refSize = references.fontSizeEnabled ? parseNum(references.fontSize) : null
-  if (references.fontSizeEnabled && (refSize === null || refSize < FONT_SIZE_MIN || refSize > FONT_SIZE_MAX)) {
+  if (references.fontSizeEnabled && references.fontSize !== '' && (typeof refSize !== 'number' || refSize < FONT_SIZE_MIN || refSize > FONT_SIZE_MAX)) {
     errors.push({
       field: 'references.font_size_pt',
       message: `Enter a font size between ${FONT_SIZE_MIN} and ${FONT_SIZE_MAX} pt.`,
     })
   }
-  if (references.fontFamilyEnabled && !references.fontFamily.trim()) {
+  const rawReferences = asLevel(payload.references)
+  if (rawReferences.font_family != null &&
+      (typeof rawReferences.font_family !== 'string' || !rawReferences.font_family.trim())) {
     errors.push({ field: 'references.font_family', message: 'Enter a font name.' })
   }
-  for (const [field, enabled, alignment] of [
-    ['references.heading_alignment', references.headingAlignmentEnabled, references.headingAlignment],
-    ['references.alignment', references.alignmentEnabled, references.alignment],
-  ] as const) {
-    if (enabled && !alignment) {
-      errors.push({ field, message: 'Choose an alignment.' })
+  for (const field of ['heading_alignment', 'alignment'] as const) {
+    if (rawReferences[field] != null &&
+        !(ALIGNMENT_OPTIONS as readonly unknown[]).includes(rawReferences[field])) {
+      errors.push({ field: `references.${field}`, message: 'Choose an alignment.' })
     }
   }
 
@@ -1183,7 +1265,7 @@ export function validateRequirements(
   ] as const) {
     const enabled = field === 'captions.space_before' ? captions.spaceBeforeEnabled : captions.spaceAfterEnabled
     const value = enabled ? parseNum(label) : null
-    if (enabled && (value === null || value < SPACING_PT_MIN || value > SPACING_PT_MAX)) {
+    if (enabled && (typeof value !== 'number' || value < SPACING_PT_MIN || value > SPACING_PT_MAX)) {
       errors.push({
         field,
         message: `Enter caption spacing between ${SPACING_PT_MIN} and ${SPACING_PT_MAX} pt.`,
@@ -1243,7 +1325,7 @@ export function validateRequirements(
   // Lists — space after only (Build 5).
   const lists = listsToUiModel((payload.lists ?? {}) as ListGroup)
   const listAfter = lists.spaceAfterEnabled ? parseNum(lists.spaceAfter) : null
-  if (lists.spaceAfterEnabled && (listAfter === null || listAfter < SPACING_PT_MIN || listAfter > SPACING_PT_MAX)) {
+  if (lists.spaceAfterEnabled && (typeof listAfter !== 'number' || listAfter < SPACING_PT_MIN || listAfter > SPACING_PT_MAX)) {
     errors.push({
       field: 'lists.space_after',
       message: `Enter list spacing between ${SPACING_PT_MIN} and ${SPACING_PT_MAX} pt.`,
@@ -1549,11 +1631,11 @@ export function isUnsavedDraft(
  * matches storage. Returns the store WriteResult so the UI can distinguish a
  * successful write from a stale-revision refusal (another tab).
  */
-export function persistEnvelope(
+export async function persistEnvelope(
   adapter: StoreAdapter,
   envelope: StoreEnvelope,
   expectedRevision: number,
-) {
+): Promise<WriteResult> {
   return saveStore(adapter, envelope, expectedRevision)
 }
 
@@ -1581,6 +1663,7 @@ export function isDirty(
 export function createMemoryStoreAdapter(): StoreAdapter {
   const store = new Map<string, string>()
   return {
+    persistent: false,
     get(key) {
       return store.get(key) ?? null
     },
@@ -1593,12 +1676,6 @@ export function createMemoryStoreAdapter(): StoreAdapter {
   }
 }
 
-/** Deterministic helper used by tests and the editor. */
-export function loadEnvelope(adapter: StoreAdapter): StoreEnvelope {
-  const result = loadStore(adapter)
-  if (!result.ok) return emptyEnvelope()
-  return result.envelope
-}
 
 // ---------------------------------------------------------------------------
 // Misc

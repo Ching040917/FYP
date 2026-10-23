@@ -24,6 +24,7 @@ Design contract (owner-approved):
 """
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
+import math
 from typing import Any, Dict, List, Optional, Set, Tuple
 from uuid import uuid4
 
@@ -69,6 +70,8 @@ def _require_unit(value: float, name: str, lo: float, hi: float) -> Optional[str
         return None
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return f"must be a number, got {type(value).__name__}"
+    if isinstance(value, float) and not math.isfinite(value):
+        return "must be a finite number"
     if value < lo or value > hi:
         return f"must be between {lo:g} and {hi:g}"
     return None
@@ -195,11 +198,11 @@ class ListSettings:
 
 @dataclass
 class RolePolicy:
-    """Role-specific eligibility and exemptions.
+    """Recorded profile metadata, retained for current and historical disclosure.
 
-    `exempt_roles` = roles that receive NO deterministic formatting findings.
-    `table_eligibility` = how tables are classified (e.g. administrative
-    tables are not caption targets).
+    These fields do not configure rule eligibility in this release.
+    Paragraph eligibility uses the fixed role policy, and table captions
+    target classified scholarly tables independently of this metadata.
     """
     exempt_roles: Set[str] = field(default_factory=set)
     table_eligibility: str = "administrative"  # administrative | scholarly | both
@@ -306,7 +309,7 @@ class DocumentFormattingProfile:
 
         # Body
         b = self.body
-        if b.font_family is not None and not b.font_family.strip():
+        if b.font_family is not None and (not isinstance(b.font_family, str) or not b.font_family.strip()):
             errors.append(("body.font_family", "must not be empty when set"))
         e = _require_unit(b.font_size_pt, "body.font_size_pt", *_FONT_SIZE_PT_RANGE)
         if e:
@@ -344,7 +347,7 @@ class DocumentFormattingProfile:
                 "heading",
                 "inherit_body_font conflicts with explicit heading font settings",
             ))
-        if h.font_family is not None and not h.font_family.strip():
+        if h.font_family is not None and (not isinstance(h.font_family, str) or not h.font_family.strip()):
             errors.append(("heading.font_family", "must not be empty when set"))
         e = _require_unit(h.font_size_pt, "heading.font_size_pt", *_FONT_SIZE_PT_RANGE)
         if e:
@@ -584,7 +587,7 @@ def profile_from_dict(data: Dict[str, Any]) -> DocumentFormattingProfile:
             raise ProfileValidationError([
                 (f"{key}.{k}", "unknown field") for k in sorted(unk)
             ])
-        return val
+        return dict(val)
 
     body_raw = _group("body", BodySettings)
     heading_raw = _group("heading", HeadingSettings)
@@ -598,17 +601,46 @@ def profile_from_dict(data: Dict[str, Any]) -> DocumentFormattingProfile:
     footers_raw = _group("footers", FooterSettings, strict=True)
     page_numbers_raw = _group("page_numbers", PageNumberSettings, strict=True)
 
-    # allowed_font_combos arrives as a list of pairs — restore tuple form.
-    if body_raw.get("allowed_font_combos") is not None:
-        body_raw["allowed_font_combos"] = tuple(
-            tuple(c) for c in body_raw["allowed_font_combos"]
-        )
-    if heading_raw.get("allowed_font_combos") is not None:
-        heading_raw["allowed_font_combos"] = tuple(
-            tuple(c) for c in heading_raw["allowed_font_combos"]
-        )
-    if isinstance(rp_raw.get("exempt_roles"), list):
-        rp_raw["exempt_roles"] = set(rp_raw["exempt_roles"])
+    # Validate collection shapes before conversion: malformed JSON must produce
+    # field errors, not iteration/unpacking/hash failures in later consumers.
+    def _font_combos(raw, path):
+        if raw is None:
+            return None
+        if not isinstance(raw, (list, tuple)):
+            raise ProfileValidationError([(path, "must be a list of font and size pairs")])
+        pairs = []
+        errors = []
+        for combo in raw:
+            if not isinstance(combo, (list, tuple)) or len(combo) != 2:
+                errors.append((path, "each font and size pair must have two values"))
+                continue
+            family, size = combo
+            if not isinstance(family, str) or not family.strip():
+                errors.append((path, "font family must be a nonempty string"))
+                continue
+            error = _require_unit(size, path, *_FONT_SIZE_PT_RANGE)
+            if size is None or error:
+                errors.append((path, error or "font size is required"))
+                continue
+            pairs.append((family, size))
+        if errors:
+            raise ProfileValidationError(errors)
+        return tuple(pairs)
+
+    for raw, name in ((body_raw, "body"), (heading_raw, "heading")):
+        if "allowed_font_combos" in raw:
+            raw["allowed_font_combos"] = _font_combos(
+                raw["allowed_font_combos"], f"{name}.allowed_font_combos",
+            )
+    if "exempt_roles" in rp_raw:
+        roles = rp_raw["exempt_roles"]
+        if not isinstance(roles, (list, tuple, set)) or any(
+            not isinstance(role, str) for role in roles
+        ):
+            raise ProfileValidationError([
+                ("role_policy.exempt_roles", "must be a list of role names"),
+            ])
+        rp_raw["exempt_roles"] = set(roles)
 
     try:
         profile = DocumentFormattingProfile(
@@ -634,7 +666,7 @@ def profile_from_dict(data: Dict[str, Any]) -> DocumentFormattingProfile:
         )
     except TypeError as exc:
         raise ProfileValidationError([("", f"malformed profile: {exc}")])
-    except ValueError as exc:
+    except (ValueError, OverflowError) as exc:
         raise ProfileValidationError([("", f"malformed profile: {exc}")])
 
     errors = profile.validate()

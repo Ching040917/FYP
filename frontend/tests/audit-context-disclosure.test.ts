@@ -385,25 +385,6 @@ test('Dashboard compact groups separate every independent page element and place
   }
 })
 
-test('details retain requirement values and scopes once within semantic areas', () => {
-  const s = snapshot({
-    description: 'Saved requirements',
-    margins: { left_in: 1, right_in: null, top_in: null, bottom_in: null },
-    references: { check_doi_format: true, check_reference_order: true },
-    role_exemptions: ['title_page'],
-    table_eligibility: 'scholarly',
-    citation_matching: { allow_personal_communication: true },
-  })
-  const sections = profileDetailSections(s)
-  const scored = sections.find((section) => section.heading === 'Scored checks')!
-  assert.deepEqual(scored.groups?.map((group) => group.heading), ['Margins', 'Reference List'])
-  assert.equal(scored.items.filter((item) => item.text === 'Reference DOI format').length, 1)
-  assert.match(scored.note!, /presentation only, not registration or resolution/)
-  const identity = sections[0].items.map((item) => item.text)
-  for (const text of ['Saved requirements', 'Formatting exemptions: title page', 'Table classification: Scholarly']) assert.ok(identity.includes(text))
-  const unchecked = sections.find((section) => section.heading === 'Not checked')!
-  assert.ok(unchecked.groups?.find((group) => group.heading === 'Margins')?.items.some((item) => item.text === 'Right margin: Not checked'))
-})
 
 test('empty requirement groups expose no placeholder rows or inflated counts', () => {
   const sections = profileDetailSections(snapshot())

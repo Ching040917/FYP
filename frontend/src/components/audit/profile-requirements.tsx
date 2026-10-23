@@ -1,5 +1,5 @@
 import type { ProfileSnapshot } from '../../types/api'
-import { profileDetailSections } from '../../lib/audit/enabled-checks-wording'
+import { profileDetailSections, recordedRoleLabel, RECORDED_ROLE_POLICY_NOTICE } from '../../lib/audit/enabled-checks-wording'
 import { DisclosureSections } from './compact-disclosure'
 
 /** Presentation only: the caller owns and supplies the current or saved snapshot. */
@@ -31,11 +31,17 @@ export function ProfileRequirements({ snapshot, context }: {
         </dl>
       </section>
       <DisclosureSections sections={coverage} />
-      {exemptions.length > 0 && (
-        <section className="border-t border-border pt-4" aria-label="Formatting exemptions">
+      <section className="border-t border-border pt-4" aria-label="Formatting exemptions">
           <h3 className="text-base font-semibold text-primary">Formatting exemptions</h3>
-          <p className="mt-1 text-[13px] leading-5 text-muted-foreground">Formatting exemptions recorded by this profile.</p>
-          <ul
+          <p className="mt-1 text-[13px] leading-5 text-muted-foreground">{RECORDED_ROLE_POLICY_NOTICE}</p>
+          {exemptions.length === 0 && (
+            <p className="mt-2 text-[13px] leading-5 text-muted-foreground">
+              {snapshot.role_exemptions == null
+                ? 'Exemptions were not recorded in this configuration.'
+                : 'No exemptions are recorded by this profile. The fixed eligibility policy still applies.'}
+            </p>
+          )}
+          {exemptions.length > 0 && <ul
             role="list"
             aria-label="Formatting exemptions"
             className="mt-2 flex flex-wrap items-start gap-2 text-[13px] leading-5"
@@ -45,14 +51,11 @@ export function ProfileRequirements({ snapshot, context }: {
                 key={role}
                 className="min-w-0 max-w-full rounded-md bg-muted px-2 py-1 text-foreground [overflow-wrap:anywhere]"
               >
-                {role === 'UNKNOWN'
-                  ? 'Unknown (no proven content role)'
-                  : role.charAt(0).toUpperCase() + role.slice(1).toLowerCase().replace(/_/g, ' ')}
+                {recordedRoleLabel(role)}
               </li>
             ))}
-          </ul>
-        </section>
-      )}
+          </ul>}
+      </section>
       <section className="border-t border-border pt-4" aria-label="Profile information">
         <h3 className="text-base font-semibold text-primary">Profile information</h3>
         <dl className="mt-3 space-y-2 text-[13px] leading-5">
@@ -64,7 +67,7 @@ export function ProfileRequirements({ snapshot, context }: {
         {snapshot.description && (
           <details className="mt-3 text-[13px] leading-5">
             <summary className="w-fit max-w-full cursor-pointer rounded-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary">Profile description</summary>
-            <p className="mt-2 text-muted-foreground">{snapshot.description}</p>
+            <p className="mt-2 text-muted-foreground [overflow-wrap:anywhere]">{snapshot.description}</p>
           </details>
         )}
       </section>

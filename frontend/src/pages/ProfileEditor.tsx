@@ -1,26 +1,6 @@
-/**
- * Custom Profile Editor (Build 5) — editor shell, profile list, creation
- * paths, and backend-gated save.
- *
- * Scope:
- *   - view built-in and saved custom profiles;
- *   - duplicate SUC Academic Report / APA 7 Student Paper;
- *   - create a safe blank custom profile;
- *   - edit custom profile name + description;
- *   - Body, Headings, Margins, Reference List, Captions, and Lists controls;
- *   - save ONLY after POST /api/formatting-profiles/validate succeeds;
- *   - return to the upload workflow.
- *
- * Deliberately deferred: deletion (Build 7) and upload-selector integration
- * (Build 6). The editor is a dedicated route — never a full-page modal.
- *
- * Accessibility: semantic heading, labelled fields, fieldsets, keyboard
- * reachable list, visible focus, inline field errors, aria-live status, focus
- * trap + restoration for the confirm dialog, no color-only status, and 44px
- * minimum action targets.
- */
+/** Browser-local grouped editor. Dirty drafts are isolated from confirmed saves. */
 import * as React from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useBlocker, useNavigate } from 'react-router-dom'
 import {
   Copy,
   Plus,
@@ -47,12 +27,10 @@ import { formatAuditDateTime } from '../lib/format-date'
 import {
   clearDraftRecovery,
   createSessionDraftRecoveryAdapter,
-  decideDraftRecovery,
-  loadDraftRecovery,
+  loadDraftRecoveryResult,
   saveDraftRecovery,
-  NEW_DRAFT_ID,
 } from '../lib/custom-profile-store/draft-recovery'
-import type { ProfileDraftRecovery } from '../lib/custom-profile-store/draft-recovery'
+import type { DraftUiState, ProfileDraftRecovery } from '../lib/custom-profile-store/draft-recovery'
 import {
   APA_BUILTIN_ID,
   SUC_BUILTIN_ID,
@@ -67,40 +45,30 @@ import {
   deleteAndBump,
   friendlySourceName,
   generateProfileId,
-  headingFromUiModel,
+  buildSavePayload,
   headingToUiModel,
   isUnsavedDraft,
-  loadEnvelope,
-  marginsFromUiModel,
   marginsToUiModel,
   applyMarginPreset,
   MARGIN_PRESET_LABELS,
   MARGIN_SIDE_LABELS,
   mergeOpStatus,
   isSuccessOpStatus,
-  OP_STATUS_SUCCESS_MS,
   type OpStatus,
   type MarginSide,
   type MarginPreset,
   persistEnvelope,
   resolveUniqueName,
-  setPayloadGroup,
-  bodyFromUiModel,
   bodyToUiModel,
-  referencesFromUiModel,
   referencesToUiModel,
-  captionsFromUiModel,
   captionsToUiModel,
-  listsFromUiModel,
   listsToUiModel,
   applyPageElementsUiPatch,
   pageElementsToUiModel,
   summarizeProfile,
   upsertAndBump,
-  citationMatchingFromUiModel,
   citationMatchingToUiModel,
   DEFAULT_CITATION_MATCHING,
-  CITATION_MATCHING_DEPENDENT_FIELDS,
   type CitationMatchingField,
   type CitationMatchingUiModel,
   type BodyUiModel,
@@ -122,7 +90,8 @@ import {
   type ReferenceHeadingText,
 } from '../lib/custom-profile-store/editor'
 import { createBrowserStoreAdapter } from '../lib/custom-profile-store/localstorage-adapter'
-import { PAGE_ELEMENTS_HELP_TEXT } from '../lib/audit/enabled-checks-wording'
+import { acceptReset, emptyEnvelope, loadStore, type StoreLoadResult } from '../lib/custom-profile-store/store'
+import { PAGE_ELEMENTS_HELP_TEXT, recordedRoleLabel, RECORDED_ROLE_POLICY_NOTICE } from '../lib/audit/enabled-checks-wording'
 import { cn } from '../lib/utils'
 
 // Known citation-style terms that may appear in profile names. We only warn;
@@ -139,6 +108,18 @@ const ALIGNMENT_SELECT_OPTIONS = [
 
 /** Neutral Reference List model, shown before a draft is loaded. */
 const EMPTY_REFERENCES_UI: ReferencesUiModel = referencesToUiModel({})
+
+function focusProfileList() {
+  const heading = document.getElementById('profile-list-heading')
+  heading?.scrollIntoView({ block: 'center', behavior: 'instant' })
+  heading?.focus({ preventScroll: true })
+}
+
+function focusDraftName() {
+  const input = document.getElementById('profile-name')
+  input?.scrollIntoView({ block: 'center', behavior: 'instant' })
+  input?.focus({ preventScroll: true })
+}
 
 /** DOM ids for the citation-controls checkboxes (error-focus targets). */
 const CITATION_INPUT_IDS: Record<CitationMatchingField, string> = {
@@ -222,7 +203,7 @@ const CITATION_CONTROL_ROWS: {
   {
     field: 'flag_ambiguous_matches',
     label: 'Flag ambiguous matches for manual review',
-    hint: 'Sorts citations that could match several entries into Manual review (never scored).',
+    hint: 'Configured ambiguous-match review is unscored and runs only while in-text citations are checked against the Reference List.',
   },
   {
     field: 'allow_personal_communication',
@@ -273,6 +254,8 @@ function RequirementToggle({
   hint?: string
   fieldId: string
 }) {
+  const groupLabel = fieldId.startsWith('body-') ? 'Body text' : fieldId.startsWith('heading-') ? 'Headings' : fieldId.startsWith('captions-') ? 'Captions' : 'Lists'
+  const accessibleLabel = `${groupLabel}: ${label}`
   return (
     <fieldset className="rounded-md border border-border p-3">
       <legend className="px-1 text-sm font-medium text-foreground">{label}</legend>
@@ -287,7 +270,7 @@ function RequirementToggle({
             enabled ? 'bg-primary border-transparent' : 'bg-input border-border',
           )}
         >
-          <span className="sr-only">Check {label}</span>
+          <span className="sr-only">Check {accessibleLabel}</span>
           <span
             className={cn(
               'inline-block h-5 w-5 rounded-full bg-white transition-transform',
@@ -301,14 +284,17 @@ function RequirementToggle({
         <div className="mt-2 flex items-center gap-2">
           <input
             id={fieldId}
-            type="number"
+            aria-label={`${accessibleLabel}${unit ? ` (${unit})` : ''}`}
+            aria-invalid={Boolean(error)}
+            type="text"
+            inputMode="decimal"
             min={min}
             max={max}
             step={step ?? 0.1}
             value={value}
             onChange={(e) => onChange(e.target.value)}
             className="w-20 rounded-md border border-border bg-white px-3 py-1.5 text-sm focus:border-ring focus:ring-1 focus:ring-ring focus:outline-none"
-            aria-describedby={hint ? `${fieldId}-hint` : undefined}
+            aria-describedby={[hint ? `${fieldId}-hint` : '', error ? `${fieldId}-error` : ''].filter(Boolean).join(' ') || undefined}
           />
           {unit && <span className="text-sm text-muted-foreground">{unit}</span>}
         </div>
@@ -316,17 +302,19 @@ function RequirementToggle({
       {enabled && isSelect && options && (
         <select
           id={fieldId}
+          aria-label={accessibleLabel}
+          aria-invalid={Boolean(error)}
           value={value}
           onChange={(e) => onChange(e.target.value)}
           className="mt-2 w-full rounded-md border border-border bg-white px-3 py-1.5 text-sm focus:border-ring focus:ring-1 focus:ring-ring focus:outline-none"
-          aria-describedby={hint ? `${fieldId}-hint` : undefined}
+          aria-describedby={[hint ? `${fieldId}-hint` : '', error ? `${fieldId}-error` : ''].filter(Boolean).join(' ') || undefined}
         >
           {options.map((o) => (
             <option key={o.value} value={o.value}>{o.label}</option>
           ))}
         </select>
       )}
-      {error && <p role="alert" className="mt-1 text-xs text-destructive">{error}</p>}
+      {error && <p id={`${fieldId}-error`} role="alert" className="mt-1 text-xs text-destructive">{error}</p>}
       {hint && <p id={`${fieldId}-hint`} className="mt-1 text-[11px] text-muted-foreground">{hint}</p>}
     </fieldset>
   )
@@ -339,12 +327,24 @@ type LoadStatus =
 
 export function ProfileEditor() {
   const navigate = useNavigate()
+  React.useEffect(() => () => {
+    // Only editor departures: do not install an app-wide navigation policy.
+    requestAnimationFrame(() => {
+      if (document.getElementById('custom-profile-main') || document.activeElement !== document.body) return
+      const main = document.querySelector<HTMLElement>('main')
+      if (!main) return
+      if (!main.hasAttribute('tabindex')) main.tabIndex = -1
+      main.scrollIntoView({ block: 'start', behavior: 'instant' })
+      main.focus({ preventScroll: true })
+    })
+  }, [])
   const adapterRef = React.useRef<StoreAdapter | null>(null)
 
   // Store + list state
   const [envelope, setEnvelope] = React.useState<StoreEnvelope | null>(null)
   const [builtins, setBuiltins] = React.useState<BuiltinViewModel[]>([])
   const [loadStatus, setLoadStatus] = React.useState<LoadStatus>({ state: 'loading' })
+  const [adapterVersion, setAdapterVersion] = React.useState(0)
   const [creationBusy, setCreationBusy] = React.useState<CreationKind | null>(null)
 
   // Editor state
@@ -358,15 +358,21 @@ export function ProfileEditor() {
   const setOpStatusSafe = React.useCallback((next: OpStatus) => {
     setOpStatus((prev) => mergeOpStatus(prev, next))
   }, [])
-  // Success statuses auto-dismiss; errors persist until superseded/corrected.
-  React.useEffect(() => {
-    if (!isSuccessOpStatus(opStatus.kind)) return
-    const t = setTimeout(() => {
-      setOpStatus((prev) => (isSuccessOpStatus(prev.kind) ? { kind: 'idle' } : prev))
-    }, OP_STATUS_SUCCESS_MS)
-    return () => clearTimeout(t)
-  }, [opStatus])
-  const [pendingNavigation, setPendingNavigation] = React.useState<null | { to: string }>(null)
+  // Results remain available until the next action; a focused status must
+  // never disappear on a timer.
+  const [pendingNavigation, setPendingNavigation] = React.useState<null | (() => void)>(null)
+  const transitionAllowed = React.useRef(false)
+  const baseRevisionRef = React.useRef(0)
+  const replacementConsentRef = React.useRef(false)
+  const deleteRevisionRef = React.useRef(0)
+  const editingExistingRef = React.useRef(false)
+  const savingRef = React.useRef(false)
+  const [storeHealth, setStoreHealth] = React.useState<StoreLoadResult | null>(null)
+  const [externalConflict, setExternalConflict] = React.useState(false)
+  const [saveBusy, setSaveBusy] = React.useState(false)
+  const summaryRef = React.useRef<HTMLDivElement>(null)
+  const statusRef = React.useRef<HTMLDivElement>(null)
+  const blocker = useBlocker(() => dirty && !transitionAllowed.current)
 
   // Requirement UI models — derived from draft.payload and the single source
   // of truth for every requirement control in this Build.
@@ -381,416 +387,244 @@ export function ProfileEditor() {
   // Inline field errors for requirement controls (mapped from backend/client).
   const [reqFieldErrors, setReqFieldErrors] = React.useState<Record<string, string>>({})
 
-  // ---------------------------------------------------------------------
-  // Unsaved draft recovery (sessionStorage, tab-scoped)
-  // ---------------------------------------------------------------------
   const draftRecoveryAdapterRef = React.useRef(createSessionDraftRecoveryAdapter())
   const [recoveryNotice, setRecoveryNotice] = React.useState<string | null>(null)
+  const [pendingRecovery, setPendingRecovery] = React.useState<ProfileDraftRecovery | null>(null)
+  const [recoveryBlocked, setRecoveryBlocked] = React.useState(false)
+  const recoveryChecked = React.useRef(false)
+  const uiState: DraftUiState = {
+    body: bodyUi, heading: headingUi, margins: marginsUi, references: referencesUi,
+    captions: captionsUi, lists: listsUi, citation: citationUi,
+  }
 
-  /** Persist the current unsaved draft for same-tab reload recovery. */
-  const persistDraftRecovery = React.useCallback(
-    (d: StoredCustomProfile | null, envRevision: number) => {
-      if (!d) return
-      const isNew = !envelope?.profiles.some((p) => p.id === d.id)
-      const recovery: ProfileDraftRecovery = {
-        schema_version: 1,
-        profile_id: isNew ? NEW_DRAFT_ID : d.id,
-        base_revision: envRevision,
-        payload: d.payload,
-        updated_at: new Date().toISOString(),
+  const hydrateUi = React.useCallback((profile: StoredCustomProfile, ui?: DraftUiState) => {
+    const payload = profile.payload
+    const group = (key: string): Record<string, unknown> =>
+      typeof payload[key] === 'object' && payload[key] !== null && !Array.isArray(payload[key])
+        ? payload[key] as Record<string, unknown> : {}
+    setBodyUi(ui ? ui.body : bodyToUiModel(group('body')))
+    setHeadingUi(ui ? ui.heading : headingToUiModel(group('heading')))
+    setMarginsUi(ui ? ui.margins : marginsToUiModel(group('margins')))
+    setReferencesUi(ui ? ui.references : referencesToUiModel(group('references')))
+    setCaptionsUi(ui ? ui.captions : captionsToUiModel(group('captions')))
+    setListsUi(ui ? ui.lists : listsToUiModel(group('lists')))
+    setCitationUi(ui ? ui.citation : citationMatchingToUiModel(payload.citation_matching))
+  }, [])
+
+  const readStore = React.useCallback((adapter: StoreAdapter) => {
+    const result = loadStore(adapter)
+    setStoreHealth(result)
+    // Empty is an explicitly unpersisted drafting container, not a healthy load.
+    setEnvelope(result.ok ? result.envelope : emptyEnvelope())
+    return result
+  }, [])
+
+  React.useEffect(() => {
+    let cancelled = false
+    const adapter = createBrowserStoreAdapter() ?? createMemoryStoreAdapter()
+    adapterRef.current = adapter
+    readStore(adapter)
+    const recovery = loadDraftRecoveryResult(draftRecoveryAdapterRef.current)
+    recoveryChecked.current = true
+    if (recovery.status === 'ready') {
+      setRecoveryBlocked(true)
+      setPendingRecovery(recovery.recovery)
+      setRecoveryNotice('An unsaved draft is available. Restore it or explicitly discard it before starting another draft.')
+    } else if (recovery.status !== 'empty') {
+      setRecoveryBlocked(recovery.status !== 'unavailable')
+      setRecoveryNotice(recovery.status === 'unsupported'
+        ? 'This draft recovery version cannot be restored losslessly (older records lack identity and metadata). Its bytes have been retained; discard explicitly to start again.'
+        : recovery.status === 'invalid'
+          ? 'The draft recovery is invalid. Its bytes have been retained; discard explicitly to start again.'
+          : 'Draft recovery storage is unavailable. Keep this tab open to retain your work.')
+    }
+    void api.getFormattingProfiles().then((list) => {
+      if (cancelled) return
+      setBuiltins(list.filter((p) => p.profile_source === 'built_in').map((p) => ({
+        profileId: p.profile_id, name: p.profile_name, description: p.description, sourceName: p.profile_name,
+      })))
+      setLoadStatus({ state: 'ready' })
+    }).catch(() => { if (!cancelled) setLoadStatus({ state: 'error' }) })
+    return () => {
+      cancelled = true
+      const currentAdapter = adapterRef.current
+      if (currentAdapter && 'destroy' in currentAdapter && typeof currentAdapter.destroy === 'function') currentAdapter.destroy()
+      adapterRef.current = null
+    }
+  }, [readStore])
+
+  React.useEffect(() => {
+    if (!dirty || !draft || !recoveryChecked.current || recoveryBlocked || pendingRecovery) return
+    const recovery: ProfileDraftRecovery = {
+      schema_version: 2, profile_id: draft.id, base_revision: baseRevisionRef.current,
+      draft, ui: uiState, updated_at: new Date().toISOString(),
+    }
+    if (!saveDraftRecovery(draftRecoveryAdapterRef.current, recovery)) {
+      setRecoveryNotice('Draft recovery could not be written. Keep this tab open; your unsaved work is not protected against reload.')
+    }
+  }, [dirty, draft, bodyUi, headingUi, marginsUi, referencesUi, captionsUi, listsUi, citationUi, pendingRecovery, recoveryBlocked, externalConflict])
+
+  const clearRecovery = React.useCallback(() => {
+    if (!clearDraftRecovery(draftRecoveryAdapterRef.current)) {
+      setRecoveryNotice('Draft recovery could not be cleared. The requested transition was cancelled to prevent old edits returning.')
+      return false
+    }
+    setPendingRecovery(null)
+    setRecoveryBlocked(false)
+    setRecoveryNotice(null)
+    return true
+  }, [])
+
+  const restoreRecovery = () => {
+    if (!pendingRecovery || !envelope) return
+    const recovery = pendingRecovery
+    baseRevisionRef.current = recovery.base_revision
+    editingExistingRef.current = recovery.draft.validationState !== 'draft'
+    const conflict = recovery.base_revision !== envelope.revision ||
+      (editingExistingRef.current && !envelope.profiles.some((profile) => profile.id === recovery.profile_id))
+    setExternalConflict(conflict)
+    setDraft(structuredClone(recovery.draft))
+    setEditingId(recovery.profile_id)
+    hydrateUi(recovery.draft, recovery.ui)
+    setDirty(true)
+    setPendingRecovery(null)
+    setRecoveryBlocked(false)
+    setRecoveryNotice(conflict
+      ? 'Restored the full draft. Saved data changed since editing began; Save is blocked until you reload the saved version or review the latest revision.'
+      : 'Restored the full unsaved draft, including name, description and unfinished input.')
+    requestAnimationFrame(focusDraftName)
+  }
+
+  React.useEffect(() => {
+    if (!adapterRef.current) return
+    return adapterRef.current.onExternalChange(() => {
+      const result = readStore(adapterRef.current!)
+      if (!result.ok) { if (dirty) setExternalConflict(true); return }
+      if (dirty) {
+        if (result.envelope.revision !== baseRevisionRef.current) setExternalConflict(true)
+      } else if (editingId) {
+        const saved = result.envelope.profiles.find((p) => p.id === editingId)
+        if (saved) {
+          setDraft(structuredClone(saved))
+          hydrateUi(saved)
+          baseRevisionRef.current = result.envelope.revision
+        } else { setDraft(null); setEditingId(null) }
       }
-      saveDraftRecovery(draftRecoveryAdapterRef.current, recovery)
-    },
-    [envelope],
-  )
+    })
+  }, [loadStatus.state, adapterVersion, dirty, editingId, readStore, hydrateUi])
 
-  // Save the unsaved draft whenever it changes (only while dirty).
   React.useEffect(() => {
-    if (!dirty || !draft || !envelope) return
-    persistDraftRecovery(draft, envelope.revision)
-  }, [draft, dirty, envelope, persistDraftRecovery])
+    if (!dirty) return
+    const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = '' }
+    window.addEventListener('beforeunload', warn)
+    return () => window.removeEventListener('beforeunload', warn)
+  }, [dirty])
 
-  // Clear the recovery record after successful Save / Discard / Delete.
-  React.useEffect(() => {
-    if (opStatus.kind === 'saved' || opStatus.kind === 'deleted') {
-      clearDraftRecovery(draftRecoveryAdapterRef.current)
-      setRecoveryNotice(null)
-    }
-  }, [opStatus.kind])
 
-  // On mount (same-tab reload), restore a structurally valid recovery that
-  // belongs to the selected profile or new draft and whose confirmed revision
-  // has not changed. Stale/conflicting records are never applied silently.
-  React.useEffect(() => {
-    if (loadStatus.state !== 'ready' && loadStatus.state !== 'error') return
-    if (!envelope) return
-    const recovery = loadDraftRecovery(draftRecoveryAdapterRef.current)
-    if (!recovery) return
-    if (draft) return // an editor session is already active — nothing to do
-
-    if (recovery.profile_id === NEW_DRAFT_ID) {
-      // Fresh-draft recovery needs a user decision; surface a notice rather
-      // than silently re-creating a profile.
-      setRecoveryNotice(
-        'Recovered unsaved changes — use one of the creation actions to start again, then re-apply your edits.',
-      )
-      return
-    }
-
-    const target = envelope.profiles.find((p) => p.id === recovery.profile_id)
-    if (!target) {
-      // Profile deleted elsewhere — remove stale recovery.
-      clearDraftRecovery(draftRecoveryAdapterRef.current)
-      setRecoveryNotice(null)
-      return
-    }
-    const decision = decideDraftRecovery(recovery, target.id, envelope.revision)
-    if (decision.action === 'apply') {
-      openProfileFromRecovery(target, decision.recovery.payload)
-      setRecoveryNotice('Recovered unsaved changes')
-    } else if (decision.action === 'conflict') {
-      setRecoveryNotice(
-        'Recovered changes conflict with updates from another tab. The saved version is shown; your unsaved edits were not applied.',
-      )
-    } else {
-      clearDraftRecovery(draftRecoveryAdapterRef.current)
-      setRecoveryNotice(null)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loadStatus.state, envelope])
-
-  /** Restore an unsaved payload over a stored profile as a dirty draft. */
-  const openProfileFromRecovery = React.useCallback(
-    (profile: StoredCustomProfile, recoveredPayload: Record<string, unknown>) => {
-      setDraft({ ...profile, payload: recoveredPayload })
-      setEditingId(profile.id)
+  const createFrom = React.useCallback(async (kind: CreationKind) => {
+    if (!envelope || savingRef.current || recoveryBlocked) return
+    setCreationBusy(kind)
+    try {
+      const loaded = readStore(adapterRef.current!)
+      const creationEnvelope = loaded.ok ? loaded.envelope : emptyEnvelope()
+      const name = resolveUniqueName(creationEnvelope.profiles.map((p) => p.name), DEFAULT_PROFILE_NAMES[kind])
+      const id = generateProfileId()
+      const sourceId = kind === 'copy-suc' ? SUC_BUILTIN_ID : kind === 'copy-apa' ? APA_BUILTIN_ID : undefined
+      const payload = sourceId
+        ? copyProfilePayload(await api.getBuiltinProfilePayload(sourceId), id, name)
+        : blankProfilePayload(id, name)
+      const profile: StoredCustomProfile = {
+        id, name, description: typeof payload.description === 'string' ? payload.description : '',
+        sourceId, payload, validationState: 'draft', updatedAt: new Date().toISOString(),
+      }
+      baseRevisionRef.current = creationEnvelope.revision
+      replacementConsentRef.current = false
+      editingExistingRef.current = false
+      setExternalConflict(false)
+      setDraft(profile)
+      setEditingId(id)
+      hydrateUi(profile)
       setDirty(true)
       setFieldErrors({})
       setReqFieldErrors({})
       setOpStatusSafe({ kind: 'idle' })
-      setBodyUi(recoveredPayload.body ? bodyToUiModel(recoveredPayload.body as Record<string, unknown>) : null)
-      setHeadingUi(recoveredPayload.heading ? headingToUiModel(recoveredPayload.heading as Record<string, unknown>) : null)
-      setMarginsUi(recoveredPayload.margins ? marginsToUiModel(recoveredPayload.margins as Record<string, unknown>) : null)
-      setReferencesUi(recoveredPayload.references ? referencesToUiModel(recoveredPayload.references as Record<string, unknown>) : null)
-      setCaptionsUi(recoveredPayload.captions ? captionsToUiModel(recoveredPayload.captions as Record<string, unknown>) : null)
-      setListsUi(recoveredPayload.lists ? listsToUiModel(recoveredPayload.lists as Record<string, unknown>) : null)
-      setCitationUi(citationMatchingToUiModel(recoveredPayload.citation_matching))
-    },
-    [],
-  )
+      requestAnimationFrame(focusDraftName)
+    } catch {
+      setOpStatusSafe({ kind: 'error', message: 'The source profile could not be copied. No profile was created. Retry the copy, or explicitly choose a blank profile.' })
+      requestAnimationFrame(() => {
+        statusRef.current?.scrollIntoView({ block: 'center', behavior: 'instant' })
+        statusRef.current?.focus({ preventScroll: true })
+      })
+    } finally { setCreationBusy(null) }
+  }, [envelope, hydrateUi, setOpStatusSafe, recoveryBlocked, readStore])
 
-  // Load once
-  React.useEffect(() => {
-    let cancelled = false
-    let builtinCache: BuiltinViewModel[] = []
-    void (async () => {
-      const adapter = createBrowserStoreAdapter() ?? createMemoryStoreAdapter()
-      adapterRef.current = adapter
-      try {
-        const [list] = await Promise.all([api.getFormattingProfiles()])
-        builtinCache = list
-          .filter((p) => p.profile_source === 'built_in')
-          .map((p) => ({
-            profileId: p.profile_id,
-            name: p.profile_name,
-            description: p.description,
-            sourceName: p.profile_name,
-          }))
-        if (cancelled) return
-        setBuiltins(builtinCache)
-        const env = loadEnvelope(adapter)
-        setEnvelope(env)
-        setLoadStatus({ state: 'ready' })
-      } catch {
-        if (cancelled) return
-        // Built-ins unavailable (backend down) — still show local profiles.
-        const env = loadEnvelope(adapter)
-        setEnvelope(env)
-        setBuiltins([])
-        setLoadStatus({ state: 'error' })
-      }
-    })()
-    return () => {
-      cancelled = true
+  const openProfile = React.useCallback((id: string) => {
+    const loaded = readStore(adapterRef.current!)
+    if (!loaded.ok) return
+    const profile = loaded.envelope.profiles.find((p) => p.id === id)
+    if (!profile) {
+      setOpStatusSafe({ kind: 'already-gone' })
+      requestAnimationFrame(focusProfileList)
+      return
     }
-  }, [])
+    baseRevisionRef.current = loaded.envelope.revision
+    replacementConsentRef.current = false
+    editingExistingRef.current = true
+    setExternalConflict(false)
+    setDraft(structuredClone(profile))
+    setEditingId(id)
+    hydrateUi(profile)
+    setDirty(false)
+    setFieldErrors({})
+    setReqFieldErrors({})
+    setOpStatusSafe({ kind: 'idle' })
+    requestAnimationFrame(focusDraftName)
+  }, [readStore, hydrateUi, setOpStatusSafe])
 
-  // Watch for external (other-tab) store changes and reload.
-  React.useEffect(() => {
-    if (!adapterRef.current) return
-    const unsubscribe = adapterRef.current.onExternalChange(() => {
-      const env = loadEnvelope(adapterRef.current!)
-      setEnvelope(env)
-    })
-    return unsubscribe
-  }, [loadStatus])
-
-  const storedProfile = React.useMemo(() => {
-    if (!envelope || !editingId) return null
-    return envelope.profiles.find((p) => p.id === editingId) ?? null
-  }, [envelope, editingId])
-
-  // On external reload, keep the dirty draft only if the stored profile
-  // still matches the one being edited; otherwise drop the draft.
-  React.useEffect(() => {
-    if (draft && !storedProfile) {
-      // The profile was deleted or store replaced — drop draft.
-      setDraft(null)
-      setDirty(false)
-      setEditingId(null)
-    } else if (draft && storedProfile && draft.id !== storedProfile.id) {
-      setDraft(null)
-      setDirty(false)
-    }
-  }, [storedProfile, draft])
-
-  // ---------------------------------------------------------------------
-  // Creation paths
-  // ---------------------------------------------------------------------
-
-  const createFrom = React.useCallback(
-    async (kind: CreationKind) => {
-      if (!envelope) return
-      setCreationBusy(kind)
-      try {
-        const name = resolveUniqueName(
-          envelope.profiles.map((p) => p.name),
-          DEFAULT_PROFILE_NAMES[kind],
-        )
-        const id = generateProfileId()
-        const nowIso = new Date().toISOString()
-
-        let payload: Record<string, unknown>
-        if (kind === 'blank') {
-          payload = blankProfilePayload(id, name)
-        } else {
-          const sourceId = kind === 'copy-suc' ? SUC_BUILTIN_ID : APA_BUILTIN_ID
-          let sourcePayload: Record<string, unknown>
-          try {
-            sourcePayload = await api.getBuiltinProfilePayload(sourceId)
-          } catch {
-            // Fall back to a safe blank so creation never hard-fails.
-            sourcePayload = blankProfilePayload(id, name)
-          }
-          payload = copyProfilePayload(sourcePayload, id, name)
-        }
-
-        const profile: StoredCustomProfile = {
-          id,
-          name,
-          description: '',
-          sourceId:
-            kind === 'copy-suc'
-              ? SUC_BUILTIN_ID
-              : kind === 'copy-apa'
-                ? APA_BUILTIN_ID
-                : undefined,
-          payload,
-          validationState: 'locally_valid',
-          updatedAt: nowIso,
-        }
-        const next = upsertAndBump(envelope, profile, nowIso)
-        const result = persistEnvelope(adapterRef.current!, next, envelope.revision)
-        if (!result.ok) {
-          // Stale write — another tab won. Reload the store.
-          setEnvelope(loadEnvelope(adapterRef.current!))
-          return
-        }
-        setEnvelope(next)
-        setDraft(profile)
-        setEditingId(profile.id)
-        setDirty(true)
-        setFieldErrors({})
-        setReqFieldErrors({})
-        setOpStatusSafe({ kind: 'idle' })
-        // Initialize requirement UI models from the newly created payload.
-        if (profile.payload.body) setBodyUi(bodyToUiModel(profile.payload.body as Record<string, unknown>))
-        if (profile.payload.heading) setHeadingUi(headingToUiModel(profile.payload.heading as Record<string, unknown>))
-        if (profile.payload.margins) setMarginsUi(marginsToUiModel(profile.payload.margins as Record<string, unknown>))
-        if (profile.payload.references) setReferencesUi(referencesToUiModel(profile.payload.references as Record<string, unknown>))
-        if (profile.payload.captions) setCaptionsUi(captionsToUiModel(profile.payload.captions as Record<string, unknown>))
-        if (profile.payload.lists) setListsUi(listsToUiModel(profile.payload.lists as Record<string, unknown>))
-        setCitationUi(citationMatchingToUiModel(profile.payload.citation_matching))
-      } finally {
-        setCreationBusy(null)
-      }
-    },
-    [envelope],
-  )
-
-  // ---------------------------------------------------------------------
-  // Draft editing
-  // ---------------------------------------------------------------------
-
-  const openProfile = React.useCallback(
-    (id: string) => {
-      if (!envelope) return
-      const profile = envelope.profiles.find((p) => p.id === id)
-      if (!profile) return
-      setDraft({ ...profile })
-      setEditingId(id)
-      setDirty(false)
-      setFieldErrors({})
-      setReqFieldErrors({})
-      setOpStatusSafe({ kind: 'idle' })
-      setBodyUi(profile.payload.body ? bodyToUiModel(profile.payload.body as Record<string, unknown>) : null)
-      setHeadingUi(profile.payload.heading ? headingToUiModel(profile.payload.heading as Record<string, unknown>) : null)
-      setMarginsUi(profile.payload.margins ? marginsToUiModel(profile.payload.margins as Record<string, unknown>) : null)
-      setReferencesUi(profile.payload.references ? referencesToUiModel(profile.payload.references as Record<string, unknown>) : null)
-      setCaptionsUi(profile.payload.captions ? captionsToUiModel(profile.payload.captions as Record<string, unknown>) : null)
-      setListsUi(profile.payload.lists ? listsToUiModel(profile.payload.lists as Record<string, unknown>) : null)
-      setCitationUi(citationMatchingToUiModel(profile.payload.citation_matching))
-    },
-    [envelope],
-  )
-
-  const updateDraft = (patch: Partial<Pick<StoredCustomProfile, 'name' | 'description'>>) => {
-    setDraft((prev) => {
-      if (!prev) return prev
-      return { ...prev, ...patch }
-    })
+  const markChanged = () => {
     setDirty(true)
     setOpStatusSafe({ kind: 'idle' })
+    if (replacementConsentRef.current) {
+      replacementConsentRef.current = false
+      setExternalConflict(true)
+    }
+  }
+  const updateDraft = (patch: Partial<Pick<StoredCustomProfile, 'name' | 'description'>>) => {
+    setDraft((previous) => previous ? { ...previous, ...patch } : previous)
+    markChanged()
+  }
+  // UI models retain unfinished raw strings; the original payload is never rebuilt here.
+  const updateBody = (update: (value: BodyUiModel) => BodyUiModel) => {
+    setBodyUi((value) => value ? update(value) : value); markChanged()
+  }
+  const updateHeading = (update: (value: HeadingUiModel) => HeadingUiModel) => {
+    setHeadingUi((value) => value ? update(value) : value); markChanged()
+  }
+  const updateMargins = (update: (value: MarginsUiModel) => MarginsUiModel) => {
+    setMarginsUi((value) => value ? update(value) : value); markChanged()
+  }
+  const updateReferences = (update: (value: ReferencesUiModel) => ReferencesUiModel) => {
+    setReferencesUi((value) => value ? update(value) : value); markChanged()
+  }
+  const updateCaptions = (update: (value: CaptionUiModel) => CaptionUiModel) => {
+    setCaptionsUi((value) => value ? update(value) : value); markChanged()
+  }
+  const updateLists = (update: (value: ListUiModel) => ListUiModel) => {
+    setListsUi((value) => value ? update(value) : value); markChanged()
+  }
+  const updateCitation = (field: CitationMatchingField, value: boolean) => {
+    setCitationUi((previous) => previous ? { ...previous, [field]: value } : previous); markChanged()
+  }
+  const updatePageElements = (patch: Partial<PageElementsUiModel>) => {
+    setDraft((previous) => previous ? { ...previous, payload: applyPageElementsUiPatch(previous.payload, patch) } : previous)
+    markChanged()
   }
 
-  // ---------------------------------------------------------------------
-  // Requirement control handlers
-  // ---------------------------------------------------------------------
-
-  const updateBody = React.useCallback(
-    (updater: (prev: BodyUiModel) => BodyUiModel) => {
-      setBodyUi((prev) => {
-        if (!prev) return prev
-        const next = updater(prev)
-        if (draft) {
-          setDraft((d) => d ? { ...d, payload: setPayloadGroup(d.payload, 'body', bodyFromUiModel(next)) } : d)
-        }
-        setDirty(true)
-        setOpStatusSafe({ kind: 'idle' })
-        return next
-      })
-    },
-    [draft],
-  )
-
-  const updateHeading = React.useCallback(
-    (updater: (prev: HeadingUiModel) => HeadingUiModel) => {
-      setHeadingUi((prev) => {
-        if (!prev) return prev
-        const next = updater(prev)
-        if (draft) {
-          const prevHeading = draft.payload.heading as Record<string, unknown> | undefined
-          const prevAlignment = typeof prevHeading?.alignment === 'string' ? prevHeading.alignment : null
-          setDraft((d) => d ? { ...d, payload: setPayloadGroup(d.payload, 'heading', headingFromUiModel(next, prevAlignment)) } : d)
-        }
-        setDirty(true)
-        setOpStatusSafe({ kind: 'idle' })
-        return next
-      })
-    },
-    [draft],
-  )
-
-  const updateMargins = React.useCallback(
-    (updater: (prev: MarginsUiModel) => MarginsUiModel) => {
-      setMarginsUi((prev) => {
-        if (!prev) return prev
-        const next = updater(prev)
-        if (draft) {
-          setDraft((d) => d ? { ...d, payload: setPayloadGroup(d.payload, 'margins', marginsFromUiModel(next)) } : d)
-        }
-        setDirty(true)
-        setOpStatusSafe({ kind: 'idle' })
-        return next
-      })
-    },
-    [draft],
-  )
-
-  const updateReferences = React.useCallback(
-    (updater: (prev: ReferencesUiModel) => ReferencesUiModel) => {
-      setReferencesUi((prev) => {
-        if (!prev) return prev
-        const next = updater(prev)
-        if (draft) {
-          setDraft((d) => d ? { ...d, payload: setPayloadGroup(d.payload, 'references', referencesFromUiModel(next)) } : d)
-        }
-        setDirty(true)
-        setOpStatusSafe({ kind: 'idle' })
-        return next
-      })
-    },
-    [draft],
-  )
-
-  const updateCaptions = React.useCallback(
-    (updater: (prev: CaptionUiModel) => CaptionUiModel) => {
-      setCaptionsUi((prev) => {
-        if (!prev) return prev
-        const next = updater(prev)
-        if (draft) {
-          setDraft((d) => d ? { ...d, payload: setPayloadGroup(d.payload, 'captions', captionsFromUiModel(next)) } : d)
-        }
-        setDirty(true)
-        setOpStatusSafe({ kind: 'idle' })
-        return next
-      })
-    },
-    [draft],
-  )
-
-  const updateLists = React.useCallback(
-    (updater: (prev: ListUiModel) => ListUiModel) => {
-      setListsUi((prev) => {
-        if (!prev) return prev
-        const next = updater(prev)
-        if (draft) {
-          setDraft((d) => d ? { ...d, payload: setPayloadGroup(d.payload, 'lists', listsFromUiModel(next)) } : d)
-        }
-        setDirty(true)
-        setOpStatusSafe({ kind: 'idle' })
-        return next
-      })
-    },
-    [draft],
-  )
-
-  const updateCitation = React.useCallback(
-    (field: CitationMatchingField, value: boolean) => {
-      setCitationUi((prev) => {
-        if (!prev) return prev
-        const next: CitationMatchingUiModel = { ...prev, [field]: value }
-        // Turning the parent check off disables the dependent checks in the
-        // UI and writes them off, matching the backend resolver.
-        if (field === 'check_citations_have_references' && !value) {
-          for (const dependent of CITATION_MATCHING_DEPENDENT_FIELDS) {
-            next[dependent] = false
-          }
-        }
-        if (draft) {
-          setDraft((d) =>
-            d
-              ? { ...d, payload: setPayloadGroup(d.payload, 'citation_matching', citationMatchingFromUiModel(next)) }
-              : d,
-          )
-        }
-        setDirty(true)
-        setOpStatusSafe({ kind: 'idle' })
-        return next
-      })
-    },
-    [draft],
-  )
-
-  const updatePageElements = React.useCallback((patch: Partial<PageElementsUiModel>) => {
-    setDraft((prev) => prev ? {
-      ...prev,
-      payload: applyPageElementsUiPatch(prev.payload, patch),
-    } : prev)
-    setDirty(true)
-    setOpStatusSafe({ kind: 'idle' })
-  }, [setOpStatusSafe])
-
+  const errorEntries = [
+    ...(fieldErrors.name ? [{ field: 'general.name', message: fieldErrors.name }] : []),
+    ...(fieldErrors.description ? [{ field: 'general.description', message: fieldErrors.description }] : []),
+    ...Object.entries(reqFieldErrors).map(([field, message]) => ({ field, message })),
+  ]
   // ---------------------------------------------------------------------
   // Save (backend-gated)
   // ---------------------------------------------------------------------
@@ -837,177 +671,187 @@ export function ProfileEditor() {
     'page_numbers.placement': 'page-numbers-placement',
   }
 
-  const focusFirstError = React.useCallback((errors: { field: string; message: string }[]) => {
-    const first = errors[0]?.field
-    if (!first) return
-    const id = FIELD_TO_INPUT_ID[first] ?? 'profile-name'
-    const el = document.getElementById(id)
-    if (el) {
-      let parent = el.parentElement
-      while (parent) {
-        if (parent instanceof HTMLDetailsElement) parent.open = true
-        parent = parent.parentElement
+  React.useLayoutEffect(() => {
+    for (const [field, id] of Object.entries(FIELD_TO_INPUT_ID)) {
+      const element = document.getElementById(id)
+      if (!element) continue
+      element.style.scrollMarginTop = '6rem'
+      const description = `validation-${field.replace(/\./g, '-')}`
+      const describedBy = (element.getAttribute('aria-describedby') ?? '').split(' ').filter((value) => value && !value.startsWith('validation-'))
+      if (errorEntries.some((error) => error.field === field)) {
+        element.setAttribute('aria-invalid', 'true')
+        describedBy.push(description)
+      } else element.removeAttribute('aria-invalid')
+      if (describedBy.length) element.setAttribute('aria-describedby', describedBy.join(' '))
+      else element.removeAttribute('aria-describedby')
+    }
+  })
+
+  const focusErrorTarget = (field: string) => {
+    const id = FIELD_TO_INPUT_ID[field] ?? 'profile-retained-data'
+    const element = document.getElementById(id) ?? document.getElementById('profile-retained-data')
+    if (!element) return
+    for (let parent = element.parentElement; parent; parent = parent.parentElement) {
+      if (parent instanceof HTMLDetailsElement) parent.open = true
+    }
+    element.scrollIntoView({ block: 'center', behavior: 'instant' })
+    element.focus({ preventScroll: true })
+  }
+  const showErrors = (errors: { field: string; message: string }[]) => {
+    setFieldErrors({
+      name: errors.find((error) => error.field === 'general.name')?.message,
+      description: errors.find((error) => error.field === 'general.description')?.message,
+    })
+    setReqFieldErrors(Object.fromEntries(errors.filter((error) =>
+      error.field !== 'general.name' && error.field !== 'general.description',
+    ).map((error) => [error.field, error.message])))
+    requestAnimationFrame(() => {
+      for (const error of errors) {
+        const target = document.getElementById(FIELD_TO_INPUT_ID[error.field] ?? 'profile-retained-data') ?? document.getElementById('profile-retained-data')
+        for (let parent = target?.parentElement; parent; parent = parent.parentElement) {
+          if (parent instanceof HTMLDetailsElement) parent.open = true
+        }
       }
-      el.focus()
-    }
-  }, [])
+      summaryRef.current?.scrollIntoView({ block: 'center', behavior: 'instant' })
+      summaryRef.current?.focus({ preventScroll: true })
+    })
+  }
+  const finalPayload = draft ? buildSavePayload(draft, uiState) : null
 
-  /** Build the final payload from the current UI models (never save partials). */
-  const buildFinalPayload = React.useCallback((): Record<string, unknown> => {
-    if (!draft) return {}
-    let payload = draft.payload
-    if (bodyUi) payload = setPayloadGroup(payload, 'body', bodyFromUiModel(bodyUi))
-    if (headingUi) {
-      const prevH = payload.heading as Record<string, unknown> | undefined
-      const prevAlignment = typeof prevH?.alignment === 'string' ? prevH.alignment : null
-      payload = setPayloadGroup(payload, 'heading', headingFromUiModel(headingUi, prevAlignment))
-    }
-    if (marginsUi) payload = setPayloadGroup(payload, 'margins', marginsFromUiModel(marginsUi))
-    if (referencesUi) {
-      payload = setPayloadGroup(payload, 'references', referencesFromUiModel(referencesUi))
-    }
-    if (captionsUi) payload = setPayloadGroup(payload, 'captions', captionsFromUiModel(captionsUi))
-    if (listsUi) payload = setPayloadGroup(payload, 'lists', listsFromUiModel(listsUi))
-    if (citationUi) {
-      payload = setPayloadGroup(
-        payload,
-        'citation_matching',
-        citationMatchingFromUiModel(citationUi),
-      )
-    }
-    return payload
-  }, [draft, bodyUi, headingUi, marginsUi, referencesUi, captionsUi, listsUi, citationUi])
-
-  const saveProfile = React.useCallback(async () => {
-    if (!draft || !envelope) return
-    // Run general + requirements validation together.
-    const allErrors = clientValidate(draft, envelope)
-    if (allErrors.length > 0) {
-      setFieldErrors({
-        name: allErrors.some((e) => e.field === 'general.name')
-          ? allErrors.find((e) => e.field === 'general.name')!.message
-          : undefined,
-        description: allErrors.some((e) => e.field === 'general.description')
-          ? allErrors.find((e) => e.field === 'general.description')!.message
-          : undefined,
-      })
-      setReqFieldErrors(
-        Object.fromEntries(
-          allErrors
-            .filter((e) => e.field !== 'general.name' && e.field !== 'general.description')
-            .map((e) => [e.field, e.message]),
-        ),
-      )
+  const saveProfile = async (): Promise<boolean> => {
+    if (!draft || !envelope || !finalPayload || savingRef.current || !dirty) return false
+    const expectedRevision = baseRevisionRef.current
+    const candidate = structuredClone(finalPayload)
+    const candidateDraft = { ...draft, payload: candidate }
+    const errors = clientValidate(candidateDraft, envelope)
+    if (errors.length) {
+      showErrors(errors)
       setOpStatusSafe({ kind: 'error', message: 'Fix the highlighted fields and try again.' })
-      focusFirstError(allErrors)
-      return
+      return false
     }
+    if (externalConflict || (editingExistingRef.current && !envelope.profiles.some((p) => p.id === draft.id))) {
+      setExternalConflict(true)
+      setOpStatusSafe({ kind: 'error', message: 'Saved profiles changed after editing began. Your draft is retained; review the latest saved version before saving.' })
+      return false
+    }
+    savingRef.current = true
+    setSaveBusy(true)
     setFieldErrors({})
     setReqFieldErrors({})
     setOpStatusSafe({ kind: 'validating' })
     try {
-      const finalPayload = buildFinalPayload()
-      const result = await api.validateCustomProfile({
-        ...finalPayload,
-        profile_name: draft.name.trim(),
-        description: draft.description,
-        profile_source: 'custom',
-        citation_style: CITATION_STYLE,
-      })
-      if (result.valid) {
-        const confirmed: StoredCustomProfile = {
-          ...draft,
-          name: draft.name.trim(),
-          description: draft.description,
-          payload: result.profile,
-          validationState: 'backend_confirmed',
-          updatedAt: new Date().toISOString(),
+      const result = await api.validateCustomProfile(candidate)
+      if (!result.valid) {
+        if ('errors' in result) {
+          showErrors(result.errors)
+          setOpStatusSafe({ kind: 'backend-error', errors: result.errors.map((error) => error.message) })
+        } else {
+          setOpStatusSafe({ kind: 'error', message: 'Validation is unavailable. Nothing was saved; your complete draft is retained. Retry when the backend is reachable.' })
         }
-        const next = upsertAndBump(envelope, confirmed, confirmed.updatedAt)
-        const write = persistEnvelope(adapterRef.current!, next, envelope.revision)
-        if (!write.ok) {
-          setEnvelope(loadEnvelope(adapterRef.current!))
-          setOpStatusSafe({
-            kind: 'error',
-            message: 'This profile was updated in another tab. Reload before saving.',
-          })
-          return
-        }
-        setEnvelope(next)
-        setDraft(confirmed)
-        // Re-derive UI models from the normalized backend payload.
-        const confirmedBody = confirmed.payload.body
-        const confirmedHeading = confirmed.payload.heading
-        const confirmedMargins = confirmed.payload.margins
-        const confirmedReferences = confirmed.payload.references
-        const confirmedCaptions = confirmed.payload.captions
-        const confirmedLists = confirmed.payload.lists
-        setBodyUi(confirmedBody ? bodyToUiModel(confirmedBody as Record<string, unknown>) : null)
-        setHeadingUi(confirmedHeading ? headingToUiModel(confirmedHeading as Record<string, unknown>) : null)
-        setMarginsUi(confirmedMargins ? marginsToUiModel(confirmedMargins as Record<string, unknown>) : null)
-        setReferencesUi(confirmedReferences ? referencesToUiModel(confirmedReferences as Record<string, unknown>) : null)
-        setCaptionsUi(confirmedCaptions ? captionsToUiModel(confirmedCaptions as Record<string, unknown>) : null)
-        setListsUi(confirmedLists ? listsToUiModel(confirmedLists as Record<string, unknown>) : null)
-        setDirty(false)
-        setOpStatusSafe({ kind: 'saved' })
-      } else if ('errors' in result) {
-        const nameErr = result.errors.find((e) => e.field === 'general.name')
-        const descErr = result.errors.find((e) => e.field === 'general.description')
-        setFieldErrors({
-          name: nameErr?.message,
-          description: descErr?.message,
-        })
-        setReqFieldErrors(
-          Object.fromEntries(
-            result.errors
-              .filter((e) => e.field !== 'general.name' && e.field !== 'general.description')
-              .map((e) => [e.field, e.message]),
-          ),
-        )
-        setOpStatusSafe({
-          kind: 'backend-error',
-          errors: result.errors.map((e) => e.message),
-        })
-        focusFirstError(result.errors)
-      } else {
-        setOpStatusSafe({
-          kind: 'error',
-          message: 'The profile could not be validated. Please try again.',
-        })
+        return false
       }
+      const confirmed: StoredCustomProfile = {
+        ...draft, id: result.profile.profile_id as string,
+        name: result.profile.profile_name as string, description: result.profile.description as string,
+        payload: result.profile, validationState: 'backend_confirmed', updatedAt: new Date().toISOString(),
+      }
+      if (confirmed.id !== draft.id) throw new Error('Validation changed the profile identity')
+      const next = upsertAndBump(envelope, confirmed, confirmed.updatedAt)
+      const write = await persistEnvelope(adapterRef.current!, next, expectedRevision)
+      if (!write.ok) {
+        readStore(adapterRef.current!)
+        if (write.reason === 'stale-revision') setExternalConflict(true)
+        setOpStatusSafe({ kind: 'error', message: write.reason === 'stale-revision'
+          ? 'Validated, but not saved: another tab changed the saved profiles. Your complete draft is retained.'
+          : `Validated, but not saved to this browser (${write.reason}). Your draft is retained; recheck storage and retry.` })
+        return false
+      }
+      setEnvelope(write.envelope)
+      setStoreHealth({ ok: true, envelope: write.envelope, recovered: false, readonly: false, firstRun: false })
+      baseRevisionRef.current = write.envelope.revision
+      replacementConsentRef.current = false
+      editingExistingRef.current = true
+      setExternalConflict(false)
+      setDraft(confirmed)
+      hydrateUi(confirmed)
+      setDirty(false)
+      const cleared = clearRecovery()
+      setOpStatusSafe({ kind: 'saved' })
+      requestAnimationFrame(() => {
+        statusRef.current?.scrollIntoView({ block: 'center', behavior: 'instant' })
+        statusRef.current?.focus({ preventScroll: true })
+      })
+      return cleared
     } catch {
-      setOpStatusSafe({
-        kind: 'error',
-        message: 'The profile could not be validated. Please try again.',
-      })
+      setOpStatusSafe({ kind: 'error', message: 'The profile could not be validated. Nothing was saved; your draft is retained. Check the connection and retry.' })
+      return false
+    } finally {
+      savingRef.current = false
+      setSaveBusy(false)
     }
-  }, [draft, envelope, bodyUi, headingUi, marginsUi, referencesUi, captionsUi, listsUi, buildFinalPayload, focusFirstError])
+  }
 
-  // ---------------------------------------------------------------------
-  // Navigation safety
-  // ---------------------------------------------------------------------
-
-  const requestNavigation = React.useCallback(
-    (to: string) => {
-      if (dirty && draft) {
-        setPendingNavigation({ to })
-      } else {
-        void navigate(to)
-      }
-    },
-    [dirty, draft, navigate],
-  )
-
-  const discardAndGo = React.useCallback(() => {
-    if (pendingNavigation) {
-      setPendingNavigation(null)
-      void navigate(pendingNavigation.to)
-    }
-  }, [pendingNavigation, navigate])
-
-  const cancelLeave = React.useCallback(() => {
+  // A single coordinator handles local context changes and the data router's
+  // links, AppNav and POP (browser back/forward) transitions.
+  const requestTransition = (action: () => void) => {
+    if (savingRef.current || creationBusy) return
+    if (dirty && draft) setPendingNavigation(() => action)
+    else action()
+  }
+  const discardAndGo = () => {
+    if (!pendingNavigation || !clearRecovery()) return
+    const action = pendingNavigation
     setPendingNavigation(null)
-  }, [])
+    setDirty(false)
+    setDraft(null)
+    setEditingId(null)
+    transitionAllowed.current = true
+    action()
+    queueMicrotask(() => { transitionAllowed.current = false })
+  }
+  const saveAndGo = async () => {
+    if (!pendingNavigation) return
+    const action = pendingNavigation
+    if (!await saveProfile()) {
+      setPendingNavigation(null)
+      if (blocker.state === 'blocked') blocker.reset()
+      return
+    }
+    setPendingNavigation(null)
+    transitionAllowed.current = true
+    action()
+    queueMicrotask(() => { transitionAllowed.current = false })
+  }
+  const cancelLeave = () => {
+    if (savingRef.current) return
+    setPendingNavigation(null)
+    if (blocker.state === 'blocked') blocker.reset()
+  }
+  React.useEffect(() => {
+    if (blocker.state === 'blocked') setPendingNavigation(() => () => blocker.proceed())
+  }, [blocker])
+
+  const [reviewedLatest, setReviewedLatest] = React.useState<StoreEnvelope | null>(null)
+  const reviewLatest = () => {
+    const result = readStore(adapterRef.current!)
+    if (result.ok && !result.readonly) setReviewedLatest(structuredClone(result.envelope))
+  }
+  const acceptReviewedRevision = () => {
+    if (!reviewedLatest || !draft || (editingExistingRef.current && !reviewedLatest.profiles.some((p) => p.id === draft.id))) return
+    const live = readStore(adapterRef.current!)
+    if (!live.ok || live.readonly || live.envelope.revision !== reviewedLatest.revision) {
+      setReviewedLatest(null)
+      setExternalConflict(true)
+      return
+    }
+    baseRevisionRef.current = reviewedLatest.revision
+    replacementConsentRef.current = true
+    setExternalConflict(false)
+    setReviewedLatest(null)
+    setOpStatusSafe({ kind: 'idle' })
+    setRecoveryNotice('You explicitly chose to replace the reviewed saved revision with this draft. Save will revalidate and recheck that revision.')
+    requestAnimationFrame(focusDraftName)
+  }
 
   // ---------------------------------------------------------------------
   // Delete (saved custom profiles only)
@@ -1015,80 +859,99 @@ export function ProfileEditor() {
 
   const [pendingDelete, setPendingDelete] = React.useState<StoredCustomProfile | null>(null)
   const [deleting, setDeleting] = React.useState(false)
-
-  const requestDelete = React.useCallback(
-    (profile: StoredCustomProfile) => {
-      if (deleting) return
-      setPendingDelete(profile)
-    },
-    [deleting],
-  )
-
-  const cancelDelete = React.useCallback(() => {
-    if (deleting) return
-    setPendingDelete(null)
-  }, [])
-
-  const confirmDelete = React.useCallback(async () => {
-    if (!pendingDelete || !envelope || deleting) return
-    // Safety: never delete a built-in identity through any path.
-    if ((BUILTIN_IDS as readonly string[]).includes(pendingDelete.id)) {
-      setPendingDelete(null)
-      return
-    }
-    setDeleting(true)
-    setOpStatusSafe({ kind: 'deleting' })
+  const [pendingReset, setPendingReset] = React.useState(false)
+  const [resetting, setResetting] = React.useState(false)
+  const confirmReset = async () => {
+    if (!adapterRef.current || resetting) return
+    setResetting(true)
     try {
-      // Re-read the live envelope: another tab may have changed it.
-      const live = loadEnvelope(adapterRef.current!)
-      const target = live.profiles.find((p) => p.id === pendingDelete.id)
-      if (!target) {
-        // Already removed in another tab — refresh and inform calmly.
-        setEnvelope(live)
-        clearEditorState()
-        setPendingDelete(null)
-        setOpStatusSafe({ kind: 'already-gone' })
-        return
-      }
-      const result = deleteAndBump(live, pendingDelete.id, new Date().toISOString())
+      const result = await acceptReset(adapterRef.current)
       if (!result.ok) {
-        setOpStatusSafe({ kind: 'error', message: 'The profile could not be deleted. Please try again.' })
-        return
-      }
-      const write = persistEnvelope(adapterRef.current!, result.envelope, live.revision)
-      if (!write.ok) {
-        setEnvelope(live)
-        setOpStatusSafe({
-          kind: 'error',
-          message: 'This profile was updated in another tab. Reload before deleting.',
-        })
+        readStore(adapterRef.current)
+        setOpStatusSafe({ kind: 'error', message: `The corrupt store was not reset (${result.reason}). Its remaining bytes are retained.` })
         return
       }
       setEnvelope(result.envelope)
-      clearDraftRecovery(draftRecoveryAdapterRef.current)
-      setRecoveryNotice(null)
-      clearEditorState()
-      setPendingDelete(null)
-      // Replaces any previous Save success — one active status at a time.
-      setOpStatus({ kind: 'deleted' })
-    } finally {
-      setDeleting(false)
-    }
-  }, [pendingDelete, envelope, deleting])
+      setStoreHealth({ ok: true, envelope: result.envelope, recovered: false, readonly: false, firstRun: false })
+      if (draft && !editingExistingRef.current) baseRevisionRef.current = result.envelope.revision
+      else if (draft) setExternalConflict(true)
+      setPendingReset(false)
+      requestAnimationFrame(focusProfileList)
+    } finally { setResetting(false) }
+  }
 
-  /** Discard an unsaved draft — never touches saved profiles. */
-  const discardDraft = React.useCallback(() => {
-    clearDraftRecovery(draftRecoveryAdapterRef.current)
-    setRecoveryNotice(null)
+  const requestDelete = (profile: StoredCustomProfile) => {
+    if (deleting) return
+    requestTransition(() => {
+      const loaded = readStore(adapterRef.current!)
+      if (!loaded.ok) {
+        setOpStatusSafe({ kind: 'error', message: 'Saved profiles could not be read. Nothing was deleted.' })
+        return
+      }
+      deleteRevisionRef.current = loaded.envelope.revision
+      const target = loaded.envelope.profiles.find((saved) => saved.id === profile.id)
+      if (!target) {
+        setOpStatusSafe({ kind: 'already-gone' })
+        return
+      }
+      setPendingDelete(structuredClone(target))
+      setOpStatusSafe({ kind: 'idle' })
+    })
+  }
+  const cancelDelete = () => { if (!deleting) setPendingDelete(null) }
+  const confirmDelete = async () => {
+    if (!pendingDelete || !envelope || deleting) return
+    if ((BUILTIN_IDS as readonly string[]).includes(pendingDelete.id)) return
+    setDeleting(true)
+    setOpStatusSafe({ kind: 'deleting' })
+    try {
+      const loaded = readStore(adapterRef.current!)
+      if (!loaded.ok || loaded.readonly) {
+        setOpStatusSafe({ kind: 'error', message: 'The profile was not deleted: browser storage is unavailable or read-only. Stored data is retained.' })
+        return
+      }
+      // Reading the target never refreshes the consent revision.
+      const result = deleteAndBump(loaded.envelope, pendingDelete.id, new Date().toISOString())
+      if (!result.ok) {
+        if (draft?.id === pendingDelete.id || pendingRecovery?.profile_id === pendingDelete.id) {
+          clearRecovery()
+          clearEditorState()
+        }
+        setPendingDelete(null)
+        setOpStatusSafe({ kind: 'already-gone' })
+        requestAnimationFrame(focusProfileList)
+        return
+      }
+      const write = await persistEnvelope(adapterRef.current!, result.envelope, deleteRevisionRef.current)
+      if (!write.ok) {
+        readStore(adapterRef.current!)
+        setOpStatusSafe({ kind: 'error', message: `The profile was not deleted (${write.reason}). Recheck saved profiles before trying again.` })
+        return
+      }
+      setEnvelope(write.envelope)
+      if (draft?.id === pendingDelete.id || pendingRecovery?.profile_id === pendingDelete.id) {
+        clearRecovery()
+        clearEditorState()
+      }
+      setPendingDelete(null)
+      setOpStatus({ kind: 'deleted' })
+      requestAnimationFrame(focusProfileList)
+    } finally { setDeleting(false) }
+  }
+  const discardDraft = () => requestTransition(() => {
+    if (!clearRecovery()) return
     clearEditorState()
     setOpStatusSafe({ kind: 'idle' })
-  }, [])
+    requestAnimationFrame(focusProfileList)
+  })
 
   /** Clear the editor draft + requirement models without touching storage. */
   const clearEditorState = React.useCallback(() => {
     setDraft(null)
     setEditingId(null)
     setDirty(false)
+    setExternalConflict(false)
+    setReviewedLatest(null)
     setBodyUi(null)
     setHeadingUi(null)
     setMarginsUi(null)
@@ -1121,6 +984,7 @@ export function ProfileEditor() {
   // ---------------------------------------------------------------------
 
   const hasCustomProfiles = (envelope?.profiles.length ?? 0) > 0
+  const lastSavedProfile = envelope?.profiles.find((profile) => profile.id === editingId)
   const selectedBuiltin = builtins.find((b) => b.profileId === editingId)
   const citationModel = citationUi ?? DEFAULT_CITATION_MATCHING
   const referenceModel = referencesUi ?? EMPTY_REFERENCES_UI
@@ -1128,7 +992,7 @@ export function ProfileEditor() {
   const pageElementsModel = pageElementsToUiModel(draft?.payload ?? {})
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
+    <div className="min-h-screen bg-background text-foreground [overflow-wrap:anywhere] [&_input]:scroll-mt-24 [&_select]:scroll-mt-24 [&_textarea]:scroll-mt-24">
       <a className="skip-link" href="#custom-profile-main">
         Skip to custom profile editor
       </a>
@@ -1158,7 +1022,7 @@ export function ProfileEditor() {
             type="button"
             variant="outline"
             className="border-border text-foreground"
-            onClick={() => requestNavigation('/dashboard')}
+            onClick={() => requestTransition(() => { void navigate('/dashboard') })}
           >
             <ArrowLeft className="mr-2 h-4 w-4" aria-hidden="true" />
             Return to upload
@@ -1174,6 +1038,100 @@ export function ProfileEditor() {
               <Info className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
               {recoveryNotice}
             </p>
+            {pendingRecovery && <p className="mt-2 break-words text-sm">Draft: {pendingRecovery.draft.name || '(unnamed profile)'}</p>}
+            <div className="mt-2 flex flex-wrap gap-2">
+              {pendingRecovery && <Button type="button" variant="outline" onClick={restoreRecovery}>Restore recovered draft</Button>}
+              {recoveryBlocked && <Button type="button" variant="outline" onClick={() => { if (clearRecovery()) requestAnimationFrame(focusProfileList) }}>Discard recovered draft</Button>}
+            </div>
+          </div>
+        )}
+
+        {storeHealth && (
+          <div role="status" className="mt-4 space-y-2 rounded-md border border-border bg-input/20 p-3 text-sm">
+            {!adapterRef.current?.persistent
+              ? <p>Browser storage is unavailable. This is an in-session draft only, not saved on this device or available for upload.</p>
+              : !storeHealth.ok
+                ? <p>{storeHealth.reason === 'both-corrupted'
+                  ? 'The saved profile store has no usable copy. Corrupt data is retained; ordinary Save cannot overwrite it.'
+                  : storeHealth.reason === 'unsupported-version'
+                    ? 'This profile store uses an unsupported newer version and is read-only. Its bytes are retained; reset and persistent writes are unavailable.'
+                    : 'Saved profile storage cannot be read. Your draft remains in this tab; nothing is saved.'}</p>
+                : storeHealth.readonly
+                  ? <p>This profile store was written by a newer version. It is read-only; existing bytes will not be downgraded.</p>
+                  : storeHealth.recovered
+                    ? <p>Recovered saved profiles from the supported recovery copy. Review them before making further changes.</p>
+                    : <p>Profiles are saved only in this browser, after validation and a successful persistent write. No server storage or sync.</p>}
+            {storeHealth.ok && Boolean(storeHealth.damagedCopies?.length) && (
+              <p>A damaged {storeHealth.damagedCopies!.join(' and ')} browser copy was detected. The usable profiles are shown; damaged bytes have been retained rather than automatically reset.</p>
+            )}
+            {adapterRef.current?.persistent && !adapterRef.current.withExclusiveWrite && (
+              <p>Conflict-safe writes are unavailable in this browser. You may read and draft, but cannot persist changes.</p>
+            )}
+            <Button type="button" variant="outline" onClick={() => {
+              const replacement = createBrowserStoreAdapter()
+              if (replacement) {
+                const old = adapterRef.current
+                if (old && 'destroy' in old && typeof old.destroy === 'function') old.destroy()
+                adapterRef.current = replacement
+              }
+              readStore(adapterRef.current!)
+              setAdapterVersion((version) => version + 1)
+            }}>Recheck browser storage</Button>
+            {!storeHealth.ok && storeHealth.reason === 'both-corrupted' && adapterRef.current?.persistent && (
+              <Button type="button" variant="outline" onClick={() => { setOpStatusSafe({ kind: 'idle' }); setPendingReset(true) }} disabled={saveBusy}>Reset corrupt profile store</Button>
+            )}
+          </div>
+        )}
+
+        {externalConflict && (
+          <section aria-label="Saved profile conflict" className="mt-4 space-y-3 rounded-md border border-warning bg-input/20 p-3 text-sm">
+            <p>Saved profiles changed after this draft began. Your complete draft is retained, including any externally deleted profile. It has not been rebased or saved.</p>
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" variant="outline" onClick={reviewLatest}>Review latest saved version</Button>
+              <Button type="button" variant="outline" onClick={() => requestTransition(() => {
+                const result = readStore(adapterRef.current!)
+                if (!result.ok) return
+                const saved = result.envelope.profiles.find((profile) => profile.id === editingId)
+                if (saved) {
+                  baseRevisionRef.current = result.envelope.revision
+                  editingExistingRef.current = true
+                  setEditingId(saved.id)
+                  setDraft(structuredClone(saved))
+                  hydrateUi(saved)
+                  setDirty(false)
+                  setExternalConflict(false)
+                } else clearEditorState()
+                replacementConsentRef.current = false
+                setReviewedLatest(null)
+                setFieldErrors({})
+                setReqFieldErrors({})
+                setOpStatusSafe({ kind: 'idle' })
+                requestAnimationFrame(saved ? focusDraftName : focusProfileList)
+              })}>Reload saved version</Button>
+            </div>
+            {reviewedLatest && (
+              <div className="space-y-2">
+                <p>Reviewed saved revision: {reviewedLatest.revision}. Compare both complete configurations before replacing.</p>
+                <details><summary>Latest saved profile</summary><pre className="max-h-64 overflow-auto whitespace-pre-wrap break-all text-xs">{JSON.stringify(reviewedLatest.profiles.find((profile) => profile.id === editingId) ?? 'Profile removed in another tab', null, 2)}</pre></details>
+                <details><summary>Your unsaved candidate</summary><pre className="max-h-64 overflow-auto whitespace-pre-wrap break-all text-xs">{JSON.stringify(finalPayload, null, 2)}</pre></details>
+                {(!editingExistingRef.current || reviewedLatest.profiles.some((profile) => profile.id === editingId)) && (
+                  <Button type="button" variant="outline" onClick={acceptReviewedRevision}>Use draft against reviewed revision</Button>
+                )}
+              </div>
+            )}
+          </section>
+        )}
+
+        {errorEntries.length > 0 && (
+          <div ref={summaryRef} role="region" tabIndex={-1} aria-labelledby="profile-errors-heading" className="mt-4 scroll-mt-24 rounded-md border border-destructive bg-destructive/5 p-4 focus:outline-none focus:ring-2 focus:ring-ring">
+            <h2 id="profile-errors-heading" className="font-semibold">There is a problem</h2>
+            <ul className="mt-2 list-disc space-y-1 pl-5 text-sm">
+              {errorEntries.map(({ field, message }) => (
+                <li key={field} id={`validation-${field.replace(/\./g, '-')}`}>
+                  <a href={`#${FIELD_TO_INPUT_ID[field] ?? 'profile-retained-data'}`} className="text-destructive underline" onClick={(event) => { event.preventDefault(); focusErrorTarget(field) }}>{message}</a>
+                </li>
+              ))}
+            </ul>
           </div>
         )}
 
@@ -1184,8 +1142,10 @@ export function ProfileEditor() {
             active at a time, so exactly one live region renders here. */}
         {opStatus.kind !== 'idle' && (
           <div
+            ref={statusRef}
+            tabIndex={-1}
             className={cn(
-              'mt-4 rounded-md border px-3 py-2.5',
+              'mt-4 scroll-mt-24 rounded-md border px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-ring',
               opStatus.kind === 'error' || opStatus.kind === 'backend-error'
                 ? 'border-destructive/30 bg-destructive/5'
                 : isSuccessOpStatus(opStatus.kind)
@@ -1253,11 +1213,11 @@ export function ProfileEditor() {
           <section aria-labelledby="profile-list-heading" className="min-w-0 space-y-6">
             <Card className="border-border bg-card">
               <CardHeader className="pb-3">
-                <CardTitle id="profile-list-heading" className="text-base font-semibold">
+                <CardTitle id="profile-list-heading" role="heading" aria-level={2} tabIndex={-1} className="scroll-mt-24 text-base font-semibold focus:outline-none focus:ring-2 focus:ring-ring">
                   Document formatting profiles
                 </CardTitle>
                 <CardDescription>
-                  Duplicate a built-in profile or start with no enabled requirements.
+                  Duplicate a built-in profile or start with blank formatting and existing APA citation defaults.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
@@ -1266,9 +1226,9 @@ export function ProfileEditor() {
                   <Button
                     type="button"
                     variant="outline"
-                    className="w-full justify-start border-border text-foreground"
-                    disabled={creationBusy !== null}
-                    onClick={() => void createFrom('copy-suc')}
+                    className="h-auto min-h-9 w-full justify-start whitespace-normal border-border text-left text-foreground"
+                    disabled={!envelope || creationBusy !== null || saveBusy || recoveryBlocked}
+                    onClick={() => requestTransition(() => { void createFrom('copy-suc') })}
                   >
                     {creationBusy === 'copy-suc' ? (
                       <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
@@ -1280,9 +1240,9 @@ export function ProfileEditor() {
                   <Button
                     type="button"
                     variant="outline"
-                    className="w-full justify-start border-border text-foreground"
-                    disabled={creationBusy !== null}
-                    onClick={() => void createFrom('copy-apa')}
+                    className="h-auto min-h-9 w-full justify-start whitespace-normal border-border text-left text-foreground"
+                    disabled={!envelope || creationBusy !== null || saveBusy || recoveryBlocked}
+                    onClick={() => requestTransition(() => { void createFrom('copy-apa') })}
                   >
                     {creationBusy === 'copy-apa' ? (
                       <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
@@ -1294,9 +1254,9 @@ export function ProfileEditor() {
                   <Button
                     type="button"
                     variant="outline"
-                    className="w-full justify-start border-border text-foreground"
-                    disabled={creationBusy !== null}
-                    onClick={() => void createFrom('blank')}
+                    className="h-auto min-h-9 w-full justify-start whitespace-normal border-border text-left text-foreground"
+                    disabled={!envelope || creationBusy !== null || saveBusy || recoveryBlocked}
+                    onClick={() => requestTransition(() => { void createFrom('blank') })}
                   >
                     {creationBusy === 'blank' ? (
                       <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
@@ -1318,12 +1278,12 @@ export function ProfileEditor() {
                   </div>
                 )}
 
-                <fieldset className="rounded-md border border-border p-3">
+                <fieldset className="min-w-0 rounded-md border border-border p-3">
                   <legend className="px-1 text-sm font-semibold text-foreground">
                     Built-in profiles
                   </legend>
                   {builtins.length === 0 ? (
-                    <p className="py-2 text-sm text-muted-foreground">Loading built-in profiles…</p>
+                    <p className="py-2 text-sm text-muted-foreground">{loadStatus.state === 'error' ? 'Built-in profiles are unavailable. Copying can be retried when the backend is reachable.' : 'Loading built-in profiles…'}</p>
                   ) : (
                     <ul className="space-y-2">
                       {builtins.map((b) => (
@@ -1331,15 +1291,15 @@ export function ProfileEditor() {
                           <div className="rounded-md border border-border bg-input/20 px-3 py-2.5">
                             <div className="flex items-center justify-between gap-2">
                               <div className="min-w-0">
-                                <div className="flex items-center gap-2">
-                                  <span className="truncate text-sm font-medium text-foreground">
+                                <div className="flex min-w-0 flex-wrap items-center gap-2">
+                                  <span className="min-w-0 text-sm font-medium text-foreground [overflow-wrap:anywhere]">
                                     {b.name}
                                   </span>
                                   <Badge variant="outline" className="border-border text-muted-foreground">
                                     Built-in
                                   </Badge>
                                 </div>
-                                <p className="mt-0.5 line-clamp-2 text-xs leading-[16px] text-muted-foreground">
+                                <p className="mt-0.5 text-xs leading-[16px] text-muted-foreground [overflow-wrap:anywhere]">
                                   {b.description}
                                 </p>
                               </div>
@@ -1351,7 +1311,7 @@ export function ProfileEditor() {
                   )}
                 </fieldset>
 
-                <fieldset className="rounded-md border border-border p-3">
+                <fieldset className="min-w-0 rounded-md border border-border p-3">
                   <legend className="px-1 text-sm font-semibold text-foreground">
                     Custom profiles
                   </legend>
@@ -1376,15 +1336,15 @@ export function ProfileEditor() {
                             >
                               <div className="flex items-center justify-between gap-2">
                                 <div className="min-w-0">
-                                  <div className="flex items-center gap-2">
-                                    <span className="truncate text-sm font-medium text-foreground">
+                                  <div className="flex min-w-0 flex-wrap items-center gap-2">
+                                    <span className="min-w-0 text-sm font-medium text-foreground [overflow-wrap:anywhere]">
                                       {p.name}
                                     </span>
                                     <Badge variant="outline" className="border-border text-muted-foreground">
                                       Custom
                                     </Badge>
                                   </div>
-                                  <p className="mt-0.5 line-clamp-2 text-xs leading-[16px] text-muted-foreground">
+                                  <p className="mt-0.5 text-xs leading-[16px] text-muted-foreground [overflow-wrap:anywhere]">
                                     {p.description || 'No description'}
                                   </p>
                                   <p className="mt-0.5 text-[11px] leading-[16px] text-muted-foreground">
@@ -1402,8 +1362,8 @@ export function ProfileEditor() {
                                   variant="outline"
                                   size="sm"
                                   className="gap-1.5 border-border text-foreground min-h-[44px]"
-                                  onClick={() => openProfile(p.id)}
-                                  disabled={isEditing}
+                                  onClick={() => requestTransition(() => openProfile(p.id))}
+                                  disabled={isEditing || saveBusy || recoveryBlocked}
                                 >
                                   <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
                                   {isEditing ? 'Editing' : 'Edit'}
@@ -1434,12 +1394,12 @@ export function ProfileEditor() {
           {/* --------------------------- Editor --------------------------- */}
           <section aria-labelledby="editor-heading" className="min-w-0">
             <Card className="border-border bg-card">
-              <CardHeader className="pb-3">
-                <CardTitle id="editor-heading" className="text-base font-semibold">
+              <CardHeader className="min-w-0 pb-3">
+                <CardTitle id="editor-heading" role="heading" aria-level={2} tabIndex={-1} className="min-w-0 scroll-mt-24 [overflow-wrap:anywhere] text-base font-semibold focus:outline-none focus:ring-2 focus:ring-ring">
                   {selectedBuiltin
                     ? selectedBuiltin.name
                     : draft
-                      ? draft.name
+                      ? draft.name.trim() || 'New custom profile'
                       : 'Profile editor'}
                 </CardTitle>
                 <CardDescription>
@@ -1490,7 +1450,7 @@ export function ProfileEditor() {
                         type="button"
                         variant="outline"
                         className="gap-1.5 border-border text-foreground"
-                        onClick={() => void createFrom(selectedBuiltin.profileId === SUC_BUILTIN_ID ? 'copy-suc' : 'copy-apa')}
+                        onClick={() => requestTransition(() => { void createFrom(selectedBuiltin.profileId === SUC_BUILTIN_ID ? 'copy-suc' : 'copy-apa') })}
                       >
                         <Copy className="h-4 w-4 text-primary" aria-hidden="true" />
                         Duplicate this profile
@@ -1499,8 +1459,24 @@ export function ProfileEditor() {
                   </div>
                 ) : draft ? (
                   <>
+                    <fieldset disabled={saveBusy} className="min-w-0 space-y-5">
+                    <nav aria-label="Profile editor sections" className="flex flex-wrap gap-x-4 gap-y-2 text-sm">
+                      {[
+                        ['profile-general', 'General'], ['profile-body', 'Body text'], ['profile-headings', 'Headings'],
+                        ['profile-margins', 'Margins'], ['profile-citations', 'Citations'], ['profile-references', 'Reference List'],
+                        ['profile-captions', 'Captions'], ['profile-lists', 'Lists'],
+                      ].map(([id, label]) => (
+                        <a key={id} href={`#${id}`} className="underline underline-offset-2" onClick={(event) => {
+                          event.preventDefault()
+                          const section = document.getElementById(id)
+                          if (section instanceof HTMLDetailsElement) section.open = true
+                          section?.scrollIntoView({ block: 'start', behavior: 'instant' })
+                          section?.querySelector<HTMLElement>('summary, input')?.focus({ preventScroll: true })
+                        }}>{label}</a>
+                      ))}
+                    </nav>
                     {/* General */}
-                    <fieldset className="rounded-md border border-border p-3">
+                    <fieldset id="profile-general" className="scroll-mt-24 rounded-md border border-border p-3">
                       <legend className="px-1 text-sm font-semibold text-foreground">
                         General
                       </legend>
@@ -1510,11 +1486,12 @@ export function ProfileEditor() {
                             htmlFor="profile-name"
                             className="text-sm font-medium text-foreground"
                           >
-                            Profile name
+                            Profile name (required)
                           </label>
                           <input
                             id="profile-name"
                             type="text"
+                            required
                             value={draft.name}
                             onChange={(e) => updateDraft({ name: e.target.value })}
                             className={cn(
@@ -1542,7 +1519,7 @@ export function ProfileEditor() {
                             htmlFor="profile-description"
                             className="text-sm font-medium text-foreground"
                           >
-                            Description
+                            Description (optional)
                           </label>
                           <textarea
                             id="profile-description"
@@ -1610,24 +1587,53 @@ export function ProfileEditor() {
 
                         <div>
                           <span className="text-sm font-medium text-foreground">
-                            Validation state
+                            Last confirmed state
                           </span>
                           <div className="mt-1 flex items-center gap-2">
                             {draft.validationState === 'backend_confirmed' ? (
                               <Badge className="bg-secondary/10 text-secondary">
                                 <CheckCircle2 className="h-3 w-3" aria-hidden="true" />
-                                Validated and saved
+                                Last saved version validated{dirty ? ' — current draft has unsaved changes' : ''}
                               </Badge>
                             ) : (
                               <Badge variant="outline" className="border-border text-muted-foreground">
                                 <Info className="h-3 w-3" aria-hidden="true" />
-                                Draft — not yet saved
+                                {lastSavedProfile ? 'Stored record is not backend-confirmed' : 'Draft — not yet saved'}
                               </Badge>
                             )}
                           </div>
+                          <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+                            Source: {friendlySourceName(draft.sourceId) ?? 'Blank custom profile'}.
+                            {' '}Last saved in this browser: {lastSavedProfile ? formatAuditDateTime(lastSavedProfile.updatedAt) : editingExistingRef.current ? 'Saved record removed or unavailable' : 'Not yet saved'}.
+                            {dirty && ' Upload continues to use only the last confirmed saved version, never these unsaved changes.'}
+                          </p>
                         </div>
                       </div>
                     </fieldset>
+
+                    <details className="rounded-md border border-border p-3">
+                      <summary className="cursor-pointer text-sm font-medium">Recorded formatting exemptions and table policy (read-only)</summary>
+                      <p className="mt-2 text-xs leading-relaxed text-muted-foreground">{RECORDED_ROLE_POLICY_NOTICE}</p>
+                      {(() => {
+                        const raw = draft.payload.role_policy
+                        if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+                          return <p className="mt-2 text-sm">Recorded policy: {raw === undefined ? 'Not supplied' : JSON.stringify(raw)}</p>
+                        }
+                        const policy = raw as Record<string, unknown>
+                        const roles = policy.exempt_roles
+                        return (
+                          <div className="mt-2 space-y-2 text-sm">
+                            <p>Recorded table eligibility (not an enforcement control): {policy.table_eligibility === undefined ? 'Not supplied' : JSON.stringify(policy.table_eligibility)}</p>
+                            {roles === undefined ? <p>Recorded exemptions: Not supplied</p>
+                              : Array.isArray(roles) ? roles.length === 0 ? <p>Recorded exemptions: Empty list</p> : (
+                                <ul aria-label="Recorded formatting exemptions" className="list-disc space-y-1 pl-5">
+                                  {roles.map((role, index) => <li key={index}>{typeof role === 'string' ? recordedRoleLabel(role) : `Unrecognized role value: ${JSON.stringify(role)}`}</li>)}
+                                </ul>
+                              ) : <p>Unrecognized exemption collection: {JSON.stringify(roles)}</p>}
+                          </div>
+                        )
+                      })()}
+                    </details>
 
                     {/* ------------------------------------------------------------------ */}
                     {/* Requirements — expand/collapse + real controls (Build 4/5)           */}
@@ -1635,6 +1641,7 @@ export function ProfileEditor() {
                     <div
                       ref={requirementsRootRef}
                       className="space-y-4"
+                      role="group"
                       aria-label="Document formatting requirements"
                     >
                       <div className="flex items-center justify-between gap-2">
@@ -1666,7 +1673,7 @@ export function ProfileEditor() {
                     {/* ------------------------------------------------------------------ */}
                     {/* Body text controls                                                   */}
                     {/* ------------------------------------------------------------------ */}
-                    <details className="group rounded-md border border-border" open={allExpanded || undefined}>
+                    <details id="profile-body" className="group scroll-mt-24 rounded-md border border-border" open={allExpanded || undefined}>
                       <summary className="cursor-pointer list-none rounded-md px-3 py-2.5 text-sm font-semibold text-foreground select-none transition-colors hover:bg-input/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background">
                         <div className="flex items-center justify-between">
                           <span>Body text</span>
@@ -1721,11 +1728,19 @@ export function ProfileEditor() {
                               {bodyUi?.fontEnabled ? 'On' : 'Off'}
                             </span>
                           </div>
+                          {(() => {
+                            const raw = draft.payload.body
+                            if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null
+                            const font = raw as Record<string, unknown>
+                            if ((font.font_family == null) === (font.font_size_pt == null)) return null
+                            return <p className="mt-2 text-xs leading-relaxed text-muted-foreground">Recorded independent body font requirement: family {JSON.stringify(font.font_family ?? null)}, size {JSON.stringify(font.font_size_pt ?? null)} pt. This form is retained read-only even while the paired-font control appears Off; validation still applies. Choose paired font settings explicitly to replace it.</p>
+                          })()}
                           {bodyUi?.fontEnabled && (
                             <div className="mt-3 space-y-2" id="body-font-pairs" role="group" aria-label="Accepted font-and-size pairs">
                               {bodyUi.pairs.map((pair, idx) => (
                                 <div key={idx} className="flex flex-wrap items-center gap-2">
                                   <input
+                                    id={idx === 0 ? 'body-font-pairs-first-family' : `body-font-pair-${idx + 1}-family`}
                                     type="text"
                                     value={pair.family}
                                     onChange={(e) =>
@@ -1737,10 +1752,12 @@ export function ProfileEditor() {
                                     }
                                     placeholder="Font family"
                                     className="w-40 rounded-md border border-border bg-white px-3 py-1.5 text-sm focus:border-ring focus:ring-1 focus:ring-ring focus:outline-none"
-                                    aria-label={`Font family for pair ${idx + 1}`}
+                                    aria-label={`Body text font family for pair ${idx + 1}`}
                                   />
                                   <input
-                                    type="number"
+                                    id={`body-font-pair-${idx + 1}-size`}
+                                    type="text"
+                                    inputMode="decimal"
                                     min={6}
                                     max={72}
                                     step={0.5}
@@ -1754,7 +1771,7 @@ export function ProfileEditor() {
                                     }
                                     placeholder="Size"
                                     className="w-20 rounded-md border border-border bg-white px-3 py-1.5 text-sm focus:border-ring focus:ring-1 focus:ring-ring focus:outline-none"
-                                    aria-label={`Font size in points for pair ${idx + 1}`}
+                                    aria-label={`Body text font size in points for pair ${idx + 1}`}
                                   />
                                   <span className="text-xs text-muted-foreground">pt</span>
                                   <Button
@@ -1832,11 +1849,13 @@ export function ProfileEditor() {
                           {bodyUi?.alignmentEnabled && (
                             <select
                               id="body-alignment"
+                              aria-label="Body text alignment"
                               value={bodyUi.alignment}
                               onChange={(e) => updateBody((u) => ({ ...u, alignment: e.target.value as AlignmentValue }))}
                               className="mt-2 w-full rounded-md border border-border bg-white px-3 py-1.5 text-sm focus:border-ring focus:ring-1 focus:ring-ring focus:outline-none"
                               aria-describedby="body-alignment-hint"
                             >
+                              {!ALIGNMENT_SELECT_OPTIONS.some((option) => option.value === bodyUi.alignment) && <option value={bodyUi.alignment}>{bodyUi.alignment || 'No supported alignment selected'}</option>}
                               <option value="left">Left</option>
                               <option value="center">Center</option>
                               <option value="right">Right</option>
@@ -1883,7 +1902,9 @@ export function ProfileEditor() {
                             <div className="mt-2 flex items-center gap-2">
                               <input
                                 id="body-line-spacing"
-                                type="number"
+                                aria-label="Body text line spacing (multiplier)"
+                                type="text"
+                                inputMode="decimal"
                                 min={1}
                                 max={4}
                                 step={0.1}
@@ -1940,6 +1961,7 @@ export function ProfileEditor() {
                           </p>
                           <p className="mt-0.5 text-xs leading-[16px] text-muted-foreground">
                             First-line indentation checking is not available in this version.
+                            {' '}Stored value (retained, Not checked): {JSON.stringify((draft.payload.body as Record<string, unknown> | undefined)?.first_line_indent_in ?? null)} in.
                           </p>
                         </div>
                       </div>
@@ -1948,7 +1970,7 @@ export function ProfileEditor() {
                     {/* ------------------------------------------------------------------ */}
                     {/* Heading controls                                                     */}
                     {/* ------------------------------------------------------------------ */}
-                    <details className="group mt-4 rounded-md border border-border" open={allExpanded || undefined}>
+                    <details id="profile-headings" className="group mt-4 scroll-mt-24 rounded-md border border-border" open={allExpanded || undefined}>
                       <summary className="cursor-pointer list-none rounded-md px-3 py-2.5 text-sm font-semibold text-foreground select-none transition-colors hover:bg-input/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2">
                         <div className="flex items-center justify-between">
                           <span>Headings</span>
@@ -1976,7 +1998,7 @@ export function ProfileEditor() {
                           <p className="mb-2 text-[11px] leading-[16px] text-muted-foreground">
                             Applies to all heading levels.
                           </p>
-                          <div className="mt-2 space-y-2" role="radiogroup" aria-label="Heading font behavior">
+                          <div id="heading-font-behavior" tabIndex={-1} className="mt-2 space-y-2" role="radiogroup" aria-label="Heading font behavior">
                             {[
                               { value: 'inherit' as const, label: 'Use the body font and size' },
                               { value: 'explicit' as const, label: 'Use separate accepted font and size' },
@@ -1997,16 +2019,22 @@ export function ProfileEditor() {
                               </label>
                             ))}
                           </div>
-                          {headingUi?.fontBehavior === 'inherit' && !bodyUi?.fontEnabled && (
-                            <p role="alert" className="mt-2 text-xs leading-[16px] text-destructive">
-                              Heading 1 cannot inherit the body font when no body font is enabled.
-                            </p>
+                          {reqFieldErrors['headings.level_1.font'] && (
+                            <p role="alert" className="mt-2 text-xs leading-relaxed text-destructive">{reqFieldErrors['headings.level_1.font']}</p>
                           )}
+                          {(() => {
+                            const raw = draft.payload.heading
+                            if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null
+                            const font = raw as Record<string, unknown>
+                            if ((font.font_family == null) === (font.font_size_pt == null)) return null
+                            return <p className="mt-2 text-xs leading-relaxed text-muted-foreground">Recorded independent heading font requirement: family {JSON.stringify(font.font_family ?? null)}, size {JSON.stringify(font.font_size_pt ?? null)} pt. It is retained read-only, not disabled by the pair editor’s projection; validation still applies. Choose explicit paired font settings to replace it.</p>
+                          })()}
                           {headingUi?.fontBehavior === 'explicit' && (
                             <div className="mt-3 space-y-2">
                               {headingUi.pairs.map((pair, idx) => (
                                 <div key={idx} className="flex flex-wrap items-center gap-2">
                                   <input
+                                    id={idx === 0 ? 'heading-font-pairs-first-family' : `heading-font-pair-${idx + 1}-family`}
                                     type="text"
                                     value={pair.family}
                                     onChange={(e) =>
@@ -2021,7 +2049,9 @@ export function ProfileEditor() {
                                     aria-label={`Font family for heading pair ${idx + 1}`}
                                   />
                                   <input
-                                    type="number"
+                                    id={`heading-font-pair-${idx + 1}-size`}
+                                    type="text"
+                                    inputMode="decimal"
                                     min={6}
                                     max={72}
                                     step={0.5}
@@ -2069,9 +2099,6 @@ export function ProfileEditor() {
                               >
                                 Add font pair
                               </Button>
-                              {reqFieldErrors['headings.level_1.font'] && (
-                                <p role="alert" className="mt-1 text-xs text-destructive">{reqFieldErrors['headings.level_1.font']}</p>
-                              )}
                             </div>
                           )}
                         </fieldset>
@@ -2148,13 +2175,10 @@ export function ProfileEditor() {
                                   type="checkbox"
                                   checked={ui?.bold ?? false}
                                   onChange={(e) =>
-                                    updateHeading((u) => {
-                                      const setBold = (v: boolean) =>
-                                        idx === 0 ? { ...u, level1: { ...u.level1, bold: v } }
-                                          : idx === 1 ? { ...u, level2: { ...u.level2, bold: v } }
-                                            : { ...u, level3: { ...u.level3, bold: v } }
-                                      return setBold(e.target.checked)
-                                    })
+                                    updateHeading((u) => idx === 0
+                                      ? { ...u, level1: { ...u.level1, bold: e.target.checked } }
+                                      : idx === 1 ? { ...u, level2: { ...u.level2, bold: e.target.checked } }
+                                        : { ...u, level3: { ...u.level3, bold: e.target.checked } })
                                   }
                                   className="h-4 w-4 accent-primary"
                                 />
@@ -2165,13 +2189,10 @@ export function ProfileEditor() {
                                   type="checkbox"
                                   checked={ui?.italic ?? false}
                                   onChange={(e) =>
-                                    updateHeading((u) => {
-                                      const setItalic = (v: boolean) =>
-                                        idx === 0 ? { ...u, level1: { ...u.level1, italic: v } }
-                                          : idx === 1 ? { ...u, level2: { ...u.level2, italic: v } }
-                                            : { ...u, level3: { ...u.level3, italic: v } }
-                                      return setItalic(e.target.checked)
-                                    })
+                                    updateHeading((u) => idx === 0
+                                      ? { ...u, level1: { ...u.level1, italic: e.target.checked } }
+                                      : idx === 1 ? { ...u, level2: { ...u.level2, italic: e.target.checked } }
+                                        : { ...u, level3: { ...u.level3, italic: e.target.checked } })
                                   }
                                   className="h-4 w-4 accent-primary"
                                 />
@@ -2251,7 +2272,7 @@ export function ProfileEditor() {
                     {/* ------------------------------------------------------------------ */}
                     {/* Margin controls                                                      */}
                     {/* ------------------------------------------------------------------ */}
-                    <details className="group mt-4 rounded-md border border-border" open={allExpanded || undefined}>
+                    <details id="profile-margins" className="group mt-4 scroll-mt-24 rounded-md border border-border" open={allExpanded || undefined}>
                       <summary className="cursor-pointer list-none rounded-md px-3 py-2.5 text-sm font-semibold text-foreground select-none transition-colors hover:bg-input/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2">
                         <div className="flex items-center justify-between">
                           <span>Margins</span>
@@ -2274,7 +2295,7 @@ export function ProfileEditor() {
                               variant="outline"
                               size="sm"
                               className="border-border text-foreground min-h-[44px]"
-                              onClick={() => setMarginsUi((prev) => prev ? { ...prev, ...applyMarginPreset(preset) } : prev)}
+                              onClick={() => updateMargins((previous) => ({ ...previous, ...applyMarginPreset(preset) }))}
                             >
                               {MARGIN_PRESET_LABELS[preset]}
                             </Button>
@@ -2315,7 +2336,9 @@ export function ProfileEditor() {
                                   <div className="mt-2 flex items-center gap-2">
                                     <input
                                       id={`margin-${side}`}
-                                      type="number"
+                                      aria-label={`${MARGIN_SIDE_LABELS[side]} margin (inches)`}
+                                      type="text"
+                                      inputMode="decimal"
                                       min={0.25}
                                       max={4}
                                       step={0.25}
@@ -2348,7 +2371,7 @@ export function ProfileEditor() {
                     {/* ------------------------------------------------------------------ */}
                     {/* Citations and References controls                                    */}
                     {/* ------------------------------------------------------------------ */}
-                    <details className="group mt-4 rounded-md border border-border" open={allExpanded || undefined}>
+                    <details id="profile-citations" className="group mt-4 scroll-mt-24 rounded-md border border-border" open={allExpanded || undefined}>
                       <summary className="cursor-pointer list-none rounded-md px-3 py-2.5 text-sm font-semibold text-foreground select-none transition-colors hover:bg-input/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2">
                         <div className="flex items-center justify-between">
                           <span>Citations and References</span>
@@ -2414,7 +2437,7 @@ export function ProfileEditor() {
                     {/* ------------------------------------------------------------------ */}
                     {/* Reference List controls                                              */}
                     {/* ------------------------------------------------------------------ */}
-                    <details className="group mt-4 rounded-md border border-border" open={allExpanded || undefined}>
+                    <details id="profile-references" className="group mt-4 scroll-mt-24 rounded-md border border-border" open={allExpanded || undefined}>
                       <summary className="cursor-pointer list-none rounded-md px-3 py-2.5 text-sm font-semibold text-foreground select-none transition-colors hover:bg-input/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2">
                         <div className="flex items-center justify-between">
                           <span>Reference List</span>
@@ -2434,6 +2457,20 @@ export function ProfileEditor() {
                           Turning off a requirement means it will not be checked or included in the score.
                           A value can only be edited while its check is on.
                         </p>
+                        {(() => {
+                          const missing = [
+                            [referenceModel.headingTextEnabled, referenceModel.headingText, 'heading text'],
+                            [referenceModel.headingAlignmentEnabled, referenceModel.headingAlignment, 'heading alignment'],
+                            [referenceModel.hangingIndentEnabled, referenceModel.hangingIndent, 'hanging indent'],
+                            [referenceModel.lineSpacingEnabled, referenceModel.lineSpacing, 'line spacing'],
+                            [referenceModel.spaceBeforeEnabled, referenceModel.spaceBefore, 'space before'],
+                            [referenceModel.spaceAfterEnabled, referenceModel.spaceAfter, 'space after'],
+                            [referenceModel.fontFamilyEnabled, referenceModel.fontFamily, 'font family'],
+                            [referenceModel.fontSizeEnabled, referenceModel.fontSize, 'font size'],
+                            [referenceModel.alignmentEnabled, referenceModel.alignment, 'entry alignment'],
+                          ].filter(([enabled, value]) => enabled && !value).map(([, , label]) => label)
+                          return missing.length ? <p className="rounded-md border border-border p-2 text-xs text-muted-foreground">Enabled without a supported comparison value: {missing.join(', ')}. These configured checks cannot compare that value until one is supplied; enabling alone does not mean a check ran. Values remain optional under the existing validation contract.</p> : null
+                        })()}
 
                         {/* Heading text */}
                         <div className="rounded-md border border-border p-3">
@@ -2447,7 +2484,6 @@ export function ProfileEditor() {
                               onChange={(e) => updateReferences((u) => ({
                                 ...u,
                                 headingTextEnabled: e.target.checked,
-                                allowHeadingAliases: e.target.checked && u.allowHeadingAliases,
                               }))}
                             />
                             <span className="text-sm text-foreground">Check Reference List heading text</span>
@@ -2467,6 +2503,7 @@ export function ProfileEditor() {
                               onChange={(e) => updateReferences((u) => ({ ...u, headingText: e.target.value as ReferenceHeadingText }))}
                               className="w-full max-w-xs rounded-md border border-border bg-white px-3 py-1.5 text-sm focus:border-ring focus:ring-1 focus:ring-ring focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
                             >
+                              {!referenceModel.headingText && <option value="">Unsupported or unset stored heading — choose explicitly to replace it</option>}
                               {REFERENCE_HEADING_TEXT_OPTIONS.map((option) => (
                                 <option key={option} value={option}>
                                   {REFERENCE_HEADING_TEXT_LABELS[option]}
@@ -2509,19 +2546,24 @@ export function ProfileEditor() {
                               id="references-check-heading-bold"
                               type="checkbox"
                               className="mt-0.5 h-4 w-4 accent-primary"
-                              checked={referenceModel.headingBoldEnabled && referenceModel.headingBold}
+                              checked={referenceModel.headingBoldEnabled}
                               aria-describedby="references-check-heading-bold-hint"
                               onChange={(e) => updateReferences((u) => ({
                                 ...u,
                                 headingBoldEnabled: e.target.checked,
-                                headingBold: e.target.checked,
                               }))}
                             />
-                            <span className="text-sm text-foreground">Heading should be bold</span>
+                            <span className="text-sm text-foreground">Check heading bold or regular state</span>
                           </label>
                           <p id="references-check-heading-bold-hint" className="mt-1 text-xs leading-[16px] text-muted-foreground">
                             Off means the heading’s bold or regular state is not checked.
                           </p>
+                          <label htmlFor="references-heading-bold-value" className="mt-2 block text-sm">Required heading state</label>
+                          <select id="references-heading-bold-value" value={referenceModel.headingBold ? 'bold' : 'regular'} disabled={!referenceModel.headingBoldEnabled}
+                            className="mt-1 w-full max-w-xs rounded-md border border-border bg-white px-3 py-1.5 text-sm focus:border-ring focus:ring-1 focus:ring-ring focus:outline-none"
+                            onChange={(event) => updateReferences((previous) => ({ ...previous, headingBold: event.target.value === 'bold' }))}>
+                            <option value="bold">Bold</option><option value="regular">Regular (not bold)</option>
+                          </select>
                         </div>
 
                         {/* Heading alignment */}
@@ -2605,7 +2647,8 @@ export function ProfileEditor() {
                             </label>
                             <input
                               id="references-hanging-indent"
-                              type="number"
+                              type="text"
+                              inputMode="decimal"
                               min={0}
                               max={4}
                               step={0.05}
@@ -2633,7 +2676,16 @@ export function ProfileEditor() {
                               className="mt-0.5 h-4 w-4 accent-primary"
                               checked={referenceModel.lineSpacingEnabled}
                               aria-describedby="references-check-line-spacing-hint"
-                              onChange={(e) => updateReferences((u) => ({ ...u, lineSpacingEnabled: e.target.checked }))}
+                              onChange={(event) => {
+                                const enabled = event.target.checked
+                                updateReferences((previous) => ({ ...previous, lineSpacingEnabled: enabled }))
+                                setDraft((previous) => {
+                                  if (!previous) return previous
+                                  const raw = previous.payload.references
+                                  const references = typeof raw === 'object' && raw !== null && !Array.isArray(raw) ? raw as Record<string, unknown> : {}
+                                  return { ...previous, payload: { ...previous.payload, references: { ...references, check_line_spacing: enabled } } }
+                                })
+                              }}
                             />
                             <span className="text-sm text-foreground">Check Reference List line spacing</span>
                           </label>
@@ -2646,7 +2698,8 @@ export function ProfileEditor() {
                             </label>
                             <input
                               id="references-line-spacing"
-                              type="number"
+                              type="text"
+                              inputMode="decimal"
                               min={1}
                               max={4}
                               step={0.1}
@@ -2687,7 +2740,8 @@ export function ProfileEditor() {
                             </label>
                             <input
                               id="references-space-before"
-                              type="number"
+                              type="text"
+                              inputMode="decimal"
                               min={0}
                               max={240}
                               step={1}
@@ -2725,7 +2779,8 @@ export function ProfileEditor() {
                             </label>
                             <input
                               id="references-space-after"
-                              type="number"
+                              type="text"
+                              inputMode="decimal"
                               min={0}
                               max={240}
                               step={1}
@@ -2803,7 +2858,8 @@ export function ProfileEditor() {
                             </label>
                             <input
                               id="references-font-size"
-                              type="number"
+                              type="text"
+                              inputMode="decimal"
                               min={6}
                               max={72}
                               step={0.5}
@@ -2904,7 +2960,7 @@ export function ProfileEditor() {
                     {/* ------------------------------------------------------------------ */}
                     {/* Captions controls                                                     */}
                     {/* ------------------------------------------------------------------ */}
-                    <details className="group mt-4 rounded-md border border-border" open={allExpanded || undefined}>
+                    <details id="profile-captions" className="group mt-4 scroll-mt-24 rounded-md border border-border" open={allExpanded || undefined}>
                       <summary className="cursor-pointer list-none rounded-md px-3 py-2.5 text-sm font-semibold text-foreground select-none transition-colors hover:bg-input/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2">
                         <div className="flex items-center justify-between">
                           <span>Captions</span>
@@ -2962,7 +3018,7 @@ export function ProfileEditor() {
                     {/* ------------------------------------------------------------------ */}
                     {/* Lists controls                                                         */}
                     {/* ------------------------------------------------------------------ */}
-                    <details className="group mt-4 rounded-md border border-border" open={allExpanded || undefined}>
+                    <details id="profile-lists" className="group mt-4 scroll-mt-24 rounded-md border border-border" open={allExpanded || undefined}>
                       <summary className="cursor-pointer list-none rounded-md px-3 py-2.5 text-sm font-semibold text-foreground select-none transition-colors hover:bg-input/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2">
                         <div className="flex items-center justify-between">
                           <span>Lists</span>
@@ -3009,10 +3065,7 @@ export function ProfileEditor() {
                     {/* Profile summary                                                      */}
                     {/* ------------------------------------------------------------------ */}
                     {draft && (() => {
-                      const currentPayload = bodyUi
-                        ? setPayloadGroup(draft.payload, 'body', bodyFromUiModel(bodyUi))
-                        : draft.payload
-                      const summary = summarizeProfile(currentPayload)
+                      const summary = summarizeProfile(finalPayload ?? draft.payload)
                       return (
                         <div className="mt-4 rounded-md border border-border bg-input/20 px-3 py-3">
                           <p className="text-sm font-semibold text-foreground">
@@ -3029,6 +3082,13 @@ export function ProfileEditor() {
                         </div>
                       )
                     })()}
+
+                    <details className="rounded-md border border-border p-3">
+                      <summary id="profile-retained-data" tabIndex={-1} className="scroll-mt-24 cursor-pointer text-sm font-medium focus:outline-none focus:ring-2 focus:ring-ring">Retained original profile data (read-only)</summary>
+                      <p className="mt-2 text-xs text-muted-foreground">Unedited values, unsupported settings and nested metadata are retained. A displayed default is not a correction. Unknown data must pass validation before replacing any confirmed save.</p>
+                      <pre className="mt-2 max-h-72 overflow-auto whitespace-pre-wrap break-all text-xs">{JSON.stringify(draft.payload, null, 2)}</pre>
+                    </details>
+                    </fieldset>
 
                     {/* Action bar — in flow (never floats over content) */}
                     {draft && (
@@ -3072,7 +3132,7 @@ export function ProfileEditor() {
                             <Button
                               type="button"
                               onClick={() => void saveProfile()}
-                              disabled={opStatus.kind === 'validating' || !dirty}
+                              aria-disabled={saveBusy || !dirty}
                               className="bg-primary text-primary-foreground hover:bg-primary/90 min-h-[44px]"
                             >
                               {opStatus.kind === 'validating' ? (
@@ -3099,10 +3159,11 @@ export function ProfileEditor() {
                         type="button"
                         variant="outline"
                         className="border-border text-foreground"
-                        onClick={() => void createFrom('blank')}
+                        disabled={saveBusy || recoveryBlocked}
+                        onClick={() => requestTransition(() => { void createFrom('blank') })}
                       >
                         <Plus className="mr-2 h-4 w-4 text-primary" aria-hidden="true" />
-                        Start with no enabled requirements
+                        Start with blank formatting
                       </Button>
                     )}
                   </div>
@@ -3119,12 +3180,32 @@ export function ProfileEditor() {
       {pendingNavigation && (
         <ConfirmDialog
           title="Unsaved changes"
-          description="You have unsaved changes to this custom profile. Discard them and continue?"
+          description="Save and continue only after a persistent Save, discard these unsaved changes, or continue editing."
           confirmLabel="Discard changes"
           cancelLabel="Continue editing"
+          secondaryLabel="Save and continue"
+          onSecondary={() => { void saveAndGo() }}
+          busy={saveBusy}
+          details={recoveryNotice?.includes('could not be cleared') ? <p role="alert" className="text-destructive">{recoveryNotice}</p> : undefined}
+          fallbackFocusId="editor-heading"
           confirmVariant="destructive"
           onConfirm={discardAndGo}
           onCancel={cancelLeave}
+        />
+      )}
+
+      {pendingReset && (
+        <ConfirmDialog
+          title="Reset corrupt profile store?"
+          description="Neither saved profile copy is usable. This explicitly replaces only this browser’s corrupt custom-profile store with an empty store and the recommended built-in selection. The corrupt bytes will be lost. Unsaved drafts and completed audits are not deleted. A newer-version store can never be reset here."
+          confirmLabel="Reset corrupt store"
+          cancelLabel="Keep stored data"
+          confirmVariant="destructive"
+          busy={resetting}
+          details={opStatus.kind === 'error' ? <p role="alert" className="text-destructive">{opStatus.message}</p> : undefined}
+          fallbackFocusId="profile-list-heading"
+          onConfirm={() => { void confirmReset() }}
+          onCancel={() => { if (!resetting) setPendingReset(false) }}
         />
       )}
 
@@ -3137,6 +3218,8 @@ export function ProfileEditor() {
           cancelLabel="Cancel"
           confirmVariant="destructive"
           busy={deleting}
+          details={opStatus.kind === 'error' ? <p role="alert" className="text-destructive">{opStatus.message}</p> : undefined}
+          fallbackFocusId="profile-list-heading"
           onConfirm={() => void confirmDelete()}
           onCancel={cancelDelete}
         />
