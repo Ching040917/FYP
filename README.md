@@ -42,6 +42,16 @@ After an audit, ACA shows what it found and why:
 
 ![Academic Compliance Auditor workspace showing compact findings, Document Preview with inline Evidence details, and read-only Current and Required values.](docs/images/aca-audit-workspace.png)
 
+### Guided Fix downloads
+
+Closing Guided Fixes or switching audits discards any late download response;
+it cannot save a corrected copy or update the current workflow. Download links
+remain one-use: if the server already consumed a discarded request, repeat
+Review and Apply from the unchanged original document to obtain a new link.
+Download progress is announced only while the current request is pending.
+Closing or restarting Guided Fixes clears obsolete notices; reopening does not
+replay a previous Download or availability announcement.
+
 ### Optional Header, Footer and Page Number reviews
 
 Custom Profiles can independently enable **Check Header requirements**,

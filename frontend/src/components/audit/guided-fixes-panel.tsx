@@ -11,7 +11,7 @@
  * raw rule codes as primary labels, or internal OOXML terminology. The
  * client sends violation IDs only; the server alone confirms exact targets.
  */
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
 import { AlertCircle, ArrowLeft, Check, Download, Loader2, Wand2, X } from 'lucide-react'
@@ -143,10 +143,21 @@ export function GuidedFixesPanel({
   const [review, setReview] = useState<GuidedFixReview | null>(null)
   const reviewRef = useRef<{ auditId: string; id: string } | null>(null)
   const [verification, setVerification] = useState<GuidedFixVerification | null>(null)
+  // Bind the result to its issuing audit, including the commit before audit-reset effects run.
+  const verificationAudit = useRef<string | null>(null)
   const [downloading, setDownloading] = useState(false)
   const [downloaded, setDownloaded] = useState(false)
   const [downloadFilename, setDownloadFilename] = useState<string | null>(null)
   const requestSerial = useRef(0)
+  const downloadInFlight = useRef<number | null>(null)
+  const downloadContext = useRef<{
+    auditId: string; verification: GuidedFixVerification | null; stage: GuidedFixStage
+  } | null>(null)
+  // Committed context only; layout cleanup invalidates downloads before passive unmount/reset effects.
+  useLayoutEffect(() => {
+    downloadContext.current = { auditId, verification, stage }
+    return () => { downloadContext.current = null }
+  }, [auditId, verification, stage])
   const [announcement, setAnnouncement] = useState<string | null>(null)
   // The dialog is mounted for every non-idle stage; report that to the
   // workspace so focus-mode entry can be blocked while it is open.
@@ -162,8 +173,12 @@ export function GuidedFixesPanel({
     setLimitNotice(null)
     setSelectedFile(null)
     setErrorMessage(null)
+    setAnnouncement(null)
     setReview(null)
     setVerification(null)
+    verificationAudit.current = null
+    downloadInFlight.current = null
+    setDownloading(false)
     setDownloaded(false)
     setDownloadFilename(null)
     return () => {
@@ -260,6 +275,11 @@ export function GuidedFixesPanel({
   }
 
   const closeToIdle = () => {
+    requestSerial.current++
+    downloadInFlight.current = null
+    setDownloading(false)
+    setDownloaded(false)
+    setDownloadFilename(null)
     revokeReview()
     setReview(null)
     setStage('idle')
@@ -267,7 +287,9 @@ export function GuidedFixesPanel({
     setLimitNotice(null)
     setSelectedFile(null)
     setErrorMessage(null)
+    setAnnouncement(null)
     setVerification(null)
+    verificationAudit.current = null
     requestAnimationFrame(() => triggerRef.current?.focus())
   }
 
@@ -318,6 +340,7 @@ export function GuidedFixesPanel({
       if (result.resolved.length !== selectedIds.length ||
           selectedIds.some((id) => !result.resolved.includes(id)) ||
           result.new_findings.length !== 0) throw new Error('Verification did not pass')
+      verificationAudit.current = auditId
       setVerification(result)
       setDownloaded(false)
       setDownloadFilename(null)
@@ -338,21 +361,36 @@ export function GuidedFixesPanel({
   }
 
   const downloadResult = async () => {
-    if (!verification || downloading || downloaded) return
+    const context = downloadContext.current
+    if (!verification || downloading || downloaded || downloadInFlight.current !== null ||
+        context?.auditId !== auditId || verificationAudit.current !== auditId ||
+        context.verification !== verification || context.stage !== 'completed') return
+    const serial = ++requestSerial.current
+    downloadInFlight.current = serial
+    const isCurrent = () => serial === requestSerial.current &&
+      downloadInFlight.current === serial &&
+      downloadContext.current?.auditId === auditId &&
+      verificationAudit.current === auditId &&
+      downloadContext.current.verification === verification &&
+      downloadContext.current.stage === 'completed'
     setDownloading(true)
     try {
       const blob = await api.downloadGuidedFix(auditId, verification.download_token)
+      if (!isCurrent()) return
       const name = correctedFilename(verification.output_filename, downloadedNames)
       downloadBlob(blob, name)
       downloadedNames.add(name)
       setDownloadFilename(name)
       setDownloaded(true)
-      announce(`Downloading ${name}.`)
     } catch (err) {
+      if (!isCurrent()) return
       if (err instanceof ApiRequestError && (err.status === 410 || err.status === 404)) setDownloaded(true)
       setErrorMessage('The verified download is unavailable or expired. Your original document was not changed.')
     } finally {
-      setDownloading(false)
+      if (isCurrent()) {
+        downloadInFlight.current = null
+        setDownloading(false)
+      }
     }
   }
 
@@ -377,13 +415,20 @@ export function GuidedFixesPanel({
       variant="outline"
       size="sm"
       onClick={() => {
+        requestSerial.current++
+        downloadInFlight.current = null
+        setDownloading(false)
+        setDownloaded(false)
+        setDownloadFilename(null)
         revokeReview()
         setSelectedIds([])
         setFilter('available')
         setLimitNotice(null)
         setSelectedFile(null)
         setErrorMessage(null)
+        setAnnouncement(null)
         setVerification(null)
+        verificationAudit.current = null
         setStage('selecting')
       }}
     >
@@ -783,6 +828,9 @@ export function GuidedFixesPanel({
           <p className="mt-1 break-all text-[13px] text-muted-foreground">
             Filename: {downloadFilename ?? correctedFilename(verification?.output_filename, downloadedNames)}
           </p>
+          <span role="status" aria-live="polite" className="sr-only">
+            {downloading ? 'Downloading…' : null}
+          </span>
           {errorMessage && <p role="alert" className="mt-2 text-[13px] text-destructive">{errorMessage}</p>}
           {downloaded && !errorMessage && <p role="status" className="mt-2 text-[13px] text-success">Downloaded. The one-use link has expired.</p>}
           {workflow}
