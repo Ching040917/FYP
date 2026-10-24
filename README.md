@@ -52,6 +52,29 @@ Download progress is announced only while the current request is pending.
 Closing or restarting Guided Fixes clears obsolete notices; reopening does not
 replay a previous Download or availability announcement.
 
+### Before/after paragraph spacing Guided Fix safety
+
+Existing `SPACE_BEFORE` and `SPACE_AFTER` corrections require an explicit,
+readable direct point setting and an unambiguous used paragraph-style and
+document-default chain. Review and Apply reject selected-side line-unit
+controls, active automatic spacing, active contextual spacing, numbering-owned
+paragraphs and malformed or otherwise unprovable evidence. Valid explicit false
+flags may override valid inherited true flags; malformed inherited controls
+remain manual even when shadowed. Unrelated opposite-side controls are preserved.
+
+Requirements must be exactly representable in twentieths of a point (twips);
+6.01pt stays manual rather than being rounded. Reopened corrected copies must
+contain the exact requested point attribute, including explicit zero, without
+competing controls. A mixed safe/unsafe selection is rejected as a whole.
+Only the selected before/after attribute changes; controls are never cleared to
+force a correction. These checks certify the point **setting**, not an exact
+rendered gap. The original DOCX, saved audit, Snapshot, History and PDF remain
+unchanged.
+
+This hardening adds no Guided Fix candidate and does not resolve the separate
+font-script-slot, line-spacing-unit, grouped-count, truncated-aggregate or
+package-policy safety issues.
+
 ### Reference List heading bold Guided Fix
 
 Guided Fixes can make a verified Reference List heading **Bold** or **Not bold**

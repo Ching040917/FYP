@@ -489,7 +489,10 @@ def _resolve_expected(
         return value if _in_bounds(value, *_LINE_SPACING_RANGE) else None
     if rule_code in ("SPACE_BEFORE", "SPACE_AFTER"):
         value = _parse_pt(expected_value)
-        return value if _in_bounds(value, *_SPACING_PT_RANGE) else None
+        return value if (
+            _in_bounds(value, *_SPACING_PT_RANGE)
+            and math.isclose(value * 20, round(value * 20), rel_tol=0, abs_tol=1e-9)
+        ) else None
     if rule_code == "ALIGNMENT":
         if expected_value in _ALIGNMENTS:
             return expected_value
@@ -597,6 +600,186 @@ def _fix_space_after(para, pt: float) -> bool:
         return False
 
 
+def _spacing_property_layers(para) -> List[Any]:
+    """Read only the used paragraph-style chain; never create missing parts."""
+    def fail():
+        raise GuidedFixFailed("unverifiable paragraph spacing")
+
+    def leaf(node, attributes):
+        if (len(node) or (node.text or "").strip() or
+                set(node.attrib) - attributes):
+            fail()
+
+    def properties(container):
+        nodes = container.findall(_W + "pPr")
+        if len(nodes) > 1:
+            fail()
+        if not nodes:
+            return None
+        node = nodes[0]
+        if (node.attrib or any((child.tail or "").strip() for child in node) or
+                (node.text or "").strip() or
+                any(child.tag in {_W + "numPr", _W + "pPrChange", _MC + "AlternateContent",
+                                  _W + "ins", _W + "del"} for child in node.iter())):
+            fail()
+        return node
+
+    def reference(container, tag):
+        nodes = container.findall(_W + tag) if container is not None else []
+        if len(nodes) > 1:
+            fail()
+        if not nodes:
+            return None
+        leaf(nodes[0], {_W + "val"})
+        value = nodes[0].get(_W + "val")
+        if not value or value != value.strip():
+            fail()
+        return value
+
+    try:
+        part = para.part
+        if (part.element.tag != _W + "document" or
+                para._p.getparent() is not part.element.find(_W + "body")):
+            fail()
+        direct = properties(para._p)
+        if direct is None or para._p[0] is not direct:
+            fail()
+        relationships = [rel for rel in part.rels.values() if rel.reltype.endswith("/styles")]
+        if len(relationships) != 1 or relationships[0].is_external:
+            fail()
+        styles = relationships[0].target_part.element
+        if styles.tag != _W + "styles":
+            fail()
+        style_nodes = {}
+        for node in styles.findall(_W + "style"):
+            style_nodes.setdefault(node.get(_W + "styleId"), []).append(node)
+        style_id = reference(direct, "pStyle")
+        if style_id is None:
+            candidates = []
+            for node in styles.findall(_W + "style"):
+                if node.get(_W + "type") != "paragraph":
+                    continue
+                default = node.get(_W + "default")
+                if default not in (None, "1", "0", "true", "false", "on", "off"):
+                    fail()
+                if default in ("1", "true", "on"):
+                    candidates.append(node)
+            if len(candidates) != 1:
+                fail()
+            style_id = candidates[0].get(_W + "styleId")
+            if not style_id:
+                fail()
+        layers = [direct]
+        seen = set()
+        while style_id is not None:
+            matches = style_nodes.get(style_id, [])
+            if (not style_id or style_id != style_id.strip() or style_id in seen or
+                    len(matches) != 1 or matches[0].get(_W + "type") != "paragraph"):
+                fail()
+            seen.add(style_id)
+            style = matches[0]
+            if any(node.tag in {_MC + "AlternateContent", _W + "pPrChange"}
+                   for node in style.iter()):
+                fail()
+            props = properties(style)
+            if props is not None:
+                if reference(props, "pStyle") is not None:
+                    fail()
+                layers.append(props)
+            style_id = reference(style, "basedOn")
+        defaults = styles.findall(_W + "docDefaults")
+        if len(defaults) > 1:
+            fail()
+        if defaults:
+            default = defaults[0]
+            tags = [node.tag for node in default]
+            if (default.attrib or (default.text or "").strip() or
+                    len(tags) != len(set(tags)) or
+                    any(tag not in {_W + "pPrDefault", _W + "rPrDefault"} for tag in tags) or
+                    any((node.tail or "").strip() for node in default)):
+                fail()
+            wrappers = default.findall(_W + "pPrDefault")
+            if wrappers:
+                wrapper = wrappers[0]
+                if (wrapper.attrib or (wrapper.text or "").strip() or
+                        any(node.tag != _W + "pPr" or (node.tail or "").strip() for node in wrapper)):
+                    fail()
+                props = properties(wrapper)
+                if props is not None:
+                    if reference(props, "pStyle") is not None:
+                        fail()
+                    layers.append(props)
+        return layers
+    except GuidedFixFailed:
+        raise
+    except Exception as exc:
+        raise GuidedFixFailed("unverifiable paragraph spacing") from exc
+
+
+def _direct_spacing_points(para, rule_code: str) -> float:
+    """Certify a direct point setting, not a rendered inter-paragraph gap."""
+    if rule_code not in ("SPACE_BEFORE", "SPACE_AFTER"):
+        raise GuidedFixFailed("unverifiable paragraph spacing")
+    side = "before" if rule_code == "SPACE_BEFORE" else "after"
+    layers = _spacing_property_layers(para)
+    known = {_W + name for name in (
+        "before", "after", "beforeLines", "afterLines",
+        "beforeAutospacing", "afterAutospacing", "line", "lineRule",
+    )}
+    booleans = {"1": True, "true": True, "on": True,
+                "0": False, "false": False, "off": False}
+    automatic = contextual = None
+    direct_twips = None
+    for index, layer in enumerate(layers):
+        spacing = layer.findall(_W + "spacing")
+        context = layer.findall(_W + "contextualSpacing")
+        if len(spacing) > 1 or len(context) > 1:
+            raise GuidedFixFailed("unverifiable paragraph spacing")
+        if spacing:
+            node = spacing[0]
+            if len(node) or (node.text or "").strip() or set(node.attrib) - known:
+                raise GuidedFixFailed("unverifiable paragraph spacing")
+            for name, value in node.attrib.items():
+                local = name[len(_W):]
+                if local.endswith("Autospacing"):
+                    valid = value in booleans
+                elif local == "lineRule":
+                    valid = value in ("auto", "exact", "atLeast")
+                else:
+                    valid = re.fullmatch(r"[0-9]+", value) is not None
+                if not valid:
+                    raise GuidedFixFailed("unverifiable paragraph spacing")
+            if node.get(_W + side + "Lines") is not None:
+                raise GuidedFixFailed("unverifiable paragraph spacing")
+            flag = node.get(_W + side + "Autospacing")
+            if flag is not None and automatic is None:
+                automatic = booleans[flag]
+            if index == 0:
+                value = node.get(_W + side)
+                if value is not None:
+                    try:
+                        direct_twips = int(value)
+                    except ValueError as exc:
+                        raise GuidedFixFailed("unverifiable paragraph spacing") from exc
+        if context:
+            node = context[0]
+            value = node.get(_W + "val", "true")
+            if (len(node) or (node.text or "").strip() or
+                    set(node.attrib) - {_W + "val"} or value not in booleans):
+                raise GuidedFixFailed("unverifiable paragraph spacing")
+            if contextual is None:
+                contextual = booleans[value]
+    if direct_twips is None or automatic is True or contextual is True:
+        raise GuidedFixFailed("unverifiable paragraph spacing")
+    try:
+        points = direct_twips / 20
+        if not math.isfinite(points):
+            raise ValueError("nonfinite spacing")
+        return points
+    except (ValueError, OverflowError) as exc:
+        raise GuidedFixFailed("unverifiable paragraph spacing") from exc
+
+
 # ---------------------------------------------------------------------------
 # Current-value comparators (same extraction + rule tolerances as the engine)
 # ---------------------------------------------------------------------------
@@ -632,6 +815,8 @@ def _current_matches_expected(rule_code: str, expected: Any, para_dict: Dict, ru
     if rule_code == "REFERENCE_HEADING_ALIGNMENT":
         from app.services.formatting_evidence import resolve_alignment
         return para is not None and resolve_alignment(para).alignment == expected
+    if rule_code in ("SPACE_BEFORE", "SPACE_AFTER"):
+        return abs(_direct_spacing_points(para, rule_code) - expected) <= 1
     if para is not None:
         pf = para.paragraph_format
         if rule_code == "LINE_SPACING":
@@ -642,12 +827,6 @@ def _current_matches_expected(rule_code: str, expected: Any, para_dict: Dict, ru
                 return abs(float(value) - expected) <= 0.1
             except (TypeError, ValueError):
                 return False
-        if rule_code == "SPACE_BEFORE":
-            value = pf.space_before
-            return value is not None and abs(value.pt - expected) <= 1
-        if rule_code == "SPACE_AFTER":
-            value = pf.space_after
-            return value is not None and abs(value.pt - expected) <= 1
         if rule_code == "ALIGNMENT":
             return _align_to_name(para.alignment) == expected
     if rule_code == "LINE_SPACING":
@@ -658,12 +837,6 @@ def _current_matches_expected(rule_code: str, expected: Any, para_dict: Dict, ru
             return abs(float(current) - expected) <= 0.1
         except (TypeError, ValueError):
             return False
-    if rule_code == "SPACE_BEFORE":
-        current = para_dict.get("space_before")
-        return current is not None and abs(current - expected) <= 1
-    if rule_code == "SPACE_AFTER":
-        current = para_dict.get("space_after")
-        return current is not None and abs(current - expected) <= 1
     if rule_code == "ALIGNMENT":
         return _align_to_name(para_dict.get("alignment")) == expected
     return False
@@ -705,14 +878,7 @@ def _current_changed_from_actual(rule_code: str, para_dict: Dict, run_dict: Opti
         actual_pt = _parse_pt(actual_value)
         if actual_pt is None:
             return True
-        if para is not None:
-            current = para.paragraph_format.space_before if rule_code == "SPACE_BEFORE" else para.paragraph_format.space_after
-            current = None if current is None else current.pt
-        else:
-            current = para_dict.get(
-                "space_before" if rule_code == "SPACE_BEFORE" else "space_after"
-            )
-        return current is None or abs(current - actual_pt) > 1
+        return abs(_direct_spacing_points(para, rule_code) - actual_pt) > 1
     if rule_code == "REFERENCE_HEADING_ALIGNMENT":
         from app.services.formatting_evidence import resolve_alignment
         return (para is None or not isinstance(actual_value, str) or
@@ -1023,6 +1189,11 @@ def _validate_output(corrected_bytes: bytes, source_doc, applied: List[Violation
         expected = _resolve_expected(violation, audit, doc, roles[index] if index < len(roles) else None)
         if expected is None:
             raise GuidedFixFailed("requirement changed")
+        if violation.rule_code in ("SPACE_BEFORE", "SPACE_AFTER"):
+            current = _direct_spacing_points(doc.paragraphs[index], violation.rule_code)
+            if not math.isclose(current * 20, expected * 20, rel_tol=0, abs_tol=1e-9):
+                raise GuidedFixFailed("target value differs after save")
+            continue
         if violation.rule_code == "REFERENCE_HEADING_BOLD":
             indexes = _reference_heading_bold_run_indexes(doc, paragraphs, index)
             reviewed = sorted(run for paragraph, run, rule in reviewed_targets

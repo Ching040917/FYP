@@ -2,9 +2,10 @@
  * Guided Fixes — selection, server review, verification and one-use download.
  * Synthetic fixtures only; backend proves document identity via SHA-256.
  */
-import { test, expect, type Page } from '@playwright/test'
+import { test, expect, type Page, type Locator, type TestInfo } from '@playwright/test'
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { AxeBuilder } from '@axe-core/playwright'
 import { createSyntheticAudit, SAMPLE_THESIS, annotate } from './helpers'
 
@@ -27,7 +28,328 @@ async function openGuidedFixes(page: Page) {
   await expect(page.getByRole('button', { name: /Review .* selected chang(e|es)/ })).toBeVisible()
 }
 
+type SpacingCase = {
+  before?: number
+  after?: number
+  override?: { side: 'before' | 'after'; layer: 'direct' | 'style' | 'base' | 'defaults'; kind: 'lines' | 'auto' | 'contextual' }
+}
+
+function spacingFixture(options: SpacingCase) {
+  const backendDir = path.resolve(process.cwd(), '..', 'backend')
+  const python = path.join(backendDir, '.venv', 'Scripts', 'python.exe')
+  const fixture = JSON.parse(execFileSync(python, ['-B', '-c', `
+import base64, io, json, sys
+from docx import Document
+from docx.enum.style import WD_STYLE_TYPE
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
+from docx.shared import Pt
+from app.services.profile_schema import new_custom_profile
+options = json.load(sys.stdin)
+doc = Document()
+p = doc.add_paragraph("A body paragraph with independently verified before and after spacing.")
+p.paragraph_format.space_before = Pt(20)
+p.paragraph_format.space_after = Pt(20)
+p.paragraph_format.line_spacing = 1.5
+p.runs[0].font.name = "Times New Roman"
+p.runs[0].font.size = Pt(12)
+control = options.get("override")
+if control:
+    layer = control["layer"]
+    if layer == "direct":
+        properties = p._p.get_or_add_pPr()
+    elif layer in {"style", "base"}:
+        style = doc.styles.add_style("SpacingEvidence", WD_STYLE_TYPE.PARAGRAPH)
+        style.base_style = doc.styles["Normal"]
+        p.style = style
+        if layer == "base":
+            base = doc.styles.add_style("SpacingEvidenceBase", WD_STYLE_TYPE.PARAGRAPH)
+            base.base_style = doc.styles["Normal"]
+            style.base_style = base
+            style = base
+        properties = style.element.get_or_add_pPr()
+    else:
+        styles = doc.styles.element
+        defaults = styles.find(qn("w:docDefaults"))
+        if defaults is None:
+            defaults = OxmlElement("w:docDefaults")
+            styles.insert(0, defaults)
+        holder = defaults.find(qn("w:pPrDefault"))
+        if holder is None:
+            holder = OxmlElement("w:pPrDefault")
+            defaults.append(holder)
+        properties = holder.find(qn("w:pPr"))
+        if properties is None:
+            properties = OxmlElement("w:pPr")
+            holder.append(properties)
+    if control["kind"] == "contextual":
+        flag = OxmlElement("w:contextualSpacing")
+        flag.set(qn("w:val"), "1")
+        properties.append(flag)
+    else:
+        spacing = properties.find(qn("w:spacing"))
+        if spacing is None:
+            spacing = OxmlElement("w:spacing")
+            properties.append(spacing)
+        attr = control["side"] + ("Lines" if control["kind"] == "lines" else "Autospacing")
+        spacing.set(qn("w:" + attr), "100" if control["kind"] == "lines" else "1")
+profile = new_custom_profile("Point spacing browser proof")
+profile.body.space_before_pt = options.get("before")
+profile.body.space_after_pt = options.get("after")
+out = io.BytesIO()
+doc.save(out)
+print(json.dumps({"docx": base64.b64encode(out.getvalue()).decode(), "profile": profile.to_dict()}))
+`], {
+    cwd: backendDir, encoding: 'utf8', input: JSON.stringify(options),
+    env: { ...process.env, PYTHONDONTWRITEBYTECODE: '1' },
+  })) as { docx: string; profile: object }
+  return {
+    ...fixture, backendDir, python,
+    file: {
+      name: 'point-spacing.docx',
+      mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      buffer: Buffer.from(fixture.docx, 'base64'),
+    },
+  }
+}
+
+async function tabTo(page: Page, target: Locator) {
+  for (let i = 0; i < 100; i++) {
+    if (await target.evaluate(element => element === document.activeElement)) {
+      await expect(target).toBeVisible()
+      expect(await target.evaluate(element => element.matches(':focus-visible'))).toBe(true)
+      return
+    }
+    await page.keyboard.press('Tab')
+    if (await page.getByRole('dialog').count()) {
+      expect(await page.evaluate(() => Boolean(document.activeElement?.closest('[role="dialog"]')))).toBe(true)
+      expect(await page.evaluate(() => Boolean(document.activeElement?.getClientRects().length))).toBe(true)
+    }
+  }
+  throw new Error('Control was not reachable using the keyboard')
+}
+
+async function spacingStateEvidence(page: Page, testInfo: TestInfo, state: string) {
+  for (const [width, height] of [[1366, 768], [1280, 800], [1024, 768], [960, 768], [768, 768]]) {
+    await page.setViewportSize({ width, height })
+    const axe = await new AxeBuilder({ page }).analyze()
+    const bounds = await page.getByRole('dialog').evaluate(dialog => ({
+      viewport: { width: innerWidth, height: innerHeight },
+      clientWidth: document.documentElement.clientWidth,
+      scrollWidth: document.documentElement.scrollWidth,
+      controls: Array.from(dialog.querySelectorAll('button,input')).filter(element => element.getClientRects().length).map(element => {
+        const rect = element.getBoundingClientRect()
+        return { name: element.getAttribute('aria-label') || element.textContent?.trim(),
+          left: rect.left, right: rect.right, width: rect.width,
+          textFits: element.scrollWidth <= element.clientWidth + 1 }
+      }),
+      liveRegions: Array.from(dialog.querySelectorAll('[role="status"],[role="alert"],[aria-live]')).map(element => element.textContent),
+    }))
+    await testInfo.attach(`${state}-${width}-accessibility.json`, {
+      body: JSON.stringify({ violations: axe.violations, incomplete: axe.incomplete, bounds }, null, 2),
+      contentType: 'application/json',
+    })
+    await testInfo.attach(`${state}-${width}.png`, { body: await page.screenshot(), contentType: 'image/png' })
+    expect(axe.violations.filter(item => item.impact === 'critical' || item.impact === 'serious')).toEqual([])
+    expect(bounds.scrollWidth).toBeLessThanOrEqual(bounds.clientWidth + 1)
+    for (const control of bounds.controls) {
+      expect(control.left).toBeGreaterThanOrEqual(-1)
+      expect(control.right).toBeLessThanOrEqual(bounds.clientWidth + 1)
+      expect(control.textFits).toBe(true)
+    }
+  }
+}
+
 test.describe('guided fixes workflow @guided-fixes', () => {
+  for (const options of [{ before: 6 }, { after: 0 }, { before: 6, after: 0 }]) {
+    test(`point spacing ${JSON.stringify(options)} completes keyboard Review Apply Download with exact package proof`, async ({ page, baseURL }, testInfo) => {
+      const origin = new URL(baseURL!).origin
+      await page.route('**/*', route => new URL(route.request().url()).origin === origin
+        ? route.continue() : route.abort('blockedbyclient'))
+      const fixture = spacingFixture(options)
+      const digest = createHash('sha256').update(fixture.file.buffer).digest('hex')
+      const created = await page.request.post('/api/audit', {
+        multipart: { file: fixture.file, custom_profile: JSON.stringify(fixture.profile) }, timeout: 90_000,
+      })
+      expect(created.ok(), await created.text()).toBe(true)
+      const auditId = (await created.json()).audit_id as string
+      const before = await (await page.request.get(`/api/audit/${auditId}`)).json()
+      await page.goto(`/audit/${auditId}`)
+      const opener = page.getByRole('button', { name: /^Guided Fixes/ })
+      await tabTo(page, opener)
+      await page.keyboard.press('Enter')
+      const sides = Object.keys(options) as ('before' | 'after')[]
+      const selected = page.getByRole('button', { name: `Review ${sides.length} selected chang${sides.length === 1 ? 'e' : 'es'}`, exact: true })
+      for (const side of sides) {
+        const checkbox = page.getByRole('checkbox', { name: new RegExp(`Space ${side} the paragraph does not match, .*Paragraph 1`) })
+        await tabTo(page, checkbox)
+        await page.keyboard.press('Space')
+        await expect(checkbox).toBeChecked()
+      }
+      await tabTo(page, page.getByRole('button', { name: 'Clear selection', exact: true }))
+      await page.keyboard.press('Enter')
+      await expect(page.getByRole('button', { name: 'Review 0 selected changes', exact: true })).toBeDisabled()
+      for (const side of sides) {
+        await tabTo(page, page.getByRole('checkbox', { name: new RegExp(`Space ${side} the paragraph does not match, .*Paragraph 1`) }))
+        await page.keyboard.press('Space')
+      }
+      await tabTo(page, selected)
+      await page.keyboard.press('Enter')
+      await tabTo(page, page.getByRole('button', { name: 'Back to findings', exact: true }).last())
+      await page.keyboard.press('Enter')
+      await expect(selected).toBeEnabled()
+      await tabTo(page, selected)
+      await page.keyboard.press('Enter')
+      // The native file chooser is represented by Playwright's file-upload seam;
+      // every dialog action before and after it uses actual keyboard navigation.
+      await tabTo(page, page.locator('#guided-fixes-file-input'))
+      await page.locator('#guided-fixes-file-input').setInputFiles(fixture.file)
+      await tabTo(page, page.getByRole('button', { name: 'Review safety and locations', exact: true }))
+      await page.keyboard.press('Enter')
+      const review = page.getByRole('dialog', { name: 'Guided Fixes — review confirmed changes' })
+      await expect(review).toBeVisible({ timeout: 60_000 })
+      for (const side of sides) {
+        await expect(review.getByText(`Property to change: space ${side}`, { exact: true })).toBeVisible()
+        await expect(review.getByText(new RegExp(`^Required and proposed: ${options[side]}(?:\\.0)?pt$`))).toBeVisible()
+      }
+      await expect(review.getByText(/^Current: 20(?:\.0)?pt$/)).toHaveCount(sides.length)
+      await spacingStateEvidence(page, testInfo, 'point-spacing-review')
+      const applyResponse = page.waitForResponse(response =>
+        response.request().method() === 'POST' && new URL(response.url()).pathname === `/api/audit/${auditId}/guided-fixes`)
+      await tabTo(page, page.getByRole('button', { name: 'Apply and verify changes', exact: true }))
+      await page.keyboard.press('Enter')
+      const applied = await (await applyResponse).json()
+      expect(applied.status).toBe('passed')
+      await expect(page.getByRole('heading', { name: 'Fix applied; re-audit passed', exact: true })).toBeVisible({ timeout: 60_000 })
+      await spacingStateEvidence(page, testInfo, 'point-spacing-verified')
+      const events: string[] = []
+      let downloadRequests = 0
+      page.on('download', event => events.push(event.suggestedFilename()))
+      page.on('request', request => {
+        if (new URL(request.url()).pathname.includes(`/api/audit/${auditId}/guided-fixes/download/`)) downloadRequests++
+      })
+      const downloadButton = page.getByRole('button', { name: 'Download corrected document', exact: true })
+      await tabTo(page, downloadButton)
+      const downloading = page.waitForEvent('download')
+      await page.keyboard.press('Enter')
+      await page.keyboard.press('Enter')
+      const download = await downloading
+      const stream = await download.createReadStream()
+      if (!stream) throw new Error('Verified spacing copy was not readable')
+      const chunks: Buffer[] = []
+      for await (const chunk of stream) chunks.push(Buffer.from(chunk))
+      const corrected = Buffer.concat(chunks)
+      await expect(downloadButton).toBeDisabled()
+      expect(events).toEqual(['point-spacing_ACA-fixed.docx'])
+      expect(downloadRequests).toBe(1)
+      expect((await page.request.get(`/api/audit/${auditId}/guided-fixes/download/${applied.download_token}`)).status()).toBe(410)
+      const inspected = JSON.parse(execFileSync(fixture.python, ['-B', '-c', `
+import base64, hashlib, io, json, sys, zipfile
+from lxml import etree
+data = json.load(sys.stdin)
+source, output = [base64.b64decode(data[key]) for key in ("source", "output")]
+ns = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+with zipfile.ZipFile(io.BytesIO(source)) as a, zipfile.ZipFile(io.BytesIO(output)) as b:
+    assert set(a.namelist()) == set(b.namelist())
+    changed = [name for name in a.namelist() if a.read(name) != b.read(name)]
+    assert set(changed) <= {"word/document.xml", "docProps/core.xml", "docProps/app.xml"}
+    old, new = [etree.fromstring(z.read("word/document.xml")) for z in (a, b)]
+    original = old.find("w:body/w:p/w:pPr/w:spacing", ns)
+    saved = new.find("w:body/w:p/w:pPr/w:spacing", ns)
+    raw = {}
+    for side, points in data["required"].items():
+        name = "{%s}%s" % (ns["w"], side)
+        assert original.get(name) == "400"
+        assert saved.get(name) == str(points * 20)
+        raw[side] = saved.get(name)
+        saved.set(name, original.get(name))
+    assert etree.tostring(old, method="c14n") == etree.tostring(new, method="c14n")
+print(json.dumps({"source_sha256": hashlib.sha256(source).hexdigest(),
+ "corrected_sha256": hashlib.sha256(output).hexdigest(), "raw_twips": raw, "changed_parts": changed}))
+`], { cwd: fixture.backendDir, encoding: 'utf8', input: JSON.stringify({
+        source: fixture.docx, output: corrected.toString('base64'), required: options,
+      }) }))
+      expect(inspected.source_sha256).toBe(digest)
+      expect(inspected.corrected_sha256).not.toBe(digest)
+      expect(createHash('sha256').update(fixture.file.buffer).digest('hex')).toBe(digest)
+      await testInfo.attach('point-spacing-package-proof.json', { body: JSON.stringify(inspected, null, 2), contentType: 'application/json' })
+      await testInfo.attach('point-spacing-original.docx', { body: fixture.file.buffer, contentType: fixture.file.mimeType })
+      await testInfo.attach('point-spacing-corrected.docx', { body: corrected, contentType: fixture.file.mimeType })
+      expect(await (await page.request.get(`/api/audit/${auditId}`)).json()).toEqual(before)
+      const reaudit = await page.request.post('/api/audit', {
+        multipart: { file: { ...fixture.file, buffer: corrected }, custom_profile: JSON.stringify(fixture.profile) }, timeout: 90_000,
+      })
+      expect(reaudit.ok(), await reaudit.text()).toBe(true)
+      const after = await reaudit.json()
+      const codes = sides.map(side => `SPACE_${side.toUpperCase()}`)
+      expect(after.physical_layout_errors.filter((finding: { rule_code: string }) => codes.includes(finding.rule_code))).toEqual([])
+      await tabTo(page, page.getByRole('button', { name: 'Close', exact: true }))
+      await page.keyboard.press('Enter')
+      await expect(opener).toBeFocused()
+      await page.keyboard.press('Enter')
+      await expect(page.getByRole('button', { name: 'Download corrected document', exact: true })).toHaveCount(0)
+      await tabTo(page, page.getByRole('button', { name: 'Close Guided Fixes', exact: true }))
+      await page.keyboard.press('Enter')
+      await expect(opener).toBeFocused()
+    })
+  }
+
+  for (const side of ['before', 'after'] as const) {
+    for (const layer of ['direct', 'style', 'base', 'defaults'] as const) {
+      for (const kind of ['lines', 'auto', 'contextual'] as const) {
+        test(`unsafe spacing ${side} ${layer} ${kind} rejects the whole selected set without a Download`, async ({ page, baseURL }, testInfo) => {
+          const origin = new URL(baseURL!).origin
+          await page.route('**/*', route => new URL(route.request().url()).origin === origin
+            ? route.continue() : route.abort('blockedbyclient'))
+          // Both sides selected: one side is safe for line/auto cases, proving
+          // that Review cannot silently drop the unsafe side or partially apply.
+          const fixture = spacingFixture({ before: 6, after: 0, override: { side, layer, kind } })
+          const digest = createHash('sha256').update(fixture.file.buffer).digest('hex')
+          const created = await page.request.post('/api/audit', {
+            multipart: { file: fixture.file, custom_profile: JSON.stringify(fixture.profile) }, timeout: 90_000,
+          })
+          expect(created.ok(), await created.text()).toBe(true)
+          const auditId = (await created.json()).audit_id as string
+          const before = await (await page.request.get(`/api/audit/${auditId}`)).json()
+          const events: string[] = []
+          let applyRequests = 0
+          page.on('download', event => events.push(event.suggestedFilename()))
+          page.on('request', request => {
+            if (request.method() === 'POST' && new URL(request.url()).pathname === `/api/audit/${auditId}/guided-fixes`) applyRequests++
+          })
+          await page.goto(`/audit/${auditId}`)
+          await openGuidedFixes(page)
+          for (const selectedSide of ['before', 'after']) {
+            await page.getByRole('checkbox', { name: new RegExp(`Space ${selectedSide} the paragraph does not match, .*Paragraph 1`) }).check()
+          }
+          await page.getByRole('button', { name: 'Review 2 selected changes', exact: true }).click()
+          await page.locator('#guided-fixes-file-input').setInputFiles(fixture.file)
+          const reviewing = page.waitForResponse(response =>
+            response.request().method() === 'POST' && new URL(response.url()).pathname === `/api/audit/${auditId}/guided-fixes/review`)
+          await page.getByRole('button', { name: 'Review safety and locations', exact: true }).click()
+          const response = await reviewing
+          expect(response.status()).toBe(422)
+          const rejected = await response.json()
+          expect(rejected).not.toHaveProperty('review_id')
+          expect(rejected).not.toHaveProperty('download_token')
+          await expect(page.getByRole('alert')).toContainText('Fix cannot be applied safely. Correct the selected findings manually.')
+          await expect(page.getByRole('button', { name: 'Apply and verify changes', exact: true })).toHaveCount(0)
+          await expect(page.getByRole('button', { name: 'Download corrected document', exact: true })).toHaveCount(0)
+          if (layer === 'direct' && side === 'before' && kind === 'lines') {
+            await spacingStateEvidence(page, testInfo, 'unsafe-spacing-manual')
+          }
+          await tabTo(page, page.getByRole('button', { name: 'Back to findings', exact: true }).last())
+          await page.keyboard.press('Enter')
+          await expect(page.getByRole('button', { name: 'Review 2 selected changes', exact: true })).toBeEnabled()
+          expect(events).toEqual([])
+          expect(applyRequests).toBe(0)
+          expect(createHash('sha256').update(fixture.file.buffer).digest('hex')).toBe(digest)
+          expect(await (await page.request.get(`/api/audit/${auditId}`)).json()).toEqual(before)
+        })
+      }
+    }
+  }
+
   test('open, keyboard-select two candidates, upload step and back preserve selection', async ({ page }, testInfo) => {
     annotate(testInfo, {
       id: 'GF-WORKFLOW',

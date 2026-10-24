@@ -546,3 +546,144 @@ def test_store_failure_does_not_publish_token(output_storage, monkeypatch):
     with pytest.raises(OSError, match="disk unavailable"):
         guided_fix_storage.store("audit-one", data, "fixed.docx")
     assert list(output_storage.iterdir()) == []
+
+
+def _assert_spacing_package_unchanged(source, corrected, expected):
+    """Independent ZIP oracle: only named paragraph/spacing attributes may differ."""
+    w = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+    with zipfile.ZipFile(io.BytesIO(source)) as original, zipfile.ZipFile(io.BytesIO(corrected)) as output:
+        assert set(original.namelist()) == set(output.namelist())
+        for name in original.namelist():
+            before, after = original.read(name), output.read(name)
+            if name not in {"word/document.xml", "docProps/core.xml", "docProps/app.xml"}:
+                # Includes styles, numbering, relationships, images and header/footer parts.
+                assert before == after, name
+                continue
+            roots = [etree.fromstring(content) for content in (before, after)]
+            if name == "word/document.xml":
+                paragraphs = [root.find(w + "body").findall(w + "p") for root in roots]
+                assert len(paragraphs[0]) == len(paragraphs[1])
+                for paragraph_index, values in expected.items():
+                    for side, twips in values.items():
+                        original_spacing = paragraphs[0][paragraph_index].find(w + "pPr/" + w + "spacing")
+                        corrected_spacing = paragraphs[1][paragraph_index].find(w + "pPr/" + w + "spacing")
+                        assert original_spacing.get(w + side) == "400"
+                        assert corrected_spacing.get(w + side) == str(twips)
+                        assert dict(original_spacing.attrib) != dict(corrected_spacing.attrib)
+                        for spacing in (original_spacing, corrected_spacing):
+                            del spacing.attrib[w + side]
+            else:
+                namespace = ("{http://purl.org/dc/terms/}" if name == "docProps/core.xml"
+                             else "{http://schemas.openxmlformats.org/officeDocument/2006/extended-properties}")
+                allowed = ({"modified"} if name == "docProps/core.xml" else
+                           {"TotalTime", "Pages", "Words", "Characters", "CharactersWithSpaces", "Lines", "Paragraphs"})
+                for root in roots:
+                    for field in allowed:
+                        for node in root.findall(namespace + field):
+                            assert not len(node)
+                            node.text = None
+            assert etree.tostring(roots[0], method="c14n") == etree.tostring(roots[1], method="c14n"), name
+
+
+def _spacing_preservation_document():
+    import base64
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+
+    document = Document()
+    paragraph = document.add_paragraph("A body paragraph with independently checked spacing.")
+    paragraph.paragraph_format.space_before = Pt(20)
+    paragraph.paragraph_format.space_after = Pt(20)
+    paragraph.runs[0].font.name = "Times New Roman"
+    paragraph.runs[0].font.size = Pt(11)
+    spacing = paragraph._p.pPr.find(qn("w:spacing"))
+    spacing.set(qn("w:line"), "360")
+    spacing.set(qn("w:lineRule"), "auto")
+    # Unselected rich content must survive without becoming spacing targets.
+    other = document.add_paragraph("Unselected bookmark and field: ")
+    start, end = OxmlElement("w:bookmarkStart"), OxmlElement("w:bookmarkEnd")
+    start.set(qn("w:id"), "7")
+    start.set(qn("w:name"), "PreservedBookmark")
+    end.set(qn("w:id"), "7")
+    other._p.insert(0, start)
+    other._p.append(end)
+    field = OxmlElement("w:fldSimple")
+    field.set(qn("w:instr"), "DATE")
+    run, text = OxmlElement("w:r"), OxmlElement("w:t")
+    text.text = "Unchanged field result"
+    run.append(text)
+    field.append(run)
+    other._p.append(field)
+    document.add_paragraph("An unselected numbered entry.", style="List Number")
+    document.add_table(rows=1, cols=1).cell(0, 0).text = "Preserved table content"
+    document.sections[0].header.paragraphs[0].text = "Preserved header"
+    document.sections[0].footer.paragraphs[0].text = "Preserved footer"
+    png = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII="
+    )
+    document.add_picture(io.BytesIO(png))
+    return document
+
+
+@pytest.mark.parametrize("side", ["before", "after"])
+@pytest.mark.parametrize("twips", [0, 120])
+def test_spacing_exact_attribute_and_package_preservation(side, twips):
+    document = _spacing_preservation_document()
+    stream = io.BytesIO()
+    document.save(stream)
+    source = stream.getvalue()
+    selected = document.paragraphs[0]
+    setattr(selected.paragraph_format, "space_" + side, Pt(twips / 20))
+    stream = io.BytesIO()
+    document.save(stream)
+    corrected = stream.getvalue()
+    _assert_spacing_package_unchanged(source, corrected, {0: {side: twips}})
+    compare_preservation(source, corrected, {(0, None, "SPACE_" + side.upper())})
+
+
+@pytest.mark.parametrize("side", ["before", "after"])
+@pytest.mark.parametrize("sibling", [
+    "opposite", "line", "lineRule", "beforeLines", "afterLines",
+    "beforeAutospacing", "afterAutospacing", "contextualSpacing",
+])
+def test_spacing_mask_does_not_hide_same_element_or_contextual_siblings(side, sibling):
+    document = _spacing_preservation_document()
+    stream = io.BytesIO()
+    document.save(stream)
+    source = stream.getvalue()
+    w = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+
+    def change(root):
+        properties = root.find(w + "body/" + w + "p/" + w + "pPr")
+        spacing = properties.find(w + "spacing")
+        spacing.set(w + side, "120")
+        if sibling == "contextualSpacing":
+            etree.SubElement(properties, w + sibling).set(w + "val", "1")
+        else:
+            attribute = ("after" if side == "before" else "before") if sibling == "opposite" else sibling
+            spacing.set(w + attribute, "exact" if attribute == "lineRule" else "1")
+
+    changed = _change_part(source, "word/document.xml", change)
+    with pytest.raises(ValueError):
+        compare_preservation(source, changed, {(0, None, "SPACE_" + side.upper())})
+
+
+def test_spacing_combined_mask_requires_both_exact_targets():
+    document = _spacing_preservation_document()
+    stream = io.BytesIO()
+    document.save(stream)
+    source = stream.getvalue()
+    w = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+
+    def change(root):
+        spacing = root.find(w + "body/" + w + "p/" + w + "pPr/" + w + "spacing")
+        spacing.set(w + "before", "120")
+        spacing.set(w + "after", "0")
+
+    corrected = _change_part(source, "word/document.xml", change)
+    targets = {(0, None, "SPACE_BEFORE"), (0, None, "SPACE_AFTER")}
+    compare_preservation(source, corrected, targets)
+    _assert_spacing_package_unchanged(source, corrected, {0: {"before": 120, "after": 0}})
+    for target in targets:
+        with pytest.raises(ValueError):
+            compare_preservation(source, corrected, {target})
