@@ -12,7 +12,12 @@ from lxml import etree
 
 from app.config import settings
 from app.services import guided_fix_storage
-from app.services.docx_preservation import compare_preservation, validate_package
+from app.services.docx_preservation import (
+    ReferenceHeadingBoldPackageUnsupported,
+    compare_preservation,
+    validate_package,
+    validate_reference_heading_bold_package,
+)
 
 
 def _docx(size=11):
@@ -41,6 +46,262 @@ def _change_part(data, name, change):
     return _replace_part(data, name, transform)
 
 
+def _add_parts(data, parts):
+    out = io.BytesIO()
+    with zipfile.ZipFile(io.BytesIO(data)) as old, zipfile.ZipFile(out, "w") as new:
+        for info in old.infolist():
+            new.writestr(info, old.read(info.filename))
+        for name, content in parts.items():
+            new.writestr(name, content)
+    return out.getvalue()
+
+
+def _bold_heading(bold):
+    document = Document()
+    paragraph = document.add_paragraph()
+    for text in ("Refer", " ", "ences", ""):
+        run = paragraph.add_run(text)
+        run.bold = bold
+        run.italic = True
+        run.font.name = "Times New Roman"
+        run.font.size = Pt(11)
+    paragraph.paragraph_format.space_before = Pt(6)
+    stream = io.BytesIO()
+    document.save(stream)
+    return stream.getvalue()
+
+
+@pytest.mark.parametrize("before_value,after_value", [(False, True), (True, False)])
+def test_reference_heading_bold_multirun_changes_only_selected_bold(before_value, after_value):
+    before = _bold_heading(before_value)
+    w = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+
+    def change(root):
+        for run in root.findall(".//" + w + "body/" + w + "p/" + w + "r")[:3]:
+            run.find(w + "rPr/" + w + "b").set(w + "val", "1" if after_value else "0")
+
+    after = _change_part(before, "word/document.xml", change)
+    targets = {(0, index, "REFERENCE_HEADING_BOLD") for index in range(3)}
+    compare_preservation(before, after, targets)
+    with pytest.raises(ValueError):
+        compare_preservation(before, after, {(0, 0, "REFERENCE_HEADING_BOLD")})
+    with pytest.raises(ValueError):
+        compare_preservation(before, after, {(0, None, "REFERENCE_HEADING_BOLD")})
+
+
+@pytest.mark.parametrize("property_name,attribute,value", [
+    ("i", "val", "0"),
+    ("rFonts", "ascii", "Arial"),
+    ("sz", "val", "28"),
+    ("spacing", "val", "20"),
+    ("b", "other", "changed"),
+    ("bCs", "val", "1"),
+])
+def test_reference_heading_bold_does_not_mask_run_siblings(property_name, attribute, value):
+    before = _bold_heading(False)
+    w = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+
+    def change(root):
+        properties = root.find(".//" + w + "rPr")
+        properties.find(w + "b").set(w + "val", "1")
+        prop = properties.find(w + property_name)
+        if prop is None:
+            prop = etree.SubElement(properties, w + property_name)
+        prop.set(w + attribute, value)
+
+    with pytest.raises(ValueError):
+        compare_preservation(before, _change_part(before, "word/document.xml", change),
+                             {(0, 0, "REFERENCE_HEADING_BOLD")})
+
+
+def test_reference_heading_bold_does_not_mask_paragraph_spacing_or_empty_run():
+    before = _bold_heading(False)
+    w = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+
+    def change_spacing(root):
+        root.find(".//" + w + "pPr/" + w + "spacing").set(w + "before", "240")
+
+    def change_empty(root):
+        root.findall(".//" + w + "rPr/" + w + "b")[-1].set(w + "val", "1")
+
+    targets = {(0, index, "REFERENCE_HEADING_BOLD") for index in range(3)}
+    for change in (change_spacing, change_empty):
+        with pytest.raises(ValueError):
+            compare_preservation(before, _change_part(before, "word/document.xml", change), targets)
+
+
+def _excluded_package(indicator, value):
+    data = _docx()
+    if indicator == "part":
+        return _add_parts(data, {value: b"<marker/>"})
+    if indicator == "relationship":
+        data = _add_parts(data, {"word/alternate.bin": b"<marker/>"})
+
+        def add_relationship(root):
+            etree.SubElement(root, root.tag.removesuffix("Relationships") + "Relationship",
+                             Id="excluded", Type=value, Target="alternate.bin")
+
+        return _change_part(data, "word/_rels/document.xml.rels", add_relationship)
+    if indicator == "content_type":
+        data = _add_parts(data, {"word/alternate.bin": b"<marker/>"})
+
+        def add_content_type(root):
+            etree.SubElement(root, root.tag.removesuffix("Types") + "Override",
+                             PartName="/word/alternate.bin", ContentType=value)
+
+        return _change_part(data, "[Content_Types].xml", add_content_type)
+    if indicator == "protection":
+        w = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+        return _change_part(data, "word/settings.xml",
+                            lambda root: etree.SubElement(root, w + value))
+    raise AssertionError("unknown fixture indicator")
+
+
+@pytest.mark.parametrize("indicator,value", [
+    ("part", "_xmlsignatures/alternate.xml"),
+    ("part", "word/vbaProject.bin"),
+    ("part", "word/vbaData.xml"),
+    ("part", "word/vbaProjectSignature.bin"),
+    ("relationship", "http://schemas.openxmlformats.org/package/2006/relationships/digital-signature/origin"),
+    ("relationship", "http://schemas.openxmlformats.org/package/2006/relationships/digital-signature/signature"),
+    ("relationship", "http://schemas.openxmlformats.org/package/2006/relationships/digital-signature/certificate"),
+    ("relationship", "http://schemas.microsoft.com/office/2006/relationships/vbaProject"),
+    ("relationship", "http://schemas.microsoft.com/office/2006/relationships/vbaData"),
+    ("relationship", "http://schemas.microsoft.com/office/2006/relationships/vbaProjectSignature"),
+    ("content_type", "application/vnd.openxmlformats-package.digital-signature-origin"),
+    ("content_type", "application/vnd.openxmlformats-package.digital-signature-xmlsignature+xml"),
+    ("content_type", "application/vnd.openxmlformats-package.digital-signature-certificate"),
+    ("content_type", "application/vnd.ms-office.vbaProject"),
+    ("content_type", "application/vnd.ms-office.vbaData+xml"),
+    ("content_type", "application/vnd.ms-office.vbaProjectSignature"),
+    ("content_type", "application/vnd.ms-word.document.macroEnabled.main+xml"),
+    ("content_type", "application/vnd.ms-word.template.macroEnabledTemplate.main+xml"),
+    ("protection", "documentProtection"),
+    ("protection", "writeProtection"),
+])
+def test_reference_heading_bold_excludes_proven_package_features_only_for_candidate(indicator, value):
+    data = _excluded_package(indicator, value)
+    validate_package(data)
+    with pytest.raises(ReferenceHeadingBoldPackageUnsupported):
+        validate_reference_heading_bold_package(data)
+
+
+def test_reference_heading_bold_ordinary_package_is_eligible():
+    data = _docx()
+    validate_package(data)
+    validate_reference_heading_bold_package(data)
+
+
+@pytest.mark.parametrize("content_type", [
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.template.main+xml",
+    "application/xml",
+    "",
+])
+def test_reference_heading_bold_requires_normal_docx_main_type(content_type):
+    def change(root):
+        main = next(child for child in root if child.get("PartName") == "/word/document.xml")
+        main.set("ContentType", content_type)
+
+    data = _change_part(_docx(), "[Content_Types].xml", change)
+    with pytest.raises(ValueError) as caught:
+        validate_reference_heading_bold_package(data)
+    assert type(caught.value) is ValueError
+
+
+def test_reference_heading_bold_macro_main_type_is_typed_exclusion():
+    def change(root):
+        main = next(child for child in root if child.get("PartName") == "/word/document.xml")
+        main.set("ContentType", "application/vnd.ms-word.document.macroEnabled.main+xml")
+
+    data = _change_part(_docx(), "[Content_Types].xml", change)
+    with pytest.raises(ReferenceHeadingBoldPackageUnsupported):
+        validate_reference_heading_bold_package(data)
+
+
+@pytest.mark.parametrize("part,content", [
+    ("word/styles.xml", b"<broken"),
+    ("word/settings.xml", b"<broken"),
+    ("word/document.xml", b"<broken"),
+    ("word/_rels/document.xml.rels", b"<broken"),
+    ("[Content_Types].xml", b"<broken"),
+    ("word/settings.xml", b"<!DOCTYPE x [<!ENTITY x 'unsafe'>]><x>&x;</x>"),
+    ("word/settings.xml", b"<settings/>"),
+    ("[Content_Types].xml", b"<Types/>"),
+])
+def test_reference_heading_bold_malformed_xml_is_not_feature_exclusion(part, content):
+    data = _replace_part(_docx(), part, lambda old: content)
+    validate_package(data)
+    with pytest.raises(ValueError) as caught:
+        validate_reference_heading_bold_package(data)
+    assert type(caught.value) is ValueError
+
+
+def test_reference_heading_bold_relationship_validation_is_not_feature_exclusion():
+    data = _change_part(_docx(), "_rels/.rels",
+                        lambda root: root[0].set("Target", "missing.xml"))
+    with pytest.raises(ValueError) as caught:
+        validate_reference_heading_bold_package(data)
+    assert type(caught.value) is ValueError
+
+
+def test_reference_heading_bold_checks_declared_xml_with_alternative_part_name():
+    data = _excluded_package("content_type", "application/xml")
+    validate_reference_heading_bold_package(data)
+    data = _replace_part(data, "word/alternate.bin", lambda content: b"<broken")
+    with pytest.raises(ValueError) as caught:
+        validate_reference_heading_bold_package(data)
+    assert type(caught.value) is ValueError
+
+
+@pytest.mark.parametrize("attribute,value", [("Id", ""), ("TargetMode", "Unknown")])
+def test_reference_heading_bold_malformed_relationship_is_plain_value_error(attribute, value):
+    data = _change_part(_docx(), "_rels/.rels",
+                        lambda root: root[0].set(attribute, value))
+    with pytest.raises(ValueError) as caught:
+        validate_reference_heading_bold_package(data)
+    assert type(caught.value) is ValueError
+
+
+@pytest.mark.parametrize("change", ["missing_main", "duplicate", "wrong_entry"])
+def test_reference_heading_bold_malformed_content_types_are_plain_value_error(change):
+    def mutate(root):
+        if change == "missing_main":
+            root.remove(next(child for child in root if child.get("PartName") == "/word/document.xml"))
+        elif change == "duplicate":
+            etree.SubElement(root, root[0].tag, **dict(root[0].attrib))
+        else:
+            etree.SubElement(root, "unknown")
+
+    data = _change_part(_docx(), "[Content_Types].xml", mutate)
+    with pytest.raises(ValueError) as caught:
+        validate_reference_heading_bold_package(data)
+    assert type(caught.value) is ValueError
+
+
+@pytest.mark.parametrize("invalid", ["zip", "duplicate", "path", "missing", "expanded", "total", "count"])
+def test_reference_heading_bold_keeps_existing_package_boundaries(invalid, monkeypatch):
+    from app.services import docx_preservation
+
+    data = _docx()
+    if invalid == "zip":
+        data = b"not a zip"
+    elif invalid in ("duplicate", "path"):
+        name = "word/document.xml" if invalid == "duplicate" else "../outside.xml"
+        data = _add_parts(data, {name: b"<x/>"})
+    elif invalid == "missing":
+        stream = io.BytesIO()
+        with zipfile.ZipFile(stream, "w") as archive:
+            archive.writestr("word/document.xml", b"<x/>")
+        data = stream.getvalue()
+    else:
+        boundary = {"expanded": "_MAX_EXPANDED_PART", "total": "_MAX_EXPANDED_TOTAL",
+                    "count": "_MAX_PARTS"}[invalid]
+        monkeypatch.setattr(docx_preservation, boundary, 1)
+    with pytest.raises(ValueError) as caught:
+        validate_reference_heading_bold_package(data)
+    assert type(caught.value) is ValueError
+
+
 def test_declared_run_size_and_repacked_package_pass():
     before = _docx(11)
     after = _docx(12)
@@ -51,6 +312,7 @@ def test_declared_run_size_and_repacked_package_pass():
     ("FONT_CONSISTENCY", "rFonts", "ascii", "Times New Roman", 0),
     ("ALIGNMENT", "jc", "val", "center", None),
     ("REFERENCE_HEADING_ALIGNMENT", "jc", "val", "center", None),
+    ("REFERENCE_HEADING_BOLD", "b", "val", "1", 0),
     ("LINE_SPACING", "spacing", "line", "360", None),
     ("SPACE_BEFORE", "spacing", "before", "120", None),
     ("SPACE_AFTER", "spacing", "after", "120", None),
@@ -192,11 +454,12 @@ def test_overexpanded_unreferenced_member_rejected_before_parsing():
         validate_package(out.getvalue())
 
 
-def test_cannot_select_indirect_runs():
+@pytest.mark.parametrize("rule", ["FONT_SIZE", "REFERENCE_HEADING_BOLD"])
+def test_cannot_select_indirect_runs(rule):
     before = _docx()
     edited = _change_part(before, "word/document.xml", _wrap_run_in_hyperlink)
     with pytest.raises(ValueError):
-        compare_preservation(edited, edited, {(0, 0, "FONT_SIZE")})
+        compare_preservation(edited, edited, {(0, 0, rule)})
 
 
 def _wrap_run_in_hyperlink(root):

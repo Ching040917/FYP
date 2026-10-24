@@ -17,6 +17,7 @@ _DCTERMS = "{http://purl.org/dc/terms/}"
 _EP = "{http://schemas.openxmlformats.org/officeDocument/2006/extended-properties}"
 _MC = "{http://schemas.openxmlformats.org/markup-compatibility/2006}"
 _XSI = "{http://www.w3.org/2001/XMLSchema-instance}"
+_CT = "{http://schemas.openxmlformats.org/package/2006/content-types}"
 
 # The selected rule never licenses a change to a sibling attribute on the
 # same element (e.g. spacing/@after while correcting spacing/@before).
@@ -25,6 +26,7 @@ _PROPERTIES = {
     "FONT_SIZE": ("rPr", "sz", ("val",)),
     "ALIGNMENT": ("pPr", "jc", ("val",)),
     "REFERENCE_HEADING_ALIGNMENT": ("pPr", "jc", ("val",)),
+    "REFERENCE_HEADING_BOLD": ("rPr", "b", ("val",)),
     "LINE_SPACING": ("pPr", "spacing", ("line", "lineRule")),
     "SPACE_BEFORE": ("pPr", "spacing", ("before",)),
     "SPACE_AFTER": ("pPr", "spacing", ("after",)),
@@ -134,6 +136,96 @@ def _check_relationships(parts: dict[str, bytes]) -> None:
             )
             if resolved.startswith("../") or resolved not in parts:
                 raise ValueError("dangling internal relationship")
+
+
+class ReferenceHeadingBoldPackageUnsupported(ValueError):
+    """A proven signature, protection, or macro excludes this candidate only."""
+
+
+def validate_reference_heading_bold_package(data: bytes) -> None:
+    """Validate ordinary DOCX input without changing other candidates' eligibility.
+
+    Malformed/unknown packages raise plain ValueError. Only positively identified
+    signatures, macros, and document/write protection use the typed exclusion.
+    """
+    parts = _package(data)
+    _check_relationships(parts)
+    roots = {
+        name: _xml(content) for name, content in parts.items()
+        if name.endswith((".xml", ".rels"))
+    }
+    content_types = roots["[Content_Types].xml"]
+    if content_types.tag != _CT + "Types":
+        raise ValueError("invalid DOCX content types")
+    defaults, overrides = {}, {}
+    for entry in content_types:
+        if len(entry) or entry.tag not in (_CT + "Default", _CT + "Override"):
+            raise ValueError("invalid DOCX content type entry")
+        content_type = entry.get("ContentType")
+        if not content_type:
+            raise ValueError("missing DOCX content type")
+        if entry.tag == _CT + "Default":
+            key = entry.get("Extension")
+            target = defaults
+        else:
+            key = entry.get("PartName")
+            target = overrides
+            if not key or not key.startswith("/"):
+                raise ValueError("invalid DOCX content type part name")
+        if not key or key in target:
+            raise ValueError("invalid or duplicate DOCX content type")
+        target[key] = content_type
+    # XML can have a non-.xml part name. Inspect those parts as well, using the
+    # same bounded package and non-networking XML parser as preservation.
+    for name, content in parts.items():
+        content_type = overrides.get("/" + name, defaults.get(name.rsplit(".", 1)[-1], ""))
+        if name not in roots and (content_type.endswith("+xml") or
+                                  content_type in ("application/xml", "text/xml")):
+            roots[name] = _xml(content)
+    _top_level_paragraphs(roots["word/document.xml"])
+    if roots["word/settings.xml"].tag != _W + "settings":
+        raise ValueError("invalid DOCX settings XML")
+
+    signature_types = {
+        "application/vnd.openxmlformats-package.digital-signature-" + suffix
+        for suffix in ("origin", "xmlsignature+xml", "certificate")
+    }
+    macro_types = {
+        "application/vnd.ms-office." + suffix
+        for suffix in ("vbaproject", "vbadata+xml", "vbaprojectsignature")
+    }
+    excluded_relations = {
+        "http://schemas.openxmlformats.org/package/2006/relationships/digital-signature/" + suffix
+        for suffix in ("origin", "signature", "certificate")
+    } | {
+        "http://schemas.microsoft.com/office/2006/relationships/" + suffix
+        for suffix in ("vbaproject", "vbadata", "vbaprojectsignature")
+    }
+    for name in parts:
+        lower = name.lower()
+        if lower.startswith("_xmlsignatures/") or lower.rsplit("/", 1)[-1] in (
+            "vbaproject.bin", "vbadata.xml", "vbaprojectsignature.bin",
+        ):
+            raise ReferenceHeadingBoldPackageUnsupported("signature or macro package part")
+    for content_type in (*defaults.values(), *overrides.values()):
+        lower = content_type.lower()
+        if (lower in signature_types or lower in macro_types or
+                (lower.startswith("application/vnd.ms-") and ".macroenabled" in lower)):
+            raise ReferenceHeadingBoldPackageUnsupported("signature or macro content type")
+    for name, root in roots.items():
+        if name.endswith(".rels") and any(
+            relation.get("Type", "").lower() in excluded_relations for relation in root
+        ):
+            raise ReferenceHeadingBoldPackageUnsupported("signature or macro relationship")
+        if root.tag == _W + "settings" and any(
+            node.tag in (_W + "documentProtection", _W + "writeProtection")
+            for node in root.iter()
+        ):
+            raise ReferenceHeadingBoldPackageUnsupported("document or write protection")
+    if overrides.get("/word/document.xml") != (
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"
+    ):
+        raise ValueError("unsupported DOCX main content type")
 
 
 def _top_level_paragraphs(root):
@@ -271,7 +363,7 @@ def compare_preservation(source_bytes: bytes, output_bytes: bytes, allowed_targe
         if (type(paragraph) is not int or paragraph < 0 or
                 (run is not None and (type(run) is not int or run < 0)) or
                 rule not in _PROPERTIES or
-                (run is None) != (rule not in ("FONT_SIZE", "FONT_CONSISTENCY")) or
+                (run is None) != (rule not in ("FONT_SIZE", "FONT_CONSISTENCY", "REFERENCE_HEADING_BOLD")) or
                 entry in targets):
             raise ValueError("invalid or duplicate guided fix target")
         targets.add(entry)

@@ -52,6 +52,26 @@ Download progress is announced only while the current request is pending.
 Closing or restarting Guided Fixes clears obsolete notices; reopening does not
 replay a previous Download or availability announcement.
 
+### Reference List heading bold Guided Fix
+
+Guided Fixes can make a verified Reference List heading **Bold** or **Not bold**
+according to the audit's saved Profile Snapshot. Review identifies one affected
+heading paragraph and confirms every nonempty direct text segment, including
+whitespace-only segments. Only its direct bold values change; wording,
+alignment, Reference entries, shared styles and empty runs remain unchanged.
+
+This correction is unavailable when the heading is ambiguous, its direct bold
+evidence is inherited, mixed or unresolved, or its structure is unsupported.
+Signed, protected and macro-enabled packages are also unavailable for this
+correction. Follow the manual guidance instead; ACA does not guess or partially
+correct the heading.
+
+Apply verifies every target segment, package preservation and a corrected-file
+re-audit before offering the separate, one-use Download. The original DOCX,
+saved Audit, Snapshot, History and PDF remain unchanged. Inspect the corrected
+copy in your authoring application before submission; auditing it again requires
+an explicit upload.
+
 ### Optional Header, Footer and Page Number reviews
 
 Custom Profiles can independently enable **Check Header requirements**,

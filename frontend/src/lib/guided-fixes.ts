@@ -23,10 +23,13 @@ export const SUPPORTED_FIX_RULES: Readonly<Record<string, true>> = {
   SPACE_BEFORE: true,
   SPACE_AFTER: true,
   REFERENCE_HEADING_ALIGNMENT: true,
+  REFERENCE_HEADING_BOLD: true,
 }
 
 /** Maximum selected findings — matches backend GuidedFixSelectionRequest. */
 export const MAX_SELECTED = 20
+
+export const REFERENCE_HEADING_BOLD_PROPERTY = 'Reference List heading bold (all heading text)'
 
 export const CORRECTED_FALLBACK_FILENAME = 'ACA-fixed.docx'
 
@@ -57,6 +60,12 @@ export const INVALID_DOCX =
 export const OVERSIZE_DOCX =
   'This file is larger than the 10 MB limit. Choose a smaller document and try again.'
 
+const BOLD_UNAVAILABLE_DETAILS: readonly string[] = [
+  'ACA cannot identify one unambiguous Reference List heading. Correct this finding manually; your original document is unchanged.',
+  'ACA cannot safely confirm bold formatting for every text segment in this heading. Correct its bold formatting manually; your original document is unchanged.',
+  'This correction is unavailable for signed, protected or macro-enabled documents. Correct the heading manually; your original document is unchanged.',
+]
+
 /**
  * Translate known backend messages; never expose internal skip codes, raw
  * document structure or unexpected server detail to the user.
@@ -72,7 +81,8 @@ export function friendlyGuidedFixError(raw: string | null | undefined): string {
       upper.includes('REVIEW_ID') || upper.includes('XML') || upper.includes('SHA256')) {
     return GENERIC_FAILURE
   }
-  if (detail === MISMATCH_DETAIL || detail === LEGACY_DETAIL || detail === ZERO_DETAIL) {
+  if (detail === MISMATCH_DETAIL || detail === LEGACY_DETAIL || detail === ZERO_DETAIL ||
+      BOLD_UNAVAILABLE_DETAILS.includes(detail)) {
     return detail
   }
   if (/does not match the document/i.test(detail)) return MISMATCH_DETAIL
@@ -184,6 +194,11 @@ export function guidedProposalFor(ruleCode: string, expected: string | null | un
   const value = friendlyValue(expected)
   if (!value) return 'Profile requirement (see finding details)'
   const upper = ruleCode.toUpperCase()
+  if (upper === 'REFERENCE_HEADING_BOLD') {
+    if (value === 'Bold') return 'Make the Reference List heading bold'
+    if (value === 'Not bold') return 'Use regular (not bold) text for the Reference List heading'
+    return 'Profile requirement (see finding details)'
+  }
   if (upper === 'ALIGNMENT' || upper === 'REFERENCE_HEADING_ALIGNMENT') return alignmentWord(value)
   if (upper === 'LINE_SPACING') return `${value} line spacing`
   if (upper === 'SPACE_BEFORE') return `${value} spacing before`
@@ -218,7 +233,9 @@ export interface GuidedFindingPresentation {
  */
 export function guidedPresentationFor(v: GuidedViolationLike): GuidedFindingPresentation {
   const ruleCode = (v.rule_code ?? '').toUpperCase()
-  const friendlyName = friendlyRuleTitle(ruleCode) ?? 'Finding'
+  const friendlyName = ruleCode === 'REFERENCE_HEADING_BOLD'
+    ? REFERENCE_HEADING_BOLD_PROPERTY
+    : friendlyRuleTitle(ruleCode) ?? 'Finding'
   const loc = v.location ?? {}
   const para = typeof loc.paragraph_index === 'number' && loc.paragraph_index >= 0
     ? loc.paragraph_index + 1

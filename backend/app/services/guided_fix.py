@@ -20,7 +20,7 @@ from app.services.profile_schema import (
 # Constants
 # ---------------------------------------------------------------------------
 
-SAFE_RUN_RULES = frozenset({"FONT_CONSISTENCY", "FONT_SIZE"})
+SAFE_RUN_RULES = frozenset({"FONT_CONSISTENCY", "FONT_SIZE", "REFERENCE_HEADING_BOLD"})
 SAFE_PARA_RULES = frozenset({"ALIGNMENT", "LINE_SPACING", "SPACE_BEFORE", "SPACE_AFTER", "REFERENCE_HEADING_ALIGNMENT"})
 
 MISMATCH_DETAIL = (
@@ -57,6 +57,29 @@ class GuidedFixFailed(Exception):
     """A fix could not be applied or the corrected output could not be
     verified. No partial output is ever returned."""
     pass
+
+
+class ReferenceHeadingBoldUnavailable(GuidedFixFailed):
+    """Only these candidate-specific reasons may cross the public Review boundary."""
+
+    DETAILS = {
+        "ambiguous_heading": (
+            "ACA cannot identify one unambiguous Reference List heading. "
+            "Correct this finding manually; your original document is unchanged."
+        ),
+        "unverifiable_bold": (
+            "ACA cannot safely confirm bold formatting for every text segment in this heading. "
+            "Correct its bold formatting manually; your original document is unchanged."
+        ),
+        "unsupported_package": (
+            "This correction is unavailable for signed, protected or macro-enabled documents. "
+            "Correct the heading manually; your original document is unchanged."
+        ),
+    }
+
+    def __init__(self, reason: str):
+        self.reason = reason
+        super().__init__(self.DETAILS[reason])
 
 
 # ---------------------------------------------------------------------------
@@ -137,6 +160,230 @@ def _unsafe_paragraph(para) -> bool:
 
 def _unsafe_run(run) -> bool:
     return _unsafe_element(run._r)
+
+
+def _require_unique_reference_heading(doc, paragraphs, index: int) -> None:
+    """The same main-story identity gate used by Reference-heading alignment."""
+    from app.services.reference_section import reference_section_bounds, normalise_reference_heading
+
+    bounds = reference_section_bounds(paragraphs)
+    recognized = [p["index"] for p in paragraphs if normalise_reference_heading(p["text"]) is not None]
+    table_heading = any(
+        normalise_reference_heading("".join(node.text or "" for node in cell_para.iter(_W + "t"))) is not None
+        for table in doc.element.body.iter(_W + "tbl")
+        for cell_para in table.iter(_W + "p")
+    )
+    if bounds is None or recognized != [index] or bounds.heading_index != index or table_heading:
+        raise GuidedFixFailed("ambiguous Reference heading")
+
+
+def _reference_heading_bold_run_indexes(doc, paragraphs, index: int) -> List[int]:
+    """Enumerate complete physical text-run addresses, also on corrected output.
+
+    No persisted Actual comparison or noncompliance decision belongs here.
+    Direct booleans make local overrides provable; used style/default chains
+    are inspected only to exclude numbering and unsupported script formatting.
+    """
+    from app.services.reference_section import NUMERIC_SECTION_PREFIX
+
+    try:
+        _require_unique_reference_heading(doc, paragraphs, index)
+    except GuidedFixFailed as exc:
+        raise ReferenceHeadingBoldUnavailable("ambiguous_heading") from exc
+    para = doc.paragraphs[index]
+    if para._p.getparent() is not doc.element.body:
+        raise ReferenceHeadingBoldUnavailable("ambiguous_heading")
+    pprs = para._p.findall(_W + "pPr")
+    if (len(pprs) != 1 or para._p[0] is not pprs[0] or
+            any(text.strip() for text in para._p.xpath("text()")) or NUMERIC_SECTION_PREFIX.match(para.text.strip())):
+        raise ReferenceHeadingBoldUnavailable("unverifiable_bold")
+    paragraph_properties = {
+        "pStyle", "keepNext", "keepLines", "pageBreakBefore", "widowControl",
+        "suppressLineNumbers", "shd", "suppressAutoHyphens",
+        "kinsoku", "wordWrap", "overflowPunct", "topLinePunct", "autoSpaceDE",
+        "autoSpaceDN", "snapToGrid", "spacing", "ind", "contextualSpacing",
+        "mirrorIndents", "suppressOverlap", "jc", "textDirection",
+        "textAlignment", "textboxTightWrap", "outlineLvl", "divId", "cnfStyle", "rPr",
+    }
+    run_properties = {
+        "rStyle", "rFonts", "b", "i", "iCs", "caps", "smallCaps", "strike",
+        "dstrike", "outline", "shadow", "emboss", "imprint", "noProof",
+        "snapToGrid", "vanish", "webHidden", "color", "spacing", "w", "kern",
+        "position", "sz", "szCs", "highlight", "u", "effect", "bdr", "shd",
+        "fitText", "vertAlign", "lang", "eastAsianLayout", "specVanish",
+    }
+
+    def check_properties(container, allowed):
+        if container is None:
+            return
+        tags = [node.tag for node in container]
+        if (container.attrib or len(tags) != len(set(tags)) or
+                any(tag not in {_W + name for name in allowed} for tag in tags) or
+                any(node.tag in {_W + "bCs", _W + "cs", _W + "rtl", _W + "bidi",
+                                 _W + "numPr", _W + "sectPr", _W + "rPrChange",
+                                 _W + "pPrChange"} for node in container.iter())):
+            raise ReferenceHeadingBoldUnavailable("unverifiable_bold")
+        # Normal lang/@bidi and rFonts/@csTheme are metadata, not script flags.
+        for node in container:
+            if node.tag == _W + "rPr":
+                check_properties(node, run_properties - {"rStyle"})
+            elif len(node) or (node.text or "").strip():
+                raise ReferenceHeadingBoldUnavailable("unverifiable_bold")
+            if node.tag == _W + "b" and (
+                set(node.attrib) - {_W + "val"} or node.text or
+                node.get(_W + "val") not in (None, "1", "0", "true", "false", "on", "off")
+            ):
+                raise ReferenceHeadingBoldUnavailable("unverifiable_bold")
+
+    check_properties(pprs[0], paragraph_properties)
+    styles = doc.styles.element
+    style_nodes = {}
+    for node in styles.findall(_W + "style"):
+        style_nodes.setdefault(node.get(_W + "styleId"), []).append(node)
+
+    def check_style(style_id, kind):
+        if not style_id:
+            raise ReferenceHeadingBoldUnavailable("unverifiable_bold")
+        seen = set()
+        while style_id is not None:
+            matches = style_nodes.get(style_id, [])
+            if style_id in seen or len(matches) != 1 or matches[0].get(_W + "type") != kind:
+                raise ReferenceHeadingBoldUnavailable("unverifiable_bold")
+            seen.add(style_id)
+            style = matches[0]
+            for tag, allowed in (("pPr", paragraph_properties), ("rPr", run_properties - {"rStyle"})):
+                properties = style.findall(_W + tag)
+                if len(properties) > 1:
+                    raise ReferenceHeadingBoldUnavailable("unverifiable_bold")
+                if properties:
+                    check_properties(properties[0], allowed)
+            parents = style.findall(_W + "basedOn")
+            if len(parents) > 1 or (parents and (
+                not parents[0].get(_W + "val") or len(parents[0]) or
+                set(parents[0].attrib) != {_W + "val"} or (parents[0].text or "").strip()
+            )):
+                raise ReferenceHeadingBoldUnavailable("unverifiable_bold")
+            style_id = parents[0].get(_W + "val") if parents else None
+
+    def used_style(container, tag, kind):
+        refs = container.findall(_W + tag) if container is not None else []
+        if len(refs) > 1:
+            raise ReferenceHeadingBoldUnavailable("unverifiable_bold")
+        if refs:
+            style_id = refs[0].get(_W + "val")
+            if not style_id or len(refs[0]) or set(refs[0].attrib) != {_W + "val"}:
+                raise ReferenceHeadingBoldUnavailable("unverifiable_bold")
+            check_style(style_id, kind)
+        else:
+            if any(node.get(_W + "type") == kind and
+                   node.get(_W + "default") not in (None, "1", "0", "true", "false", "on", "off")
+                   for node in styles.findall(_W + "style")):
+                raise ReferenceHeadingBoldUnavailable("unverifiable_bold")
+            defaults = [node for node in styles.findall(_W + "style")
+                        if node.get(_W + "type") == kind and node.get(_W + "default") in ("1", "true", "on")]
+            if len(defaults) > 1 or (kind == "paragraph" and not defaults):
+                raise ReferenceHeadingBoldUnavailable("unverifiable_bold")
+            if defaults:
+                check_style(defaults[0].get(_W + "styleId"), kind)
+
+    defaults = styles.findall(_W + "docDefaults")
+    if len(defaults) > 1:
+        raise ReferenceHeadingBoldUnavailable("unverifiable_bold")
+    if defaults:
+        if (defaults[0].attrib or
+                any(node.tag not in {_W + "pPrDefault", _W + "rPrDefault"} for node in defaults[0])):
+            raise ReferenceHeadingBoldUnavailable("unverifiable_bold")
+        for outer, inner, allowed in (
+            ("pPrDefault", "pPr", paragraph_properties),
+            ("rPrDefault", "rPr", run_properties - {"rStyle"}),
+        ):
+            wrappers = defaults[0].findall(_W + outer)
+            if len(wrappers) > 1:
+                raise ReferenceHeadingBoldUnavailable("unverifiable_bold")
+            if wrappers:
+                properties = wrappers[0].findall(_W + inner)
+                if (len(properties) != 1 or len(wrappers[0]) != 1 or wrappers[0].attrib or
+                        (wrappers[0].text or "").strip()):
+                    raise ReferenceHeadingBoldUnavailable("unverifiable_bold")
+                if properties:
+                    check_properties(properties[0], allowed)
+    used_style(pprs[0], "pStyle", "paragraph")
+    bookmarks = []
+    seen_bookmarks = set()
+    indexes = []
+    run_index = 0
+    for child in para._p:
+        if child.tag == _W + "pPr":
+            continue
+        if child.tag in (_W + "bookmarkStart", _W + "bookmarkEnd"):
+            identity = child.get(_W + "id")
+            allowed = {_W + "id", _W + "name"} if child.tag == _W + "bookmarkStart" else {_W + "id"}
+            if (not identity or not identity.isascii() or not identity.isdecimal() or
+                    len(child) or child.text or set(child.attrib) != allowed):
+                raise ReferenceHeadingBoldUnavailable("unverifiable_bold")
+            if child.tag == _W + "bookmarkStart":
+                if identity in seen_bookmarks or not child.get(_W + "name"):
+                    raise ReferenceHeadingBoldUnavailable("unverifiable_bold")
+                seen_bookmarks.add(identity)
+                bookmarks.append(identity)
+                for tag in ("bookmarkStart", "bookmarkEnd"):
+                    if sum(node.get(_W + "id") == identity for node in doc.element.body.iter(_W + tag)) != 1:
+                        raise ReferenceHeadingBoldUnavailable("unverifiable_bold")
+            elif not bookmarks or bookmarks.pop() != identity:
+                raise ReferenceHeadingBoldUnavailable("unverifiable_bold")
+            continue
+        if child.tag != _W + "r" or _unsafe_element(child):
+            raise ReferenceHeadingBoldUnavailable("unverifiable_bold")
+        if (any(text.strip() for text in child.xpath("text()")) or
+                any(node.tag not in (_W + "rPr", _W + "t") for node in child)):
+            raise ReferenceHeadingBoldUnavailable("unverifiable_bold")
+        rprs = child.findall(_W + "rPr")
+        if (len(rprs) > 1 or (rprs and child[0] is not rprs[0]) or
+                any(len(node) or set(node.attrib) - {"{http://www.w3.org/XML/1998/namespace}space"}
+                    for node in child.findall(_W + "t"))):
+            raise ReferenceHeadingBoldUnavailable("unverifiable_bold")
+        rpr = rprs[0] if rprs else None
+        check_properties(rpr, run_properties)
+        used_style(rpr, "rStyle", "character")
+        run = para.runs[run_index]
+        if any(unicodedata.bidirectional(ch) in ("R", "AL", "AN") for ch in run.text):
+            raise ReferenceHeadingBoldUnavailable("unverifiable_bold")
+        if run.text != "":
+            bold = rpr.findall(_W + "b") if rpr is not None else []
+            if (len(bold) != 1 or len(bold[0]) or bold[0].text or
+                    set(bold[0].attrib) - {_W + "val"} or
+                    bold[0].get(_W + "val") not in (None, "1", "0", "true", "false", "on", "off") or
+                    type(run.font.bold) is not bool):
+                raise ReferenceHeadingBoldUnavailable("unverifiable_bold")
+            indexes.append(run_index)
+        run_index += 1
+    if bookmarks or not indexes:
+        raise ReferenceHeadingBoldUnavailable("unverifiable_bold")
+    return indexes
+
+
+def _reference_heading_bold_targets(audit, doc, paragraphs, violation) -> Tuple[List[int], bool]:
+    location = violation.location
+    if (not isinstance(location, dict) or set(location) != {"paragraph_index"} or
+            type(location["paragraph_index"]) is not int or
+            not 0 <= location["paragraph_index"] < len(doc.paragraphs)):
+        raise ReferenceHeadingBoldUnavailable("ambiguous_heading")
+    index = location["paragraph_index"]
+    indexes = _reference_heading_bold_run_indexes(doc, paragraphs, index)
+    expected = _resolve_expected(violation, audit, doc, None)
+    if type(expected) is not bool:
+        raise ReferenceHeadingBoldUnavailable("unverifiable_bold")
+    states = [doc.paragraphs[index].runs[i].font.bold for i in indexes]
+    if (any(value is not states[0] for value in states) or
+            violation.actual_value != ("Bold" if states[0] else "Not bold") or
+            states[0] is expected):
+        raise ReferenceHeadingBoldUnavailable("unverifiable_bold")
+    return indexes, expected
+
+
+def _fix_reference_heading_bold(run, required: bool) -> bool:
+    run.font.bold = required
+    return type(run.font.bold) is bool and run.font.bold is required
 
 
 # ---------------------------------------------------------------------------
@@ -222,6 +469,18 @@ def _resolve_expected(
     rule_code = violation.rule_code
     expected_value = violation.expected_value
 
+    if rule_code == "REFERENCE_HEADING_BOLD":
+        from app.services.profile_snapshot import snapshot_from_dict
+        from app.services.profile_preset_adapter import EffectiveProfileConfig
+        try:
+            config = EffectiveProfileConfig(snapshot_from_dict(audit.profile_snapshot))
+            required = config.REFERENCES_HEADING_BOLD
+            if (config.REFERENCES_CHECK_HEADING_BOLD is True and type(required) is bool and
+                    expected_value == ("Bold" if required else "Not bold")):
+                return required
+        except Exception:
+            return None
+        return None
     if rule_code == "FONT_SIZE":
         value = _parse_pt(expected_value)
         return value if _in_bounds(value, *_FONT_SIZE_PT_RANGE) else None
@@ -358,6 +617,9 @@ def _current_matches_expected(rule_code: str, expected: Any, para_dict: Dict, ru
     the paragraph object directly when provided — `extract_paragraphs`
     maps explicit zero lengths to None, so the dict view is unreliable for
     SPACE_* when the expected value is 0pt."""
+    if rule_code == "REFERENCE_HEADING_BOLD":
+        current = run_dict.get("bold") if run_dict else None
+        return type(current) is bool and current is expected
     if rule_code in SAFE_RUN_RULES:
         if run_dict is None:
             return False
@@ -412,6 +674,9 @@ def _current_changed_from_actual(rule_code: str, para_dict: Dict, run_dict: Opti
     actual_value (same extraction + tolerances). An actual_value that fails
     its own parser is treated as changed — an unverifiable current-vs-actual
     comparison is never applied."""
+    if rule_code == "REFERENCE_HEADING_BOLD":
+        current = run_dict.get("bold") if run_dict else None
+        return type(current) is not bool or actual_value != ("Bold" if current else "Not bold")
     if rule_code == "FONT_SIZE":
         actual_pt = _parse_pt(actual_value)
         if actual_pt is None:
@@ -519,6 +784,16 @@ def review_targets(audit: AuditRecord, source_bytes: bytes, violations: List[Vio
     """
     from app.services.role_classifier import classify_paragraphs
 
+    if any(v.rule_code == "REFERENCE_HEADING_BOLD" for v in violations):
+        from app.services.docx_preservation import (
+            validate_reference_heading_bold_package, ReferenceHeadingBoldPackageUnsupported,
+        )
+        try:
+            validate_reference_heading_bold_package(source_bytes)
+        except ReferenceHeadingBoldPackageUnsupported as exc:
+            raise ReferenceHeadingBoldUnavailable("unsupported_package") from exc
+        except ValueError as exc:
+            raise GuidedFixFailed("unverifiable DOCX package") from exc
     doc = parse_document(source_bytes)
     paragraphs = extract_paragraphs(doc)
     roles = classify_paragraphs(doc, paragraphs)
@@ -531,6 +806,8 @@ def review_targets(audit: AuditRecord, source_bytes: bytes, violations: List[Vio
         code = violation.rule_code
         if code not in SAFE_RUN_RULES | SAFE_PARA_RULES:
             raise GuidedFixFailed("unsupported rule")
+        if code == "REFERENCE_HEADING_BOLD":
+            bold_indexes, bold_expected = _reference_heading_bold_targets(audit, doc, paragraphs, violation)
         loc = violation.location
         if not isinstance(loc, dict):
             raise GuidedFixFailed("missing location")
@@ -554,23 +831,15 @@ def review_targets(audit: AuditRecord, source_bytes: bytes, violations: List[Vio
         if any(run.text != parsed.get("text") for run, parsed in zip(para.runs, paragraphs[index]["runs"])):
             raise GuidedFixFailed("run traversal changed")
         if code == "REFERENCE_HEADING_ALIGNMENT":
-            from app.services.reference_section import reference_section_bounds, normalise_reference_heading
             from app.services.formatting_evidence import resolve_alignment
-            bounds = reference_section_bounds(paragraphs)
-            recognized = [p["index"] for p in paragraphs if normalise_reference_heading(p["text"]) is not None]
-            table_heading = any(
-                normalise_reference_heading("".join(
-                    node.text or "" for node in cell_para.iter(_W + "t")
-                )) is not None
-                for table in doc.element.body.iter(_W + "tbl")
-                for cell_para in table.iter(_W + "p")
-            )
-            if (bounds is None or recognized != [index] or bounds.heading_index != index or
-                    table_heading or not resolve_alignment(para).is_resolved):
+            _require_unique_reference_heading(doc, paragraphs, index)
+            if not resolve_alignment(para).is_resolved:
                 raise GuidedFixFailed("ambiguous Reference heading")
         raw = loc.get("run_indexes", loc.get("run_index"))
         run_indexes = raw if isinstance(raw, list) else [raw]
-        if code in SAFE_RUN_RULES:
+        if code == "REFERENCE_HEADING_BOLD":
+            run_indexes = bold_indexes
+        elif code in SAFE_RUN_RULES:
             if (not run_indexes or any(type(i) is not int or not 0 <= i < len(para.runs)
                                        for i in run_indexes) or len(set(run_indexes)) != len(run_indexes)):
                 raise GuidedFixFailed("invalid run targets")
@@ -582,7 +851,9 @@ def review_targets(audit: AuditRecord, source_bytes: bytes, violations: List[Vio
             if raw is not None:
                 raise GuidedFixFailed("paragraph target contains run indexes")
             run_indexes = [None]
-        expected = _resolve_expected(violation, audit, doc, roles[index] if index < len(roles) else None)
+        expected = bold_expected if code == "REFERENCE_HEADING_BOLD" else _resolve_expected(
+            violation, audit, doc, roles[index] if index < len(roles) else None,
+        )
         if expected is None:
             raise GuidedFixFailed("unresolved requirement")
         for run_index in run_indexes:
@@ -603,9 +874,11 @@ def review_targets(audit: AuditRecord, source_bytes: bytes, violations: List[Vio
             "violation_id": violation.id,
             "before": violation.actual_value,
             "after": violation.expected_value,
-            "locations": [f"Paragraph {index + 1}"],
-            "affected_count": len(run_indexes),
-            "property": code.lower().replace("_", " "),
+            "locations": ([f'Reference List heading "{para.text}" — Paragraph {index + 1}']
+                          if code == "REFERENCE_HEADING_BOLD" else [f"Paragraph {index + 1}"]),
+            "affected_count": 1 if code == "REFERENCE_HEADING_BOLD" else len(run_indexes),
+            "property": ("Reference List heading bold (all heading text)"
+                         if code == "REFERENCE_HEADING_BOLD" else code.lower().replace("_", " ")),
         })
     return items, targets
 
@@ -618,7 +891,7 @@ def apply_guided_fixes(
     """Apply whitelisted fixes to a parsed copy; return
     (corrected_bytes, applied, skipped). Never mutates source_bytes; never
     persists anything. Raises GuidedFixFailed on any unverifiable state."""
-    review_targets(audit, source_bytes, violations)
+    _, reviewed_targets = review_targets(audit, source_bytes, violations)
     from app.services.role_classifier import classify_paragraphs
 
     doc = parse_document(source_bytes)
@@ -659,13 +932,16 @@ def apply_guided_fixes(
         run_indexes: Optional[List[int]] = None
         run_dict: Optional[Dict] = None
         if kind == "run":
-            raw = location.get("run_indexes")
-            if isinstance(raw, list):
-                run_indexes = [i for i in raw if isinstance(i, int) and not isinstance(i, bool)]
+            if rule_code == "REFERENCE_HEADING_BOLD":
+                run_indexes, _ = _reference_heading_bold_targets(audit, doc, paragraphs, violation)
             else:
-                raw = location.get("run_index")
-                if isinstance(raw, int) and not isinstance(raw, bool):
-                    run_indexes = [raw]
+                raw = location.get("run_indexes")
+                if isinstance(raw, list):
+                    run_indexes = [i for i in raw if isinstance(i, int) and not isinstance(i, bool)]
+                else:
+                    raw = location.get("run_index")
+                    if isinstance(raw, int) and not isinstance(raw, bool):
+                        run_indexes = [raw]
             if not run_indexes:
                 skipped.append((violation, "no_location"))
                 continue
@@ -711,6 +987,8 @@ def apply_guided_fixes(
                 ok = _fix_space_before(para, expected)
             elif rule_code == "REFERENCE_HEADING_ALIGNMENT":
                 ok = _fix_alignment(para, expected)
+            elif rule_code == "REFERENCE_HEADING_BOLD":
+                ok = all(_fix_reference_heading_bold(r, expected) for r in runs)
             else:  # SPACE_AFTER
                 ok = _fix_space_after(para, expected)
         except Exception:
@@ -729,11 +1007,11 @@ def apply_guided_fixes(
     doc.save(output)
     corrected_bytes = output.getvalue()
 
-    _validate_output(corrected_bytes, doc, applied, roles, audit)
+    _validate_output(corrected_bytes, doc, applied, roles, audit, reviewed_targets)
     return corrected_bytes, applied, []
 
 
-def _validate_output(corrected_bytes: bytes, source_doc, applied: List[Violation], roles: List[str], audit) -> None:
+def _validate_output(corrected_bytes: bytes, source_doc, applied: List[Violation], roles: List[str], audit, reviewed_targets) -> None:
     """Reopen and verify every target's effective value, including grouped runs."""
     doc = parse_document(corrected_bytes)
     paragraphs = extract_paragraphs(doc)
@@ -745,6 +1023,17 @@ def _validate_output(corrected_bytes: bytes, source_doc, applied: List[Violation
         expected = _resolve_expected(violation, audit, doc, roles[index] if index < len(roles) else None)
         if expected is None:
             raise GuidedFixFailed("requirement changed")
+        if violation.rule_code == "REFERENCE_HEADING_BOLD":
+            indexes = _reference_heading_bold_run_indexes(doc, paragraphs, index)
+            reviewed = sorted(run for paragraph, run, rule in reviewed_targets
+                              if paragraph == index and rule == "REFERENCE_HEADING_BOLD")
+            before = source_doc.paragraphs[index]
+            after = doc.paragraphs[index]
+            if (indexes != reviewed or before.text != after.text or
+                    [run.text for run in before.runs] != [run.text for run in after.runs] or
+                    any(after.runs[i].font.bold is not expected for i in indexes)):
+                raise GuidedFixFailed("incomplete Reference heading bold output")
+            continue
         indexes = location.get("run_indexes", [location.get("run_index")]) if violation.rule_code in SAFE_RUN_RULES else [None]
         for run_index in indexes:
             if run_index is not None and (type(run_index) is not int or run_index >= len(paragraphs[index]["runs"])):

@@ -57,6 +57,7 @@ from app.services.guided_fix import (
     build_corrected_filename,
     review_targets,
     GuidedFixFailed,
+    ReferenceHeadingBoldUnavailable,
     GuidedFixSelectionRequest,
     LEGACY_DETAIL,
     MISMATCH_DETAIL,
@@ -884,6 +885,8 @@ async def review_guided_fixes_endpoint(
     audit, source, selected, ids = await _guided_request(audit_id, file, selection, db)
     try:
         items, _ = review_targets(audit, source, selected)
+    except ReferenceHeadingBoldUnavailable as exc:
+        raise HTTPException(status_code=422, detail=ReferenceHeadingBoldUnavailable.DETAILS[exc.reason])
     except GuidedFixFailed:
         raise HTTPException(status_code=422, detail="Fix cannot be applied safely. Manual correction required.")
     except Exception:
@@ -897,7 +900,11 @@ async def review_guided_fixes_endpoint(
         "review_id": token, "items": items,
         "output_filename": build_corrected_filename(audit.filename),
         "limitations": ["Only selected direct formatting will change.", "Layout and pagination may reflow.",
-                        "Original audit and document remain unchanged. Corrected results are session-only."],
+                        "Original audit and document remain unchanged. Corrected results are session-only."] + (
+            ["For the Reference List heading bold correction, only bold for all verified heading text changes; "
+             "wording, alignment, Reference entries and shared styles remain unchanged by this correction."]
+            if any(v.rule_code == "REFERENCE_HEADING_BOLD" for v in selected) else []
+        ),
         "expires_at": datetime.fromtimestamp(expiry, timezone.utc).isoformat(),
     }
 

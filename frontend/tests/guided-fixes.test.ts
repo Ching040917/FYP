@@ -94,7 +94,25 @@ describe('guided presentation', () => {
     assert.equal(pres.friendlyLocation, 'Paragraph 2')
     assert.equal(pres.current, 'Left')
     assert.equal(pres.proposed, 'centered')
-    assert.equal(guidedPresentationFor(violation('REFERENCE_HEADING_BOLD')).supported, false)
+  })
+
+  test('Reference heading bold proposes only the saved boolean direction', () => {
+    for (const [current, required, proposal] of [
+      ['Not bold', 'Bold', 'Make the Reference List heading bold'],
+      ['Bold', 'Not bold', 'Use regular (not bold) text for the Reference List heading'],
+    ]) {
+      const pres = guidedPresentationFor(violation('REFERENCE_HEADING_BOLD', {
+        location: { paragraph_index: 1 }, actual_value: current, expected_value: required,
+      }))
+      assert.equal(pres.supported, true)
+      assert.equal(pres.friendlyName, 'Reference List heading bold (all heading text)')
+      assert.equal(pres.current, current)
+      assert.equal(pres.proposed, proposal)
+      assert.equal(pres.friendlyLocation, 'Paragraph 2')
+    }
+    const unknown = guidedPresentationFor(violation('REFERENCE_HEADING_BOLD', { expected_value: '12 pt' }))
+    assert.equal(unknown.proposed, 'Profile requirement (see finding details)')
+    assert.equal(guidedPresentationFor(violation('HEADING_BOLD')).supported, false)
   })
 })
 
@@ -300,6 +318,17 @@ describe('error translation', () => {
   test('unsafe review shows manual-correction guidance', () => {
     assert.equal(friendlyGuidedFixError(ZERO_DETAIL), ZERO_DETAIL)
     assert.ok(friendlyGuidedFixError(ZERO_DETAIL).includes('manual'))
+  })
+
+  test('only exact proven heading-bold unavailability details are exposed', () => {
+    for (const detail of [
+      'ACA cannot identify one unambiguous Reference List heading. Correct this finding manually; your original document is unchanged.',
+      'ACA cannot safely confirm bold formatting for every text segment in this heading. Correct its bold formatting manually; your original document is unchanged.',
+      'This correction is unavailable for signed, protected or macro-enabled documents. Correct the heading manually; your original document is unchanged.',
+    ]) {
+      assert.equal(friendlyGuidedFixError(detail), detail)
+      assert.equal(friendlyGuidedFixError(`${detail} Internal XML detail`), GENERIC_FAILURE)
+    }
   })
 
   test('internal skip codes never reach the user', () => {

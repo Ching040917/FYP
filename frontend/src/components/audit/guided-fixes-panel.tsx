@@ -20,7 +20,7 @@ import { Button } from '../ui/button'
 import { Badge } from '../ui/badge'
 import { cn } from '../../lib/utils'
 import {
-  GF_INTRO, GF_SECONDARY, MAX_SELECTED, WORKFLOW_STEPS, correctedFilename,
+  GF_INTRO, GF_SECONDARY, MAX_SELECTED, REFERENCE_HEADING_BOLD_PROPERTY, WORKFLOW_STEPS, correctedFilename,
   deselectInView, friendlyGuidedFixError, guidedCountLine, guidedLimitNotice,
   guidedPresentationFor, guidedReviewLabel, selectAllInView, workflowStepForStage,
 } from '../../lib/guided-fixes'
@@ -43,11 +43,13 @@ const FILTER_OPTIONS: Array<{ id: GuidedFilter; label: string }> = [
 const downloadedNames = new Set<string>()
 
 /**
- * Removal-button label for a finding. Reads the shared friendly title map so
- * the panel can never drift from the Findings list wording.
+ * Use shared finding titles, except the two-direction heading-bold candidate
+ * uses its approved neutral property label.
  */
 function reviewLabelFor(v: Violation): string {
-  return friendlyRuleTitle(v.rule_code) ?? 'finding'
+  return v.rule_code === 'REFERENCE_HEADING_BOLD'
+    ? REFERENCE_HEADING_BOLD_PROPERTY
+    : friendlyRuleTitle(v.rule_code) ?? 'finding'
 }
 
 
@@ -810,7 +812,9 @@ export function GuidedFixesPanel({
                   : <ul className="mt-1 space-y-1">
                     {findings.map((finding, index) => (
                       <li key={`${finding.rule_code}-${index}`}>
-                        {friendlyRuleTitle(finding.rule_code) ?? 'Finding'}: {finding.count}
+                        {finding.rule_code === 'REFERENCE_HEADING_BOLD'
+                          ? REFERENCE_HEADING_BOLD_PROPERTY
+                          : friendlyRuleTitle(finding.rule_code) ?? 'Finding'}: {finding.count}
                         {finding.locations.length > 0 && ` · ${finding.locations.join(', ')}`}
                       </li>
                     ))}

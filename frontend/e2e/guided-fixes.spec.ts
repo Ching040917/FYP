@@ -197,6 +197,96 @@ print(json.dumps({"docx": base64.b64encode(out.getvalue()).decode(), "profile": 
     expect((await downloadPromise).suggestedFilename()).toContain('_ACA-fixed.docx')
   })
 
+  for (const { required, segmented } of [
+    { required: true, segmented: false },
+    { required: false, segmented: false },
+    { required: true, segmented: true },
+  ]) {
+    test(`Reference heading bold ${required ? 'on' : 'off'}${segmented ? ' across all text runs' : ''} preserves the original and downloads a verified copy`, async ({ page, baseURL }) => {
+      const origin = new URL(baseURL!).origin
+      await page.route('**/*', route => new URL(route.request().url()).origin === origin
+        ? route.continue() : route.abort('blockedbyclient'))
+      const backendDir = path.resolve(process.cwd(), '..', 'backend')
+      const python = path.join(backendDir, '.venv', 'Scripts', 'python.exe')
+      const fixture = JSON.parse(execFileSync(python, ['-B', '-c', `
+import base64, json
+from tests.test_guided_fix_reference_heading import _bold_doc, _bold_bytes
+from app.services.profile_schema import new_custom_profile
+required = ${required ? 'True' : 'False'}
+source = _bold_bytes(_bold_doc(not required, segmented=${segmented ? 'True' : 'False'}, rich=True))
+profile = new_custom_profile("Reference heading bold E2E")
+profile.references.check_heading_bold = True
+profile.references.heading_bold = required
+print(json.dumps({"docx": base64.b64encode(source).decode(), "profile": profile.to_dict()}))
+`], { cwd: backendDir, encoding: 'utf8' })) as { docx: string; profile: object }
+      const buffer = Buffer.from(fixture.docx, 'base64')
+      const file = { name: 'reference-bold.docx', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', buffer }
+      const created = await page.request.post('/api/audit', {
+        multipart: { file, custom_profile: JSON.stringify(fixture.profile) }, timeout: 90_000,
+      })
+      expect(created.ok(), await created.text()).toBeTruthy()
+      const auditId = (await created.json()).audit_id as string
+      const before = await (await page.request.get(`/api/audit/${auditId}`)).json()
+      await page.goto(`/audit/${auditId}`)
+      await page.getByRole('button', { name: 'Guided Fixes' }).click()
+      await page.getByRole('checkbox', { name: /Reference List heading bold \(all heading text\).*Paragraph 2/ }).check()
+      await expect(page.getByText(required
+        ? 'Make the Reference List heading bold'
+        : 'Use regular (not bold) text for the Reference List heading')).toBeVisible()
+      await page.getByRole('button', { name: 'Review 1 selected change', exact: true }).click()
+      await page.locator('#guided-fixes-file-input').setInputFiles(file)
+      await page.getByRole('button', { name: 'Review safety and locations' }).click()
+      await expect(page.getByText('Property to change: Reference List heading bold (all heading text)', { exact: true })).toBeVisible({ timeout: 60_000 })
+      await expect(page.getByText(`Current: ${required ? 'Not bold' : 'Bold'}`, { exact: true })).toBeVisible()
+      await expect(page.getByText(`Required and proposed: ${required ? 'Bold' : 'Not bold'}`, { exact: true })).toBeVisible()
+      await expect(page.getByText(/^1 affected location: Reference List heading "References ?".*Paragraph 2$/)).toBeVisible()
+      await page.getByRole('button', { name: 'Apply and verify changes' }).click()
+      await expect(page.getByRole('heading', { name: 'Fix applied; re-audit passed' })).toBeVisible({ timeout: 60_000 })
+      await expect(page.getByRole('dialog').getByText('Reference List heading bold (all heading text): 1')).toBeVisible()
+      const events: string[] = []
+      page.on('download', event => events.push(event.suggestedFilename()))
+      const downloading = page.waitForEvent('download')
+      await page.getByRole('button', { name: 'Download corrected document', exact: true }).click()
+      const download = await downloading
+      const stream = await download.createReadStream()
+      if (!stream) throw new Error('Verified download did not provide readable output')
+      const chunks: Buffer[] = []
+      for await (const chunk of stream) chunks.push(Buffer.from(chunk))
+      const corrected = Buffer.concat(chunks)
+      await expect(page.getByText('Downloaded. The one-use link has expired.', { exact: true })).toBeVisible()
+      expect(events).toEqual(['reference-bold_ACA-fixed.docx'])
+      const inspected = JSON.parse(execFileSync(python, ['-B', '-c', `
+import base64, io, json, sys, zipfile
+from docx import Document
+from app.services.docx_preservation import compare_preservation
+data = json.load(sys.stdin)
+source, output = (base64.b64decode(data[key]) for key in ("source", "output"))
+original, corrected = Document(io.BytesIO(source)), Document(io.BytesIO(output))
+before, after = original.paragraphs[1], corrected.paragraphs[1]
+indexes = [i for i, run in enumerate(before.runs) if run.text != ""]
+assert before.text == after.text and before.alignment == after.alignment
+assert all(after.runs[i].font.bold is data["required"] for i in indexes)
+assert [(r.text, r.font.italic, r.font.name, r.font.size) for r in before.runs] == [(r.text, r.font.italic, r.font.name, r.font.size) for r in after.runs]
+assert all(after.runs[i]._r.xml == run._r.xml for i, run in enumerate(before.runs) if run.text == "")
+compare_preservation(source, output, {(1, i, "REFERENCE_HEADING_BOLD") for i in indexes})
+with zipfile.ZipFile(io.BytesIO(source)) as a, zipfile.ZipFile(io.BytesIO(output)) as b:
+    assert set(a.namelist()) == set(b.namelist())
+    assert all(a.read(name) == b.read(name) for name in a.namelist() if name not in {"word/document.xml", "docProps/core.xml", "docProps/app.xml"})
+print(json.dumps({"verified_text_runs": len(indexes), "package_preserved": True}))
+`], { cwd: backendDir, encoding: 'utf8', input: JSON.stringify({
+        source: fixture.docx, output: corrected.toString('base64'), required,
+      }) })) as { verified_text_runs: number; package_preserved: boolean }
+      expect(inspected).toEqual({ verified_text_runs: segmented ? 3 : 1, package_preserved: true })
+      expect(await (await page.request.get(`/api/audit/${auditId}`)).json()).toEqual(before)
+      const reaudit = await page.request.post('/api/audit', {
+        multipart: { file: { ...file, buffer: corrected }, custom_profile: JSON.stringify(fixture.profile) }, timeout: 90_000,
+      })
+      expect(reaudit.ok(), await reaudit.text()).toBeTruthy()
+      const findings = (await reaudit.json()).physical_layout_errors as { rule_code: string }[]
+      expect(findings.filter(finding => finding.rule_code === 'REFERENCE_HEADING_BOLD')).toEqual([])
+    })
+  }
+
   test('manual-only audit explains empty candidates without offering Apply', async ({ page }) => {
     const backendDir = path.resolve(process.cwd(), '..', 'backend')
     const python = path.join(backendDir, '.venv', 'Scripts', 'python.exe')
