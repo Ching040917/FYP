@@ -52,6 +52,37 @@ Download progress is announced only while the current request is pending.
 Closing or restarting Guided Fixes clears obsolete notices; reopening does not
 replay a previous Download or availability announcement.
 
+### Font Guided Fix safety
+
+Existing `FONT_CONSISTENCY` and `FONT_SIZE` corrections now require supported
+plain-ASCII text, explicit agreeing direct font-family slots, and an unambiguous
+used character/paragraph-style and document-default chain. Inherited font
+declarations, themes, alternate-slot conflicts, script/bidi controls, unsupported
+structures and malformed evidence remain manual—even when direct formatting
+might override them. Ordinary Word templates may therefore offer fewer automatic
+corrections. ACA never removes inherited formatting to make an uploaded file
+eligible.
+
+Both operations independently use the audit's immutable saved Profile Snapshot,
+not the current Profile editor. Size requirements and Current evidence must be
+exact integer half-points: 12pt and 12.5pt are representable; 12.005pt and 12.25pt
+remain manual before Apply is offered. Family corrections change only the three
+authorized direct family slots; size corrections change only the direct size.
+Every selected run's raw saved output is checked exactly after reopening, before
+package preservation, corrected-file re-audit and the separate one-use Download.
+A mixed safe/unsafe selection is refused as a whole.
+
+The original DOCX, saved Audit, Snapshot, History, PDF, scoring and categories
+remain unchanged. This certifies eligible OOXML settings, not installed-font
+availability, font substitution, arbitrary-script rendering or Word pagination.
+No candidate was added. Line-spacing unit/output verification, strict decimal
+before/after-spacing exactness, grouped quantities, truncated aggregates and
+package-policy disposition remain separate release-closure work.
+
+In Review, Tab can focus the details area, marked by an inset focus ring.
+When its content overflows, use the arrow keys, Page Up/Page Down or Home/End
+to scroll it; Tab continues to the existing review actions.
+
 ### Before/after paragraph spacing Guided Fix safety
 
 Existing `SPACE_BEFORE` and `SPACE_AFTER` corrections require an explicit,
@@ -71,9 +102,10 @@ force a correction. These checks certify the point **setting**, not an exact
 rendered gap. The original DOCX, saved audit, Snapshot, History and PDF remain
 unchanged.
 
-This hardening adds no Guided Fix candidate and does not resolve the separate
-font-script-slot, line-spacing-unit, grouped-count, truncated-aggregate or
-package-policy safety issues.
+The before/after-spacing hardening alone does not resolve the separate font,
+line-spacing-unit, strict-decimal, grouped-count, truncated-aggregate or
+package-policy issues. The font boundary is described above; the remaining
+release-closure items are not resolved by font hardening.
 
 ### Reference List heading bold Guided Fix
 

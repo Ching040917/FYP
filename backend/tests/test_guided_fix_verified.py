@@ -28,10 +28,12 @@ from app.services import guided_fix_storage
 from tests.test_guided_fix_reference_heading import (
     BOLD_RULE, _bold_audit, _bold_bytes, _bold_doc,
 )
+from tests.test_guided_fixes import _clean_font_fixture_context
 
 
 def _doc():
     doc = Document()
+    _clean_font_fixture_context(doc)
     p = doc.add_paragraph('Body paragraph.')
     p.runs[0].font.size = Pt(11)
     p.runs[0].font.name = 'Times New Roman'
@@ -1196,3 +1198,765 @@ def test_spacing_style_and_default_context_must_be_complete(variant):
                 style.attrib.pop(qn('w:default'), None)
     with pytest.raises(GuidedFixFailed):
         _direct_spacing_points(document.paragraphs[0], 'SPACE_BEFORE')
+
+
+def _font_document(grouped=False):
+    document = _clean_font_fixture_context(Document())
+    paragraph = document.add_paragraph()
+    for text in (("Ordinary ASCII ", "academic prose.") if grouped else ("Ordinary ASCII academic prose.",)):
+        run = paragraph.add_run(text)
+        run.font.name = "Calibri"
+        run.font.size = Pt(11)
+        run.italic = True
+    sibling = document.add_paragraph("Unselected sibling.")
+    sibling.runs[0].font.name = "Times New Roman"
+    sibling.runs[0].font.size = Pt(12)
+    return document
+
+
+def _font_audit(document, required=12, family="Times New Roman", profile=None, version=6):
+    profile = profile or new_custom_profile("Strict direct font evidence")
+    profile.body.font_family = family
+    profile.body.font_size_pt = required
+    snapshot = replace(resolve_snapshot(profile), schema_version=version, fingerprint="").with_fingerprint()
+    source = _bold_bytes(document)
+    findings = run_static_rules_engine(source, config=EffectiveProfileConfig(snapshot))
+    for index, finding in enumerate(findings):
+        finding.id = f"font-{index}"
+    audit = SimpleNamespace(
+        profile_snapshot=snapshot.to_dict(), paragraph_page_mapping=None, violations=findings,
+        weighted_score=calculate_weighted_score_detailed(findings).total,
+        document_sha256=hashlib.sha256(source).hexdigest(),
+    )
+    return source, audit
+
+
+def _font_findings(audit, *codes):
+    findings = [finding for finding in audit.violations if finding.rule_code in codes
+                and finding.location.get("paragraph_index") == 0]
+    assert findings, "A regression must select genuine detector findings"
+    return findings
+
+
+def _font_layer(document, layer):
+    from docx.enum.style import WD_STYLE_TYPE
+
+    paragraph = document.paragraphs[0]
+    if layer == "direct":
+        return paragraph.runs[0]._r.get_or_add_rPr()
+    if layer == "defaults":
+        return document.styles.element.find(qn("w:docDefaults")).find(qn("w:rPrDefault")).find(qn("w:rPr"))
+    if layer == "default_character":
+        return document.styles["Default Paragraph Font"].element.get_or_add_rPr()
+    character = layer in ("character", "character_base")
+    kind = WD_STYLE_TYPE.CHARACTER if character else WD_STYLE_TYPE.PARAGRAPH
+    style = document.styles.add_style("Font evidence " + layer, kind)
+    if character:
+        paragraph.runs[0].style = style
+    else:
+        paragraph.style = style
+    if layer in ("character_base", "paragraph_base"):
+        base = document.styles.add_style("Font evidence base " + layer, kind)
+        style.base_style = base
+        style = base
+    return style.element.get_or_add_rPr()
+
+
+@pytest.mark.parametrize("codes", [("FONT_CONSISTENCY",), ("FONT_SIZE",), ("FONT_CONSISTENCY", "FONT_SIZE")])
+@pytest.mark.parametrize("grouped", [False, True])
+@pytest.mark.parametrize("required", [12, 12.5])
+def test_font_supported_direct_composition_is_exact_and_preserved(codes, grouped, required):
+    from app.services.guided_fix import apply_guided_fixes
+    from tests.test_guided_fix_preservation_storage import _assert_font_package_unchanged
+
+    source, audit = _font_audit(_font_document(grouped), required=required)
+    original_hash = hashlib.sha256(source).hexdigest()
+    selected = _font_findings(audit, *codes)
+    items, targets = review_targets(audit, source, selected)
+    assert {item["before"] for item in items} == {
+        finding.actual_value for finding in selected
+    }
+    output, applied, skipped = apply_guided_fixes(audit, source, selected)
+    assert skipped == []
+    assert applied == selected
+    _assert_font_package_unchanged(source, output, targets)
+    after = Document(io.BytesIO(output))
+    for run in after.paragraphs[0].runs:
+        if "FONT_CONSISTENCY" in codes:
+            assert all(run._r.rPr.rFonts.get(qn("w:" + name)) == "Times New Roman"
+                       for name in ("ascii", "hAnsi", "eastAsia"))
+        if "FONT_SIZE" in codes:
+            assert run._r.rPr.find(qn("w:sz")).get(qn("w:val")) == str(int(required * 2))
+        assert run.italic is True
+    summary = verify_reaudit(audit, source, output, selected)
+    assert summary["new_findings"] == []
+    assert summary["after_score"] >= summary["before_score"]
+    assert hashlib.sha256(source).hexdigest() == original_hash
+
+
+@pytest.mark.parametrize("rule", ["FONT_CONSISTENCY", "FONT_SIZE"])
+@pytest.mark.parametrize("layer", ["character", "character_base", "default_character", "paragraph",
+                                  "paragraph_base", "defaults"])
+def test_font_inherited_active_complex_slots_are_manual(rule, layer):
+    document = _font_document()
+    props = _font_layer(document, layer)
+    for tag, value in (("cs", "1"), ("szCs", "44")):
+        node = OxmlElement("w:" + tag)
+        node.set(qn("w:val"), value)
+        props.append(node)
+    fonts = OxmlElement("w:rFonts")
+    fonts.set(qn("w:cs"), "Courier New")
+    props.append(fonts)
+    source, audit = _font_audit(document)
+    selected = _font_findings(audit, rule)
+    from app.services.guided_fix import apply_guided_fixes
+    for operation in (review_targets, apply_guided_fixes):
+        with pytest.raises(GuidedFixFailed):
+            operation(audit, source, selected)
+    assert fonts.get(qn("w:cs")) == "Courier New"
+    assert props.find(qn("w:szCs")).get(qn("w:val")) == "44"
+
+
+@pytest.mark.parametrize("rule", ["FONT_CONSISTENCY", "FONT_SIZE"])
+@pytest.mark.parametrize("layer", ["direct", "character", "paragraph_base", "defaults"])
+@pytest.mark.parametrize("tag,literal", [
+    ("cs", "0"), ("cs", "false"), ("cs", "bad"), ("rtl", "0"), ("rtl", ""),
+    ("szCs", "22"), ("script", "latin"), ("bidi", "0"),
+])
+def test_font_script_controls_are_never_cleared_or_interpreted(rule, layer, tag, literal):
+    document = _font_document()
+    node = OxmlElement("w:" + tag)
+    node.set(qn("w:val"), literal)
+    _font_layer(document, layer).append(node)
+    source, audit = _font_audit(document)
+    with pytest.raises(GuidedFixFailed):
+        review_targets(audit, source, _font_findings(audit, rule))
+
+
+@pytest.mark.parametrize("rule", ["FONT_CONSISTENCY", "FONT_SIZE"])
+@pytest.mark.parametrize("attribute", ["asciiTheme", "hAnsiTheme", "eastAsiaTheme", "cstheme",
+                                     "csTheme", "cs", "hint", "unknown"])
+def test_font_every_alternate_or_unknown_direct_font_attribute_is_manual(rule, attribute):
+    document = _font_document()
+    document.paragraphs[0].runs[0]._r.rPr.rFonts.set(qn("w:" + attribute), "minorBidi")
+    source, audit = _font_audit(document)
+    with pytest.raises(GuidedFixFailed):
+        review_targets(audit, source, _font_findings(audit, rule))
+
+
+@pytest.mark.parametrize("rule", ["FONT_CONSISTENCY", "FONT_SIZE"])
+@pytest.mark.parametrize("layer", ["character", "character_base", "default_character", "paragraph",
+                                  "paragraph_base", "defaults"])
+def test_font_inherited_literal_fonts_are_manual_even_when_shadowed(rule, layer):
+    document = _font_document()
+    fonts = OxmlElement("w:rFonts")
+    fonts.set(qn("w:ascii"), "Calibri")
+    fonts.set(qn("w:hAnsi"), "Calibri")
+    _font_layer(document, layer).append(fonts)
+    source, audit = _font_audit(document)
+    with pytest.raises(GuidedFixFailed):
+        review_targets(audit, source, _font_findings(audit, rule))
+
+
+@pytest.mark.parametrize("layer", ["character", "character_base", "default_character", "paragraph",
+                                  "paragraph_base", "defaults"])
+def test_font_size_inherited_size_is_manual_but_family_does_not_interpret_it(layer):
+    document = _font_document()
+    size = OxmlElement("w:sz")
+    size.set(qn("w:val"), "22")
+    _font_layer(document, layer).append(size)
+    source, audit = _font_audit(document)
+    with pytest.raises(GuidedFixFailed):
+        review_targets(audit, source, _font_findings(audit, "FONT_SIZE"))
+    assert review_targets(audit, source, _font_findings(audit, "FONT_CONSISTENCY"))[0]
+
+
+@pytest.mark.parametrize("rule", ["FONT_CONSISTENCY", "FONT_SIZE"])
+@pytest.mark.parametrize("text", ["", "café", "ASCII 中文", "ASCII العربية", "ASCII \u0301", "ASCII \x7f"])
+def test_font_non_ascii_or_empty_selected_text_is_manual(rule, text):
+    document = _font_document()
+    source, audit = _font_audit(document)
+    selected = _font_findings(audit, rule)
+    document.paragraphs[0].runs[0].text = text
+    with pytest.raises(GuidedFixFailed):
+        review_targets(audit, _bold_bytes(document), selected)
+
+
+@pytest.mark.parametrize("rule", ["FONT_CONSISTENCY", "FONT_SIZE"])
+@pytest.mark.parametrize("variant", [
+    "no_rPr", "duplicate_rPr", "no_fonts", "duplicate_fonts", "no_ascii", "no_hAnsi",
+    "empty_ascii", "mixed_hAnsi", "mixed_eastAsia", "font_child", "font_text",
+    "duplicate_size", "no_size", "zero_size", "fraction_size", "negative_size", "size_attribute",
+])
+def test_font_malformed_or_ambiguous_direct_evidence_is_manual(rule, variant):
+    document = _font_document()
+    source, audit = _font_audit(document)
+    selected = _font_findings(audit, rule)
+    run = document.paragraphs[0].runs[0]
+    props = run._r.rPr
+    fonts = props.rFonts
+    size = props.find(qn("w:sz"))
+    if variant == "no_rPr":
+        run._r.remove(props)
+    elif variant == "duplicate_rPr":
+        run._r.append(copy.deepcopy(props))
+    elif variant == "no_fonts":
+        props.remove(fonts)
+    elif variant == "duplicate_fonts":
+        props.append(copy.deepcopy(fonts))
+    elif variant in ("no_ascii", "no_hAnsi"):
+        del fonts.attrib[qn("w:" + variant.removeprefix("no_"))]
+    elif variant == "empty_ascii":
+        fonts.set(qn("w:ascii"), "")
+    elif variant in ("mixed_hAnsi", "mixed_eastAsia"):
+        fonts.set(qn("w:" + variant.removeprefix("mixed_")), "Arial")
+    elif variant == "font_child":
+        fonts.append(OxmlElement("w:cs"))
+    elif variant == "font_text":
+        fonts.text = "unexpected"
+    elif variant == "duplicate_size":
+        props.append(copy.deepcopy(size))
+    elif variant == "no_size":
+        props.remove(size)
+    elif variant == "size_attribute":
+        size.set(qn("w:unknown"), "1")
+    else:
+        size.set(qn("w:val"), {"zero_size": "0", "fraction_size": "22.5", "negative_size": "-22"}[variant])
+    if rule == "FONT_CONSISTENCY" and variant == "no_size":
+        assert review_targets(audit, _bold_bytes(document), selected)[0]
+        return  # A family correction does not require a direct size.
+    with pytest.raises(GuidedFixFailed):
+        review_targets(audit, _bold_bytes(document), selected)
+
+
+@pytest.mark.parametrize("rule", ["FONT_CONSISTENCY", "FONT_SIZE"])
+@pytest.mark.parametrize("variant", [
+    "dangling_character", "dangling_paragraph", "duplicate_used_style", "wrong_style_type",
+    "cycle", "duplicate_basedOn", "linked", "duplicate_docDefaults", "duplicate_rPrDefault",
+    "duplicate_default_rPr", "missing_default_character", "duplicate_default_character",
+    "missing_default_paragraph", "duplicate_default_paragraph", "duplicate_style_rPr",
+    "duplicate_pPr", "duplicate_rStyle", "duplicate_pStyle", "direct_bidi", "style_bidi",
+    "defaults_bidi", "fldSimple",
+])
+def test_font_used_style_graph_and_paragraph_context_are_unambiguous(rule, variant):
+    document = _font_document()
+    paragraph = document.paragraphs[0]
+    props = _font_layer(document, "paragraph")
+    style = props.getparent()
+    defaults = document.styles.element.find(qn("w:docDefaults"))
+    if variant == "dangling_character":
+        paragraph.runs[0]._r.get_or_add_rPr().append(OxmlElement("w:rStyle"))
+        paragraph.runs[0]._r.rPr.find(qn("w:rStyle")).set(qn("w:val"), "Missing")
+    elif variant == "dangling_paragraph":
+        paragraph._p.pPr.find(qn("w:pStyle")).set(qn("w:val"), "Missing")
+    elif variant == "duplicate_used_style":
+        document.styles.element.append(copy.deepcopy(style))
+    elif variant == "wrong_style_type":
+        style.set(qn("w:type"), "character")
+    elif variant in ("cycle", "duplicate_basedOn", "linked"):
+        tag = "link" if variant == "linked" else "basedOn"
+        node = OxmlElement("w:" + tag)
+        node.set(qn("w:val"), style.get(qn("w:styleId")))
+        style.append(node)
+        if variant == "duplicate_basedOn":
+            style.append(copy.deepcopy(node))
+    elif variant == "duplicate_docDefaults":
+        document.styles.element.append(copy.deepcopy(defaults))
+    elif variant == "duplicate_rPrDefault":
+        defaults.append(copy.deepcopy(defaults.find(qn("w:rPrDefault"))))
+    elif variant == "duplicate_default_rPr":
+        wrapper = defaults.find(qn("w:rPrDefault"))
+        wrapper.append(copy.deepcopy(wrapper.find(qn("w:rPr"))))
+    elif variant in ("missing_default_character", "duplicate_default_character",
+                     "missing_default_paragraph", "duplicate_default_paragraph"):
+        kind = "character" if variant.endswith("character") else "paragraph"
+        if kind == "paragraph":
+            paragraph._p.remove(paragraph._p.pPr)
+        default = next(node for node in document.styles.element.findall(qn("w:style"))
+                       if node.get(qn("w:type")) == kind and node.get(qn("w:default")) == "1")
+        if variant.startswith("missing"):
+            default.attrib.pop(qn("w:default"))
+        else:
+            extra = copy.deepcopy(default)
+            extra.set(qn("w:styleId"), "OtherDefault")
+            document.styles.element.append(extra)
+    elif variant == "duplicate_style_rPr":
+        style.append(copy.deepcopy(props))
+    elif variant == "duplicate_pPr":
+        paragraph._p.append(copy.deepcopy(paragraph._p.pPr))
+    elif variant == "duplicate_rStyle":
+        run_props = paragraph.runs[0]._r.rPr
+        for _ in range(2):
+            node = OxmlElement("w:rStyle")
+            node.set(qn("w:val"), "DefaultParagraphFont")
+            run_props.append(node)
+    elif variant == "duplicate_pStyle":
+        paragraph._p.pPr.append(copy.deepcopy(paragraph._p.pPr.find(qn("w:pStyle"))))
+    elif variant in ("direct_bidi", "style_bidi", "defaults_bidi"):
+        if variant == "direct_bidi":
+            ppr = paragraph._p.pPr
+        elif variant == "style_bidi":
+            ppr = style.get_or_add_pPr()
+        else:
+            ppr = defaults.find(qn("w:pPrDefault")).find(qn("w:pPr"))
+        node = OxmlElement("w:bidi")
+        node.set(qn("w:val"), "0")
+        ppr.append(node)
+    else:
+        wrapper = OxmlElement("w:fldSimple")
+        paragraph._p.append(wrapper)
+    source, audit = _font_audit(document)
+    with pytest.raises(GuidedFixFailed):
+        review_targets(audit, source, _font_findings(audit, rule))
+
+
+@pytest.mark.parametrize("rule", ["FONT_CONSISTENCY", "FONT_SIZE"])
+def test_font_unused_broken_styles_do_not_reduce_supported_availability(rule):
+    document = _font_document()
+    from docx.enum.style import WD_STYLE_TYPE
+    style = document.styles.add_style("Unused broken font evidence", WD_STYLE_TYPE.PARAGRAPH)
+    base = OxmlElement("w:basedOn")
+    base.set(qn("w:val"), "Missing")
+    style.element.append(base)
+    style.element.append(copy.deepcopy(base))
+    source, audit = _font_audit(document)
+    assert review_targets(audit, source, _font_findings(audit, rule))[0]
+
+
+@pytest.mark.parametrize("required", [12.005, 12.25, 12.00000000001])
+def test_font_non_halfpoint_saved_requirement_is_manual_before_review(required):
+    source, audit = _font_audit(_font_document(), required=required)
+    with pytest.raises(GuidedFixFailed):
+        review_targets(audit, source, _font_findings(audit, "FONT_SIZE"))
+
+
+@pytest.mark.parametrize("actual", ["11.5pt", "11.005pt", "11.00000000000000000000000000000001pt"])
+def test_font_current_size_requires_exact_direct_halfpoint(actual):
+    source, audit = _font_audit(_font_document())
+    selected = _font_findings(audit, "FONT_SIZE")
+    selected[0].actual_value = actual
+    with pytest.raises(GuidedFixFailed):
+        review_targets(audit, source, selected)
+
+
+@pytest.mark.parametrize("rule", ["FONT_CONSISTENCY", "FONT_SIZE"])
+@pytest.mark.parametrize("version", [1, 2, 3, 4, 5, 6])
+def test_font_saved_snapshot_versions_bind_requirements_independently(rule, version):
+    source, audit = _font_audit(_font_document(), version=version)
+    selected = _font_findings(audit, rule)
+    assert review_targets(audit, source, selected)[0]
+    selected[0].expected_value = "Arial" if rule == "FONT_CONSISTENCY" else "13pt"
+    with pytest.raises(GuidedFixFailed):
+        review_targets(audit, source, selected)
+
+
+@pytest.mark.parametrize("rule", ["FONT_CONSISTENCY", "FONT_SIZE"])
+@pytest.mark.parametrize("change", ["missing", "corrupt", "future"])
+def test_font_missing_or_invalid_saved_snapshot_never_uses_persisted_scalar_alone(rule, change):
+    source, audit = _font_audit(_font_document())
+    selected = _font_findings(audit, rule)
+    if change == "missing":
+        audit.profile_snapshot = None
+    elif change == "future":
+        audit.profile_snapshot["schema_version"] = 999
+    else:
+        audit.profile_snapshot["body"]["font_size_pt"] = 13
+    with pytest.raises(GuidedFixFailed):
+        review_targets(audit, source, selected)
+
+
+@pytest.mark.parametrize("fault", ["ascii", "hAnsi", "eastAsia", "sz", "missing_eastAsia",
+                                  "inherited_cs", "inherited_fonts", "inherited_size", "paragraph_bidi"])
+def test_font_faulty_authorized_output_is_discarded_before_publication(
+    client, monkeypatch, test_engine, bold_boundary_storage, fault,
+):
+    from app.services import guided_fix
+    source = _bold_bytes(_font_document(grouped=True))
+    response = client.post("/api/audit", files={"file": ("font.docx", source)})
+    assert response.status_code == 200, response.text
+    audit = response.json()
+    rule = "FONT_SIZE" if fault in ("sz", "inherited_size") else "FONT_CONSISTENCY"
+    selected = [f["id"] for f in audit["physical_layout_errors"]
+                if f["rule_code"] == rule and f["location"].get("paragraph_index") == 0]
+    assert selected
+    root = f'/api/audit/{audit["audit_id"]}/guided-fixes'
+    saved = _saved_source_state(test_engine, audit["audit_id"])
+    review = _upload(client, root + "/review", source, selected)
+    assert review.status_code == 200, review.text
+    name = "_fix_font_size" if rule == "FONT_SIZE" else "_fix_font_family"
+    real = getattr(guided_fix, name)
+    calls = 0
+
+    def wrong_last_run(run, value):
+        nonlocal calls
+        ok = real(run, value)
+        calls += 1
+        if calls == 2:
+            if fault == "sz":
+                run._r.rPr.find(qn("w:sz")).set(qn("w:val"), "25")
+            elif fault == "missing_eastAsia":
+                del run._r.rPr.rFonts.attrib[qn("w:eastAsia")]
+            elif fault.startswith("inherited_"):
+                styles = next(rel.target_part.element for rel in run.part.rels.values()
+                              if rel.reltype.endswith("/styles"))
+                props = styles.find(qn("w:docDefaults")).find(qn("w:rPrDefault")).find(qn("w:rPr"))
+                tag = {"inherited_cs": "cs", "inherited_fonts": "rFonts", "inherited_size": "sz"}[fault]
+                node = OxmlElement("w:" + tag)
+                node.set(qn("w:ascii") if tag == "rFonts" else qn("w:val"), "Calibri" if tag == "rFonts" else "22")
+                props.append(node)
+            elif fault == "paragraph_bidi":
+                node = OxmlElement("w:bidi")
+                node.set(qn("w:val"), "0")
+                run._parent._p.get_or_add_pPr().append(node)
+            else:
+                run._r.rPr.rFonts.set(qn("w:" + fault), "Courier New")
+        return ok
+
+    monkeypatch.setattr(guided_fix, name, wrong_last_run)
+    applied = _upload(client, root, source, selected, review.json()["review_id"])
+    assert applied.status_code == 422, applied.text
+    assert calls == 2
+    _assert_no_bold_output(applied, bold_boundary_storage, audit["audit_id"])
+    assert _saved_source_state(test_engine, audit["audit_id"]) == saved
+
+
+@pytest.mark.parametrize("mixed", [False, True])
+def test_font_manual_template_or_mixed_selection_has_no_review_or_output(
+    client, test_engine, bold_boundary_storage, mixed,
+):
+    document = _font_document(grouped=True) if mixed else Document()
+    if mixed:
+        node = OxmlElement("w:cs")
+        node.set(qn("w:val"), "0")
+        document.paragraphs[0].runs[1]._r.rPr.append(node)
+    else:
+        run = document.add_paragraph("Ordinary template with inherited font controls.").runs[0]
+        run.font.name = "Calibri"
+        run.font.size = Pt(11)
+    source = _bold_bytes(document)
+    response = client.post("/api/audit", files={"file": ("manual.docx", source)})
+    assert response.status_code == 200, response.text
+    audit = response.json()
+    ids = [finding["id"] for finding in audit["physical_layout_errors"]
+           if finding["rule_code"] in ("FONT_SIZE", "FONT_CONSISTENCY")]
+    assert ids
+    saved = _saved_source_state(test_engine, audit["audit_id"])
+    root = f'/api/audit/{audit["audit_id"]}/guided-fixes'
+    review = _upload(client, root + "/review", source, ids)
+    assert review.status_code == 422, review.text
+    _assert_no_bold_output(review, bold_boundary_storage, audit["audit_id"])
+    assert _saved_source_state(test_engine, audit["audit_id"]) == saved
+
+
+@pytest.mark.parametrize("role", ["HEADING_1", "HEADING_2", "HEADING_3", "APPENDIX_HEADING"])
+def test_font_heading_size_uses_authoritative_saved_adapter_requirement(role):
+    from app.services.document_parser import extract_paragraphs
+    from app.services.role_classifier import classify_paragraphs
+    from app.services.guided_fix import apply_guided_fixes
+
+    document = _font_document()
+    paragraph = document.paragraphs[0]
+    if role == "APPENDIX_HEADING":
+        paragraph.runs[0].text = "Appendix A"
+    else:
+        paragraph.style = document.styles["Heading " + role[-1]]
+        style = paragraph.style.element
+        for child in list(style):
+            if child.tag in (qn("w:rPr"), qn("w:link")):
+                style.remove(child)
+    profile = new_custom_profile("Authoritative heading font")
+    profile.heading.font_family = "Times New Roman"
+    profile.heading.font_size_pt = 14
+    profile.heading.level_1 = {"font_size_pt": 16}
+    profile.heading.level_2 = {"font_size_pt": 18}
+    profile.heading.level_3 = {"font_size_pt": 20}
+    source, audit = _font_audit(document, profile=profile)
+    assert classify_paragraphs(document, extract_paragraphs(document))[0] == role
+    selected = _font_findings(audit, "FONT_SIZE")
+    assert selected[0].expected_value == "14pt"
+    assert review_targets(audit, source, selected)[0]
+    output, _, _ = apply_guided_fixes(audit, source, selected)
+    assert Document(io.BytesIO(output)).paragraphs[0].runs[0]._r.rPr.find(qn("w:sz")).get(qn("w:val")) == "28"
+    assert verify_reaudit(audit, source, output, selected)["new_findings"] == []
+
+
+@pytest.mark.parametrize("rule", ["FONT_SIZE", "FONT_CONSISTENCY"])
+def test_font_ambiguous_saved_allowed_pairs_are_not_a_new_pair_selection(rule):
+    profile = new_custom_profile("Ambiguous allowed font pairs")
+    profile.body.allowed_font_combos = (("Arial", 12), ("Times New Roman", 14))
+    source, audit = _font_audit(_font_document(), profile=profile, family="Arial")
+    with pytest.raises(GuidedFixFailed):
+        review_targets(audit, source, _font_findings(audit, rule))
+
+
+@pytest.mark.parametrize("fault", ["none", "mutation", "preservation", "reaudit", "wrong_original"])
+def test_font_combined_api_keeps_saved_history_pdf_and_publication_atomic(
+    client, test_engine, monkeypatch, bold_boundary_storage, fault,
+):
+    from app.api import routes
+    from app.services import guided_fix
+    from tests.test_guided_fix_preservation_storage import _assert_font_package_unchanged
+    from pypdf import PdfReader
+
+    source = _bold_bytes(_font_document(grouped=True))
+    response = client.post("/api/audit", files={"file": ("combined-font.docx", source)})
+    assert response.status_code == 200, response.text
+    audit = response.json()
+    ids = [f["id"] for f in audit["physical_layout_errors"]
+           if f["rule_code"] in ("FONT_SIZE", "FONT_CONSISTENCY") and f["location"].get("paragraph_index") == 0]
+    assert len(ids) == 2
+    audit_path = f'/api/audit/{audit["audit_id"]}'
+    root = audit_path + "/guided-fixes"
+    saved = _saved_source_state(test_engine, audit["audit_id"])
+    detail = client.get(audit_path).json()
+    history = client.get("/api/audits").json()
+
+    def pdf_text():
+        response = client.get(audit_path + "/export-pdf")
+        assert response.status_code == 200
+        return "\n".join(page.extract_text() or "" for page in PdfReader(io.BytesIO(response.content)).pages)
+
+    pdf = pdf_text()
+    review = _upload(client, root + "/review", source, ids)
+    assert review.status_code == 200, review.text
+    upload = source
+    if fault == "mutation":
+        monkeypatch.setattr(guided_fix, "_fix_font_size", lambda *_args: False)
+    elif fault in ("preservation", "reaudit"):
+        def refuse(*_args, **_kwargs):
+            raise GuidedFixFailed("Controlled font publication failure")
+        target = routes.docx_preservation if fault == "preservation" else routes
+        monkeypatch.setattr(target, "compare_preservation" if fault == "preservation" else "verify_reaudit", refuse)
+    elif fault == "wrong_original":
+        different = _font_document(grouped=True)
+        different.paragraphs[0].add_run(" Other original.")
+        upload = _bold_bytes(different)
+    applied = _upload(client, root, upload, ids, review.json()["review_id"])
+    if fault == "none":
+        assert applied.status_code == 200, applied.text
+        assert set(applied.json()["resolved"]) == set(ids)
+        assert applied.json()["new_findings"] == []
+        download = client.get(root + "/download/" + applied.json()["download_token"])
+        assert download.status_code == 200
+        targets = {(0, i, rule) for i in (0, 1) for rule in ("FONT_SIZE", "FONT_CONSISTENCY")}
+        _assert_font_package_unchanged(source, download.content, targets)
+        runs = Document(io.BytesIO(download.content)).paragraphs[0].runs
+        assert all(run._r.rPr.find(qn("w:sz")).get(qn("w:val")) == "24" for run in runs)
+        assert all(run._r.rPr.rFonts.get(qn("w:" + attr)) == "Times New Roman"
+                   for run in runs for attr in ("ascii", "hAnsi", "eastAsia"))
+        assert client.get(root + "/download/" + applied.json()["download_token"]).status_code == 410
+    else:
+        assert applied.status_code == (409 if fault == "wrong_original" else 422), applied.text
+        _assert_no_bold_output(applied, bold_boundary_storage, audit["audit_id"])
+    assert _saved_source_state(test_engine, audit["audit_id"]) == saved
+    assert client.get(audit_path).json() == detail
+    assert client.get("/api/audits").json() == history
+    assert pdf_text() == pdf
+
+
+@pytest.mark.parametrize("rule", ["FONT_SIZE", "FONT_CONSISTENCY"])
+def test_font_saved_requirement_does_not_follow_current_profile_edits(
+    client, test_engine, monkeypatch, bold_boundary_storage, rule,
+):
+    from app.services import profile_registry
+    profile = new_custom_profile("Historical direct font")
+    profile.body.font_family = "Times New Roman"
+    profile.body.font_size_pt = 12.5
+    monkeypatch.setattr(profile_registry, "BUILTIN_PROFILES", {profile.profile_id: profile})
+    source = _bold_bytes(_font_document())
+    response = client.post("/api/audit", params={"profile_id": profile.profile_id},
+                           files={"file": ("saved-font.docx", source)})
+    assert response.status_code == 200, response.text
+    audit = response.json()
+    ids = [f["id"] for f in audit["physical_layout_errors"] if f["rule_code"] == rule
+           and f["location"].get("paragraph_index") == 0]
+    assert ids
+    saved = _saved_source_state(test_engine, audit["audit_id"])
+    profile.body.font_family = "Arial"
+    profile.body.font_size_pt = 16
+    root = f'/api/audit/{audit["audit_id"]}/guided-fixes'
+    review = _upload(client, root + "/review", source, ids)
+    assert review.status_code == 200, review.text
+    applied = _upload(client, root, source, ids, review.json()["review_id"])
+    assert applied.status_code == 200, applied.text
+    download = client.get(root + "/download/" + applied.json()["download_token"])
+    assert download.status_code == 200
+    run = Document(io.BytesIO(download.content)).paragraphs[0].runs[0]
+    if rule == "FONT_SIZE":
+        assert run._r.rPr.find(qn("w:sz")).get(qn("w:val")) == "25"
+    else:
+        assert all(run._r.rPr.rFonts.get(qn("w:" + attr)) == "Times New Roman"
+                   for attr in ("ascii", "hAnsi", "eastAsia"))
+    assert _saved_source_state(test_engine, audit["audit_id"]) == saved
+
+
+@pytest.mark.parametrize("text", ["ASCII\ttext\nwith XML whitespace.", "ASCII\rtext.", " "])
+def test_font_selected_ascii_xml_whitespace_keeps_direct_run_identity(text):
+    from app.services.guided_fix import apply_guided_fixes
+    document = _font_document()
+    document.paragraphs[0].runs[0].text = text
+    source, audit = _font_audit(document)
+    if not text.strip():
+        # Whitespace-only paragraphs have no font candidate; do not invent one.
+        assert not [f for f in audit.violations if f.rule_code.startswith("FONT")
+                    and f.location.get("paragraph_index") == 0]
+        return
+    selected = _font_findings(audit, "FONT_SIZE", "FONT_CONSISTENCY")
+    output, _, _ = apply_guided_fixes(audit, source, selected)
+    assert Document(io.BytesIO(output)).paragraphs[0].runs[0].text == document.paragraphs[0].runs[0].text
+
+
+@pytest.mark.parametrize("layer", ["character", "character_base", "default_character", "paragraph",
+                                  "paragraph_base"])
+@pytest.mark.parametrize("variant", ["duplicate", "cycle", "dangling", "linked", "nested_control"])
+def test_font_each_reachable_style_chain_is_validated(layer, variant):
+    document = _font_document()
+    props = _font_layer(document, layer)
+    style = props.getparent()
+    if variant == "duplicate":
+        document.styles.element.append(copy.deepcopy(style))
+    elif variant == "nested_control":
+        wrapper = OxmlElement("w:unknown")
+        wrapper.append(OxmlElement("w:cs"))
+        props.append(wrapper)
+    else:
+        node = OxmlElement("w:link" if variant == "linked" else "w:basedOn")
+        node.set(qn("w:val"), "Missing" if variant == "dangling" else style.get(qn("w:styleId")))
+        style.append(node)
+    source, audit = _font_audit(document)
+    with pytest.raises(GuidedFixFailed):
+        review_targets(audit, source, _font_findings(audit, "FONT_SIZE", "FONT_CONSISTENCY"))
+
+
+@pytest.mark.parametrize("variant", ["missing_styles", "duplicate_defaults_wrapper", "nested_defaults",
+                                    "unknown_run_property", "nested_text", "raw_text_tail"])
+def test_font_malformed_reachable_wrappers_do_not_hide_font_controls(variant):
+    document = _font_document()
+    source, audit = _font_audit(document)
+    selected = _font_findings(audit, "FONT_SIZE", "FONT_CONSISTENCY")
+    run = document.paragraphs[0].runs[0]
+    if variant == "missing_styles":
+        key = next(key for key, rel in document.part.rels.items() if rel.reltype.endswith("/styles"))
+        del document.part.rels[key]
+    elif variant == "duplicate_defaults_wrapper":
+        defaults = document.styles.element.find(qn("w:docDefaults"))
+        defaults.append(copy.deepcopy(defaults.find(qn("w:pPrDefault"))))
+    elif variant == "nested_defaults":
+        wrapper = document.styles.element.find(qn("w:docDefaults")).find(qn("w:rPrDefault"))
+        wrapper.append(OxmlElement("w:unknown"))
+    elif variant == "unknown_run_property":
+        run._r.rPr.append(OxmlElement("w:unknown"))
+    elif variant == "nested_text":
+        run._r.find(qn("w:t")).append(OxmlElement("w:cs"))
+    else:
+        run._r.find(qn("w:t")).tail = "Unenumerated text"
+    with pytest.raises(GuidedFixFailed):
+        review_targets(audit, _bold_bytes(document), selected)
+
+
+@pytest.mark.parametrize("variant", ["single_combined", "family_existing_allowed_size", "ambiguous_size_manual"])
+def test_font_unique_allowed_family_preserves_pair_choice(variant):
+    from app.services.guided_fix import apply_guided_fixes
+    from tests.test_guided_fix_preservation_storage import _assert_font_package_unchanged
+    profile = new_custom_profile("Saved allowed family")
+    profile.body.allowed_font_combos = (
+        (("Times New Roman", 12),) if variant == "single_combined"
+        else (("Times New Roman", 12), ("Times New Roman", 14))
+    )
+    document = _font_document()
+    if variant == "family_existing_allowed_size":
+        document.paragraphs[0].runs[0].font.size = Pt(12)
+    source, audit = _font_audit(document, profile=profile)
+    if variant == "ambiguous_size_manual":
+        with pytest.raises(GuidedFixFailed):
+            review_targets(audit, source, _font_findings(audit, "FONT_SIZE"))
+        return
+    codes = ("FONT_CONSISTENCY", "FONT_SIZE") if variant == "single_combined" else ("FONT_CONSISTENCY",)
+    selected = _font_findings(audit, *codes)
+    _, targets = review_targets(audit, source, selected)
+    output, _, _ = apply_guided_fixes(audit, source, selected)
+    _assert_font_package_unchanged(source, output, targets)
+    run = Document(io.BytesIO(output)).paragraphs[0].runs[0]
+    assert run._r.rPr.find(qn("w:sz")).get(qn("w:val")) == "24"
+    assert all(run._r.rPr.rFonts.get(qn("w:" + attr)) == "Times New Roman"
+               for attr in ("ascii", "hAnsi", "eastAsia"))
+    assert verify_reaudit(audit, source, output, selected)["new_findings"] == []
+
+
+@pytest.mark.parametrize("variant", [
+    "12pt", "11.5pt", "11.005pt", "11.00000000000000000000000000000001pt",
+    "missing_direct_size", "grouped_last_size",
+])
+def test_font_allowed_pair_current_family_size_is_exact_for_every_run(variant):
+    profile = new_custom_profile("Exact allowed-pair Current")
+    profile.body.allowed_font_combos = (("Times New Roman", 12),)
+    document = _font_document(grouped=variant == "grouped_last_size")
+    source, audit = _font_audit(document, profile=profile)
+    selected = _font_findings(audit, "FONT_CONSISTENCY")
+    assert review_targets(audit, source, selected)[0]
+    if variant == "missing_direct_size":
+        props = document.paragraphs[0].runs[0]._r.rPr
+        props.remove(props.find(qn("w:sz")))
+        source = _bold_bytes(document)
+    elif variant == "grouped_last_size":
+        document.paragraphs[0].runs[-1]._r.rPr.find(qn("w:sz")).set(qn("w:val"), "23")
+        source = _bold_bytes(document)
+    else:
+        selected[0].actual_value = "Calibri " + variant
+    with pytest.raises(GuidedFixFailed):
+        review_targets(audit, source, selected)
+
+
+def test_font_stale_allowed_pair_current_has_no_actionable_api_review(
+    client, test_engine, monkeypatch, bold_boundary_storage,
+):
+    from app.services import profile_registry
+    profile = new_custom_profile("Saved allowed pair Current")
+    profile.body.font_family = "Times New Roman"
+    profile.body.font_size_pt = 12
+    profile.body.allowed_font_combos = (("Times New Roman", 12),)
+    monkeypatch.setattr(profile_registry, "BUILTIN_PROFILES", {profile.profile_id: profile})
+    source = _bold_bytes(_font_document())
+    response = client.post("/api/audit", params={"profile_id": profile.profile_id},
+                           files={"file": ("combo-current.docx", source)})
+    assert response.status_code == 200, response.text
+    audit = response.json()
+    ids = [finding["id"] for finding in audit["physical_layout_errors"]
+           if finding["rule_code"] == "FONT_CONSISTENCY" and finding["location"].get("paragraph_index") == 0]
+    assert len(ids) == 1
+    with Session(test_engine) as db:
+        db.get(Violation, ids[0]).actual_value = "Calibri 12pt"
+        db.commit()
+    saved = _saved_source_state(test_engine, audit["audit_id"])
+    root = f'/api/audit/{audit["audit_id"]}/guided-fixes'
+    review = _upload(client, root + "/review", source, ids)
+    assert review.status_code == 422, review.text
+    _assert_no_bold_output(review, bold_boundary_storage, audit["audit_id"])
+    assert _saved_source_state(test_engine, audit["audit_id"]) == saved
+
+
+@pytest.mark.parametrize("rule", ["FONT_CONSISTENCY", "FONT_SIZE"])
+@pytest.mark.parametrize("layer", ["direct", "character", "default_character", "paragraph_base", "defaults"])
+@pytest.mark.parametrize("tag,attribute,value", [
+    ("eastAsianLayout", "combine", "0"),
+    ("eastAsianLayout", "combine", "false"),
+    ("eastAsianLayout", "unknown", "malformed"),
+    ("oMath", "val", "0"),
+    ("lang", "bidi", "ar-SA"),
+    ("lang", "eastAsia", "zh-CN"),
+    ("lang", "unknown", "en-US"),
+    ("lang", "val", ""),
+])
+def test_font_script_layout_and_language_ambiguity_is_manual(rule, layer, tag, attribute, value):
+    document = _font_document()
+    props = _font_layer(document, layer)
+    node = props.find(qn("w:" + tag))
+    if node is None:
+        node = OxmlElement("w:" + tag)
+        props.append(node)
+    if tag == "lang":
+        node.set(qn("w:val"), "en-US")
+    node.set(qn("w:" + attribute), value)
+    source, audit = _font_audit(document)
+    with pytest.raises(GuidedFixFailed):
+        review_targets(audit, source, _font_findings(audit, rule))

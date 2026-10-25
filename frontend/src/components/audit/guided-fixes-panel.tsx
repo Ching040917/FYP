@@ -652,7 +652,7 @@ export function GuidedFixesPanel({
               <X className="h-4 w-4" aria-hidden="true" />
             </Button>
           </div>
-          <div className="min-h-0 flex-1 overflow-y-auto px-5 py-3 scrollbar-thin max-[240px]:px-2">
+          <div tabIndex={0} className="min-h-0 flex-1 overflow-y-auto px-5 py-3 scrollbar-thin focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary max-[240px]:px-2">
             <p className="text-sm text-foreground" role="status">
               Safety review passed for {review.items.length} selected {review.items.length === 1 ? 'finding' : 'findings'}. Nothing has been changed yet.
             </p>

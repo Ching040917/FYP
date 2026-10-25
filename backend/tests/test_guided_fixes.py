@@ -41,6 +41,37 @@ HLINK_REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships
 # Helpers
 # ---------------------------------------------------------------------------
 
+def _clean_font_fixture_context(document):
+    """Synthetic direct-font fixture, not a cleanup operation on uploaded documents.
+
+    The stock Word template contains inherited theme fonts and szCs. Positive
+    font tests deliberately construct a smaller supported context instead.
+    """
+    containers = [document.styles.element.find(qn("w:docDefaults"))]
+    containers += [document.styles[name].element for name in ("Normal", "Default Paragraph Font")]
+    for container in containers:
+        if container is None:
+            continue
+        for props in container.iter(qn("w:rPr")):
+            for child in list(props):
+                if child.tag in {qn("w:" + tag) for tag in ("rFonts", "sz", "szCs", "cs", "rtl")}:
+                    props.remove(child)
+                elif child.tag == qn("w:lang"):
+                    child.attrib.pop(qn("w:bidi"), None)
+                    child.attrib.pop(qn("w:eastAsia"), None)
+    return document
+
+
+def _font_fixture_bytes(data):
+    document = _clean_font_fixture_context(Document(io.BytesIO(data)))
+    for paragraph in document.paragraphs:
+        for run in paragraph.runs:
+            if run.font.name is None:
+                run.font.name = "Times New Roman"
+    stream = io.BytesIO()
+    document.save(stream)
+    return stream.getvalue()
+
 def _post_audit(client, docx_factory, paragraphs=("Body paragraph.",), **kw):
     return client.post(
         "/api/audit",
@@ -80,6 +111,7 @@ def _fix_post(client, audit_id, file_bytes, violation_ids, filename="audit.docx"
 def _make_docx(text="Body paragraph.", size=11.0, family="Calibri"):
     """Minimal single-paragraph docx with explicit font size 11pt."""
     doc = Document()
+    _clean_font_fixture_context(doc)
     p = doc.add_paragraph(text)
     run = p.runs[0]
     run.font.name = family
@@ -124,7 +156,7 @@ class TestIdentity:
         s.close()
 
     def test_exact_bytes_fix_returns_docx(self, client, docx_factory):
-        file_bytes = docx_factory(paragraphs=["Body paragraph."], body_size=11)
+        file_bytes = _font_fixture_bytes(docx_factory(paragraphs=["Body paragraph."], body_size=11))
         # The SAME bytes are audited and re-uploaded: "exact bytes" is the
         # claim under test. Building a second document from identical
         # arguments is NOT byte-identical — make_docx_bytes stamps the
@@ -272,7 +304,7 @@ class TestRequestSecurity:
 
     def test_crlf_dotdot_filename_sanitized(self, client, docx_factory):
         hostile = "..\\report\r\n.docx"
-        file_bytes = docx_factory(paragraphs=["Body paragraph."], body_size=11)
+        file_bytes = _font_fixture_bytes(docx_factory(paragraphs=["Body paragraph."], body_size=11))
         resp = _post_audit_bytes(client, file_bytes)
         audit_id = resp.json()["audit_id"]
         ids = _rule_ids(resp, "FONT_SIZE")
@@ -296,7 +328,7 @@ class TestRequestSecurity:
 
 class TestSupportedFixes:
     def test_font_size_fix(self, client, docx_factory):
-        file_bytes = docx_factory(paragraphs=["Body paragraph."], body_size=11)
+        file_bytes = _font_fixture_bytes(docx_factory(paragraphs=["Body paragraph."], body_size=11))
         resp = _post_audit_bytes(client, file_bytes)
         audit_id = resp.json()["audit_id"]
         ids = _rule_ids(resp, "FONT_SIZE")
@@ -307,7 +339,7 @@ class TestSupportedFixes:
         assert abs(d.paragraphs[0].runs[0].font.size.pt - 12.0) < 0.01
 
     def test_font_consistency_fix(self, client, docx_factory):
-        file_bytes = docx_factory(paragraphs=["Body paragraph."], font_name="Calibri")
+        file_bytes = _font_fixture_bytes(docx_factory(paragraphs=["Body paragraph."], font_name="Calibri"))
         resp = _post_audit_bytes(client, file_bytes)
         audit_id = resp.json()["audit_id"]
         ids = _rule_ids(resp, "FONT_CONSISTENCY")
@@ -319,6 +351,7 @@ class TestSupportedFixes:
         assert run.font.name == "Times New Roman"
         rfonts = run._element.rPr.rFonts
         assert rfonts.get(qn("w:ascii")) == "Times New Roman"
+        assert rfonts.get(qn("w:hAnsi")) == "Times New Roman"
         assert rfonts.get(qn("w:eastAsia")) == "Times New Roman"
 
     def test_alignment_fix(self, client, docx_factory):
@@ -376,9 +409,9 @@ class TestSupportedFixes:
         assert abs(d2.paragraphs[0].paragraph_format.space_after.pt - 6.0) < 0.01
 
     def test_sibling_untouched(self, client, docx_factory):
-        file_bytes = docx_factory(
+        file_bytes = _font_fixture_bytes(docx_factory(
             paragraphs=["Body paragraph.", "Sibling intact."], body_size=11
-        )
+        ))
         resp = _post_audit_bytes(client, file_bytes)
         audit_id = resp.json()["audit_id"]
         ids = _rule_ids(resp, "FONT_SIZE")
@@ -392,6 +425,7 @@ class TestSupportedFixes:
 
     def test_highlight_survives(self, client, docx_factory):
         doc = Document()
+        _clean_font_fixture_context(doc)
         p = doc.add_paragraph("Body paragraph.")
         run = p.runs[0]
         run.font.name = "Calibri"
@@ -418,9 +452,12 @@ class TestSupportedFixes:
 
     def test_multi_run_grouped_fix(self, client, docx_factory):
         doc = Document()
+        _clean_font_fixture_context(doc)
         p = doc.add_paragraph()
         p.add_run("One ").font.size = Pt(11)
         p.add_run("two").font.size = Pt(11)
+        for run in p.runs:
+            run.font.name = "Times New Roman"
         p.paragraph_format.line_spacing = 1.5
         p.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
         buf = io.BytesIO()
@@ -440,6 +477,7 @@ class TestSupportedFixes:
     def test_ambiguous_family_never_guessed(self, client, docx_factory):
         # Allowed combinations span several families: no family may be guessed.
         doc = Document()
+        _clean_font_fixture_context(doc)
         p = doc.add_paragraph("Body paragraph.")
         run = p.runs[0]
         run.font.name = "Comic Sans MS"
@@ -536,7 +574,7 @@ class TestSafety:
         assert not r.content.startswith(b"PK")
 
     def test_nothing_persisted(self, client_file_db, docx_factory, tmp_path):
-        file_bytes = docx_factory(paragraphs=["Body paragraph."], body_size=11)
+        file_bytes = _font_fixture_bytes(docx_factory(paragraphs=["Body paragraph."], body_size=11))
         resp = _post_audit_bytes(client_file_db, file_bytes)
         audit_id = resp.json()["audit_id"]
         ids = _rule_ids(resp, "FONT_SIZE")
@@ -553,7 +591,7 @@ class TestSafety:
         assert after_files == before_files, f"new files: {after_files - before_files}"
 
     def test_logs_do_not_leak_content(self, client, docx_factory, caplog):
-        file_bytes = docx_factory(paragraphs=["Body paragraph."], body_size=11)
+        file_bytes = _font_fixture_bytes(docx_factory(paragraphs=["Body paragraph."], body_size=11))
         resp = _post_audit_bytes(client, file_bytes)
         audit_id = resp.json()["audit_id"]
         ids = _rule_ids(resp, "FONT_SIZE")
@@ -573,6 +611,7 @@ def _rich_docx_bytes():
     """One fixable body paragraph + hyperlink, bookmark, tracked insert,
     numbered list, SEQ caption, table, image, header, Unicode text."""
     doc = Document()
+    _clean_font_fixture_context(doc)
     body = doc.add_paragraph("Plain body paragraph to fix.")
     for run in body.runs:
         run.font.name = "Calibri"
@@ -706,7 +745,7 @@ class TestPreservation:
 
 class TestOutputContract:
     def test_content_type_and_filename(self, client, docx_factory):
-        file_bytes = docx_factory(paragraphs=["Body paragraph."], body_size=11)
+        file_bytes = _font_fixture_bytes(docx_factory(paragraphs=["Body paragraph."], body_size=11))
         resp = _post_audit_bytes(client, file_bytes)
         audit_id = resp.json()["audit_id"]
         ids = _rule_ids(resp, "FONT_SIZE")
@@ -719,7 +758,7 @@ class TestOutputContract:
 
 
     def test_corrected_bytes_reopenable(self, client, docx_factory):
-        file_bytes = docx_factory(paragraphs=["Body paragraph."], body_size=11)
+        file_bytes = _font_fixture_bytes(docx_factory(paragraphs=["Body paragraph."], body_size=11))
         resp = _post_audit_bytes(client, file_bytes)
         audit_id = resp.json()["audit_id"]
         ids = _rule_ids(resp, "FONT_SIZE")
@@ -729,7 +768,7 @@ class TestOutputContract:
         assert d.paragraphs
 
     def test_export_pdf_and_history_intact(self, client, docx_factory):
-        file_bytes = docx_factory(paragraphs=["Body paragraph."], body_size=11)
+        file_bytes = _font_fixture_bytes(docx_factory(paragraphs=["Body paragraph."], body_size=11))
         resp = _post_audit_bytes(client, file_bytes)
         audit_id = resp.json()["audit_id"]
         ids = _rule_ids(resp, "FONT_SIZE")

@@ -687,3 +687,76 @@ def test_spacing_combined_mask_requires_both_exact_targets():
     for target in targets:
         with pytest.raises(ValueError):
             compare_preservation(source, corrected, {target})
+
+
+def _assert_font_package_unchanged(before, after, targets):
+    """Independent package/raw-XML proof in addition to production preservation."""
+    compare_preservation(before, after, targets)
+    with zipfile.ZipFile(io.BytesIO(before)) as original, zipfile.ZipFile(io.BytesIO(after)) as corrected:
+        assert set(original.namelist()) == set(corrected.namelist())
+        for name in original.namelist():
+            if name not in ("word/document.xml", "docProps/core.xml"):
+                assert original.read(name) == corrected.read(name), name
+        w = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+        trees = [etree.fromstring(archive.read("word/document.xml")) for archive in (original, corrected)]
+        for tree in trees:
+            paragraphs = tree.find(w + "body").findall(w + "p")
+            for paragraph, run, rule in targets:
+                properties = paragraphs[paragraph].findall(w + "r")[run].find(w + "rPr")
+                if rule == "FONT_CONSISTENCY":
+                    fonts = properties.find(w + "rFonts")
+                    for name in ("ascii", "hAnsi", "eastAsia"):
+                        fonts.attrib.pop(w + name, None)
+                elif rule == "FONT_SIZE":
+                    properties.find(w + "sz").attrib.pop(w + "val", None)
+                else:
+                    raise AssertionError("This oracle is font-only")
+        assert etree.tostring(trees[0], method="c14n") == etree.tostring(trees[1], method="c14n")
+
+
+@pytest.mark.parametrize("rule,tag,attribute,value", [
+    ("FONT_CONSISTENCY", "rFonts", "cs", "Courier New"),
+    ("FONT_CONSISTENCY", "rFonts", "cstheme", "majorBidi"),
+    ("FONT_CONSISTENCY", "rFonts", "hint", "eastAsia"),
+    ("FONT_CONSISTENCY", "sz", "val", "25"),
+    ("FONT_CONSISTENCY", "szCs", "val", "44"),
+    ("FONT_SIZE", "rFonts", "hAnsi", "Courier New"),
+    ("FONT_SIZE", "rFonts", "eastAsia", "Courier New"),
+    ("FONT_SIZE", "szCs", "val", "44"),
+    ("FONT_SIZE", "sz", "unknown", "25"),
+])
+def test_font_masks_do_not_authorize_other_slots_or_siblings(rule, tag, attribute, value):
+    from tests.test_guided_fix_verified import _font_audit, _font_document, _font_findings
+    from app.services.guided_fix import apply_guided_fixes, review_targets
+    from docx.oxml.ns import qn
+
+    source, audit = _font_audit(_font_document())
+    selected = _font_findings(audit, rule)
+    _, targets = review_targets(audit, source, selected)
+    output, _, _ = apply_guided_fixes(audit, source, selected)
+    _assert_font_package_unchanged(source, output, targets)
+
+    def change(tree):
+        props = tree.find(".//" + qn("w:body") + "/" + qn("w:p") + "/" + qn("w:r") + "/" + qn("w:rPr"))
+        node = props.find(qn("w:" + tag))
+        if node is None:
+            node = etree.SubElement(props, qn("w:" + tag))
+        node.set(qn("w:" + attribute), value)
+
+    damaged = _change_part(output, "word/document.xml", change)
+    with pytest.raises(ValueError):
+        compare_preservation(source, damaged, targets)
+
+
+@pytest.mark.parametrize("part", ["word/styles.xml", "word/settings.xml", "word/numbering.xml"])
+def test_font_fix_never_authorizes_shared_context_changes(part):
+    from tests.test_guided_fix_verified import _font_audit, _font_document, _font_findings
+    from app.services.guided_fix import apply_guided_fixes, review_targets
+
+    source, audit = _font_audit(_font_document())
+    selected = _font_findings(audit, "FONT_SIZE", "FONT_CONSISTENCY")
+    _, targets = review_targets(audit, source, selected)
+    output, _, _ = apply_guided_fixes(audit, source, selected)
+    damaged = _change_part(output, part, lambda root: root.set("unauthorized", "changed"))
+    with pytest.raises(ValueError):
+        compare_preservation(source, damaged, targets)

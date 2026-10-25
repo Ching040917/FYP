@@ -2,6 +2,7 @@
 import io
 import math
 import re
+from decimal import Decimal, InvalidOperation
 import unicodedata
 import urllib.parse
 from typing import Any, Dict, List, Optional, Tuple
@@ -49,7 +50,6 @@ _ALIGNMENTS = frozenset({"left", "center", "right", "justify"})
 
 _PT_RE = re.compile(r"^([0-9]+(?:\.[0-9]+)?)\s*pt$", re.IGNORECASE)
 _RATIO_RE = re.compile(r"^([0-9]+(?:\.[0-9]+)?)$")
-_COMBO_TOKEN_RE = re.compile(r"^(.+?)\s+\d+(?:\.\d+)?pt$")
 _TRAILING_SIZE_RE = re.compile(r"\s+\d+(?:\.\d+)?pt$", re.IGNORECASE)
 
 
@@ -390,75 +390,70 @@ def _fix_reference_heading_bold(run, required: bool) -> bool:
 # Expected-value resolution — never guess a font
 # ---------------------------------------------------------------------------
 
-def _resolve_font_consistency_expected(
-    expected_value, audit, doc, role
-) -> Optional[str]:
-    """Resolve the FONT_CONSISTENCY expected family, or None (skip).
-
-    1. No ', ' in the expected value → single family token: strip, reject
-       empty/control chars/len>64/all-digits.
-    2. ', ' present (combo list) → collect distinct families from tokens
-       matching '<family> <number>pt'; exactly one distinct family → it.
-    3. Otherwise snapshot route: EffectiveProfileConfig from the persisted
-       snapshot; role from classify_paragraphs; heading role → heading
-       family (or the single distinct family in the heading allowed combos),
-       else the body equivalents. Multiple families or none → None.
-    NEVER hard-codes "Times New Roman"; no suggestedFamily().
-    """
-    if not isinstance(expected_value, str):
+def _font_half_points(value, *, requirement=True) -> Optional[int]:
+    """Parse font points exactly; neither rounding nor detector tolerance is proof."""
+    if not isinstance(value, str):
         return None
-    if ", " not in expected_value:
-        token = expected_value.strip()
-        if (
-            not token
-            or len(token) > 64
-            or token.isdigit()
-            or any(ord(ch) < 32 or ord(ch) == 127 for ch in token)
-        ):
-            return None
-        return token
-
-    families = set()
-    for token in expected_value.split(", "):
-        m = _COMBO_TOKEN_RE.match(token)
-        if m is not None:
-            family = m.group(1).strip()
-            if family and len(family) <= 64:
-                families.add(family)
-    if len(families) == 1:
-        return families.pop()
-
-    # Snapshot route: the persisted immutable profile snapshot decides.
-    snapshot_dict = getattr(audit, "profile_snapshot", None)
-    if not isinstance(snapshot_dict, dict):
+    match = _PT_RE.fullmatch(value.strip())
+    if match is None:
         return None
     try:
-        from app.services.profile_snapshot import snapshot_from_dict
-        from app.services.profile_preset_adapter import EffectiveProfileConfig
-        snapshot = snapshot_from_dict(snapshot_dict)
-        cfg = EffectiveProfileConfig(snapshot)
+        points = Decimal(match.group(1))
+        numerator, denominator = points.as_integer_ratio()
+        if (points <= 0 or (numerator * 2) % denominator or
+                (requirement and not Decimal(str(_FONT_SIZE_PT_RANGE[0])) <= points <=
+                 Decimal(str(_FONT_SIZE_PT_RANGE[1])))):
+            return None
+        return numerator * 2 // denominator
+    except (InvalidOperation, ValueError, OverflowError):
+        return None
+
+
+def _resolve_font_expected(expected_value, audit, role, code) -> Optional[Any]:
+    """Independently restore one saved, role-specific font requirement."""
+    from app.services.profile_snapshot import snapshot_from_dict
+    from app.services.profile_preset_adapter import EffectiveProfileConfig
+    from app.services.role_eligibility import is_body_role, is_list_item_role
+
+    levels = {"HEADING_1": 1, "HEADING_2": 2, "HEADING_3": 3, "APPENDIX_HEADING": 1}
+    level = levels.get(role)
+    if level is None and not (is_body_role(role) or is_list_item_role(role)):
+        return None
+    try:
+        cfg = EffectiveProfileConfig(snapshot_from_dict(audit.profile_snapshot))
+        combos = cfg.HEADING_ALLOWED_FONT_COMBOS if level else cfg.BODY_ALLOWED_FONT_COMBOS
+        if code == "FONT_SIZE":
+            saved = cfg.heading_expected_size(level) if level else cfg.FONT_SIZE_BODY
+            saved_half_points = _font_half_points(f"{saved}pt")
+            if saved_half_points is None:
+                return None
+            if combos:
+                sizes = {_font_half_points(f"{size}pt") for _, size in combos}
+                if sizes != {saved_half_points}:
+                    return None
+                persisted = ", ".join(f"{family} {size:g}pt" for family, size in combos)
+                if expected_value != persisted:
+                    return None
+            elif _font_half_points(expected_value) != saved_half_points:
+                return None
+            return saved_half_points / 2
+        family = cfg.HEADING_FONT_FAMILY if level else cfg.FONT_FAMILY
+        if combos:
+            families = {name for name, _ in combos}
+            if len(families) != 1:
+                return None
+            family = next(iter(families))
+            if expected_value != ", ".join(f"{name} {size:g}pt" for name, size in combos):
+                return None
+        elif not isinstance(expected_value, str) or expected_value.strip() != family:
+            return None
+        if (not isinstance(family, str) or not family or family != family.strip() or
+                len(family) > 64 or family.isdigit() or
+                any(ord(ch) < 32 or ord(ch) == 127 for ch in family)):
+            return None
+        return family
     except Exception:
         return None
-
-    from app.services.role_eligibility import is_heading_role
-    if is_heading_role(role):
-        family = cfg.HEADING_FONT_FAMILY
-        if family:
-            return family.strip()
-        combos = getattr(cfg, "HEADING_ALLOWED_FONT_COMBOS", ()) or ()
-        families = {f for f, _ in combos}
-        if len(families) == 1:
-            return families.pop()
-        return None
-
-    family = cfg.FONT_FAMILY
-    if family:
-        return family.strip()
-    combos = getattr(cfg, "BODY_ALLOWED_FONT_COMBOS", ()) or ()
-    families = {f for f, _ in combos}
-    if len(families) == 1:
-        return families.pop()
-    return None
 
 
 def _resolve_expected(
@@ -481,9 +476,8 @@ def _resolve_expected(
         except Exception:
             return None
         return None
-    if rule_code == "FONT_SIZE":
-        value = _parse_pt(expected_value)
-        return value if _in_bounds(value, *_FONT_SIZE_PT_RANGE) else None
+    if rule_code in ("FONT_SIZE", "FONT_CONSISTENCY"):
+        return _resolve_font_expected(expected_value, audit, role, rule_code)
     if rule_code == "LINE_SPACING":
         value = _parse_ratio(expected_value)
         return value if _in_bounds(value, *_LINE_SPACING_RANGE) else None
@@ -497,10 +491,6 @@ def _resolve_expected(
         if expected_value in _ALIGNMENTS:
             return expected_value
         return None
-    if rule_code == "FONT_CONSISTENCY":
-        return _resolve_font_consistency_expected(
-            expected_value, audit, doc, role,
-        )
     if rule_code == "REFERENCE_HEADING_ALIGNMENT":
         from app.services.profile_snapshot import snapshot_from_dict
         from app.services.profile_preset_adapter import EffectiveProfileConfig
@@ -528,7 +518,7 @@ def _fix_font_size(run, pt: float) -> bool:
         actual = run.font.size
         if actual is None:
             return False
-        return abs(actual.pt - pt) <= 0.01
+        return actual.pt * 2 == _font_half_points(f"{pt}pt")
     except Exception:
         return False
 
@@ -536,12 +526,12 @@ def _fix_font_size(run, pt: float) -> bool:
 def _fix_font_family(run, family: str) -> bool:
     from docx.oxml.ns import qn
     run.font.name = family  # writes w:ascii + w:hAnsi
-    # Required: font.name does NOT write w:eastAsia — without it the fix
-    # fails on CJK text (Word applies the eastAsia face there).
+    # Only these three literal slots are authorized; no alternate slot is cleared.
     run._element.rPr.rFonts.set(qn("w:eastAsia"), family)
     rfonts = run._element.rPr.rFonts
     return (
         rfonts.get(qn("w:ascii")) == family
+        and rfonts.get(qn("w:hAnsi")) == family
         and rfonts.get(qn("w:eastAsia")) == family
     )
 
@@ -781,7 +771,7 @@ def _direct_spacing_points(para, rule_code: str) -> float:
 
 
 # ---------------------------------------------------------------------------
-# Current-value comparators (same extraction + rule tolerances as the engine)
+# Current-value comparators (font half-points are exact; paragraph rules retain tolerances)
 # ---------------------------------------------------------------------------
 
 def _align_to_name(align) -> str:
@@ -808,7 +798,9 @@ def _current_matches_expected(rule_code: str, expected: Any, para_dict: Dict, ru
             return False
         if rule_code == "FONT_SIZE":
             current = run_dict.get("effective_font_size")
-            return current is not None and abs(current - expected) <= 0.5
+            return current is not None and _font_half_points(
+                f"{current}pt", requirement=False,
+            ) == _font_half_points(f"{expected}pt")
         # FONT_CONSISTENCY
         current = run_dict.get("effective_font_name")
         return current is not None and current.lower() == expected.lower()
@@ -851,11 +843,10 @@ def _current_changed_from_actual(rule_code: str, para_dict: Dict, run_dict: Opti
         current = run_dict.get("bold") if run_dict else None
         return type(current) is not bool or actual_value != ("Bold" if current else "Not bold")
     if rule_code == "FONT_SIZE":
-        actual_pt = _parse_pt(actual_value)
-        if actual_pt is None:
-            return True
+        token = actual_value.rsplit(" ", 1)[-1] if isinstance(actual_value, str) else actual_value
+        actual_half_points = _font_half_points(token, requirement=False)
         current = run_dict.get("effective_font_size") if run_dict else None
-        return current is None or abs(current - actual_pt) > 0.5
+        return current is None or actual_half_points != _font_half_points(f"{current}pt", requirement=False)
     if rule_code == "FONT_CONSISTENCY":
         actual_family = _family_from_actual(actual_value)
         if actual_family is None:
@@ -919,27 +910,267 @@ def _content_disposition(filename: str) -> str:
 # Pipeline
 # ---------------------------------------------------------------------------
 
-def _unsupported_font_slots(run, code: str) -> bool:
-    """Do not certify a visual font change while Word may use another slot."""
-    rpr = run._r.find(_W + "rPr")
-    if any(unicodedata.bidirectional(ch) in ("R", "AL", "AN") for ch in run.text):
+def _font_styles(part):
+    """Check the original relationship before library getters can create defaults."""
+    relationships = [rel for rel in part.rels.values() if rel.reltype.endswith("/styles")]
+    if len(relationships) != 1 or relationships[0].is_external:
+        raise GuidedFixFailed("unresolved alternate font slot")
+    try:
+        styles = relationships[0].target_part.element
+        if styles.tag == _W + "styles":
+            return styles
+    except (AttributeError, KeyError, ValueError) as exc:
+        raise GuidedFixFailed("unresolved alternate font slot") from exc
+    raise GuidedFixFailed("unresolved alternate font slot")
+
+
+def _font_property_layers(para, run) -> List[Any]:
+    """Validate only reachable styles/defaults, without resolving shadowed fonts."""
+    def fail():
+        raise GuidedFixFailed("unresolved alternate font slot")
+
+    def leaf(node, attrs):
+        if len(node) or (node.text or "").strip() or set(node.attrib) - attrs:
+            fail()
+
+    def properties(container, tag):
+        nodes = container.findall(_W + tag)
+        if len(nodes) > 1:
+            fail()
+        if not nodes:
+            return None
+        node = nodes[0]
+        tags = [child.tag for child in node]
+        if (node.attrib or (node.text or "").strip() or len(tags) != len(set(tags)) or
+                any((child.tail or "").strip() for child in node) or
+                any(child.tag in {_W + "rPrChange", _W + "pPrChange", _W + "ins",
+                                  _W + "del", _MC + "AlternateContent"} for child in node.iter())):
+            fail()
+        if tag == "pPr" and node.find(_W + "bidi") is not None:
+            fail()
+        if tag == "rPr":
+            allowed = {
+                _W + name for name in (
+                    "rStyle", "rFonts", "b", "bCs", "i", "iCs", "caps", "smallCaps",
+                    "strike", "dstrike", "outline", "shadow", "emboss", "imprint",
+                    "noProof", "snapToGrid", "vanish", "webHidden", "color", "spacing",
+                    "w", "kern", "position", "sz", "szCs", "highlight", "u", "effect",
+                    "bdr", "shd", "fitText", "vertAlign", "rtl", "cs", "em", "lang",
+                    "eastAsianLayout", "specVanish", "oMath", "bidi", "script",
+                )
+            }
+            if any(child.tag not in allowed or len(child) or (child.text or "").strip()
+                   for child in node):
+                fail()
+        elif any(descendant.tag in {_W + "rFonts", _W + "sz", _W + "szCs", _W + "cs",
+                                    _W + "rtl", _W + "script", _W + "bidi", _W + "rPr"}
+                 for child in node for descendant in child.iterdescendants()):
+            fail()
+        return node
+
+    def reference(container, tag):
+        nodes = container.findall(_W + tag) if container is not None else []
+        if len(nodes) > 1:
+            fail()
+        if not nodes:
+            return None
+        leaf(nodes[0], {_W + "val"})
+        value = nodes[0].get(_W + "val")
+        if not value or value != value.strip():
+            fail()
+        return value
+
+    try:
+        part = para.part
+        if (part.element.tag != _W + "document" or
+                para._p.getparent() is not part.element.find(_W + "body") or
+                run._r.getparent() is not para._p or
+                any(child.tag not in {_W + "pPr", _W + "r", _W + "bookmarkStart",
+                                      _W + "bookmarkEnd"} for child in para._p) or
+                any(child.tag not in {_W + "rPr", _W + "t", _W + "tab", _W + "br",
+                                      _W + "cr"} for child in run._r)):
+            fail()
+        if (any(text.strip() for text in para._p.xpath("text()")) or
+                any(text.strip() for text in run._r.xpath("text()")) or
+                any((child.tail or "").strip() for child in para._p) or
+                any((child.tail or "").strip() or len(child)
+                    for child in run._r if child.tag != _W + "rPr")):
+            fail()
+        direct = properties(run._r, "rPr")
+        if direct is None or run._r[0] is not direct:
+            fail()
+        paragraph_props = properties(para._p, "pPr")
+        if paragraph_props is not None and para._p[0] is not paragraph_props:
+            fail()
+        styles = _font_styles(part)
+        style_nodes = {}
+        for node in styles.findall(_W + "style"):
+            style_nodes.setdefault(node.get(_W + "styleId"), []).append(node)
+
+        def default_style(kind):
+            candidates = []
+            for node in styles.findall(_W + "style"):
+                if node.get(_W + "type") != kind:
+                    continue
+                value = node.get(_W + "default")
+                if value not in (None, "1", "0", "true", "false", "on", "off"):
+                    fail()
+                if value in ("1", "true", "on"):
+                    candidates.append(node)
+            if len(candidates) != 1 or not candidates[0].get(_W + "styleId"):
+                fail()
+            return candidates[0].get(_W + "styleId")
+
+        layers = [direct]
+
+        def chain(style_id, kind):
+            seen = set()
+            while style_id is not None:
+                matches = style_nodes.get(style_id, [])
+                if (style_id in seen or len(matches) != 1 or
+                        matches[0].get(_W + "type") != kind):
+                    fail()
+                seen.add(style_id)
+                style = matches[0]
+                tags = [node.tag for node in style]
+                if (len(tags) != len(set(tags)) or (style.text or "").strip() or
+                        any((node.tail or "").strip() for node in style) or
+                        any(node.tag not in {_W + "rPr", _W + "pPr"} and
+                            (len(node) or (node.text or "").strip()) for node in style) or
+                        any(node.tag not in {_W + name for name in (
+                            "name", "aliases", "basedOn", "next", "link", "autoRedefine",
+                            "hidden", "uiPriority", "semiHidden", "unhideWhenUsed", "qFormat",
+                            "locked", "personal", "personalCompose", "personalReply", "rsid",
+                            "rPr", "pPr",
+                        )} for node in style)):
+                    fail()
+                if (style.findall(_W + "link") or
+                        any(node.tag in {_MC + "AlternateContent", _W + "rPrChange",
+                                         _W + "pPrChange"} for node in style.iter())):
+                    fail()
+                props = properties(style, "rPr")
+                if props is not None:
+                    if reference(props, "rStyle") is not None:
+                        fail()
+                    layers.append(props)
+                ppr = properties(style, "pPr")
+                if ppr is not None and (kind == "character" or reference(ppr, "pStyle") is not None or
+                                        ppr.find(_W + "rPr") is not None):
+                    fail()
+                style_id = reference(style, "basedOn")
+
+        character = reference(direct, "rStyle")
+        chain(character if character is not None else default_style("character"), "character")
+        # The default character style is a used fallback even with an explicit style.
+        if character is not None:
+            chain(default_style("character"), "character")
+        paragraph = reference(paragraph_props, "pStyle")
+        chain(paragraph if paragraph is not None else default_style("paragraph"), "paragraph")
+        if paragraph_props is not None and paragraph_props.find(_W + "rPr") is not None:
+            fail()
+        defaults = styles.findall(_W + "docDefaults")
+        if len(defaults) > 1:
+            fail()
+        if defaults:
+            default = defaults[0]
+            tags = [child.tag for child in default]
+            if (default.attrib or (default.text or "").strip() or len(tags) != len(set(tags)) or
+                    any(tag not in {_W + "rPrDefault", _W + "pPrDefault"} for tag in tags) or
+                    any((child.tail or "").strip() for child in default)):
+                fail()
+            for tag, prop in (("rPrDefault", "rPr"), ("pPrDefault", "pPr")):
+                wrappers = default.findall(_W + tag)
+                if not wrappers:
+                    continue
+                wrapper = wrappers[0]
+                if (wrapper.attrib or (wrapper.text or "").strip() or
+                        any(child.tag != _W + prop or (child.tail or "").strip() for child in wrapper)):
+                    fail()
+                props = properties(wrapper, prop)
+                if props is not None:
+                    if prop == "rPr":
+                        if reference(props, "rStyle") is not None:
+                            fail()
+                        layers.append(props)
+                    elif reference(props, "pStyle") is not None or props.find(_W + "rPr") is not None:
+                        fail()
+        return layers
+    except GuidedFixFailed:
+        raise
+    except Exception as exc:
+        raise GuidedFixFailed("unresolved alternate font slot") from exc
+
+
+def _unsupported_font_slots(run, para, code: str) -> bool:
+    """One strict direct-slot predicate shared by source and reopened output."""
+    if not run.text or any(not (32 <= ord(ch) <= 126 or ch in "\t\r\n") for ch in run.text):
         return True
-    if rpr is None:
+    try:
+        layers = _font_property_layers(para, run)
+        for index, rpr in enumerate(layers):
+            if any(rpr.find(_W + tag) is not None for tag in (
+                "cs", "rtl", "bidi", "script", "szCs", "eastAsianLayout", "oMath",
+            )):
+                return True
+            language = rpr.find(_W + "lang")
+            if language is not None:
+                value = language.get(_W + "val")
+                if (set(language.attrib) != {_W + "val"} or not value or value != value.strip() or
+                        any(ord(ch) < 32 or ord(ch) == 127 for ch in value)):
+                    return True
+            fonts = rpr.findall(_W + "rFonts")
+            sizes = rpr.findall(_W + "sz")
+            if index:
+                if fonts or (code == "FONT_SIZE" and sizes):
+                    return True
+                continue
+            if len(fonts) != 1:
+                return True
+            font = fonts[0]
+            ascii_name = font.get(_W + "ascii")
+            if (len(font) or (font.text or "").strip() or
+                    set(font.attrib) - {_W + "ascii", _W + "hAnsi", _W + "eastAsia"} or
+                    not ascii_name or ascii_name != ascii_name.strip() or
+                    any(ord(ch) < 32 or ord(ch) == 127 for ch in ascii_name) or
+                    font.get(_W + "hAnsi") != ascii_name or
+                    font.get(_W + "eastAsia", ascii_name) != ascii_name):
+                return True
+            if sizes or code == "FONT_SIZE":
+                if len(sizes) != 1:
+                    return True
+                size = sizes[0]
+                raw = size.get(_W + "val", "")
+                if (len(size) or (size.text or "").strip() or set(size.attrib) != {_W + "val"} or
+                        re.fullmatch(r"[0-9]+", raw) is None or int(raw) <= 0):
+                    return True
         return False
-    if rpr.find(_W + "cs") is not None or rpr.find(_W + "rtl") is not None:
+    except (GuidedFixFailed, ValueError):
         return True
-    if code == "FONT_SIZE" and rpr.find(_W + "szCs") is not None:
-        return True
-    if code == "FONT_CONSISTENCY":
-        fonts = rpr.find(_W + "rFonts")
-        if fonts is not None and any(
-            name in fonts.attrib for name in (
-                _W + "asciiTheme", _W + "hAnsiTheme", _W + "eastAsiaTheme",
-                _W + "csTheme", _W + "cs",
-            )
-        ):
-            return True
-    return False
+
+
+def _preflight_font_targets(doc, violations):
+    """Check selected raw font evidence before scalar getters can parse it."""
+    font_violations = [v for v in violations if v.rule_code in ("FONT_SIZE", "FONT_CONSISTENCY")]
+    if not font_violations:
+        return
+    _font_styles(doc.part)
+    paragraphs = doc.paragraphs
+    for violation in font_violations:
+        location = violation.location
+        if not isinstance(location, dict):
+            raise GuidedFixFailed("missing location")
+        index = location.get("paragraph_index")
+        if type(index) is not int or not 0 <= index < len(paragraphs):
+            raise GuidedFixFailed("invalid paragraph")
+        paragraph = paragraphs[index]
+        runs = paragraph.runs
+        raw = location.get("run_indexes", location.get("run_index"))
+        indexes = raw if isinstance(raw, list) else [raw]
+        if (not indexes or any(type(i) is not int or not 0 <= i < len(runs) for i in indexes) or
+                len(set(indexes)) != len(indexes)):
+            raise GuidedFixFailed("invalid run targets")
+        if any(_unsupported_font_slots(runs[i], paragraph, violation.rule_code) for i in indexes):
+            raise GuidedFixFailed("unresolved alternate font slot")
 
 
 def review_targets(audit: AuditRecord, source_bytes: bytes, violations: List[Violation]):
@@ -961,6 +1192,7 @@ def review_targets(audit: AuditRecord, source_bytes: bytes, violations: List[Vio
         except ValueError as exc:
             raise GuidedFixFailed("unverifiable DOCX package") from exc
     doc = parse_document(source_bytes)
+    _preflight_font_targets(doc, violations)
     paragraphs = extract_paragraphs(doc)
     roles = classify_paragraphs(doc, paragraphs)
     if len(paragraphs) != len(doc.paragraphs):
@@ -1011,7 +1243,7 @@ def review_targets(audit: AuditRecord, source_bytes: bytes, violations: List[Vio
                 raise GuidedFixFailed("invalid run targets")
             if any(_unsafe_run(para.runs[i]) for i in run_indexes):
                 raise GuidedFixFailed("unsafe run")
-            if any(_unsupported_font_slots(para.runs[i], code) for i in run_indexes):
+            if any(_unsupported_font_slots(para.runs[i], para, code) for i in run_indexes):
                 raise GuidedFixFailed("unresolved alternate font slot")
         else:
             if raw is not None:
@@ -1032,6 +1264,25 @@ def review_targets(audit: AuditRecord, source_bytes: bytes, violations: List[Vio
                 raise GuidedFixFailed("conflicting property targets")
             property_targets.add(property_key)
             parsed = paragraphs[index]["runs"][run_index] if run_index is not None else None
+            if code in ("FONT_SIZE", "FONT_CONSISTENCY"):
+                raw_run = para.runs[run_index]
+                if code == "FONT_SIZE":
+                    raw_size = int(raw_run._r.rPr.find(_W + "sz").get(_W + "val"))
+                    actual = violation.actual_value
+                    token = actual.rsplit(" ", 1)[-1] if isinstance(actual, str) else actual
+                    if (_font_half_points(token, requirement=False) != raw_size or
+                            (token != actual and _family_from_actual(actual) !=
+                             raw_run._r.rPr.rFonts.get(_W + "ascii").lower())):
+                        raise GuidedFixFailed("source differs from finding")
+                elif _family_from_actual(violation.actual_value) != raw_run._r.rPr.rFonts.get(_W + "ascii").lower():
+                    raise GuidedFixFailed("source differs from finding")
+                if code == "FONT_CONSISTENCY" and isinstance(violation.actual_value, str):
+                    combo_size = _TRAILING_SIZE_RE.search(violation.actual_value)
+                    if combo_size is not None:
+                        size = raw_run._r.rPr.find(_W + "sz")
+                        if (size is None or _font_half_points(combo_size.group().strip(), requirement=False) !=
+                                int(size.get(_W + "val"))):
+                            raise GuidedFixFailed("source differs from finding")
             if _current_changed_from_actual(code, paragraphs[index], parsed, violation.actual_value, para=para):
                 raise GuidedFixFailed("source differs from finding")
             if _current_matches_expected(code, expected, paragraphs[index], parsed, para=para):
@@ -1180,6 +1431,7 @@ def apply_guided_fixes(
 def _validate_output(corrected_bytes: bytes, source_doc, applied: List[Violation], roles: List[str], audit, reviewed_targets) -> None:
     """Reopen and verify every target's effective value, including grouped runs."""
     doc = parse_document(corrected_bytes)
+    _preflight_font_targets(doc, applied)
     paragraphs = extract_paragraphs(doc)
     if len(doc.paragraphs) != len(source_doc.paragraphs):
         raise GuidedFixFailed("paragraph count changed")
@@ -1209,6 +1461,18 @@ def _validate_output(corrected_bytes: bytes, source_doc, applied: List[Violation
         for run_index in indexes:
             if run_index is not None and (type(run_index) is not int or run_index >= len(paragraphs[index]["runs"])):
                 raise GuidedFixFailed("run missing after save")
+            if violation.rule_code in ("FONT_SIZE", "FONT_CONSISTENCY"):
+                para = doc.paragraphs[index]
+                raw_run = para.runs[run_index]
+                if _unsupported_font_slots(raw_run, para, violation.rule_code):
+                    raise GuidedFixFailed("unresolved alternate font slot after save")
+                if violation.rule_code == "FONT_SIZE":
+                    if int(raw_run._r.rPr.find(_W + "sz").get(_W + "val")) != _font_half_points(f"{expected}pt"):
+                        raise GuidedFixFailed("target value differs after save")
+                elif any(raw_run._r.rPr.rFonts.get(_W + name) != expected
+                         for name in ("ascii", "hAnsi", "eastAsia")):
+                    raise GuidedFixFailed("target value differs after save")
+                continue
             run = paragraphs[index]["runs"][run_index] if run_index is not None else None
             if not _current_matches_expected(violation.rule_code, expected, paragraphs[index], run, para=doc.paragraphs[index]):
                 raise GuidedFixFailed("target value differs after save")
