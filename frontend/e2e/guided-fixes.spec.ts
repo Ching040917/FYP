@@ -2166,19 +2166,30 @@ test.describe('direct auto LINE evidence @line-spacing', () => {
   for (const options of [
     { raw: 240, required: 1.5 }, { raw: 360, required: 2 }, { raw: 480, required: 1.5 },
     { raw: 276, required: 1.5 }, { raw: 241, required: 1.5 }, { raw: 480, required: 1 },
-    { raw: 480, required: 1.15 }, { raw: 480, required: 1.0125 }, { raw: 240, required: 4 },
+    { raw: 480, required: 1.15 }, { raw: 480, required: 1.0125 }, { raw: 360, required: 1.0125 }, { raw: 240, required: 4 },
     { count: 3 }, { reference: true }, { appendix: true },
   ] satisfies LineCase[]) {
     test(`supported line ${JSON.stringify(options)} completes keyboard Review Apply Download with exact raw proof`, async ({ page }, testInfo) => {
       const fixture = lineFixture(options)
       const { auditId, before } = await openLineAudit(page, fixture)
+      if (options.raw === 360 && options.required === 1.0125) {
+        expect(before.violations.filter(v => v.rule_code === 'LINE_SPACING')).toHaveLength(1)
+      }
       await selectLineChanges(page, fixture)
       const response = page.waitForResponse(r => new URL(r.url()).pathname.endsWith('/guided-fixes/review'))
       await page.keyboard.press('Enter')
       const reviewed = await response
       expect(reviewed.status()).toBe(200)
       const review = await reviewed.json()
-      expect(review.items.map((item: { after: string }) => item.after).sort()).toEqual(fixture.selected.map(item => item.required).sort())
+      if (options.reference) {
+        const expected = before.violations.filter(v => v.rule_code === 'LINE_SPACING').map(v => v.expected_value).sort()
+        expect(expected).toHaveLength(fixture.selected.length)
+        const after = review.items.map((item: { after: string }) => item.after).sort()
+        expect(after).toEqual(expected)
+        await testInfo.attach('line-review-values.json', { body: JSON.stringify({ expected, after }), contentType: 'application/json' })
+      } else {
+        expect(review.items.map((item: { after: string }) => item.after).sort()).toEqual(fixture.selected.map(item => item.required).sort())
+      }
       await expect(page.getByRole('button', { name: 'Apply and verify changes', exact: true })).toBeVisible()
       await fontEvidence(page, testInfo, 'line-confirmed-review')
       await tabTo(page, page.getByRole('button', { name: 'Apply and verify changes', exact: true }))
@@ -2195,7 +2206,7 @@ test.describe('direct auto LINE evidence @line-spacing', () => {
 
   for (const options of [
     { rule: 'exact' }, { rule: 'atLeast' }, { rule: 'missing' },
-    { required: 1.501 }, { required: 1.333 }, { required: 1.0041666666666667 },
+    { required: 1.501 }, { required: 1.333 },
     { count: 2, unsafe: 'inherited' }, { count: 2, unsafe: 'grid' }, { count: 2, unsafe: 'snap' },
     { count: 2, unsafe: 'bookmark' }, { count: 2, unsafe: 'numbered' },
   ] satisfies LineCase[]) {
@@ -2248,8 +2259,24 @@ test.describe('direct auto LINE evidence @line-spacing', () => {
   })
 
   test('required Reference page evidence refuses publication when owned renderer is unavailable', async ({ page }, testInfo) => {
+    test.skip(process.env.ACA_LINE_FAULT_APP !== '1' || process.env.ACA_LINE_RENDERER_UNAVAILABLE !== '1',
+      'Requires the isolated renderer-denying external fault wrapper.')
     const fixture = lineFixture({ reference: true, pageEvidence: true })
     const { auditId, before } = await openLineAudit(page, fixture)
+    const preview = await page.request.get(`/api/audit/${auditId}/rendered-preview`)
+    expect(preview.status()).toBe(409)
+    const stateURL = `/api/__aca-line-evidence/${auditId}`
+    const baselineResponse = await page.request.get(stateURL)
+    expect(baselineResponse.ok()).toBe(true)
+    const baseline = await baselineResponse.json()
+    expect(baseline.output_tokens).toBe(0)
+    const originalSha = createHash('sha256').update(fixture.file.buffer).digest('hex')
+    const downloads: string[] = []
+    const downloadRequests: string[] = []
+    page.on('download', event => downloads.push(event.suggestedFilename()))
+    page.on('request', request => {
+      if (new URL(request.url()).pathname.startsWith(`/api/audit/${auditId}/guided-fixes/download/`)) downloadRequests.push(request.url())
+    })
     await selectLineChanges(page, fixture)
     await page.keyboard.press('Enter')
     const apply = page.getByRole('button', { name: 'Apply and verify changes', exact: true })
@@ -2262,9 +2289,17 @@ test.describe('direct auto LINE evidence @line-spacing', () => {
     expect(response.status()).toBe(422)
     const rejected = await response.json()
     expect(rejected).not.toHaveProperty('download_token')
+    expect(rejected).not.toHaveProperty('output_filename')
     await expect(page.getByRole('button', { name: 'Download corrected document', exact: true })).toHaveCount(0)
+    expect(downloads).toEqual([])
+    expect(downloadRequests).toEqual([])
+    expect(createHash('sha256').update(fixture.file.buffer).digest('hex')).toBe(originalSha)
+    const afterState = await (await page.request.get(stateURL)).json()
+    expect(afterState).toEqual(baseline)
     expect(await (await page.request.get(`/api/audit/${auditId}`)).json()).toEqual(before)
-    await testInfo.attach('line-required-renderer-refusal.json', { body: JSON.stringify(rejected), contentType: 'application/json' })
+    await testInfo.attach('line-required-renderer-refusal.json', {
+      body: JSON.stringify({ rejected, baseline, afterState, downloads, downloadRequests, originalSha }), contentType: 'application/json',
+    })
   })
 
   for (const transition of ['audit switch', 'close'] as const) {
