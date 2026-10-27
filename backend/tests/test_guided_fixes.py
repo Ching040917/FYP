@@ -62,6 +62,17 @@ def _clean_font_fixture_context(document):
     return document
 
 
+def _clean_line_spacing_fixture_context(document):
+    """Construct synthetic direct-auto evidence, never normalize an upload."""
+    for properties in document.styles.element.iter(qn("w:pPr")):
+        for spacing in properties.findall(qn("w:spacing")):
+            spacing.attrib.pop(qn("w:line"), None)
+            spacing.attrib.pop(qn("w:lineRule"), None)
+    for grid in list(document.element.iter(qn("w:docGrid"))):
+        grid.getparent().remove(grid)
+    return document
+
+
 def _font_fixture_bytes(data):
     document = _clean_font_fixture_context(Document(io.BytesIO(data)))
     for paragraph in document.paragraphs:
@@ -366,7 +377,11 @@ class TestSupportedFixes:
         assert d.paragraphs[0].alignment == WD_ALIGN_PARAGRAPH.JUSTIFY
 
     def test_line_spacing_fix(self, client, docx_factory):
-        file_bytes = docx_factory(paragraphs=["Body paragraph."], line_spacing=1.0)
+        document = Document(io.BytesIO(docx_factory(paragraphs=["Body paragraph."], line_spacing=1.0)))
+        _clean_line_spacing_fixture_context(document)
+        stream = io.BytesIO()
+        document.save(stream)
+        file_bytes = stream.getvalue()
         resp = _post_audit_bytes(client, file_bytes)
         audit_id = resp.json()["audit_id"]
         ids = _rule_ids(resp, "LINE_SPACING")
@@ -374,7 +389,9 @@ class TestSupportedFixes:
         r = _fix_post(client, audit_id, file_bytes, [ids[0]])
         assert r.status_code == 200, r.text
         d = Document(io.BytesIO(r.content))
-        assert abs(float(d.paragraphs[0].paragraph_format.line_spacing) - 1.5) < 0.01
+        spacing = d.paragraphs[0]._p.pPr.find(qn("w:spacing"))
+        assert spacing.get(qn("w:line")) == "360"
+        assert spacing.get(qn("w:lineRule")) == "auto"
 
     def test_space_before_fix(self, client, docx_factory):
         base = docx_factory(paragraphs=["Body paragraph."])

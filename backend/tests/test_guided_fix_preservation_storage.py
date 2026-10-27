@@ -760,3 +760,222 @@ def test_font_fix_never_authorizes_shared_context_changes(part):
     damaged = _change_part(output, part, lambda root: root.set("unauthorized", "changed"))
     with pytest.raises(ValueError):
         compare_preservation(source, damaged, targets)
+
+
+def _assert_line_spacing_package_unchanged(source, corrected, expected):
+    """Independent ZIP/XML oracle; expected maps paragraph indexes to raw lines."""
+    w = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+    with zipfile.ZipFile(io.BytesIO(source)) as original, zipfile.ZipFile(io.BytesIO(corrected)) as output:
+        assert set(original.namelist()) == set(output.namelist())
+        for name in original.namelist():
+            before, after = original.read(name), output.read(name)
+            if name not in {"word/document.xml", "docProps/core.xml", "docProps/app.xml"}:
+                assert before == after, name
+                continue
+            roots = [etree.fromstring(content) for content in (before, after)]
+            if name == "word/document.xml":
+                paragraphs = [root.find(w + "body").findall(w + "p") for root in roots]
+                assert len(paragraphs[0]) == len(paragraphs[1])
+                for index, line in expected.items():
+                    assert type(index) is int and index >= 0
+                    assert type(line) is int and line > 0
+                    spacing = [items[index].find(w + "pPr/" + w + "spacing") for items in paragraphs]
+                    assert all(node is not None for node in spacing)
+                    assert spacing[1].get(w + "line") == str(line)
+                    assert spacing[1].get(w + "lineRule") == "auto"
+                    for node in spacing:
+                        node.attrib.pop(w + "line", None)
+                        node.attrib.pop(w + "lineRule", None)
+            else:
+                namespace = ("{http://purl.org/dc/terms/}" if name == "docProps/core.xml"
+                             else "{http://schemas.openxmlformats.org/officeDocument/2006/extended-properties}")
+                allowed = ({"modified"} if name == "docProps/core.xml" else
+                           {"TotalTime", "Pages", "Words", "Characters", "CharactersWithSpaces", "Lines", "Paragraphs"})
+                for root in roots:
+                    for field in allowed:
+                        for node in root.findall(namespace + field):
+                            assert not len(node)
+                            node.text = None
+            assert etree.tostring(roots[0], method="c14n") == etree.tostring(roots[1], method="c14n"), name
+
+
+@pytest.fixture
+def line_spacing_preservation_pair():
+    from docx.oxml.ns import qn
+
+    document = _spacing_preservation_document()
+    document.paragraphs[0].add_run(" A second physical run.").italic = True
+    unselected = document.add_paragraph("Another unselected plain paragraph.")
+    unselected.paragraph_format.line_spacing = 1.5
+    document.settings.odd_and_even_pages_header_footer = True
+    section = document.sections[0]
+    section.different_first_page_header_footer = True
+    for variant in ("first_page_", "even_page_"):
+        for kind in ("header", "footer"):
+            getattr(section, variant + kind).paragraphs[0].text = "Preserved " + variant + kind
+    stream = io.BytesIO()
+    document.save(stream)
+    source = stream.getvalue()
+    spacing = document.paragraphs[0]._p.pPr.find(qn("w:spacing"))
+    spacing.set(qn("w:line"), "480")
+    spacing.set(qn("w:lineRule"), "auto")
+    stream = io.BytesIO()
+    document.save(stream)
+    return source, stream.getvalue()
+
+
+@pytest.mark.parametrize("source_rule", ["auto", "exact", "atLeast"])
+def test_line_spacing_mask_authorizes_only_selected_line_and_rule(line_spacing_preservation_pair, source_rule):
+    source, corrected = line_spacing_preservation_pair
+    w = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+    source = _change_part(source, "word/document.xml", lambda root:
+                          root.find(w + "body/" + w + "p/" + w + "pPr/" + w + "spacing").set(w + "lineRule", source_rule))
+    # Preservation authorization is independent of stricter Review eligibility.
+    compare_preservation(source, corrected, {(0, None, "LINE_SPACING")})
+    _assert_line_spacing_package_unchanged(source, corrected, {0: 480})
+    with pytest.raises(ValueError):
+        compare_preservation(source, corrected, set())
+    with pytest.raises(ValueError):
+        compare_preservation(source, corrected, {(0, None, "SPACE_BEFORE")})
+
+    with zipfile.ZipFile(io.BytesIO(source)) as package:
+        names = set(package.namelist())
+        assert len([name for name in names if name.startswith("word/header") and name.endswith(".xml")]) == 3
+        assert len([name for name in names if name.startswith("word/footer") and name.endswith(".xml")]) == 3
+        assert any(name.startswith("word/media/") for name in names)
+        assert {"word/styles.xml", "word/numbering.xml", "word/_rels/document.xml.rels"} <= names
+        root = etree.fromstring(package.read("word/document.xml"))
+        assert root.find(".//" + w + "bookmarkStart") is not None
+        assert root.find(".//" + w + "fldSimple") is not None
+        assert root.find(".//" + w + "tbl") is not None
+        assert root.find(".//" + w + "sectPr") is not None
+    output = Document(io.BytesIO(corrected))
+    assert len(output.paragraphs[0].runs) == 2
+    assert output.paragraphs[0].paragraph_format.space_before.pt == 20
+    assert output.paragraphs[0].paragraph_format.space_after.pt == 20
+
+
+@pytest.mark.parametrize("sibling", [
+    "before", "after", "beforeLines", "afterLines",
+    "beforeAutospacing", "afterAutospacing", "contextualSpacing",
+])
+def test_line_spacing_mask_preserves_spacing_siblings(line_spacing_preservation_pair, sibling):
+    source, corrected = line_spacing_preservation_pair
+    w = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+
+    def change(root):
+        properties = root.find(w + "body/" + w + "p/" + w + "pPr")
+        if sibling == "contextualSpacing":
+            etree.SubElement(properties, w + sibling).set(w + "val", "1")
+        else:
+            properties.find(w + "spacing").set(w + sibling, "1")
+
+    damaged = _change_part(corrected, "word/document.xml", change)
+    with pytest.raises(ValueError):
+        compare_preservation(source, damaged, {(0, None, "LINE_SPACING")})
+    with pytest.raises(AssertionError):
+        _assert_line_spacing_package_unchanged(source, damaged, {0: 480})
+
+
+@pytest.mark.parametrize("change_kind", ["text", "run_boundary", "run_format", "bookmark", "field", "table", "section"])
+def test_line_spacing_mask_preserves_selected_identity_and_main_story(line_spacing_preservation_pair, change_kind):
+    source, corrected = line_spacing_preservation_pair
+    w = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+
+    def change(root):
+        body = root.find(w + "body")
+        paragraph = body.find(w + "p")
+        runs = paragraph.findall(w + "r")
+        if change_kind == "text":
+            runs[0].find(w + "t").text += " Changed"
+        elif change_kind == "run_boundary":
+            # Same concatenated text, different physical run identity.
+            runs[0].find(w + "t").text += runs[1].find(w + "t").text
+            paragraph.remove(runs[1])
+        elif change_kind == "run_format":
+            runs[1].find(w + "rPr/" + w + "i").set(w + "val", "0")
+        elif change_kind == "bookmark":
+            root.find(".//" + w + "bookmarkStart").set(w + "name", "ChangedBookmark")
+        elif change_kind == "field":
+            root.find(".//" + w + "fldSimple").set(w + "instr", "TIME")
+        elif change_kind == "table":
+            root.find(".//" + w + "tbl//" + w + "t").text = "Changed table"
+        else:
+            body.find(w + "sectPr/" + w + "pgSz").set(w + "w", "10000")
+
+    damaged = _change_part(corrected, "word/document.xml", change)
+    with pytest.raises(ValueError):
+        compare_preservation(source, damaged, {(0, None, "LINE_SPACING")})
+    with pytest.raises(AssertionError):
+        _assert_line_spacing_package_unchanged(source, damaged, {0: 480})
+
+
+def test_line_spacing_mask_requires_every_changed_paragraph(line_spacing_preservation_pair):
+    source, corrected = line_spacing_preservation_pair
+    w = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+    index = len(Document(io.BytesIO(source)).paragraphs) - 1
+
+    def change(root):
+        paragraph = root.find(w + "body").findall(w + "p")[index]
+        paragraph.find(w + "pPr/" + w + "spacing").set(w + "line", "276")
+
+    grouped = _change_part(corrected, "word/document.xml", change)
+    targets = {(0, None, "LINE_SPACING"), (index, None, "LINE_SPACING")}
+    compare_preservation(source, grouped, targets)
+    _assert_line_spacing_package_unchanged(source, grouped, {0: 480, index: 276})
+    for target in targets:
+        with pytest.raises(ValueError):
+            compare_preservation(source, grouped, {target})
+    with pytest.raises(AssertionError):
+        _assert_line_spacing_package_unchanged(source, grouped, {0: 480})
+
+
+@pytest.mark.parametrize("witness", [
+    "style", "defaults", "settings", "numbering", "relationship", "media", "inventory",
+    "header", "footer", "first_page_header", "first_page_footer", "even_page_header", "even_page_footer",
+])
+def test_line_spacing_mask_preserves_shared_package_and_protected_stories(line_spacing_preservation_pair, witness):
+    source, corrected = line_spacing_preservation_pair
+    w = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+    r = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
+    if witness in {"style", "defaults"}:
+        def change(root):
+            if witness == "style":
+                style = next(node for node in root.findall(w + "style") if node.get(w + "styleId") == "Normal")
+                style.find(w + "name").set(w + "val", "Changed Normal")
+            else:
+                root.find(w + "docDefaults/" + w + "pPrDefault/" + w + "pPr/" + w + "spacing").set(w + "line", "480")
+        damaged = _change_part(corrected, "word/styles.xml", change)
+    elif witness in {"settings", "numbering"}:
+        damaged = _change_part(corrected, "word/" + witness + ".xml", lambda root: root.set("unauthorized", "changed"))
+    elif witness == "relationship":
+        # Swap valid existing destinations, so rejection proves preservation,
+        # not merely a dangling relationship/package validation failure.
+        def change(root):
+            images = [node for node in root if node.get("Type", "").endswith("/image")]
+            headers = [node for node in root if node.get("Type", "").endswith("/header")]
+            image_target, header_target = images[0].get("Target"), headers[0].get("Target")
+            images[0].set("Target", header_target)
+            headers[0].set("Target", image_target)
+        damaged = _change_part(corrected, "word/_rels/document.xml.rels", change)
+    elif witness == "media":
+        with zipfile.ZipFile(io.BytesIO(corrected)) as package:
+            part = next(name for name in package.namelist() if name.startswith("word/media/"))
+        damaged = _replace_part(corrected, part, lambda data: data + b"changed")
+    elif witness == "inventory":
+        damaged = _add_parts(corrected, {"word/unselected-extra.xml": b"<extra/>"})
+    else:
+        variant = "first" if witness.startswith("first_page_") else "even" if witness.startswith("even_page_") else "default"
+        kind = "header" if witness.endswith("header") else "footer"
+        with zipfile.ZipFile(io.BytesIO(corrected)) as package:
+            root = etree.fromstring(package.read("word/document.xml"))
+            reference = next(node for node in root.find(w + "body/" + w + "sectPr").findall(w + kind + "Reference")
+                             if node.get(w + "type") == variant)
+            relationships = etree.fromstring(package.read("word/_rels/document.xml.rels"))
+            relationship = next(node for node in relationships if node.get("Id") == reference.get(r + "id"))
+            part = "word/" + relationship.get("Target")
+        damaged = _change_part(corrected, part, lambda root: root.find(".//" + w + "t").__setattr__("text", "Changed protected story"))
+    with pytest.raises(ValueError):
+        compare_preservation(source, damaged, {(0, None, "LINE_SPACING")})
+    with pytest.raises(AssertionError):
+        _assert_line_spacing_package_unchanged(source, damaged, {0: 480})

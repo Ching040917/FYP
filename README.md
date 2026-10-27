@@ -75,13 +75,53 @@ A mixed safe/unsafe selection is refused as a whole.
 The original DOCX, saved Audit, Snapshot, History, PDF, scoring and categories
 remain unchanged. This certifies eligible OOXML settings, not installed-font
 availability, font substitution, arbitrary-script rendering or Word pagination.
-No candidate was added. Line-spacing unit/output verification, strict decimal
-before/after-spacing exactness, grouped quantities, truncated aggregates and
-package-policy disposition remain separate release-closure work.
+No candidate was added. Strict decimal before/after-spacing exactness, grouped
+quantities, truncated aggregates and package-policy disposition remain separate
+release-closure work; these font checks do not certify the whole Guided Fix set.
 
 In Review, Tab can focus the details area, marked by an inset focus ring.
 When its content overflows, use the arrow keys, Page Up/Page Down or Home/End
 to scroll it; Tab continues to the existing review actions.
+
+### Line-spacing Guided Fix safety
+
+Existing `LINE_SPACING` corrections require a nonempty plain main-story body
+paragraph, qualifying Appendix prose, or an individually addressed Reference
+entry with an enabled saved requirement. Only explicit canonical positive
+`w:line` integers with `w:lineRule="auto"` qualify. The used paragraph-style and
+document-default graph must be unambiguous and contain no inherited line
+declarations or linked styles. Numbering, wrappers, section boundaries,
+competing spacing controls, snap-to-grid settings and any main-document grid
+remain manual. Ordinary Word templates may therefore lose automatic
+availability; ACA never clears those settings to make an upload eligible.
+
+The audit's immutable saved Profile Snapshot independently supplies the
+requirement, not the current Profile editor or a hardcoded heading default.
+Saved decimal multipliers must be exactly representable in integer 240ths of a
+line: 1.5, 1.15 and 1.0125 qualify; 1.501 and 1.333 do not. Legacy v1/v2
+Reference requirements remain manual because their saved payload has no resolved
+enforcement toggle. Loadable legacy body requirements use the same safety gates.
+
+Confirmed Review preserves the detector's literal Current/Required strings only
+after proving multiplier units and source identity. Exact, atLeast, absolute,
+inherited, missing and malformed evidence cannot reach a successful Review.
+Unsupported absolute findings may still show a provisional numeric Current
+before upload; refusal does not change their client-side candidate classification.
+
+Only the selected `line`/`lineRule` attributes change. Every selected paragraph
+is independently reopened and checked for the exact required raw integer and
+literal `auto`, with paragraph text, physical run boundaries and fresh role
+matched against pristine original bytes. No getter tolerance, rounding, implicit
+rule or detector silence certifies the output. Mixed safe/unsafe selections are
+refused atomically. Unchanged package preservation and deterministic re-audit
+must pass before storage and the separate one-use Download; missing required
+rendered-page evidence remains a refusal.
+
+The original DOCX, Audit, Snapshot, History, PDF, scoring and categories remain
+unchanged. This certifies eligible encoded settings, not Word rendering or
+physical pagination. It is not a complete Guided Fix freeze or release approval:
+strict decimal before/after spacing, grouped quantities, truncated aggregates
+and package-policy disposition remain independent closure work.
 
 ### Before/after paragraph spacing Guided Fix safety
 
@@ -102,10 +142,10 @@ force a correction. These checks certify the point **setting**, not an exact
 rendered gap. The original DOCX, saved audit, Snapshot, History and PDF remain
 unchanged.
 
-The before/after-spacing hardening alone does not resolve the separate font,
-line-spacing-unit, strict-decimal, grouped-count, truncated-aggregate or
-package-policy issues. The font boundary is described above; the remaining
-release-closure items are not resolved by font hardening.
+The before/after-spacing hardening alone does not establish complete Guided Fix
+release closure. The separate font and line-spacing boundaries are described
+above; strict-decimal, grouped-count, truncated-aggregate and package-policy
+issues remain independent.
 
 ### Reference List heading bold Guided Fix
 

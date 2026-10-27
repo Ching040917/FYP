@@ -1960,3 +1960,987 @@ def test_font_script_layout_and_language_ambiguity_is_manual(rule, layer, tag, a
     source, audit = _font_audit(document)
     with pytest.raises(GuidedFixFailed):
         review_targets(audit, source, _font_findings(audit, rule))
+
+
+def _line_spacing_document(raw_lines=(240,), role="BODY"):
+    from tests.test_guided_fixes import _clean_line_spacing_fixture_context
+
+    document = _clean_line_spacing_fixture_context(Document())
+    if role == "APPENDIX_BODY":
+        document.add_paragraph("Appendix A")
+    elif role == "REFERENCE_ENTRY":
+        document.add_paragraph("References")
+    for index, line in enumerate(raw_lines):
+        paragraph = document.add_paragraph()
+        texts = (("Smith, A. (2024). ", f"Academic reference {index + 1}. Press.")
+                 if role == "REFERENCE_ENTRY" else
+                 ("Ordinary academic prose ", f"with an independently preserved ending {index + 1}."))
+        for text in texts:
+            paragraph.add_run(text)
+        spacing = OxmlElement("w:spacing")
+        for key, value in (("line", line), ("lineRule", "auto"), ("before", "120"), ("after", "160")):
+            spacing.set(qn("w:" + key), str(value))
+        paragraph._p.get_or_add_pPr().append(spacing)
+    return document
+
+
+def _line_spacing_audit(document, required=1.5, *, profile=None, version=6):
+    profile = profile or new_custom_profile("Exact direct line spacing")
+    profile.body.line_spacing = required
+    snapshot = replace(resolve_snapshot(profile), schema_version=version, fingerprint="").with_fingerprint()
+    source = _bold_bytes(document)
+    findings = run_static_rules_engine(source, config=EffectiveProfileConfig(snapshot))
+    for index, finding in enumerate(findings):
+        finding.id = f"line-{index}"
+    return source, SimpleNamespace(
+        profile_snapshot=snapshot.to_dict(), paragraph_page_mapping=None, violations=findings,
+        weighted_score=calculate_weighted_score_detailed(findings).total,
+        document_sha256=hashlib.sha256(source).hexdigest(),
+    )
+
+
+def _line_spacing_findings(audit):
+    findings = [finding for finding in audit.violations if finding.rule_code == "LINE_SPACING"]
+    assert findings, "A line regression must start with genuine detector findings"
+    return findings
+
+
+def _line_spacing_api_audit(client, source, required=1.5, *, profile=None):
+    profile = profile or new_custom_profile("Direct line spacing API")
+    profile.body.line_spacing = required
+    response = client.post("/api/audit", data={"custom_profile": json.dumps(profile.to_dict())},
+                           files={"file": ("line-spacing.docx", source)})
+    assert response.status_code == 200, response.text
+    audit = response.json()
+    findings = [finding for finding in audit["physical_layout_errors"] if finding["rule_code"] == "LINE_SPACING"]
+    assert findings, "API journeys must select real saved line findings"
+    return audit, f'/api/audit/{audit["audit_id"]}/guided-fixes', [finding["id"] for finding in findings]
+
+
+@pytest.mark.parametrize("raw_lines,required,encoded", [
+    ((240,), 1.5, 360), ((360,), 2.0, 480), ((480,), 1.5, 360), ((276,), 1.5, 360),
+    ((241,), 1.5, 360), ((480,), 1, 240), ((480,), 1.15, 276), ((480,), 1.0125, 243),
+    ((240,), 4.0, 960), ((240, 480), 1.5, 360),
+])
+def test_line_spacing_exact_multiplier_review_apply_download_and_saved_views(
+    client, test_engine, bold_boundary_storage, raw_lines, required, encoded,
+):
+    from pypdf import PdfReader
+    from app.services.profile_snapshot import snapshot_from_dict
+    from tests.test_guided_fix_preservation_storage import _assert_line_spacing_package_unchanged
+
+    source = _bold_bytes(_line_spacing_document(raw_lines))
+    original = bytes(source)
+    digest = hashlib.sha256(source).hexdigest()
+    audit, root, ids = _line_spacing_api_audit(client, source, required)
+    path = f'/api/audit/{audit["audit_id"]}'
+    saved = _saved_source_state(test_engine, audit["audit_id"])
+    detail, history = client.get(path).json(), client.get("/api/audits").json()
+
+    def pdf_text():
+        response = client.get(path + "/export-pdf")
+        assert response.status_code == 200
+        return "\n".join(page.extract_text() or "" for page in PdfReader(io.BytesIO(response.content)).pages)
+
+    report = pdf_text()
+    review = _upload(client, root + "/review", source, ids)
+    assert review.status_code == 200, review.text
+    assert [item["before"] for item in review.json()["items"]] == [str(raw / 240) for raw in raw_lines]
+    assert [item["after"] for item in review.json()["items"]] == [str(required)] * len(raw_lines)
+    applied = _upload(client, root, source, ids, review.json()["review_id"])
+    assert applied.status_code == 200, applied.text
+    assert applied.json()["status"] == "passed"
+    assert applied.json()["resolved"] == ids
+    assert applied.json()["new_findings"] == []
+    download_path = root + "/download/" + applied.json()["download_token"]
+    download = client.get(download_path)
+    assert download.status_code == 200
+    assert download.headers["cache-control"] == "private, no-store"
+    assert client.get(download_path).status_code == 410
+    _assert_line_spacing_package_unchanged(source, download.content, dict(enumerate([encoded] * len(raw_lines))))
+    output = Document(io.BytesIO(download.content))
+    for paragraph in output.paragraphs:
+        spacing = paragraph._p.pPr.find(qn("w:spacing"))
+        assert spacing.get(qn("w:line")) == str(encoded)
+        assert spacing.get(qn("w:lineRule")) == "auto"
+        assert spacing.get(qn("w:before")) == "120"
+        assert spacing.get(qn("w:after")) == "160"
+    config = EffectiveProfileConfig(snapshot_from_dict(saved["audit"]["profile_snapshot"]))
+    before, after = [run_static_rules_engine(data, config=config) for data in (source, download.content)]
+    assert not any(f.rule_code == "LINE_SPACING" for f in after)
+    assert sorted(map(_spacing_finding_key, after)) == sorted(
+        _spacing_finding_key(f) for f in before if f.rule_code != "LINE_SPACING"
+    )
+    scores = [calculate_weighted_score_detailed(findings) for findings in (before, after)]
+    assert scores[1].total >= scores[0].total
+    deductions = {row.category: row.deduction for row in scores[0].breakdown}
+    assert all(row.deduction <= deductions[row.category] for row in scores[1].breakdown)
+    assert source == original and hashlib.sha256(source).hexdigest() == digest
+    assert hashlib.sha256(download.content).hexdigest() != digest
+    assert saved["audit"]["document_sha256"] == digest
+    assert _saved_source_state(test_engine, audit["audit_id"]) == saved
+    assert client.get(path).json() == detail
+    assert client.get("/api/audits").json() == history
+    assert pdf_text() == report
+
+
+@pytest.mark.parametrize("role", ["BODY", "APPENDIX_BODY", "REFERENCE_ENTRY"])
+@pytest.mark.parametrize("version", [1, 2, 3, 4, 5, 6])
+def test_line_spacing_saved_versions_and_roles_resolve_independent_requirements(role, version):
+    from app.services.guided_fix import apply_guided_fixes
+    from app.services.document_parser import extract_paragraphs
+    from app.services.role_classifier import classify_paragraphs
+    from tests.test_guided_fix_preservation_storage import _assert_line_spacing_package_unchanged
+
+    profile = new_custom_profile("Separate saved body and References multipliers")
+    profile.references.line_spacing = 2.0
+    profile.references.check_line_spacing = True
+    document = _line_spacing_document(role=role)
+    source, audit = _line_spacing_audit(document, profile=profile, version=version)
+    # Legacy Reference payloads omit the toggle: retain a genuinely emitted
+    # finding from the enabled current Snapshot, without fabricating an emitter.
+    if role == "REFERENCE_ENTRY" and version < 3:
+        _, current = _line_spacing_audit(document, profile=profile)
+        audit.violations = current.violations
+        with pytest.raises(GuidedFixFailed):
+            review_targets(audit, source, _line_spacing_findings(audit))
+        return
+    selected = _line_spacing_findings(audit)
+    index = selected[0].location["paragraph_index"]
+    assert classify_paragraphs(document, extract_paragraphs(document))[index] == role
+    required, encoded = (2.0, 480) if role == "REFERENCE_ENTRY" else (1.5, 360)
+    assert selected[0].expected_value == str(required)
+    items, _ = review_targets(audit, source, selected)
+    assert items[0]["after"] == str(required)
+    output, _, _ = apply_guided_fixes(audit, source, selected)
+    _assert_line_spacing_package_unchanged(source, output, {index: encoded})
+    assert verify_reaudit(audit, source, output, selected)["new_findings"] == []
+    selected[0].expected_value = "1.75"
+    with pytest.raises(GuidedFixFailed):
+        review_targets(audit, source, selected)
+
+
+@pytest.mark.parametrize("required", [1.501, 1.333, 1.0041666666666667])
+def test_line_spacing_nonrepresentable_saved_decimal_never_reaches_review(
+    client, test_engine, bold_boundary_storage, required,
+):
+    source = _bold_bytes(_line_spacing_document((480,)))
+    audit, root, ids = _line_spacing_api_audit(client, source, required)
+    before = _saved_source_state(test_engine, audit["audit_id"])
+    response = _upload(client, root + "/review", source, ids)
+    assert response.status_code == 422, response.text
+    _assert_no_spacing_output(response, bold_boundary_storage, audit["audit_id"])
+    assert _saved_source_state(test_engine, audit["audit_id"]) == before
+
+
+@pytest.mark.parametrize("actual", ["NaN", "nan", "inf", "-inf", "1", "1.00", " 1.0", "1.0x", "1.01", None])
+def test_line_spacing_current_requires_literal_finite_detector_projection(actual):
+    source, audit = _line_spacing_audit(_line_spacing_document())
+    selected = _line_spacing_findings(audit)
+    selected[0].actual_value = actual
+    with pytest.raises(GuidedFixFailed):
+        review_targets(audit, source, selected)
+
+
+@pytest.mark.parametrize("value", [None, True, False, 0.5, 4.001, float("inf"), float("nan")])
+def test_line_spacing_saved_requirement_must_be_finite_real_in_bounds(value):
+    from app.services.profile_snapshot import snapshot_from_dict
+
+    source, audit = _line_spacing_audit(_line_spacing_document())
+    selected = _line_spacing_findings(audit)
+    snapshot = snapshot_from_dict(audit.profile_snapshot)
+    audit.profile_snapshot = replace(snapshot, body_line_spacing=value, fingerprint="").with_fingerprint().to_dict()
+    selected[0].expected_value = str(value)
+    with pytest.raises(GuidedFixFailed):
+        review_targets(audit, source, selected)
+
+
+@pytest.mark.parametrize("change", ["missing", "corrupt", "future", "disabled_reference", "missing_reference"])
+def test_line_spacing_missing_or_disabled_saved_evidence_cannot_use_finding_scalar(change):
+    from app.services.profile_snapshot import snapshot_from_dict
+
+    profile = new_custom_profile("Reference saved toggle")
+    profile.references.line_spacing = 2.0
+    profile.references.check_line_spacing = True
+    source, audit = _line_spacing_audit(_line_spacing_document(role="REFERENCE_ENTRY"), profile=profile)
+    selected = _line_spacing_findings(audit)
+    if change == "missing":
+        audit.profile_snapshot = None
+    elif change == "corrupt":
+        audit.profile_snapshot["body"]["line_spacing"] = 2.0
+    elif change == "future":
+        audit.profile_snapshot["schema_version"] = 999
+    else:
+        snapshot = snapshot_from_dict(audit.profile_snapshot)
+        changes = ({"references_check_line_spacing": False} if change == "disabled_reference"
+                   else {"references_line_spacing": None})
+        audit.profile_snapshot = replace(snapshot, **changes, fingerprint="").with_fingerprint().to_dict()
+    with pytest.raises(GuidedFixFailed):
+        review_targets(audit, source, selected)
+
+
+@pytest.mark.parametrize("location", [
+    {}, {"paragraph_index": True}, {"paragraph_index": -1}, {"paragraph_index": 99},
+    {"paragraph_index": 0, "run_index": 0}, {"paragraph_index": 0, "run_indexes": []},
+    {"paragraph_index": 0, "paragraph_indexes": [0, 1], "occurrences": 2},
+    {"paragraph_index": 0, "paragraph_indexes": [0], "occurrences": 2},
+])
+def test_line_spacing_requires_complete_main_story_paragraph_identity(location):
+    source, audit = _line_spacing_audit(_line_spacing_document())
+    selected = _line_spacing_findings(audit)
+    selected[0].location = location
+    with pytest.raises(GuidedFixFailed):
+        review_targets(audit, source, selected)
+
+
+def test_line_spacing_duplicate_selected_target_is_not_a_complete_second_correction():
+    source, audit = _line_spacing_audit(_line_spacing_document())
+    selected = _line_spacing_findings(audit)
+    with pytest.raises(GuidedFixFailed):
+        review_targets(audit, source, selected + selected)
+
+
+@pytest.mark.parametrize("rule", ["exact", "atLeast"])
+def test_line_spacing_absolute_findings_are_genuine_but_never_confirmed(
+    client, bold_boundary_storage, rule,
+):
+    document = _line_spacing_document((360,))
+    document.paragraphs[0]._p.pPr.find(qn("w:spacing")).set(qn("w:lineRule"), rule)
+    source = _bold_bytes(document)
+    audit, root, ids = _line_spacing_api_audit(client, source)
+    finding = next(f for f in audit["physical_layout_errors"] if f["id"] == ids[0])
+    assert finding["actual_value"] == "228600"
+    response = _upload(client, root + "/review", source, ids)
+    assert response.status_code == 422, response.text
+    _assert_no_spacing_output(response, bold_boundary_storage, audit["audit_id"])
+
+
+@pytest.mark.parametrize("layer", ["style", "base", "default"])
+@pytest.mark.parametrize("attribute,value", [
+    ("line", "240"), ("lineRule", "auto"), ("beforeLines", "0"), ("afterLines", "100"),
+    ("beforeAutospacing", "0"), ("afterAutospacing", "false"),
+])
+def test_line_spacing_shadowed_inherited_line_or_competing_control_is_manual(layer, attribute, value):
+    document = _line_spacing_document()
+    source, audit = _line_spacing_audit(document)
+    properties = _spacing_layer(document, layer)
+    spacing = properties.find(qn("w:spacing"))
+    if spacing is None:
+        spacing = OxmlElement("w:spacing")
+        properties.append(spacing)
+    spacing.set(qn("w:" + attribute), value)
+    with pytest.raises(GuidedFixFailed):
+        review_targets(audit, _bold_bytes(document), _line_spacing_findings(audit))
+
+
+@pytest.mark.parametrize("layer", ["direct", "style", "base", "default"])
+@pytest.mark.parametrize("tag", ["contextualSpacing", "snapToGrid", "numPr", "pPrChange", "unknownProperty"])
+def test_line_spacing_used_controls_are_manual_even_when_false_or_shadowed(layer, tag):
+    document = _line_spacing_document()
+    _, audit = _line_spacing_audit(document)
+    node = OxmlElement("w:" + tag)
+    node.set(qn("w:val"), "0")
+    _spacing_layer(document, layer).append(node)
+    with pytest.raises(GuidedFixFailed):
+        review_targets(audit, _bold_bytes(document), _line_spacing_findings(audit))
+
+
+@pytest.mark.parametrize("attribute,value", [
+    ("line", None), ("lineRule", None), ("lineRule", "exactly"), ("line", "0"),
+    ("line", "-240"), ("line", "0240"), ("line", "+240"), ("line", " 240"),
+    ("line", "240.0"), ("line", "NaN"), ("line", "2147483648"),
+    ("before", "-1"), ("after", "1.5"), ("beforeLines", "0"),
+    ("afterLines", "0"), ("beforeAutospacing", "false"), ("afterAutospacing", "0"),
+    ("unknown", "1"),
+])
+def test_line_spacing_malformed_selected_raw_source_refuses_before_scalar_getters(attribute, value):
+    document = _line_spacing_document()
+    _, audit = _line_spacing_audit(document)
+    selected = _line_spacing_findings(audit)
+    spacing = document.paragraphs[0]._p.pPr.find(qn("w:spacing"))
+    if value is None:
+        spacing.attrib.pop(qn("w:" + attribute))
+    else:
+        spacing.set(qn("w:" + attribute), value)
+    # Malformed source is deliberately introduced only after a genuine finding
+    # is captured. This is service preflight evidence, not an upload journey.
+    with pytest.raises(GuidedFixFailed):
+        review_targets(audit, _bold_bytes(document), selected)
+
+
+@pytest.mark.parametrize("layer", ["direct", "style", "base", "default"])
+@pytest.mark.parametrize("variant", [
+    "duplicate_spacing", "duplicate_pPr", "duplicate_leaf", "nested_leaf",
+    "property_text", "property_tail", "spacing_text", "spacing_child",
+])
+def test_line_spacing_every_used_property_container_is_plain_and_unambiguous(layer, variant):
+    document = _line_spacing_document()
+    _, audit = _line_spacing_audit(document)
+    properties = _spacing_layer(document, layer)
+    spacing = properties.find(qn("w:spacing"))
+    if spacing is None:
+        spacing = OxmlElement("w:spacing")
+        spacing.set(qn("w:before"), "0")
+        properties.append(spacing)
+    if variant == "duplicate_spacing":
+        properties.append(copy.deepcopy(spacing))
+    elif variant == "duplicate_pPr":
+        properties.getparent().append(copy.deepcopy(properties))
+    elif variant == "duplicate_leaf":
+        for _ in range(2):
+            node = OxmlElement("w:jc")
+            node.set(qn("w:val"), "left")
+            properties.append(node)
+    elif variant == "nested_leaf":
+        node = OxmlElement("w:keepLines")
+        node.append(OxmlElement("w:keepNext"))
+        properties.append(node)
+    elif variant == "property_text":
+        properties.text = "not property whitespace"
+    elif variant == "property_tail":
+        spacing.tail = "not property whitespace"
+    elif variant == "spacing_text":
+        spacing.text = "not a spacing leaf"
+    else:
+        spacing.append(OxmlElement("w:before"))
+    with pytest.raises(GuidedFixFailed):
+        review_targets(audit, _bold_bytes(document), _line_spacing_findings(audit))
+
+
+@pytest.mark.parametrize("variant", [
+    "missing_style", "wrong_kind", "duplicate_style", "cycle", "missing_base",
+    "duplicate_basedOn", "duplicate_pStyle", "linked_style", "linked_base",
+    "missing_styles", "duplicate_docDefaults", "duplicate_pPrDefault", "duplicate_default_pPr",
+    "missing_default", "duplicate_default", "nested_defaults",
+])
+def test_line_spacing_used_style_and_default_graph_must_be_complete(variant):
+    document = _line_spacing_document()
+    _, audit = _line_spacing_audit(document)
+    paragraph = document.paragraphs[0]
+    _spacing_layer(document, "style")
+    style = paragraph.style
+    if variant == "missing_style":
+        paragraph._p.pPr.find(qn("w:pStyle")).set(qn("w:val"), "AbsentLineStyle")
+    elif variant == "wrong_kind":
+        style.element.set(qn("w:type"), "character")
+    elif variant == "duplicate_style":
+        document.styles.element.append(copy.deepcopy(style.element))
+    elif variant == "cycle":
+        style.base_style.base_style = style
+    elif variant == "missing_base":
+        style.element.find(qn("w:basedOn")).set(qn("w:val"), "AbsentLineBase")
+    elif variant == "duplicate_basedOn":
+        style.element.append(copy.deepcopy(style.element.find(qn("w:basedOn"))))
+    elif variant == "duplicate_pStyle":
+        paragraph._p.pPr.append(copy.deepcopy(paragraph._p.pPr.find(qn("w:pStyle"))))
+    elif variant in {"linked_style", "linked_base"}:
+        node = OxmlElement("w:link")
+        node.set(qn("w:val"), "UninterpretedLinkedStyle")
+        (style if variant == "linked_style" else style.base_style).element.append(node)
+    elif variant == "missing_styles":
+        for key, relationship in list(document.part.rels.items()):
+            if relationship.reltype.endswith("/styles"):
+                del document.part.rels[key]
+    elif variant in {"missing_default", "duplicate_default"}:
+        # Force default paragraph-style resolution rather than an explicit style.
+        paragraph._p.pPr.remove(paragraph._p.pPr.find(qn("w:pStyle")))
+        normal = document.styles["Normal"].element
+        if variant == "missing_default":
+            normal.attrib.pop(qn("w:default"))
+        else:
+            duplicate = copy.deepcopy(normal)
+            duplicate.set(qn("w:styleId"), "SecondDefaultLineStyle")
+            document.styles.element.append(duplicate)
+    else:
+        properties = _spacing_layer(document, "default")
+        defaults = properties.getparent().getparent()
+        if variant == "duplicate_docDefaults":
+            defaults.getparent().append(copy.deepcopy(defaults))
+        elif variant == "duplicate_pPrDefault":
+            defaults.append(copy.deepcopy(properties.getparent()))
+        elif variant == "duplicate_default_pPr":
+            properties.getparent().append(copy.deepcopy(properties))
+        else:
+            defaults.append(OxmlElement("w:unknownDefaults"))
+    with pytest.raises(GuidedFixFailed):
+        review_targets(audit, _bold_bytes(document), _line_spacing_findings(audit))
+
+
+@pytest.mark.parametrize("variant", [
+    "bookmark", "simple_field", "hyperlink", "tracked_insert", "content_control",
+    "run_field", "run_change", "duplicate_rPr", "misplaced_rPr", "paragraph_text",
+    "paragraph_tail", "section_boundary", "empty", "numbered_style",
+])
+def test_line_spacing_selected_structure_does_not_expand_plain_paragraph_envelope(variant):
+    document = _line_spacing_document()
+    _, audit = _line_spacing_audit(document)
+    paragraph = document.paragraphs[0]
+    if variant in {"bookmark", "simple_field", "hyperlink", "tracked_insert", "content_control"}:
+        tag = {"bookmark": "bookmarkStart", "simple_field": "fldSimple", "hyperlink": "hyperlink",
+               "tracked_insert": "ins", "content_control": "sdt"}[variant]
+        node = OxmlElement("w:" + tag)
+        if variant != "bookmark":
+            node.append(copy.deepcopy(paragraph.runs[0]._r))
+        paragraph._p.append(node)
+    elif variant in {"run_field", "run_change"}:
+        paragraph.runs[0]._r.append(OxmlElement("w:fldChar" if variant == "run_field" else "w:rPrChange"))
+    elif variant == "duplicate_rPr":
+        run = paragraph.runs[0]._r
+        run.get_or_add_rPr()
+        run.append(OxmlElement("w:rPr"))
+    elif variant == "misplaced_rPr":
+        paragraph.runs[0]._r.append(OxmlElement("w:rPr"))
+    elif variant == "paragraph_text":
+        from lxml import etree
+        etree._Element.text.__set__(paragraph._p, "unrepresented raw paragraph text")
+    elif variant == "paragraph_tail":
+        paragraph.runs[0]._r.tail = "unrepresented raw run tail"
+    elif variant == "section_boundary":
+        paragraph._p.pPr.append(copy.deepcopy(document.sections[0]._sectPr))
+    elif variant == "empty":
+        for run in paragraph.runs:
+            run.text = ""
+    else:
+        paragraph.style = "List Number"
+    with pytest.raises(GuidedFixFailed):
+        review_targets(audit, _bold_bytes(document), _line_spacing_findings(audit))
+
+
+@pytest.mark.parametrize("grid_type", [None, "default", "lines", "linesAndChars"])
+def test_line_spacing_any_main_document_grid_is_manual_even_in_other_section(grid_type):
+    document = _line_spacing_document()
+    _, audit = _line_spacing_audit(document)
+    document.add_section()
+    grid = OxmlElement("w:docGrid")
+    grid.set(qn("w:linePitch"), "360")
+    if grid_type is not None:
+        grid.set(qn("w:type"), grid_type)
+    document.sections[-1]._sectPr.append(grid)
+    with pytest.raises(GuidedFixFailed):
+        review_targets(audit, _bold_bytes(document), _line_spacing_findings(audit))
+
+
+@pytest.mark.parametrize("story", ["table", "header", "footer", "first_page_header", "even_page_footer"])
+def test_line_spacing_non_main_story_cannot_be_selected_by_paragraph_alias(story):
+    document = _line_spacing_document()
+    _, audit = _line_spacing_audit(document)
+    selected = _line_spacing_findings(audit)
+    original = document.paragraphs[0]
+    if story == "table":
+        target = document.add_table(rows=1, cols=1).cell(0, 0).paragraphs[0]
+    else:
+        target = getattr(document.sections[0], story).paragraphs[0]
+    target._p.getparent().replace(target._p, copy.deepcopy(original._p))
+    original._p.getparent().remove(original._p)
+    with pytest.raises(GuidedFixFailed):
+        review_targets(audit, _bold_bytes(document), selected)
+
+
+@pytest.mark.parametrize("role", ["HEADING_1", "APPENDIX_HEADING", "CAPTION", "APPENDIX_FORM"])
+def test_line_spacing_wrong_role_never_borrows_body_requirement(role):
+    document = _line_spacing_document((480,))
+    paragraph = document.paragraphs[0]
+    if role == "HEADING_1":
+        paragraph.style = "Heading 1"
+        for node in list(paragraph.style.element.findall(qn("w:link"))):
+            paragraph.style.element.remove(node)
+    elif role == "APPENDIX_HEADING":
+        paragraph.text = "Appendix A"
+    # Headings below use a real heading detector finding; skipped-role forms
+    # instead retain a genuine body finding before changing only its context.
+    source, audit = _line_spacing_audit(document)
+    selected = _line_spacing_findings(audit)
+    if role == "CAPTION":
+        paragraph.text = "Figure 1: Sample illustration"
+    elif role == "APPENDIX_FORM":
+        document._element.body.insert(0, OxmlElement("w:p"))
+        document.paragraphs[0].text = "Appendix A"
+        paragraph.text = "Name:"
+        selected[0].location = {"paragraph_index": 1}
+    with pytest.raises(GuidedFixFailed):
+        review_targets(audit, _bold_bytes(document), selected)
+
+
+@pytest.mark.parametrize("variant", ["duplicate", "table"])
+def test_line_spacing_reference_requires_unique_main_story_reference_span(variant):
+    profile = new_custom_profile("Unique reference line requirement")
+    profile.references.line_spacing = 2.0
+    profile.references.check_line_spacing = True
+    document = _line_spacing_document(role="REFERENCE_ENTRY")
+    _, audit = _line_spacing_audit(document, profile=profile)
+    if variant == "duplicate":
+        document.add_paragraph("References")
+    else:
+        document.add_table(rows=1, cols=1).cell(0, 0).text = "References"
+    with pytest.raises(GuidedFixFailed):
+        review_targets(audit, _bold_bytes(document), _line_spacing_findings(audit))
+
+
+def test_line_spacing_unused_broken_styles_and_ordinary_sibling_points_remain_available():
+    from docx.enum.style import WD_STYLE_TYPE
+    from app.services.guided_fix import apply_guided_fixes
+    from tests.test_guided_fix_preservation_storage import _assert_line_spacing_package_unchanged
+
+    document = _line_spacing_document()
+    unused = document.styles.add_style("Unused broken line style", WD_STYLE_TYPE.PARAGRAPH)
+    based = OxmlElement("w:basedOn")
+    based.set(qn("w:val"), "AbsentUnusedBase")
+    unused.element.append(based)
+    unused.element.append(OxmlElement("w:link"))
+    for layer in ("style", "default"):
+        properties = _spacing_layer(document, layer)
+        spacing = properties.find(qn("w:spacing"))
+        if spacing is None:
+            spacing = OxmlElement("w:spacing")
+            properties.append(spacing)
+        spacing.set(qn("w:before"), "0")
+        spacing.set(qn("w:after"), "240")
+    source, audit = _line_spacing_audit(document)
+    selected = _line_spacing_findings(audit)
+    output, _, _ = apply_guided_fixes(audit, source, selected)
+    _assert_line_spacing_package_unchanged(source, output, {0: 360})
+
+
+def test_line_spacing_inherited_only_upload_has_no_invented_selectable_finding(client, bold_boundary_storage):
+    document = _line_spacing_document()
+    spacing = document.paragraphs[0]._p.pPr.find(qn("w:spacing"))
+    for attribute in ("line", "lineRule"):
+        del spacing.attrib[qn("w:" + attribute)]
+    document.styles["Normal"].paragraph_format.line_spacing = 1.0
+    profile = new_custom_profile("Inherited line spacing is not direct evidence")
+    profile.body.line_spacing = 1.5
+    response = client.post("/api/audit", data={"custom_profile": json.dumps(profile.to_dict())},
+                           files={"file": ("inherited.docx", _bold_bytes(document))})
+    assert response.status_code == 200, response.text
+    assert not any(f["rule_code"] == "LINE_SPACING" for f in response.json()["physical_layout_errors"])
+
+
+@pytest.mark.parametrize("unsafe", ["absolute_second", "stock_context"])
+def test_line_spacing_safe_and_unsafe_source_selection_has_no_review_or_output(
+    client, test_engine, bold_boundary_storage, unsafe,
+):
+    document = _line_spacing_document((240, 480))
+    if unsafe == "absolute_second":
+        document.paragraphs[1]._p.pPr.find(qn("w:spacing")).set(qn("w:lineRule"), "exact")
+    else:
+        document.styles["Normal"].paragraph_format.line_spacing = 1.15
+    source = _bold_bytes(document)
+    audit, root, ids = _line_spacing_api_audit(client, source)
+    assert len(ids) == 2
+    before = _saved_source_state(test_engine, audit["audit_id"])
+    response = _upload(client, root + "/review", source, ids)
+    assert response.status_code == 422, response.text
+    _assert_no_spacing_output(response, bold_boundary_storage, audit["audit_id"])
+    assert _saved_source_state(test_engine, audit["audit_id"]) == before
+
+
+@pytest.mark.parametrize("fault", [
+    "line_plus_one", "line_minus_one", "missing_rule", "exact", "atLeast", "absolute_alias",
+    "absolute_alias_atLeast",
+    "grouped_last_337", "unchanged_last", "text", "run_boundary", "run_attribute",
+    "paragraph_count", "role", "before", "after", "contextual", "autospacing",
+])
+def test_line_spacing_faulty_output_is_discarded_before_token_or_storage(
+    client, test_engine, monkeypatch, bold_boundary_storage, fault,
+):
+    from app.api import routes
+    from app.services import guided_fix
+    from pypdf import PdfReader
+
+    document = _line_spacing_document((240, 240))
+    heading = document.styles["Heading 1"].element
+    for link in list(heading.findall(qn("w:link"))):
+        heading.remove(link)
+    required = 2.0 if fault in {"absolute_alias", "absolute_alias_atLeast"} else 1.5
+    source = _bold_bytes(document)
+    digest = hashlib.sha256(source).hexdigest()
+    audit, root, ids = _line_spacing_api_audit(client, source, required)
+    path = f'/api/audit/{audit["audit_id"]}'
+    before = _saved_source_state(test_engine, audit["audit_id"])
+    detail, history = client.get(path).json(), client.get("/api/audits").json()
+
+    def pdf_text():
+        response = client.get(path + "/export-pdf")
+        assert response.status_code == 200
+        return "\n".join(page.extract_text() or "" for page in PdfReader(io.BytesIO(response.content)).pages)
+
+    report = pdf_text()
+    review = _upload(client, root + "/review", source, ids)
+    assert review.status_code == 200, review.text
+    fix = guided_fix._fix_line_spacing
+    calls = []
+
+    def corrupt_after_real_setter(paragraph, ratio):
+        calls.append(paragraph.text)
+        if fault == "unchanged_last" and len(calls) == 2:
+            return True
+        result = fix(paragraph, ratio)
+        if fault == "unchanged_last":
+            return result
+        if len(calls) != (2 if fault == "grouped_last_337" else 1):
+            return result
+        spacing = paragraph._p.pPr.find(qn("w:spacing"))
+        if fault in {"line_plus_one", "line_minus_one", "grouped_last_337"}:
+            value = 337 if fault == "grouped_last_337" else int(spacing.get(qn("w:line"))) + (
+                1 if fault == "line_plus_one" else -1)
+            spacing.set(qn("w:line"), str(value))
+        elif fault == "missing_rule":
+            del spacing.attrib[qn("w:lineRule")]
+        elif fault in {"exact", "atLeast", "absolute_alias", "absolute_alias_atLeast"}:
+            rule = "atLeast" if fault == "absolute_alias_atLeast" else "exact" if fault == "absolute_alias" else fault
+            spacing.set(qn("w:lineRule"), rule)
+            if fault in {"absolute_alias", "absolute_alias_atLeast"}:
+                spacing.set(qn("w:line"), "0.00015748pt")
+        elif fault == "text":
+            paragraph.runs[0].text += " Changed original text."
+        elif fault == "run_boundary":
+            text = paragraph.text
+            paragraph.runs[0].text = text
+            paragraph._p.remove(paragraph.runs[1]._r)
+        elif fault == "run_attribute":
+            paragraph.runs[0]._r.find(qn("w:t")).set(
+                "{http://www.w3.org/XML/1998/namespace}space", "default")
+        elif fault == "paragraph_count":
+            paragraph._p.getparent().insert(0, copy.deepcopy(paragraph._p))
+        elif fault == "role":
+            paragraph.style = "Heading 1"
+        elif fault in {"before", "after"}:
+            spacing.set(qn("w:" + fault), "999")
+        elif fault == "contextual":
+            paragraph._p.pPr.append(OxmlElement("w:contextualSpacing"))
+        else:
+            spacing.set(qn("w:beforeAutospacing"), "0")
+        return result
+
+    monkeypatch.setattr(guided_fix, "_fix_line_spacing", corrupt_after_real_setter)
+    if fault not in {"before", "after"}:
+        def no_preservation_escape(*_args, **_kwargs):
+            pytest.fail("The independent reopened line/identity oracle must reject this fault first")
+        monkeypatch.setattr(routes.docx_preservation, "compare_preservation", no_preservation_escape)
+
+    def no_publication(*_args, **_kwargs):
+        pytest.fail("A faulty line copy must not reach output storage")
+
+    monkeypatch.setattr(guided_fix_storage, "store", no_publication)
+    response = _upload(client, root, source, ids, review.json()["review_id"])
+    assert response.status_code == 422, response.text
+    _assert_no_spacing_output(response, bold_boundary_storage, audit["audit_id"])
+    assert _saved_source_state(test_engine, audit["audit_id"]) == before
+    assert client.get(path).json() == detail
+    assert client.get("/api/audits").json() == history
+    assert pdf_text() == report
+    assert hashlib.sha256(source).hexdigest() == digest
+
+
+def test_line_spacing_output_oracle_requires_pristine_original_not_mutated_source_doc():
+    from app.services.guided_fix import _validate_output, apply_guided_fixes
+    from app.services.document_parser import extract_paragraphs
+    from app.services.role_classifier import classify_paragraphs
+
+    document = _line_spacing_document()
+    source, audit = _line_spacing_audit(document)
+    selected = _line_spacing_findings(audit)
+    _, targets = review_targets(audit, source, selected)
+    roles = classify_paragraphs(document, extract_paragraphs(document))
+    output, _, _ = apply_guided_fixes(audit, source, selected)
+    already_mutated = Document(io.BytesIO(output))
+    with pytest.raises(GuidedFixFailed):
+        _validate_output(output, already_mutated, selected, roles, audit, targets)
+
+
+@pytest.mark.parametrize("failure", [
+    "preservation", "baseline_drift", "new_finding", "category_increase",
+    "reaudit_unavailable", "page_mapping_unavailable", "storage_failure",
+])
+def test_line_spacing_publication_barriers_preserve_saved_audit_history_and_pdf(
+    client, test_engine, monkeypatch, bold_boundary_storage, failure,
+):
+    from app.api import routes
+    from app.services import guided_fix_verification, docx_pdf_converter
+    from app.services.layout_violation import LayoutViolation
+    from pypdf import PdfReader
+
+    source = _bold_bytes(_line_spacing_document())
+    audit, root, ids = _line_spacing_api_audit(client, source)
+    path = f'/api/audit/{audit["audit_id"]}'
+    review = _upload(client, root + "/review", source, ids)
+    assert review.status_code == 200, review.text
+    injected = []
+    if failure in {"baseline_drift", "page_mapping_unavailable"}:
+        with Session(test_engine) as db:
+            saved = db.get(AuditRecord, audit["audit_id"])
+            if failure == "baseline_drift":
+                saved.weighted_score -= 1
+            else:
+                saved.paragraph_page_mapping = {"0": 1}
+            db.commit()
+        if failure == "page_mapping_unavailable":
+            def no_page_renderer(_source):
+                injected.append("required fresh renderer")
+                raise RuntimeError("Controlled unavailable fresh page evidence")
+            monkeypatch.setattr(docx_pdf_converter, "convert_docx_to_pdf", no_page_renderer)
+        else:
+            injected.append("saved score differs")
+    elif failure == "preservation":
+        def preservation_refusal(*_args):
+            injected.append("package preservation")
+            raise GuidedFixFailed("Controlled package gate refusal")
+        monkeypatch.setattr(routes.docx_preservation, "compare_preservation", preservation_refusal)
+    elif failure in {"reaudit_unavailable", "new_finding"}:
+        engine = guided_fix_verification.run_static_rules_engine
+
+        def failed_engine(data, **kwargs):
+            injected.append(data)
+            if failure == "reaudit_unavailable":
+                raise RuntimeError("Controlled unavailable deterministic re-audit")
+            findings = engine(data, **kwargs)
+            if data != source:
+                findings.append(LayoutViolation(
+                    rule_code="FONT_SIZE", severity="MINOR",
+                    location={"paragraph_index": 0, "run_index": 0},
+                    message="An unrelated new finding", actual_value="9pt", expected_value="12pt",
+                ))
+            return findings
+
+        monkeypatch.setattr(guided_fix_verification, "run_static_rules_engine", failed_engine)
+    elif failure == "category_increase":
+        score = guided_fix_verification.calculate_weighted_score_detailed
+
+        def increased_score(findings):
+            result = score(findings)
+            injected.append(result)
+            if len(injected) == 2:
+                breakdown = [replace(row, deduction=row.deduction + 1)
+                             if row.category == "page_margins" else row for row in result.breakdown]
+                return replace(result, total=result.total - 1, breakdown=breakdown)
+            return result
+
+        monkeypatch.setattr(guided_fix_verification, "calculate_weighted_score_detailed", increased_score)
+    else:
+        def failed_fsync(_descriptor):
+            injected.append("fsync")
+            raise OSError("Controlled output disk write failure")
+        monkeypatch.setattr(guided_fix_storage.os, "fsync", failed_fsync)
+    if failure != "storage_failure":
+        def no_publication(*_args):
+            pytest.fail("Storage must not run after a failed line verification gate")
+        monkeypatch.setattr(guided_fix_storage, "store", no_publication)
+    saved = _saved_source_state(test_engine, audit["audit_id"])
+    detail, history = client.get(path).json(), client.get("/api/audits").json()
+
+    def pdf_text():
+        response = client.get(path + "/export-pdf")
+        assert response.status_code == 200
+        return "\n".join(page.extract_text() or "" for page in PdfReader(io.BytesIO(response.content)).pages)
+
+    report = pdf_text()
+    response = _upload(client, root, source, ids, review.json()["review_id"])
+    assert response.status_code == (503 if failure == "storage_failure" else 422), response.text
+    assert injected
+    if failure in {"new_finding", "category_increase"}:
+        assert len(injected) == 2
+    _assert_no_spacing_output(response, bold_boundary_storage, audit["audit_id"])
+    assert _saved_source_state(test_engine, audit["audit_id"]) == saved
+    assert client.get(path).json() == detail
+    assert client.get("/api/audits").json() == history
+    assert pdf_text() == report
+
+
+@pytest.mark.parametrize("phase", ["review", "apply"])
+@pytest.mark.parametrize("change,status", [
+    ("wrong_original", 409), ("stale_actual", 422), ("stale_expected", 422),
+    ("no_snapshot", 409), ("future_snapshot", 409), ("corrupt_snapshot", 409), ("no_hash", 409),
+])
+def test_line_spacing_saved_candidate_gates_reject_before_mutation(
+    client, test_engine, monkeypatch, bold_boundary_storage, phase, change, status,
+):
+    from app.services import guided_fix
+
+    source = _bold_bytes(_line_spacing_document())
+    audit, root, ids = _line_spacing_api_audit(client, source)
+    token = None
+    if phase == "apply":
+        review = _upload(client, root + "/review", source, ids)
+        assert review.status_code == 200, review.text
+        token = review.json()["review_id"]
+    with Session(test_engine) as db:
+        saved = db.get(AuditRecord, audit["audit_id"])
+        finding = db.get(Violation, ids[0])
+        if change == "stale_actual":
+            finding.actual_value = "NaN"
+        elif change == "stale_expected":
+            finding.expected_value = "1.75"
+        elif change == "no_snapshot":
+            saved.profile_snapshot = None
+        elif change == "future_snapshot":
+            payload = copy.deepcopy(saved.profile_snapshot)
+            payload["schema_version"] = 999
+            saved.profile_snapshot = payload
+        elif change == "corrupt_snapshot":
+            payload = copy.deepcopy(saved.profile_snapshot)
+            payload["body"]["line_spacing"] = 2.0
+            saved.profile_snapshot = payload
+        elif change == "no_hash":
+            saved.document_sha256 = None
+        db.commit()
+    before = _saved_source_state(test_engine, audit["audit_id"])
+    if change == "wrong_original":
+        different = _line_spacing_document()
+        different.paragraphs[0].runs[0].text += " A different original."
+        source = _bold_bytes(different)
+
+    def no_mutation(*_args):
+        pytest.fail("Wrong source or stale saved evidence must be rejected before mutation")
+
+    monkeypatch.setattr(guided_fix, "_fix_line_spacing", no_mutation)
+    response = _upload(client, root + ("/review" if phase == "review" else ""), source, ids, token)
+    assert response.status_code == status, response.text
+    # _guided_request can reject before consuming a valid Review token; do not
+    # prescribe token cleanup at that earlier, unchanged route boundary.
+    _assert_no_bold_output(response, bold_boundary_storage, audit["audit_id"])
+    assert _saved_source_state(test_engine, audit["audit_id"]) == before
+
+
+def test_line_spacing_saved_requirement_survives_current_profile_edits(
+    client, test_engine, monkeypatch, bold_boundary_storage,
+):
+    from app.services import profile_registry
+    from tests.test_guided_fix_preservation_storage import _assert_line_spacing_package_unchanged
+
+    profile = new_custom_profile("Historical exact direct line spacing")
+    profile.body.line_spacing = 1.5
+    monkeypatch.setattr(profile_registry, "BUILTIN_PROFILES", {profile.profile_id: profile})
+    source = _bold_bytes(_line_spacing_document())
+    response = client.post("/api/audit", params={"profile_id": profile.profile_id},
+                           files={"file": ("historical-line.docx", source)})
+    assert response.status_code == 200, response.text
+    audit = response.json()
+    ids = [f["id"] for f in audit["physical_layout_errors"] if f["rule_code"] == "LINE_SPACING"]
+    assert ids
+    saved = _saved_source_state(test_engine, audit["audit_id"])
+    profile.body.line_spacing = 2.0
+    root = f'/api/audit/{audit["audit_id"]}/guided-fixes'
+    review = _upload(client, root + "/review", source, ids)
+    assert review.status_code == 200, review.text
+    assert review.json()["items"][0]["after"] == "1.5"
+    applied = _upload(client, root, source, ids, review.json()["review_id"])
+    assert applied.status_code == 200, applied.text
+    download = client.get(root + "/download/" + applied.json()["download_token"])
+    assert download.status_code == 200
+    _assert_line_spacing_package_unchanged(source, download.content, {0: 360})
+    assert _saved_source_state(test_engine, audit["audit_id"]) == saved
+
+
+@pytest.mark.parametrize("expected", ["1.50", " 1.5", "1.5 ", "1.5x", "15e-1", "NaN", None])
+def test_line_spacing_required_literal_cannot_be_reinterpreted_or_normalized(expected):
+    source, audit = _line_spacing_audit(_line_spacing_document())
+    selected = _line_spacing_findings(audit)
+    selected[0].expected_value = expected
+    with pytest.raises(GuidedFixFailed):
+        review_targets(audit, source, selected)
+
+
+@pytest.mark.parametrize("raw", [1, 2147483647])
+def test_line_spacing_canonical_positive_source_boundaries_are_not_saved_ratio_bounds(raw):
+    from app.services.guided_fix import apply_guided_fixes
+    from tests.test_guided_fix_preservation_storage import _assert_line_spacing_package_unchanged
+
+    source, audit = _line_spacing_audit(_line_spacing_document((raw,)))
+    selected = _line_spacing_findings(audit)
+    assert selected[0].actual_value == str(raw / 240)
+    assert review_targets(audit, source, selected)[0][0]["before"] == str(raw / 240)
+    output, _, _ = apply_guided_fixes(audit, source, selected)
+    _assert_line_spacing_package_unchanged(source, output, {0: 360})
+
+
+def test_line_spacing_plain_tabs_breaks_and_multiple_run_boundaries_are_preserved():
+    from app.services.guided_fix import apply_guided_fixes
+    from tests.test_guided_fix_preservation_storage import _assert_line_spacing_package_unchanged
+
+    document = _line_spacing_document()
+    paragraph = document.paragraphs[0]
+    paragraph.runs[0].text = "Ordinary\tacademic\nprose "
+    paragraph.runs[1]._r.append(OxmlElement("w:cr"))
+    paragraph.runs[1].add_text("with an unchanged trailing boundary.")
+    source, audit = _line_spacing_audit(document)
+    selected = _line_spacing_findings(audit)
+    output, _, _ = apply_guided_fixes(audit, source, selected)
+    _assert_line_spacing_package_unchanged(source, output, {0: 360})
+    reopened = Document(io.BytesIO(output)).paragraphs[0]
+    assert reopened.text == paragraph.text
+    assert [run.text for run in reopened.runs] == [run.text for run in paragraph.runs]
+
+
+@pytest.mark.parametrize("unsafe", [False, True])
+def test_line_spacing_and_point_spacing_mixed_selection_is_atomic(
+    client, test_engine, bold_boundary_storage, unsafe,
+):
+    source = _bold_bytes(_line_spacing_document())
+    profile = new_custom_profile("Mixed direct line and point spacing")
+    profile.body.space_before_pt = 0
+    audit, root, line_ids = _line_spacing_api_audit(client, source, profile=profile)
+    point_ids = [f["id"] for f in audit["physical_layout_errors"] if f["rule_code"] == "SPACE_BEFORE"]
+    assert point_ids
+    ids = line_ids + point_ids
+    if unsafe:
+        with Session(test_engine) as db:
+            finding = db.get(Violation, line_ids[0])
+            finding.actual_value = "NaN"
+            db.commit()
+    before = _saved_source_state(test_engine, audit["audit_id"])
+    review = _upload(client, root + "/review", source, ids)
+    if unsafe:
+        assert review.status_code == 422, review.text
+        _assert_no_spacing_output(review, bold_boundary_storage, audit["audit_id"])
+    else:
+        from app.services.docx_preservation import compare_preservation
+
+        assert review.status_code == 200, review.text
+        applied = _upload(client, root, source, ids, review.json()["review_id"])
+        assert applied.status_code == 200, applied.text
+        assert set(applied.json()["resolved"]) == set(ids)
+        download = client.get(root + "/download/" + applied.json()["download_token"])
+        assert download.status_code == 200
+        spacing = Document(io.BytesIO(download.content)).paragraphs[0]._p.pPr.find(qn("w:spacing"))
+        assert {key: spacing.get(qn("w:" + key)) for key in ("line", "lineRule", "before", "after")} == {
+            "line": "360", "lineRule": "auto", "before": "0", "after": "160",
+        }
+        compare_preservation(source, download.content, {(0, None, "LINE_SPACING"), (0, None, "SPACE_BEFORE")})
+    assert _saved_source_state(test_engine, audit["audit_id"]) == before
+
+
+@pytest.mark.parametrize("boundary", ["foreign_finding", "foreign_review", "changed_selection", "incomplete_audit"])
+def test_line_spacing_api_audit_ownership_and_review_binding_precede_mutation(
+    client, test_engine, monkeypatch, bold_boundary_storage, boundary,
+):
+    from app.services import guided_fix
+
+    source = _bold_bytes(_line_spacing_document((240, 240)))
+    audit, root, ids = _line_spacing_api_audit(client, source)
+    foreign, foreign_root, foreign_ids = _line_spacing_api_audit(client, source)
+    review = _upload(client, root + "/review", source, ids)
+    assert review.status_code == 200, review.text
+    token, target, chosen = review.json()["review_id"], root, ids
+    if boundary == "foreign_finding":
+        target, chosen = root + "/review", foreign_ids
+    elif boundary == "foreign_review":
+        target, chosen = foreign_root, foreign_ids
+    elif boundary == "changed_selection":
+        chosen = ids[:1]
+    else:
+        with Session(test_engine) as db:
+            db.get(AuditRecord, audit["audit_id"]).status = "pending"
+            db.commit()
+    saved = _saved_source_state(test_engine, audit["audit_id"])
+    other_saved = _saved_source_state(test_engine, foreign["audit_id"])
+
+    def no_mutation(*_args):
+        pytest.fail("Audit ownership and Review binding must be checked before a line edit")
+
+    monkeypatch.setattr(guided_fix, "_fix_line_spacing", no_mutation)
+    response = _upload(client, target, source, chosen, token)
+    assert response.status_code == (422 if boundary in {"foreign_finding", "changed_selection"} else 409)
+    _assert_no_bold_output(response, bold_boundary_storage, audit["audit_id"])
+    _assert_no_bold_output(response, bold_boundary_storage, foreign["audit_id"])
+    assert _saved_source_state(test_engine, audit["audit_id"]) == saved
+    assert _saved_source_state(test_engine, foreign["audit_id"]) == other_saved

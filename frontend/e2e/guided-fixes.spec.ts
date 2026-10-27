@@ -1896,3 +1896,572 @@ test.describe('font stale Download screenshot journeys @font-slot @font-stale-do
     })
   }
 })
+
+type LineCase = {
+  required?: number
+  raw?: number
+  rule?: 'auto' | 'exact' | 'atLeast' | 'missing'
+  count?: number
+  reference?: boolean
+  appendix?: boolean
+  pageEvidence?: boolean
+  unsafe?: 'inherited' | 'inherited-only' | 'grid' | 'snap' | 'bookmark' | 'numbered'
+}
+
+function lineFixture(options: LineCase = {}): LineFixture {
+  const backendDir = path.resolve(process.cwd(), '..', 'backend')
+  const python = path.join(backendDir, '.venv', 'Scripts', 'python.exe')
+  const fixture = JSON.parse(execFileSync(python, ['-B', '-c', `
+import base64, io, json, sys
+from decimal import Decimal
+from docx import Document
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
+from app.services.profile_schema import new_custom_profile
+options = json.load(sys.stdin)
+doc = Document()
+# Fixture construction only: remove stock-template inherited line declarations
+# and grids, rather than manufacturing eligibility during a product operation.
+for spacing in doc.styles.element.iter(qn("w:spacing")):
+    for attr in ("line", "lineRule"):
+        spacing.attrib.pop(qn("w:" + attr), None)
+for grid in list(doc.element.iter(qn("w:docGrid"))):
+    grid.getparent().remove(grid)
+profile = new_custom_profile("LINE direct-auto browser evidence")
+required = options.get("required", 1.5)
+profile.body.line_spacing = required
+selected = []
+if options.get("appendix"):
+    doc.add_paragraph("APPENDIX A", style="Heading 1")
+for index in range(options.get("count", 1)):
+    p = doc.add_paragraph("This synthetic academic body paragraph provides ordinary prose for exact line spacing evidence. ")
+    p.add_run("Its second physical run must retain the original boundary and text.")
+    spacing = OxmlElement("w:spacing")
+    spacing.set(qn("w:line"), str(options.get("raw", 240)))
+    if options.get("rule") != "missing":
+        spacing.set(qn("w:lineRule"), options.get("rule", "auto"))
+    spacing.set(qn("w:before"), "120")
+    spacing.set(qn("w:after"), "160")
+    p._p.get_or_add_pPr().append(spacing)
+    selected.append({"index": len(doc.paragraphs) - 1, "required": str(required)})
+    if index == options.get("count", 1) - 1:
+        unsafe = options.get("unsafe")
+        if unsafe in ("inherited", "inherited-only"):
+            inherited = OxmlElement("w:spacing")
+            inherited.set(qn("w:line"), "276")
+            inherited.set(qn("w:lineRule"), "auto")
+            doc.styles["Normal"].element.get_or_add_pPr().append(inherited)
+            if unsafe == "inherited-only":
+                spacing.attrib.pop(qn("w:line"))
+                spacing.attrib.pop(qn("w:lineRule"), None)
+        elif unsafe == "grid":
+            grid = OxmlElement("w:docGrid")
+            grid.set(qn("w:linePitch"), "360")
+            doc.sections[0]._sectPr.append(grid)
+        elif unsafe == "snap":
+            p._p.get_or_add_pPr().append(OxmlElement("w:snapToGrid"))
+        elif unsafe == "bookmark":
+            bookmark = OxmlElement("w:bookmarkStart")
+            bookmark.set(qn("w:id"), "123")
+            bookmark.set(qn("w:name"), "SyntheticLine")
+            p._p.insert(1, bookmark)
+            end = OxmlElement("w:bookmarkEnd")
+            end.set(qn("w:id"), "123")
+            p._p.append(end)
+        elif unsafe == "numbered":
+            p.style = doc.styles["List Number"]
+if options.get("reference"):
+    doc.add_paragraph("References")
+    p = doc.add_paragraph("Smith, A. (2024). Synthetic line evidence reference. Academic Press.")
+    p.paragraph_format.line_spacing = 1.0
+    profile.references.line_spacing = 2.0
+    profile.references.check_line_spacing = True
+    profile.references.check_start_on_new_page = options.get("pageEvidence", False)
+    selected.append({"index": len(doc.paragraphs) - 1, "required": "2.0"})
+out = io.BytesIO()
+doc.save(out)
+print(json.dumps({"docx": base64.b64encode(out.getvalue()).decode(), "profile": profile.to_dict(), "selected": selected}))
+`], { cwd: backendDir, encoding: 'utf8', input: JSON.stringify(options),
+    env: { ...process.env, PYTHONDONTWRITEBYTECODE: '1' } })) as {
+      docx: string; profile: object; selected: { index: number; required: string }[]
+    }
+  return { ...fixture, backendDir, python,
+    file: { name: 'line-spacing-evidence.docx',
+      mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      buffer: Buffer.from(fixture.docx, 'base64') } }
+}
+
+type LineFixture = {
+  docx: string
+  profile: object
+  selected: { index: number; required: string }[]
+  backendDir: string
+  python: string
+  file: { name: string; mimeType: string; buffer: Buffer }
+  historical?: { audit: unknown; history: unknown; pdf: string; pdfPages: unknown }
+}
+
+async function openLineAudit(page: Page, fixture: LineFixture) {
+  const response = await page.request.post('/api/audit', {
+    multipart: { file: fixture.file, custom_profile: JSON.stringify(fixture.profile) }, timeout: 90_000,
+  })
+  expect(response.ok(), await response.text()).toBe(true)
+  const auditId = (await response.json()).audit_id as string
+  const before = await (await page.request.get(`/api/audit/${auditId}`)).json() as FontAuditSnapshot
+  fixture.historical = await lineHistoricalWitness(page, auditId, fixture)
+  await page.goto(`/audit/${auditId}`)
+  return { auditId, before }
+}
+
+async function lineHistoricalWitness(page: Page, auditId: string, fixture: LineFixture) {
+  const audit = await (await page.request.get(`/api/audit/${auditId}`)).json()
+  const history = (await (await page.request.get('/api/audits?limit=100')).json() as { id: string }[])
+    .find(row => row.id === auditId)
+  expect(history).toBeDefined()
+  const response = await page.request.get(`/api/audit/${auditId}/export-pdf`)
+  expect(response.ok()).toBe(true)
+  const pdf = await response.body()
+  const pdfPages = JSON.parse(execFileSync(fixture.python, ['-B', '-c', `
+import base64, hashlib, io, json, sys
+from pypdf import PdfReader
+reader = PdfReader(io.BytesIO(base64.b64decode(sys.stdin.read())))
+print(json.dumps([{"text": page.extract_text(), "content_sha256": hashlib.sha256(page.get_contents().get_data()).hexdigest()} for page in reader.pages]))
+`], { cwd: fixture.backendDir, encoding: 'utf8', input: pdf.toString('base64') }))
+  return { audit, history, pdf: pdf.toString('base64'), pdfPages }
+}
+
+async function selectLineChanges(page: Page, fixture: LineFixture) {
+  await tabTo(page, page.getByRole('button', { name: /^Guided Fixes/ }))
+  await page.keyboard.press('Enter')
+  const boxes = page.getByRole('checkbox', { name: /line spacing/i })
+  await expect(boxes).toHaveCount(fixture.selected.length)
+  for (let i = 0; i < fixture.selected.length; i++) {
+    await tabTo(page, boxes.nth(i))
+    await page.keyboard.press('Space')
+    await expect(boxes.nth(i)).toBeChecked()
+  }
+  await tabTo(page, page.getByRole('button', { name: new RegExp(`^Review ${fixture.selected.length} selected change`) }))
+  await page.keyboard.press('Enter')
+  await page.locator('#guided-fixes-file-input').setInputFiles(fixture.file)
+  await tabTo(page, page.getByRole('button', { name: 'Review safety and locations', exact: true }))
+}
+
+async function proveLineDownload(page: Page, testInfo: TestInfo, auditId: string, fixture: LineFixture, before: FontAuditSnapshot) {
+  const downloads: string[] = []
+  const requests: string[] = []
+  page.on('download', download => downloads.push(download.suggestedFilename()))
+  page.on('request', request => {
+    if (new URL(request.url()).pathname.startsWith(`/api/audit/${auditId}/guided-fixes/download/`)) requests.push(request.url())
+  })
+  const button = page.getByRole('button', { name: 'Download corrected document', exact: true })
+  await tabTo(page, button)
+  const pending = page.waitForEvent('download')
+  await page.keyboard.press('Enter')
+  const download = await pending
+  const stream = await download.createReadStream()
+  if (!stream) throw new Error('Verified LINE output was not readable')
+  const chunks: Buffer[] = []
+  for await (const chunk of stream) chunks.push(Buffer.from(chunk))
+  const corrected = Buffer.concat(chunks)
+  await expect(button).toBeDisabled()
+  expect(downloads).toEqual(['line-spacing-evidence_ACA-fixed.docx'])
+  expect(requests).toHaveLength(1)
+  expect((await page.request.get(requests[0])).status()).toBe(410)
+  const proof = JSON.parse(execFileSync(fixture.python, ['-B', '-c', `
+import base64, hashlib, io, json, sys, zipfile
+from decimal import Decimal
+from lxml import etree
+data = json.load(sys.stdin)
+source, corrected = [base64.b64decode(data[key]) for key in ("source", "corrected")]
+ns = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+with zipfile.ZipFile(io.BytesIO(source)) as a, zipfile.ZipFile(io.BytesIO(corrected)) as b:
+    assert set(a.namelist()) == set(b.namelist())
+    changed = [name for name in a.namelist() if a.read(name) != b.read(name)]
+    assert set(changed) <= {"word/document.xml", "docProps/core.xml", "docProps/app.xml"}
+    metadata_changes = {}
+    for name in a.namelist():
+        if name == "word/document.xml":
+            continue
+        if name not in {"docProps/core.xml", "docProps/app.xml"}:
+            assert a.read(name) == b.read(name), name
+            continue
+        trees = [etree.parse(io.BytesIO(z.read(name)), etree.XMLParser(resolve_entities=False, no_network=True)) for z in (a, b)]
+        roots = [tree.getroot() for tree in trees]
+        assert roots[0].tag == roots[1].tag
+        allowed = ({"{http://purl.org/dc/terms/}modified"} if name == "docProps/core.xml" else
+          {"{http://schemas.openxmlformats.org/officeDocument/2006/extended-properties}" + field
+           for field in ("TotalTime", "Pages", "Words", "Characters", "CharactersWithSpaces", "Lines", "Paragraphs")})
+        metadata_changes[name] = [
+            {"tag": child.tag, "source_text": child.text, "output_text": saved.text}
+            for child, saved in zip(roots[0], roots[1])
+            if child.tag == saved.tag and child.tag in allowed and child.text != saved.text
+        ]
+        for root in roots:
+            for child in root:
+                if child.tag in allowed:
+                    assert len(child) == 0, "Complex save metadata is not authorized"
+                    child.text = None
+        assert etree.tostring(trees[0], method="c14n") == etree.tostring(trees[1], method="c14n"), name
+    old, new = [etree.fromstring(z.read("word/document.xml")) for z in (a, b)]
+    old_p, new_p = [root.findall("w:body/w:p", ns) for root in (old, new)]
+    assert len(old_p) == len(new_p)
+    raw = []
+    for selected in data["selected"]:
+        index = selected["index"]
+        required = Decimal(selected["required"]) * 240
+        assert required == required.to_integral_value()
+        original, saved = [paras[index].find("w:pPr/w:spacing", ns) for paras in (old_p, new_p)]
+        line, rule = ["{%s}%s" % (ns["w"], attr) for attr in ("line", "lineRule")]
+        assert saved.get(line) == str(int(required))
+        assert saved.get(rule) == "auto"
+        raw.append({"index": index, "line": saved.get(line), "lineRule": saved.get(rule)})
+        for attr in (line, rule):
+            if attr in original.attrib: saved.set(attr, original.get(attr))
+            else: saved.attrib.pop(attr, None)
+    assert etree.tostring(old, method="c14n") == etree.tostring(new, method="c14n")
+    witnesses = {name: name in a.namelist() for name in ["word/styles.xml", "word/numbering.xml", "word/header1.xml", "word/footer1.xml"]}
+print(json.dumps({"source_sha256": hashlib.sha256(source).hexdigest(), "corrected_sha256": hashlib.sha256(corrected).hexdigest(),
+ "changed_parts": changed, "selected_raw": raw, "package_witnesses": witnesses, "bounded_metadata_changes": metadata_changes,
+ "unchanged_after_exact_two_attribute_mask": True}))
+`], { cwd: fixture.backendDir, encoding: 'utf8', input: JSON.stringify({
+    source: fixture.docx, corrected: corrected.toString('base64'), selected: fixture.selected,
+  }) }))
+  expect(proof.source_sha256).toBe(createHash('sha256').update(fixture.file.buffer).digest('hex'))
+  expect(proof.corrected_sha256).not.toBe(proof.source_sha256)
+  for (const [name, body, contentType] of [
+    ['line-original.docx', fixture.file.buffer, fixture.file.mimeType],
+    ['line-corrected.docx', corrected, fixture.file.mimeType],
+    ['line-package-proof.json', JSON.stringify(proof, null, 2), 'application/json'],
+    ['line-download-events.json', JSON.stringify({ downloads, requests, oneUseStatus: 410 }), 'application/json'],
+  ] as const) await testInfo.attach(name, { body, contentType })
+  expect(await (await page.request.get(`/api/audit/${auditId}`)).json()).toEqual(before)
+  const historical = await lineHistoricalWitness(page, auditId, fixture)
+  expect(historical.audit).toEqual(fixture.historical?.audit)
+  expect(historical.history).toEqual(fixture.historical?.history)
+  expect(historical.pdfPages).toEqual(fixture.historical?.pdfPages)
+  await testInfo.attach('line-original-audit-before.pdf', { body: Buffer.from(fixture.historical!.pdf, 'base64'), contentType: 'application/pdf' })
+  await testInfo.attach('line-original-audit-after.pdf', { body: Buffer.from(historical.pdf, 'base64'), contentType: 'application/pdf' })
+  await testInfo.attach('line-history-pdf-proof.json', { body: JSON.stringify({
+    before: fixture.historical, after: historical, comparison: 'persisted API/History and extracted PDF page text/decoded streams; PDF metadata is not treated as historical content',
+  }, null, 2), contentType: 'application/json' })
+  const reaudit = await page.request.post('/api/audit', {
+    multipart: { file: { ...fixture.file, buffer: corrected }, custom_profile: JSON.stringify(fixture.profile) }, timeout: 90_000,
+  })
+  expect(reaudit.ok(), await reaudit.text()).toBe(true)
+  const result = await reaudit.json()
+  expect(result.physical_layout_errors.filter((v: { rule_code: string }) => v.rule_code === 'LINE_SPACING')).toEqual([])
+  const saved = await (await page.request.get(`/api/audit/${result.audit_id}`)).json() as FontAuditSnapshot
+  const untouched = [saved, before].map(audit => audit.violations.filter(v => v.rule_code !== 'LINE_SPACING')
+    .map(({ rule_code, severity, location, actual_value, expected_value }) =>
+      JSON.stringify({ rule_code, severity, location, actual_value, expected_value })).sort())
+  expect(untouched[0]).toEqual(untouched[1])
+  expect(saved.weighted_score).toBeGreaterThanOrEqual(before.weighted_score)
+  for (const row of saved.score_breakdown) {
+    expect(row.deduction).toBeLessThanOrEqual(before.score_breakdown.find(item => item.category === row.category)?.deduction ?? 0)
+  }
+  await testInfo.attach('line-independent-reaudit.json', { body: JSON.stringify(result, null, 2), contentType: 'application/json' })
+}
+
+test.describe('direct auto LINE evidence @line-spacing', () => {
+  for (const options of [
+    { raw: 240, required: 1.5 }, { raw: 360, required: 2 }, { raw: 480, required: 1.5 },
+    { raw: 276, required: 1.5 }, { raw: 241, required: 1.5 }, { raw: 480, required: 1 },
+    { raw: 480, required: 1.15 }, { raw: 480, required: 1.0125 }, { raw: 240, required: 4 },
+    { count: 3 }, { reference: true }, { appendix: true },
+  ] satisfies LineCase[]) {
+    test(`supported line ${JSON.stringify(options)} completes keyboard Review Apply Download with exact raw proof`, async ({ page }, testInfo) => {
+      const fixture = lineFixture(options)
+      const { auditId, before } = await openLineAudit(page, fixture)
+      await selectLineChanges(page, fixture)
+      const response = page.waitForResponse(r => new URL(r.url()).pathname.endsWith('/guided-fixes/review'))
+      await page.keyboard.press('Enter')
+      const reviewed = await response
+      expect(reviewed.status()).toBe(200)
+      const review = await reviewed.json()
+      expect(review.items.map((item: { after: string }) => item.after).sort()).toEqual(fixture.selected.map(item => item.required).sort())
+      await expect(page.getByRole('button', { name: 'Apply and verify changes', exact: true })).toBeVisible()
+      await fontEvidence(page, testInfo, 'line-confirmed-review')
+      await tabTo(page, page.getByRole('button', { name: 'Apply and verify changes', exact: true }))
+      await page.keyboard.press('Enter')
+      await expect(page.getByRole('heading', { name: 'Fix applied; re-audit passed', exact: true })).toBeVisible({ timeout: 60_000 })
+      await proveLineDownload(page, testInfo, auditId, fixture, before)
+      await tabTo(page, page.getByRole('button', { name: 'Close', exact: true }))
+      await page.keyboard.press('Enter')
+      await expect(page.getByRole('button', { name: /^Guided Fixes/ })).toBeFocused()
+      await page.keyboard.press('Enter')
+      await expect(page.getByRole('button', { name: 'Review 0 selected changes', exact: true })).toBeDisabled()
+    })
+  }
+
+  for (const options of [
+    { rule: 'exact' }, { rule: 'atLeast' }, { rule: 'missing' },
+    { required: 1.501 }, { required: 1.333 }, { required: 1.0041666666666667 },
+    { count: 2, unsafe: 'inherited' }, { count: 2, unsafe: 'grid' }, { count: 2, unsafe: 'snap' },
+    { count: 2, unsafe: 'bookmark' }, { count: 2, unsafe: 'numbered' },
+  ] satisfies LineCase[]) {
+    test(`unsupported line ${JSON.stringify(options)} refuses confirmed Review atomically`, async ({ page }, testInfo) => {
+      const fixture = lineFixture(options)
+      const { auditId, before } = await openLineAudit(page, fixture)
+      const downloads: string[] = []
+      page.on('download', event => downloads.push(event.suggestedFilename()))
+      await selectLineChanges(page, fixture)
+      const pending = page.waitForResponse(r => new URL(r.url()).pathname.endsWith('/guided-fixes/review'))
+      await page.keyboard.press('Enter')
+      const response = await pending
+      expect(response.status()).toBe(422)
+      const rejected = await response.json()
+      expect(rejected).not.toHaveProperty('review_id')
+      expect(rejected).not.toHaveProperty('download_token')
+      await expect(page.getByRole('alert')).toContainText('Fix cannot be applied safely.')
+      await expect(page.getByRole('button', { name: 'Apply and verify changes', exact: true })).toHaveCount(0)
+      await expect(page.getByRole('button', { name: 'Download corrected document', exact: true })).toHaveCount(0)
+      expect(downloads).toEqual([])
+      expect(await (await page.request.get(`/api/audit/${auditId}`)).json()).toEqual(before)
+      await fontEvidence(page, testInfo, 'line-manual-refusal')
+      await testInfo.attach('line-review-refusal.json', { body: JSON.stringify(rejected), contentType: 'application/json' })
+    })
+  }
+
+  test('inherited-only spacing has no invented LINE finding or selectable candidate', async ({ page }, testInfo) => {
+    const fixture = lineFixture({ unsafe: 'inherited-only' })
+    const { before } = await openLineAudit(page, fixture)
+    expect(before.violations.filter(v => v.rule_code === 'LINE_SPACING')).toEqual([])
+    await expect(page.getByRole('checkbox', { name: /line spacing/i })).toHaveCount(0)
+    await testInfo.attach('line-inherited-no-finding.json', { body: JSON.stringify(before), contentType: 'application/json' })
+    await testInfo.attach('line-inherited-no-candidate.png', { body: await page.screenshot(), contentType: 'image/png' })
+  })
+
+  test('wrong original is refused before confirmed LINE Review', async ({ page }, testInfo) => {
+    const fixture = lineFixture()
+    const { auditId, before } = await openLineAudit(page, fixture)
+    await selectLineChanges(page, fixture)
+    await page.locator('#guided-fixes-file-input').setInputFiles(lineFixture({ raw: 480 }).file)
+    const pending = page.waitForResponse(r => new URL(r.url()).pathname.endsWith('/guided-fixes/review'))
+    await tabTo(page, page.getByRole('button', { name: 'Review safety and locations', exact: true }))
+    await page.keyboard.press('Enter')
+    const rejected = await pending
+    expect(rejected.status()).toBe(409)
+    await expect(page.getByRole('alert')).toContainText(MISMATCH_TEXT)
+    await expect(page.getByRole('button', { name: 'Apply and verify changes', exact: true })).toHaveCount(0)
+    expect(await (await page.request.get(`/api/audit/${auditId}`)).json()).toEqual(before)
+    await testInfo.attach('line-wrong-original.json', { body: await rejected.body(), contentType: 'application/json' })
+  })
+
+  test('required Reference page evidence refuses publication when owned renderer is unavailable', async ({ page }, testInfo) => {
+    const fixture = lineFixture({ reference: true, pageEvidence: true })
+    const { auditId, before } = await openLineAudit(page, fixture)
+    await selectLineChanges(page, fixture)
+    await page.keyboard.press('Enter')
+    const apply = page.getByRole('button', { name: 'Apply and verify changes', exact: true })
+    await expect(apply).toBeVisible({ timeout: 60_000 })
+    const pending = page.waitForResponse(response => response.request().method() === 'POST'
+      && new URL(response.url()).pathname === `/api/audit/${auditId}/guided-fixes`)
+    await tabTo(page, apply)
+    await page.keyboard.press('Enter')
+    const response = await pending
+    expect(response.status()).toBe(422)
+    const rejected = await response.json()
+    expect(rejected).not.toHaveProperty('download_token')
+    await expect(page.getByRole('button', { name: 'Download corrected document', exact: true })).toHaveCount(0)
+    expect(await (await page.request.get(`/api/audit/${auditId}`)).json()).toEqual(before)
+    await testInfo.attach('line-required-renderer-refusal.json', { body: JSON.stringify(rejected), contentType: 'application/json' })
+  })
+
+  for (const transition of ['audit switch', 'close'] as const) {
+    test(`delayed genuine LINE Download after ${transition} is suppressed and later valid Download succeeds`, async ({ page }, testInfo) => {
+      const fixture = lineFixture({ reference: true })
+      const first = await openLineAudit(page, fixture)
+      const second = await openLineAudit(page, fixture)
+      await page.goto(`/audit/${first.auditId}`)
+      await selectLineChanges(page, fixture)
+      await page.keyboard.press('Enter')
+      const apply = page.getByRole('button', { name: 'Apply and verify changes', exact: true })
+      await expect(apply).toBeVisible({ timeout: 60_000 })
+      await tabTo(page, apply)
+      await page.keyboard.press('Enter')
+      await expect(page.getByRole('heading', { name: 'Fix applied; re-audit passed', exact: true })).toBeVisible({ timeout: 60_000 })
+      const received = Promise.withResolvers<void>()
+      const release = Promise.withResolvers<void>()
+      const downloads: string[] = []
+      page.on('download', event => downloads.push(event.suggestedFilename()))
+      const pattern = `**/api/audit/${first.auditId}/guided-fixes/download/*`
+      await page.route(pattern, async route => {
+        const response = await route.fetch()
+        expect(response.status()).toBe(200)
+        received.resolve()
+        await release.promise
+        await route.fulfill({ response })
+      })
+      try {
+        await tabTo(page, page.getByRole('button', { name: 'Download corrected document', exact: true }))
+        await page.keyboard.press('Enter')
+        await received.promise
+        await expect(page.getByRole('status').filter({ hasText: /^Downloading…$/ })).toHaveCount(1)
+        if (transition === 'audit switch') {
+          await page.evaluate(id => {
+            window.history.pushState({}, '', `/audit/${id}`)
+            window.dispatchEvent(new PopStateEvent('popstate'))
+          }, second.auditId)
+        } else {
+          await tabTo(page, page.getByRole('button', { name: 'Close', exact: true }))
+          await page.keyboard.press('Enter')
+        }
+        await expect(page.getByRole('dialog')).toHaveCount(0)
+        const settled = page.waitForResponse(r => new URL(r.url()).pathname.startsWith(`/api/audit/${first.auditId}/guided-fixes/download/`))
+        release.resolve()
+        await settled
+        await page.waitForLoadState('networkidle')
+        expect(downloads).toEqual([])
+        await expect(page.getByText('Downloaded. The one-use link has expired.', { exact: true })).toHaveCount(0)
+        await page.unroute(pattern)
+        await testInfo.attach(`line-stale-${transition}-suppressed.png`, { body: await page.screenshot(), contentType: 'image/png' })
+        await selectLineChanges(page, fixture)
+        await page.keyboard.press('Enter')
+        await expect(apply).toBeVisible({ timeout: 60_000 })
+        await tabTo(page, apply)
+        await page.keyboard.press('Enter')
+        await expect(page.getByRole('heading', { name: 'Fix applied; re-audit passed', exact: true })).toBeVisible({ timeout: 60_000 })
+        const later = transition === 'audit switch' ? second : first
+        fixture.historical = await lineHistoricalWitness(page, later.auditId, fixture)
+        await proveLineDownload(page, testInfo, later.auditId, fixture, later.before)
+        expect(downloads).toHaveLength(1)
+      } finally {
+        release.resolve()
+        await page.unroute(pattern)
+        await testInfo.attach(`line-stale-${transition}-events.json`, { body: JSON.stringify({ transition, downloads }), contentType: 'application/json' })
+      }
+    })
+  }
+
+  for (const fault of ['raw-plus-one', 'missing-rule', 'wrong-rule', 'absolute-alias', 'group-last337', 'unchanged-last',
+    'text', 'run-boundary', 'preservation', 'reaudit', 'storage']) {
+    test(`synthetic line ${fault} fails publication then permits later genuine recovery`, async ({ page }, testInfo) => {
+      test.skip(process.env.ACA_LINE_FAULT_APP !== '1', 'Requires task-owned external synthetic fault app')
+      const fixture = lineFixture({ count: 2, required: fault === 'absolute-alias' ? 2 : 1.5 })
+      const { auditId, before } = await openLineAudit(page, fixture)
+      const stateURL = `/api/__aca-line-evidence/${auditId}`
+      const baselineResponse = await page.request.get(stateURL)
+      expect(baselineResponse.ok()).toBe(true)
+      const baseline = await baselineResponse.json()
+      await selectLineChanges(page, fixture)
+      await page.keyboard.press('Enter')
+      const apply = page.getByRole('button', { name: 'Apply and verify changes', exact: true })
+      await expect(apply).toBeVisible({ timeout: 60_000 })
+      const endpoint = `**/api/audit/${auditId}/guided-fixes`
+      await page.route(endpoint, route => route.continue({ headers: {
+        ...route.request().headers(), 'x-aca-synthetic-line-fault': fault,
+      } }))
+      const downloads: string[] = []
+      page.on('download', event => downloads.push(event.suggestedFilename()))
+      const pending = page.waitForResponse(r => r.request().method() === 'POST'
+        && new URL(r.url()).pathname === `/api/audit/${auditId}/guided-fixes`)
+      await tabTo(page, apply)
+      await page.keyboard.press('Enter')
+      const response = await pending
+      expect(response.status()).toBe(fault === 'storage' ? 503 : 422)
+      const rejected = await response.json()
+      expect(rejected).not.toHaveProperty('download_token')
+      expect(rejected).not.toHaveProperty('output_filename')
+      await expect(page.getByRole('alert')).toBeVisible()
+      await expect(page.getByRole('button', { name: 'Download corrected document', exact: true })).toHaveCount(0)
+      const after = await (await page.request.get(stateURL)).json()
+      expect(after.record_sha256).toBe(baseline.record_sha256)
+      expect(after.output_tokens).toBe(0)
+      expect(after.all_output_file_count).toBe(baseline.all_output_file_count)
+      expect(after.fault_events.length).toBeGreaterThan(0)
+      expect(downloads).toEqual([])
+      expect(await (await page.request.get(`/api/audit/${auditId}`)).json()).toEqual(before)
+      const historical = await lineHistoricalWitness(page, auditId, fixture)
+      expect(historical.history).toEqual(fixture.historical?.history)
+      expect(historical.pdfPages).toEqual(fixture.historical?.pdfPages)
+      await testInfo.attach(`line-${fault}-original-report.pdf`, { body: Buffer.from(historical.pdf, 'base64'), contentType: 'application/pdf' })
+      await testInfo.attach(`line-${fault}-publication.json`, {
+        body: JSON.stringify({ fault, status: response.status(), rejected, baseline, after, downloads }, null, 2), contentType: 'application/json',
+      })
+      await fontEvidence(page, testInfo, `line-${fault}-failure`)
+      await page.unroute(endpoint)
+      await tabTo(page, page.getByRole('button', { name: 'Review safety and locations', exact: true }))
+      await page.keyboard.press('Enter')
+      await expect(apply).toBeVisible({ timeout: 60_000 })
+      await tabTo(page, apply)
+      await page.keyboard.press('Enter')
+      await expect(page.getByRole('heading', { name: 'Fix applied; re-audit passed', exact: true })).toBeVisible({ timeout: 60_000 })
+      await proveLineDownload(page, testInfo, auditId, fixture, before)
+      expect(downloads).toHaveLength(1)
+    })
+  }
+
+  test('native 100/200 percent LINE Review supports overflow keyboard, Back, Apply and Download @line-native', async ({}, testInfo) => {
+    const controller = process.env.ACA_LINE_NATIVE_CONTROLLER
+    test.skip(!controller, 'Requires external task-owned native Chrome controller')
+    test.setTimeout(600_000)
+    // External runtime-selected controller exists only in the authorized evidence root.
+    const { launchNative } = await import(controller!)
+    const native = await launchNative(testInfo.outputPath('line-native'))
+    const page = native.page as Page
+    try {
+      const fixture = lineFixture({ count: 12, reference: true })
+      const { auditId, before } = await openLineAudit(page, fixture)
+      await selectLineChanges(page, fixture)
+      await page.keyboard.press('Enter')
+      await expect(page.getByRole('button', { name: 'Apply and verify changes', exact: true })).toBeVisible({ timeout: 60_000 })
+      for (const [width, height] of [[1366, 768], [1280, 800], [1024, 768], [960, 768], [768, 768]]) {
+        await native.setWindow(width, height)
+        let baseline: { outerWidth: number; outerHeight: number; innerWidth: number; innerHeight: number; devicePixelRatio: number } | undefined
+        for (const zoom of [1, 2]) {
+          const actualZoom = await native.setZoom(zoom)
+          const state = `line-review-${width}-${height}-native-${zoom * 100}`
+          const dimensions = await fontEvidence(page, testInfo, state)
+          expect(actualZoom).toBe(zoom)
+          if (zoom === 1) baseline = dimensions
+          else {
+            expect(dimensions.outerWidth).toBe(baseline!.outerWidth)
+            expect(dimensions.outerHeight).toBe(baseline!.outerHeight)
+            expect(dimensions.devicePixelRatio).toBe(baseline!.devicePixelRatio * 2)
+            expect(Math.abs(dimensions.innerWidth * 2 - baseline!.innerWidth)).toBeLessThanOrEqual(2)
+            expect(Math.abs(dimensions.innerHeight * 2 - baseline!.innerHeight)).toBeLessThanOrEqual(2)
+          }
+          await reviewKeyboardEvidence(page, testInfo, state, zoom === 2)
+          const scroll = page.locator(reviewScrollSelector)
+          await scroll.focus()
+          await page.keyboard.press('End')
+          await native.capture(`${state}-review-scrolled-bottom`, scroll)
+          await tabTo(page, page.getByRole('button', { name: 'Apply and verify changes', exact: true }))
+          await testInfo.attach(`${state}-native-zoom.json`, { body: JSON.stringify({ actualZoom, dimensions }), contentType: 'application/json' })
+        }
+      }
+      await native.setZoom(1)
+      await tabTo(page, page.getByRole('button', { name: 'Cancel review', exact: true }))
+      await page.keyboard.press('Enter')
+      await expect(page.getByRole('button', { name: 'Review safety and locations', exact: true })).toBeVisible()
+      await tabTo(page, page.getByRole('button', { name: 'Review safety and locations', exact: true }))
+      await page.keyboard.press('Enter')
+      await expect(page.getByRole('button', { name: 'Apply and verify changes', exact: true })).toBeVisible()
+      await tabTo(page, page.getByRole('button', { name: 'Apply and verify changes', exact: true }))
+      await page.keyboard.press('Enter')
+      await expect(page.getByRole('heading', { name: 'Fix applied; re-audit passed', exact: true })).toBeVisible({ timeout: 60_000 })
+      await proveLineDownload(page, testInfo, auditId, fixture, before)
+      await tabTo(page, page.getByRole('button', { name: 'Close', exact: true }))
+      await page.keyboard.press('Enter')
+      await expect(page.getByRole('button', { name: /^Guided Fixes/ })).toBeFocused()
+      const manual = lineFixture({ rule: 'exact' })
+      const manualAudit = await openLineAudit(page, manual)
+      await selectLineChanges(page, manual)
+      await page.keyboard.press('Enter')
+      await expect(page.getByRole('alert')).toContainText('Fix cannot be applied safely.')
+      for (const [width, height] of [[1366, 768], [1280, 800], [1024, 768], [960, 768], [768, 768]]) {
+        await native.setWindow(width, height)
+        for (const zoom of [1, 2]) {
+          await native.setZoom(zoom)
+          await fontEvidence(page, testInfo, `line-manual-${width}-${height}-native-${zoom * 100}`)
+          await tabTo(page, page.getByRole('button', { name: 'Back to findings', exact: true }).last())
+          await native.capture(`line-manual-${width}-${height}-native-${zoom * 100}`)
+        }
+      }
+      await expect(page.getByRole('button', { name: 'Apply and verify changes', exact: true })).toHaveCount(0)
+      expect(await (await page.request.get(`/api/audit/${manualAudit.auditId}`)).json()).toEqual(manualAudit.before)
+    } finally {
+      await native.close()
+    }
+  })
+})
