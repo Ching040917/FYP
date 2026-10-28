@@ -75,9 +75,9 @@ A mixed safe/unsafe selection is refused as a whole.
 The original DOCX, saved Audit, Snapshot, History, PDF, scoring and categories
 remain unchanged. This certifies eligible OOXML settings, not installed-font
 availability, font substitution, arbitrary-script rendering or Word pagination.
-No candidate was added. Grouped quantities, truncated aggregates and
-package-policy disposition remain separate release-closure work; these font
-checks do not certify the whole Guided Fix set.
+No candidate was added. Grouped quantities and package-policy disposition
+remain separate release-closure work; these font checks do not certify the
+whole Guided Fix set.
 
 In Review, Tab can focus the details area, marked by an inset focus ring.
 When its content overflows, use the arrow keys, Page Up/Page Down or Home/End
@@ -120,8 +120,7 @@ rendered-page evidence remains a refusal.
 The original DOCX, Audit, Snapshot, History, PDF, scoring and categories remain
 unchanged. This certifies eligible encoded settings, not Word rendering or
 physical pagination. It is not a complete Guided Fix freeze or release approval:
-grouped quantities, truncated aggregates and package-policy disposition remain
-independent closure work.
+grouped quantities and package-policy disposition remain independent closure work.
 
 ### Before/after paragraph spacing Guided Fix safety
 
@@ -151,8 +150,17 @@ grids and snap-to-grid are preserved. The original DOCX, saved audit, Snapshot,
 History and PDF remain unchanged.
 
 The before/after-spacing hardening alone does not establish complete Guided Fix
-release closure. Grouped-count wording, truncated aggregates and package-policy
-issues remain independent.
+release closure. Grouped-count wording, package safety and malformed DOCX issues
+remain independent.
+
+### Ambient aggregate re-audit hardening
+
+Unselected ambient Reference and citation aggregate findings can accompany
+unrelated, eligible Guided Fixes even when their stored paragraph indexes are
+capped at 10. Re-audit compares the available locations and total occurrence
+counts, and still rejects new or worsened findings. Selected findings must have
+complete target locations; Reference-specific entry aggregate rules remain
+manual-only. No Guided Fix candidate rules were added.
 
 ### Reference List heading bold Guided Fix
 

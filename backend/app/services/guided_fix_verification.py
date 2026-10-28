@@ -9,12 +9,15 @@ from app.services.scoring import calculate_weighted_score_detailed
 from app.services.guided_fix import GuidedFixFailed
 
 
-def _positions(finding):
+def _positions(finding, *, strict: bool = False):
     loc = finding.location if isinstance(finding.location, dict) else {}
     paragraphs = loc.get('paragraph_indexes')
     if isinstance(paragraphs, list):
-        if (any(type(i) is not int or i < 0 for i in paragraphs) or
-                loc.get('occurrences') != len(set(paragraphs))):
+        count = loc.get('occurrences', loc.get('entry_count'))
+        if (not paragraphs or any(type(i) is not int or i < 0 for i in paragraphs) or
+                type(count) is not int or count < len(set(paragraphs))):
+            raise GuidedFixFailed('incomplete finding locations')
+        if strict and (count != len(paragraphs) or len(paragraphs) != len(set(paragraphs))):
             raise GuidedFixFailed('incomplete finding locations')
     else:
         paragraphs = [loc.get('paragraph_index')]
@@ -31,16 +34,27 @@ def _positions(finding):
 def _evidence(findings):
     evidence = Counter()
     for f in findings:
+        loc = f.location if isinstance(f.location, dict) else {}
         for position in _positions(f):
             evidence[(f.rule_code, f.severity, position, f.expected_value, f.actual_value)] += 1
+        count = loc.get('occurrences', loc.get('entry_count'))
+        if count is not None:
+            evidence[(f.rule_code, f.severity, ('occurrences',), f.expected_value, f.actual_value)] += count
     return evidence
 
 
 def _summary(findings):
-    return [{ 'rule_code': f.rule_code, 'count': len(_positions(f)),
-              'locations': [f'Paragraph {p + 1}' if type(p) is int else 'Document'
-                            for p, _, _ in _positions(f)]}
-            for f in findings]
+    summaries = []
+    for f in findings:
+        positions = _positions(f)
+        loc = f.location if isinstance(f.location, dict) else {}
+        summaries.append({
+            'rule_code': f.rule_code,
+            'count': loc.get('occurrences', loc.get('entry_count', len(positions))),
+            'locations': [f'Paragraph {p + 1}' if type(p) is int else 'Document'
+                          for p, _, _ in positions],
+        })
+    return summaries
 
 
 def verify_reaudit(audit, source_bytes: bytes, fixed_bytes: bytes, selected):
@@ -96,7 +110,7 @@ def verify_reaudit(audit, source_bytes: bytes, fixed_bytes: bytes, selected):
         before_ev, after_ev = _evidence(before), _evidence(after)
         selected_positions = set()
         for f in selected:
-            for position in _positions(f):
+            for position in _positions(f, strict=True):
                 selected_positions.add((f.rule_code, position))
         if any((f.rule_code, position) in selected_positions
                for f in after for position in _positions(f)):

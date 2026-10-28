@@ -3507,3 +3507,146 @@ def test_line_spacing_api_audit_ownership_and_review_binding_precede_mutation(
     _assert_no_bold_output(response, bold_boundary_storage, foreign["audit_id"])
     assert _saved_source_state(test_engine, audit["audit_id"]) == saved
     assert _saved_source_state(test_engine, foreign["audit_id"]) == other_saved
+
+
+def test_ambient_aggregate_positions_permits_unselected_truncation_but_strictly_refuses_selected():
+    """Unselected ambient aggregate findings evaluate available positions; selected requires 1:1 completeness."""
+    from app.services.guided_fix_verification import _positions
+    from app.services.layout_violation import LayoutViolation
+
+    finding = LayoutViolation(
+        rule_code="REFERENCE_HANGING_INDENT",
+        severity="MINOR",
+        location={
+            "paragraph_index": 2,
+            "occurrences": 15,
+            "paragraph_indexes": list(range(2, 12)),
+        },
+        message="Reference entry hanging indent does not match",
+        expected_value="0.5in",
+        actual_value="0in",
+    )
+    # Ambient / unselected: evaluates using available stored indexes
+    positions = _positions(finding, strict=False)
+    assert len(positions) == 10
+    assert [p for p, _, _ in positions] == list(range(2, 12))
+
+    # Selected: strictly requires 1:1 completeness
+    with pytest.raises(GuidedFixFailed, match="incomplete finding locations"):
+        _positions(finding, strict=True)
+
+    # Repeated indexes do not constitute complete distinct selected targets.
+    finding.location = {
+        "paragraph_index": 2, "occurrences": 2, "paragraph_indexes": [2, 2],
+    }
+    with pytest.raises(GuidedFixFailed, match="incomplete finding locations"):
+        _positions(finding, strict=True)
+
+    # Corrupt location: negative index or occurrences less than stored set
+    corrupt = LayoutViolation(
+        rule_code="REFERENCE_HANGING_INDENT",
+        severity="MINOR",
+        location={
+            "paragraph_index": 2,
+            "occurrences": 5,
+            "paragraph_indexes": list(range(2, 12)),
+        },
+        message="Reference entry hanging indent does not match",
+        expected_value="0.5in",
+        actual_value="0in",
+    )
+    with pytest.raises(GuidedFixFailed, match="incomplete finding locations"):
+        _positions(corrupt, strict=False)
+
+
+def test_ambient_aggregate_references_do_not_crash_valid_space_before_reaudit():
+    """Unselected ambient aggregate findings (>10 references) do not crash re-audit of valid SPACE_BEFORE fix."""
+    from app.services.guided_fix import apply_guided_fixes
+    from app.services.docx_preservation import compare_preservation
+
+    document = Document()
+    _clean_font_fixture_context(document)
+    p0 = document.add_paragraph(
+        "Synthetic body prose cites Jones (2020) and Jones (2020) again."
+    )
+    p0.paragraph_format.space_before = Pt(20)
+    document.add_paragraph("References", style="Heading 1")
+    for i in range(15):
+        document.add_paragraph(f"Smith, A. (2020). Title of paper {i}. Journal of Testing, 1(1), 10-20.")
+
+    profile = new_custom_profile("Ambient 15 references hanging indent")
+    profile.references.check_hanging_indent = True
+    profile.references.hanging_indent_in = 0.5
+    profile.body.space_before_pt = 6
+
+    source, audit = _point_profile_audit(document, profile)
+    ref_findings = [f for f in audit.violations if f.rule_code == "REFERENCE_HANGING_INDENT"]
+    assert len(ref_findings) == 1
+    assert ref_findings[0].location["occurrences"] == 15
+    assert len(ref_findings[0].location["paragraph_indexes"]) == 10
+    duplicates = [f for f in audit.violations if f.rule_code == "REFERENCE_DUPLICATE"]
+    assert len(duplicates) == 1
+    assert duplicates[0].location["entry_count"] == 15
+    assert len(duplicates[0].location["paragraph_indexes"]) == 10
+    citations = [f for f in audit.violations if f.rule_code == "CITATION_MISMATCH"]
+    assert len(citations) == 1
+    assert citations[0].location["occurrences"] == 2
+    assert citations[0].location["paragraph_indexes"] == [0]
+
+    selected = [f for f in audit.violations if f.rule_code == "SPACE_BEFORE"]
+    assert len(selected) == 1
+
+    _, targets = review_targets(audit, source, selected)
+    corrected, applied, skipped = apply_guided_fixes(audit, source, selected)
+    assert applied == selected and not skipped
+    compare_preservation(source, corrected, targets)
+
+    # verify_reaudit now succeeds despite 15 ambient reference entries
+    result = verify_reaudit(audit, source, corrected, selected)
+    assert result["before_score"] < result["after_score"]
+    assert result["new_findings"] == []
+    for side in ("before_findings", "after_findings"):
+        summary = {item["rule_code"]: item for item in result[side]}
+        assert summary["REFERENCE_HANGING_INDENT"]["count"] == 15
+        assert summary["REFERENCE_DUPLICATE"]["count"] == 15
+        assert summary["CITATION_MISMATCH"]["count"] == 2
+
+    # Selecting the truncated aggregate itself continues to fail at Review
+    with pytest.raises(GuidedFixFailed):
+        review_targets(audit, source, ref_findings)
+
+    # Attempting to verify re-audit with the truncated aggregate selected fails strictly
+    with pytest.raises(GuidedFixFailed, match="incomplete finding locations"):
+        verify_reaudit(audit, source, corrected, ref_findings)
+
+
+def test_ambient_aggregate_worsened_occurrence_count_is_detected():
+    """Increasing occurrence count of an ambient aggregate finding triggers re-audit failure."""
+    from app.services.guided_fix import apply_guided_fixes
+
+    document = Document()
+    _clean_font_fixture_context(document)
+    p0 = document.add_paragraph("Synthetic body prose with enough text to qualify for the body role.")
+    p0.paragraph_format.space_before = Pt(20)
+    document.add_paragraph("References", style="Heading 1")
+    for i in range(15):
+        document.add_paragraph(f"Author{i:02d}, A. (2020). Title of paper {i}. Journal of Testing, 1(1), 10-20.")
+
+    profile = new_custom_profile("Ambient 15 references hanging indent")
+    profile.references.check_hanging_indent = True
+    profile.references.hanging_indent_in = 0.5
+    profile.body.space_before_pt = 6
+
+    source, audit = _point_profile_audit(document, profile)
+    selected = [f for f in audit.violations if f.rule_code == "SPACE_BEFORE"]
+    corrected, applied, _ = apply_guided_fixes(audit, source, selected)
+
+    # Create a corrupted output DOCX that adds a 16th non-compliant reference entry
+    corrupted_doc = Document(io.BytesIO(corrected))
+    corrupted_doc.add_paragraph("Author15, A. (2020). Another unindented paper. Journal of Testing, 1(1), 10-20.")
+    corrupted_buf = io.BytesIO()
+    corrupted_doc.save(corrupted_buf)
+    corrupted_bytes = corrupted_buf.getvalue()
+
+    with pytest.raises(GuidedFixFailed, match="new or worsened finding after re-audit"):
+        verify_reaudit(audit, source, corrupted_bytes, selected)
