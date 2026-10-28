@@ -75,9 +75,9 @@ A mixed safe/unsafe selection is refused as a whole.
 The original DOCX, saved Audit, Snapshot, History, PDF, scoring and categories
 remain unchanged. This certifies eligible OOXML settings, not installed-font
 availability, font substitution, arbitrary-script rendering or Word pagination.
-No candidate was added. Strict decimal before/after-spacing exactness, grouped
-quantities, truncated aggregates and package-policy disposition remain separate
-release-closure work; these font checks do not certify the whole Guided Fix set.
+No candidate was added. Grouped quantities, truncated aggregates and
+package-policy disposition remain separate release-closure work; these font
+checks do not certify the whole Guided Fix set.
 
 In Review, Tab can focus the details area, marked by an inset focus ring.
 When its content overflows, use the arrow keys, Page Up/Page Down or Home/End
@@ -120,8 +120,8 @@ rendered-page evidence remains a refusal.
 The original DOCX, Audit, Snapshot, History, PDF, scoring and categories remain
 unchanged. This certifies eligible encoded settings, not Word rendering or
 physical pagination. It is not a complete Guided Fix freeze or release approval:
-strict decimal before/after spacing, grouped quantities, truncated aggregates
-and package-policy disposition remain independent closure work.
+grouped quantities, truncated aggregates and package-policy disposition remain
+independent closure work.
 
 ### Before/after paragraph spacing Guided Fix safety
 
@@ -133,18 +133,25 @@ paragraphs and malformed or otherwise unprovable evidence. Valid explicit false
 flags may override valid inherited true flags; malformed inherited controls
 remain manual even when shadowed. Unrelated opposite-side controls are preserved.
 
-Requirements must be exactly representable in twentieths of a point (twips);
-6.01pt stays manual rather than being rounded. Reopened corrected copies must
-contain the exact requested point attribute, including explicit zero, without
-competing controls. A mixed safe/unsafe selection is rejected as a whole.
-Only the selected before/after attribute changes; controls are never cleared to
-force a correction. These checks certify the point **setting**, not an exact
-rendered gap. The original DOCX, saved audit, Snapshot, History and PDF remain
-unchanged.
+Requirements come from the saved Snapshot and must be exactly representable in
+twentieths of a point (twips) within 0–240 pt. For example, 6.05pt is eligible
+but 6.00000000001pt and 6.01pt stay manual rather than being rounded. The
+persisted Current value must exactly match the direct source attribute; a
+source-to-requirement difference of 20 twips or less stays manual even if the
+float-based detector reported a finding. Explicit zero is valid and is written
+as `"0"`.
+
+The reopened copy is checked against the original source, saved requirement,
+reviewed targets and raw selected attributes. Separately selected properties
+are independently verified; other spacing attributes and controls are
+preserved. Simple fields, paragraph-level section properties and ambiguous
+bookmarks remain manual. A mixed safe/unsafe selection is rejected as a whole.
+These checks certify the point **setting**, not an exact rendered gap; document
+grids and snap-to-grid are preserved. The original DOCX, saved audit, Snapshot,
+History and PDF remain unchanged.
 
 The before/after-spacing hardening alone does not establish complete Guided Fix
-release closure. The separate font and line-spacing boundaries are described
-above; strict-decimal, grouped-count, truncated-aggregate and package-policy
+release closure. Grouped-count wording, truncated aggregates and package-policy
 issues remain independent.
 
 ### Reference List heading bold Guided Fix

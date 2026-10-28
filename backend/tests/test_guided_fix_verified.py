@@ -4,6 +4,7 @@ import io
 import json
 import copy
 import zipfile
+from decimal import Decimal
 from dataclasses import replace
 
 from docx import Document
@@ -674,7 +675,7 @@ def _spacing_finding_key(finding):
 
 
 @pytest.mark.parametrize('side', ['before', 'after'])
-@pytest.mark.parametrize('required', [6, 0])
+@pytest.mark.parametrize('required', [0, 0.05, 0.1, 0.5, 1, 6, 6.05, 6.1, 12, 239.95, 240])
 def test_point_spacing_review_apply_download_and_reaudit(
     client, test_engine, spacing_boundary_storage, side, required,
 ):
@@ -692,6 +693,7 @@ def test_point_spacing_review_apply_download_and_reaudit(
     source = _bold_bytes(document)
     original = bytes(source)
     digest = hashlib.sha256(source).hexdigest()
+    required_twips = int(Decimal(str(required)) * 20)
     audit = _spacing_audit(client, source, **{side: required})
     root, ids = _spacing_selection(audit, (side,))
     path = f'/api/audit/{audit["audit_id"]}'
@@ -721,10 +723,10 @@ def test_point_spacing_review_apply_download_and_reaudit(
     assert client.get(download_path).status_code == 410
     assert download.content != source
     assert hashlib.sha256(download.content).hexdigest() != digest
-    _assert_spacing_package_unchanged(source, download.content, {0: {side: required * 20}})
+    _assert_spacing_package_unchanged(source, download.content, {0: {side: required_twips}})
     output = Document(io.BytesIO(download.content))
     spacing = output.paragraphs[0]._p.pPr.find(qn('w:spacing'))
-    assert spacing.get(qn('w:' + side)) == str(required * 20)
+    assert spacing.get(qn('w:' + side)) == str(required_twips)
     assert spacing.get(qn('w:' + opposite + 'Lines')) == '100'
     assert spacing.get(qn('w:' + opposite + 'Autospacing')) == '1'
     config = EffectiveProfileConfig(snapshot_from_dict(saved['audit']['profile_snapshot']))
@@ -752,13 +754,24 @@ def test_point_spacing_review_apply_download_and_reaudit(
 
 
 @pytest.mark.parametrize('side', ['before', 'after'])
-def test_spacing_unrepresentable_requirement_remains_manual(client, spacing_boundary_storage, side):
+@pytest.mark.parametrize('required', [6.00000000001, 6.025, 6.001, 0.01, 0.025, 1.333])
+def test_spacing_unrepresentable_requirement_remains_manual(
+    client, test_engine, spacing_boundary_storage, side, required,
+):
     source = _bold_bytes(_spacing_document())
-    audit = _spacing_audit(client, source, **{side: 6.01})
+    digest = hashlib.sha256(source).hexdigest()
+    audit = _spacing_audit(client, source, **{side: required})
     root, ids = _spacing_selection(audit, (side,))
+    saved = _saved_source_state(test_engine, audit['audit_id'])
+    detail = client.get(f'/api/audit/{audit["audit_id"]}').json()
+    history = client.get('/api/audits').json()
     response = _upload(client, root + '/review', source, ids)
     assert response.status_code == 422, response.text
     _assert_no_spacing_output(response, spacing_boundary_storage, audit['audit_id'])
+    assert hashlib.sha256(source).hexdigest() == digest
+    assert _saved_source_state(test_engine, audit['audit_id']) == saved
+    assert client.get(f'/api/audit/{audit["audit_id"]}').json() == detail
+    assert client.get('/api/audits').json() == history
 
 
 @pytest.mark.parametrize('side', ['before', 'after'])
@@ -831,15 +844,25 @@ def test_spacing_before_after_selection_is_atomic(client, spacing_boundary_stora
 
 
 @pytest.mark.parametrize('side', ['before', 'after'])
-@pytest.mark.parametrize('fault', ['auto', 'lines', 'contextual', 'one_twip', 'partial'])
+@pytest.mark.parametrize('fault', [
+    'auto', 'lines', 'contextual', 'one_twip', 'minus_twip', 'rounded', 'missing',
+    'sibling', 'line', 'lineRule', 'text', 'run', 'role', 'bookmark', 'partial',
+])
 def test_spacing_output_override_is_rejected(
     client, monkeypatch, spacing_boundary_storage, side, fault,
 ):
     from app.services import guided_fix
     from app.services.profile_snapshot import snapshot_from_dict
 
-    source = _bold_bytes(_spacing_document())
-    audit = _spacing_audit(client, source)
+    document = _spacing_document()
+    if fault == 'bookmark':
+        start, end = OxmlElement('w:bookmarkStart'), OxmlElement('w:bookmarkEnd')
+        start.set(qn('w:id'), '7')
+        start.set(qn('w:name'), 'OriginalBookmark')
+        end.set(qn('w:id'), '7')
+        document.paragraphs[0]._p.extend((start, end))
+    source = _bold_bytes(document)
+    audit = _spacing_audit(client, source, **({side: 6.05} if fault == 'rounded' else {}))
     root, ids = _spacing_selection(audit, ('before', 'after') if fault == 'partial' else (side,))
     review = _upload(client, root + '/review', source, ids)
     assert review.status_code == 200, review.text
@@ -851,15 +874,32 @@ def test_spacing_output_override_is_rejected(
         if fault == 'partial':
             return True
         assert original_mutator(paragraph, required)
-        if fault == 'one_twip':
-            paragraph._p.pPr.find(qn('w:spacing')).set(qn('w:' + side), str(round(required * 20) + 1))
+        spacing = paragraph._p.pPr.find(qn('w:spacing'))
+        if fault in {'one_twip', 'minus_twip'}:
+            spacing.set(qn('w:' + side), str(required + (1 if fault == 'one_twip' else -1)))
+        elif fault == 'rounded':
+            spacing.set(qn('w:' + side), '120')  # A 6.025pt rounded result is not the required 121 twips.
+        elif fault == 'missing':
+            del spacing.attrib[qn('w:' + side)]
+        elif fault == 'sibling':
+            spacing.set(qn('w:' + ('after' if side == 'before' else 'before')), '399')
+        elif fault in {'line', 'lineRule'}:
+            spacing.set(qn('w:' + fault), '240' if fault == 'line' else 'exact')
+        elif fault == 'text':
+            paragraph.runs[0].text += ' changed'
+        elif fault == 'run':
+            paragraph.add_run('extra run')
+        elif fault == 'role':
+            paragraph.style = 'Heading 1'
+        elif fault == 'bookmark':
+            paragraph._p.find(qn('w:bookmarkStart')).set(qn('w:name'), 'ChangedBookmark')
         else:
             control = {'auto': 'Autospacing', 'lines': 'Lines', 'contextual': 'contextualSpacing'}[fault]
             _spacing_control(paragraph._p.pPr, side, control, '1')
         return True
 
-    def inspected_validator(data, *args):
-        if fault != 'partial':
+    def inspected_validator(data, *args, **kwargs):
+        if fault in {'auto', 'lines', 'contextual', 'one_twip', 'minus_twip', 'rounded'}:
             with zipfile.ZipFile(io.BytesIO(data)) as package:
                 assert package.read('word/document.xml')
             # The real detector's silence must not substitute for raw output proof.
@@ -868,7 +908,7 @@ def test_spacing_output_override_is_rejected(
             assert not [finding for finding in findings if finding.rule_code == 'SPACE_' + side.upper()]
             silent_outputs.append(data)
         try:
-            return original_validator(data, *args)
+            return original_validator(data, *args, **kwargs)
         except GuidedFixFailed as exc:
             errors.append(str(exc))
             raise
@@ -882,8 +922,531 @@ def test_spacing_output_override_is_rejected(
     response = _upload(client, root, source, ids, review.json()['review_id'])
     assert response.status_code == 422, response.text
     assert errors
-    assert bool(silent_outputs) is (fault != 'partial')
+    assert bool(silent_outputs) is (fault in {'auto', 'lines', 'contextual', 'one_twip', 'minus_twip', 'rounded'})
     _assert_no_spacing_output(response, spacing_boundary_storage, audit['audit_id'])
+
+
+@pytest.mark.parametrize('side', ['before', 'after'])
+@pytest.mark.parametrize('variant', [
+    'paired', 'field', 'section', 'invalid_id', 'negative_id', 'unicode_id', 'duplicate_start',
+    'duplicate_end', 'cross_paragraph', 'reversed',
+])
+def test_point_spacing_structure_and_bookmark_review(
+    client, spacing_boundary_storage, side, variant,
+):
+    document = _spacing_document()
+    paragraph = document.paragraphs[0]
+    if variant == 'field':
+        field = OxmlElement('w:fldSimple')
+        field.set(qn('w:instr'), 'DATE')
+        paragraph._p.append(field)
+    elif variant == 'section':
+        paragraph._p.pPr.append(OxmlElement('w:sectPr'))
+    else:
+        start, end = OxmlElement('w:bookmarkStart'), OxmlElement('w:bookmarkEnd')
+        start.set(qn('w:id'), {'invalid_id': 'bad', 'negative_id': '-1', 'unicode_id': '١'}.get(variant, '7'))
+        start.set(qn('w:name'), 'SpacingBookmark')
+        end.set(qn('w:id'), '7')
+        if variant == 'reversed':
+            paragraph._p.append(end)
+            paragraph._p.append(start)
+        else:
+            paragraph._p.append(start)
+            if variant == 'duplicate_start':
+                paragraph._p.append(copy.deepcopy(start))
+            if variant == 'cross_paragraph':
+                document.add_paragraph('Bookmark continuation.')._p.append(end)
+            else:
+                paragraph._p.append(end)
+            if variant == 'duplicate_end':
+                paragraph._p.append(copy.deepcopy(end))
+    source = _bold_bytes(document)
+    audit = _spacing_audit(client, source)
+    root, ids = _spacing_selection(audit, (side,))
+    review = _upload(client, root + '/review', source, ids)
+    if variant != 'paired':
+        assert review.status_code == 422, review.text
+        _assert_no_spacing_output(review, spacing_boundary_storage, audit['audit_id'])
+        return
+    assert review.status_code == 200, review.text
+    applied = _upload(client, root, source, ids, review.json()['review_id'])
+    assert applied.status_code == 200, applied.text
+    download = client.get(root + '/download/' + applied.json()['download_token'])
+    assert download.status_code == 200
+    output = Document(io.BytesIO(download.content)).paragraphs[0]
+    assert output._p.pPr.find(qn('w:spacing')).get(qn('w:' + side)) == '120'
+    assert output._p.find(qn('w:bookmarkStart')).get(qn('w:id')) == '7'
+    assert output._p.find(qn('w:bookmarkEnd')).get(qn('w:id')) == '7'
+
+
+
+@pytest.mark.parametrize('side', ['before', 'after'])
+@pytest.mark.parametrize('difference', [19, 20, 21])
+def test_point_spacing_exact_detector_threshold(side, difference):
+    from app.services.guided_fix import _current_matches_expected
+
+    paragraph = _spacing_document().paragraphs[0]
+    paragraph._p.pPr.find(qn('w:spacing')).set(qn('w:' + side), str(68 + difference))
+    assert _current_matches_expected(
+        'SPACE_' + side.upper(), 68, {}, None, paragraph,
+    ) is (difference <= 20)
+
+
+@pytest.mark.parametrize('side', ['before', 'after'])
+def test_point_spacing_large_actual_and_float_projection(side):
+    from app.services.guided_fix import _current_changed_from_actual
+
+    paragraph = _spacing_document().paragraphs[0]
+    spacing = paragraph._p.pPr.find(qn('w:spacing'))
+    code = 'SPACE_' + side.upper()
+    spacing.set(qn('w:' + side), '6000')
+    assert not _current_changed_from_actual(code, {}, None, '300pt', paragraph)
+    spacing.set(qn('w:' + side), '9007199254740993')
+    assert _current_changed_from_actual(code, {}, None, '450359962737049.6pt', paragraph)
+
+
+@pytest.mark.parametrize('value', [
+    '6.00000000001pt', '6.025pt', '6.001pt', '0.01pt', '0.025pt',
+    '1.333pt', '-1pt', '-0pt', '-0.0pt', '1e-1pt', '240.05pt', 'NaNpt', 'infpt', 'nonsense', '',
+    '6.00000000000000000000000000000000000001pt',
+])
+def test_point_spacing_requirement_parser_refuses_inexact_or_invalid(value):
+    from app.services.guided_fix import _point_twips
+
+    assert _point_twips(value, requirement=True) is None
+
+
+@pytest.mark.parametrize('side', ['before', 'after'])
+@pytest.mark.parametrize('spelling', ['6pt', '6.0pt', '6.00pt'])
+def test_point_spacing_expected_numeric_equivalence_at_review(
+    client, test_engine, spacing_boundary_storage, side, spelling,
+):
+    source = _bold_bytes(_spacing_document())
+    audit = _spacing_audit(client, source, **{side: 6})
+    root, ids = _spacing_selection(audit, (side,))
+    with Session(test_engine) as db:
+        db.get(Violation, ids[0]).expected_value = spelling
+        db.commit()
+    before = _saved_source_state(test_engine, audit['audit_id'])
+    review = _upload(client, root + '/review', source, ids)
+    assert review.status_code == 200, review.text
+    assert _saved_source_state(test_engine, audit['audit_id']) == before
+    with Session(test_engine) as db:
+        assert db.get(Violation, ids[0]).expected_value == spelling
+
+
+def _point_snapshot_audit(side, version=6):
+    profile = new_custom_profile('Saved point spacing evidence')
+    profile.body.space_before_pt = 6
+    profile.body.space_after_pt = 6
+    snapshot = replace(resolve_snapshot(profile), schema_version=version, fingerprint='').with_fingerprint()
+    source = _bold_bytes(_spacing_document())
+    findings = run_static_rules_engine(source, config=EffectiveProfileConfig(snapshot))
+    for index, finding in enumerate(findings):
+        finding.id = f'point-{index}'
+    selected = [finding for finding in findings if finding.rule_code == 'SPACE_' + side.upper()]
+    assert len(selected) == 1
+    return source, SimpleNamespace(
+        profile_snapshot=snapshot.to_dict(), paragraph_page_mapping=None, violations=findings,
+        weighted_score=calculate_weighted_score_detailed(findings).total,
+        document_sha256=hashlib.sha256(source).hexdigest(),
+    ), selected
+
+
+@pytest.mark.parametrize('side', ['before', 'after'])
+@pytest.mark.parametrize('version', [1, 2, 3, 4, 5, 6])
+def test_point_spacing_saved_snapshot_versions(side, version):
+    source, audit, selected = _point_snapshot_audit(side, version)
+    assert review_targets(audit, source, selected)[0]
+
+
+@pytest.mark.parametrize('side', ['before', 'after'])
+@pytest.mark.parametrize('value', [None, True, -1, 240.05, float('inf'), float('nan'), '6'])
+def test_point_spacing_invalid_saved_requirement_is_manual(side, value):
+    from app.services.profile_snapshot import snapshot_from_dict
+
+    source, audit, selected = _point_snapshot_audit(side)
+    snapshot = snapshot_from_dict(audit.profile_snapshot)
+    audit.profile_snapshot = replace(
+        snapshot, **{'body_space_' + side + '_pt': value}, fingerprint='',
+    ).with_fingerprint().to_dict()
+    with pytest.raises(GuidedFixFailed):
+        review_targets(audit, source, selected)
+
+
+@pytest.mark.parametrize('side', ['before', 'after'])
+@pytest.mark.parametrize('failure', ['preservation', 'reaudit_unavailable', 'new_finding', 'category_increase', 'storage_failure'])
+def test_point_spacing_publication_barriers_preserve_saved_state(
+    client, test_engine, monkeypatch, spacing_boundary_storage, side, failure,
+):
+    from app.api import routes
+    from app.services import guided_fix_verification
+    from app.services.layout_violation import LayoutViolation
+
+    source = _bold_bytes(_spacing_document())
+    digest = hashlib.sha256(source).hexdigest()
+    audit = _spacing_audit(client, source)
+    root, ids = _spacing_selection(audit, (side,))
+    review = _upload(client, root + '/review', source, ids)
+    assert review.status_code == 200, review.text
+    saved = _saved_source_state(test_engine, audit['audit_id'])
+    history = client.get('/api/audits').json()
+    called = []
+    if failure == 'preservation':
+        def fail_preservation(*_args):
+            called.append(True)
+            raise ValueError('injected package-preservation failure')
+
+        monkeypatch.setattr(routes.docx_preservation, 'compare_preservation', fail_preservation)
+    elif failure in {'reaudit_unavailable', 'new_finding'}:
+        original_engine = guided_fix_verification.run_static_rules_engine
+
+        def changed_reaudit(data, **kwargs):
+            called.append(data)
+            if failure == 'reaudit_unavailable':
+                raise RuntimeError('injected re-audit failure')
+            findings = original_engine(data, **kwargs)
+            if data != source:
+                findings.append(LayoutViolation(
+                    rule_code='FONT_SIZE', severity='MINOR',
+                    location={'paragraph_index': 0, 'run_index': 0},
+                    message='New unrelated finding', expected_value='12pt', actual_value='9pt',
+                ))
+            return findings
+
+        monkeypatch.setattr(guided_fix_verification, 'run_static_rules_engine', changed_reaudit)
+    elif failure == 'category_increase':
+        original_score = guided_fix_verification.calculate_weighted_score_detailed
+
+        def increased_category(findings):
+            score = original_score(findings)
+            called.append(score)
+            if len(called) == 2:
+                breakdown = [replace(row, deduction=row.deduction + 1)
+                             if row.category == 'page_margins' else row for row in score.breakdown]
+                return replace(score, total=score.total - 1, breakdown=breakdown)
+            return score
+
+        monkeypatch.setattr(guided_fix_verification, 'calculate_weighted_score_detailed', increased_category)
+    else:
+        def fail_fsync(_fd):
+            called.append(True)
+            raise OSError('injected storage failure')
+
+        monkeypatch.setattr(guided_fix_storage.os, 'fsync', fail_fsync)
+    response = _upload(client, root, source, ids, review.json()['review_id'])
+    assert response.status_code == (503 if failure == 'storage_failure' else 422), response.text
+    assert called
+    _assert_no_bold_output(response, spacing_boundary_storage, audit['audit_id'])
+    assert hashlib.sha256(source).hexdigest() == digest
+    assert _saved_source_state(test_engine, audit['audit_id']) == saved
+    assert client.get('/api/audits').json() == history
+
+
+@pytest.mark.parametrize('side', ['before', 'after'])
+def test_point_spacing_missing_page_evidence_never_publishes(
+    client, test_engine, monkeypatch, spacing_boundary_storage, side,
+):
+    from app.services import docx_pdf_converter
+
+    document = _spacing_document()
+    document.add_paragraph('References', style='Heading 1')
+    document.add_paragraph('Smith, A. (2024). Synthetic reference. Academic Press.')
+    source = _bold_bytes(document)
+    profile = new_custom_profile('Point spacing with reference page evidence')
+    setattr(profile.body, 'space_' + side + '_pt', 6)
+    profile.references.check_start_on_new_page = True
+    response = client.post('/api/audit', data={'custom_profile': json.dumps(profile.to_dict())},
+                           files={'file': ('spacing.docx', source)})
+    assert response.status_code == 200, response.text
+    audit = response.json()
+    root, ids = _spacing_selection(audit, (side,))
+    review = _upload(client, root + '/review', source, ids)
+    assert review.status_code == 200, review.text
+    saved = _saved_source_state(test_engine, audit['audit_id'])
+    assert saved['audit']['paragraph_page_mapping'] is None
+    attempts = []
+
+    def unavailable_renderer(_source):
+        attempts.append(True)
+        raise RuntimeError('synthetic page evidence unavailable')
+
+    monkeypatch.setattr(docx_pdf_converter, 'convert_docx_to_pdf', unavailable_renderer)
+    applied = _upload(client, root, source, ids, review.json()['review_id'])
+    assert applied.status_code == 422, applied.text
+    assert attempts
+    _assert_no_bold_output(applied, spacing_boundary_storage, audit['audit_id'])
+    assert _saved_source_state(test_engine, audit['audit_id']) == saved
+
+
+@pytest.mark.parametrize('side', ['before', 'after'])
+@pytest.mark.parametrize('fault', [None, 'unchanged', 'wrong'])
+def test_point_spacing_grouped_paragraphs_all_or_nothing(
+    client, monkeypatch, spacing_boundary_storage, side, fault,
+):
+    from app.services import guided_fix
+
+    document = _spacing_document()
+    second = document.add_paragraph('Another body paragraph requiring the same spacing.')
+    second.paragraph_format.space_before = Pt(20)
+    second.paragraph_format.space_after = Pt(20)
+    second.runs[0].font.name = 'Times New Roman'
+    second.runs[0].font.size = Pt(11)
+    source = _bold_bytes(document)
+    audit = _spacing_audit(client, source)
+    findings = [finding for finding in audit['physical_layout_errors']
+                if finding['rule_code'] == 'SPACE_' + side.upper()]
+    assert {finding['location']['paragraph_index'] for finding in findings} == {0, 1}
+    ids = [finding['id'] for finding in findings]
+    root = f'/api/audit/{audit["audit_id"]}/guided-fixes'
+    review = _upload(client, root + '/review', source, ids)
+    assert review.status_code == 200, review.text
+    if fault:
+        original = getattr(guided_fix, '_fix_space_' + side)
+        calls = []
+
+        def omit_last(paragraph, required):
+            calls.append(paragraph)
+            if len(calls) == 1:
+                return original(paragraph, required)
+            if fault == 'unchanged':
+                return True
+            result = original(paragraph, required)
+            paragraph._p.pPr.find(qn('w:spacing')).set(qn('w:' + side), str(required + 1))
+            return result
+
+        monkeypatch.setattr(guided_fix, '_fix_space_' + side, omit_last)
+    response = _upload(client, root, source, ids, review.json()['review_id'])
+    if fault:
+        assert len(calls) == 2
+        assert response.status_code == 422, response.text
+        _assert_no_bold_output(response, spacing_boundary_storage, audit['audit_id'])
+        return
+    assert response.status_code == 200, response.text
+    download = client.get(root + '/download/' + response.json()['download_token'])
+    assert download.status_code == 200
+    output = Document(io.BytesIO(download.content))
+    assert [p._p.pPr.find(qn('w:spacing')).get(qn('w:' + side))
+            for p in output.paragraphs] == ['120', '120']
+
+
+@pytest.mark.parametrize('side', ['before', 'after'])
+@pytest.mark.parametrize('field,value', [('actual_value', '19.95pt'), ('expected_value', '7pt')])
+def test_point_spacing_stale_saved_finding_has_no_review(
+    client, test_engine, spacing_boundary_storage, side, field, value,
+):
+    source = _bold_bytes(_spacing_document())
+    audit = _spacing_audit(client, source)
+    root, ids = _spacing_selection(audit, (side,))
+    with Session(test_engine) as db:
+        setattr(db.get(Violation, ids[0]), field, value)
+        db.commit()
+    saved = _saved_source_state(test_engine, audit['audit_id'])
+    review = _upload(client, root + '/review', source, ids)
+    assert review.status_code == 422, review.text
+    _assert_no_spacing_output(review, spacing_boundary_storage, audit['audit_id'])
+    assert _saved_source_state(test_engine, audit['audit_id']) == saved
+
+
+@pytest.mark.parametrize('side', ['before', 'after'])
+def test_point_spacing_actual_above_requirement_range_applies(
+    client, spacing_boundary_storage, side,
+):
+    document = _spacing_document()
+    setattr(document.paragraphs[0].paragraph_format, 'space_' + side, Pt(300))
+    source = _bold_bytes(document)
+    audit = _spacing_audit(client, source)
+    root, ids = _spacing_selection(audit, (side,))
+    review = _upload(client, root + '/review', source, ids)
+    assert review.status_code == 200, review.text
+    applied = _upload(client, root, source, ids, review.json()['review_id'])
+    assert applied.status_code == 200, applied.text
+    download = client.get(root + '/download/' + applied.json()['download_token'])
+    assert download.status_code == 200
+    output = Document(io.BytesIO(download.content))
+    assert output.paragraphs[0]._p.pPr.find(qn('w:spacing')).get(qn('w:' + side)) == '120'
+
+
+@pytest.mark.parametrize('side', ['before', 'after'])
+@pytest.mark.parametrize('difference', [19, 20, 21])
+def test_point_spacing_detector_float_boundary_is_conservative(
+    client, spacing_boundary_storage, side, difference,
+):
+    document = _spacing_document()
+    document.paragraphs[0]._p.pPr.find(qn('w:spacing')).set(
+        qn('w:' + side), str(68 + difference),
+    )
+    source = _bold_bytes(document)
+    audit = _spacing_audit(client, source, **{side: 3.4})
+    findings = [finding for finding in audit['physical_layout_errors']
+                if finding['rule_code'] == 'SPACE_' + side.upper()]
+    if difference == 19:
+        assert not findings
+        return
+    assert len(findings) == 1
+    root = f'/api/audit/{audit["audit_id"]}/guided-fixes'
+    review = _upload(client, root + '/review', source, [findings[0]['id']])
+    if difference == 20:
+        assert review.status_code == 422, review.text
+        _assert_no_spacing_output(review, spacing_boundary_storage, audit['audit_id'])
+    else:
+        assert review.status_code == 200, review.text
+
+
+def _point_profile_audit(document, profile):
+    snapshot = resolve_snapshot(profile)
+    source = _bold_bytes(document)
+    findings = run_static_rules_engine(source, config=EffectiveProfileConfig(snapshot))
+    for index, finding in enumerate(findings):
+        finding.id = f'point-role-{index}'
+    return source, SimpleNamespace(
+        profile_snapshot=snapshot.to_dict(), paragraph_page_mapping=None, violations=findings,
+        weighted_score=calculate_weighted_score_detailed(findings).total,
+        document_sha256=hashlib.sha256(source).hexdigest(),
+    )
+
+
+@pytest.mark.parametrize('side', ['before', 'after'])
+@pytest.mark.parametrize('kind,role,required', [
+    ('body', 'BODY', 6), ('heading', 'HEADING_1', 6.05),
+    ('caption', 'CAPTION_FIGURE', 6.1), ('appendix', 'APPENDIX_BODY', 6),
+])
+def test_point_spacing_uses_saved_requirement_for_real_role(side, kind, role, required):
+    from app.services.document_parser import extract_paragraphs
+    from app.services.guided_fix import apply_guided_fixes
+    from app.services.role_classifier import classify_paragraphs
+    from app.services.docx_preservation import compare_preservation
+
+    document = Document()
+    if kind == 'appendix':
+        document.add_paragraph('Main body prose that is long enough to be classified.')
+        document.add_paragraph('Appendix A', style='Heading 1')
+    text = 'Figure 1: Synthetic evidence diagram' if kind == 'caption' else (
+        'Synthetic academic prose with enough text to qualify for this role.'
+    )
+    paragraph = document.add_paragraph(text, style='Heading 1' if kind == 'heading' else None)
+    paragraph.paragraph_format.space_before = Pt(20)
+    paragraph.paragraph_format.space_after = Pt(20)
+    paragraph.runs[0].font.name = 'Times New Roman'
+    paragraph.runs[0].font.size = Pt(11)
+    index = len(document.paragraphs) - 1
+    profile = new_custom_profile('Saved role-specific point requirements')
+    for name in ('space_before_pt', 'space_after_pt'):
+        setattr(profile.body, name, 6)
+        setattr(profile.heading, name, 6.05)
+        setattr(profile.captions, name, 6.1)
+    source, audit = _point_profile_audit(document, profile)
+    original = Document(io.BytesIO(source))
+    assert classify_paragraphs(original, extract_paragraphs(original))[index] == role
+    selected = [finding for finding in audit.violations
+                if finding.rule_code == 'SPACE_' + side.upper()
+                and finding.location == {'paragraph_index': index}]
+    assert len(selected) == 1 and selected[0].expected_value == f'{required}pt'
+    _, targets = review_targets(audit, source, selected)
+    corrected, applied, skipped = apply_guided_fixes(audit, source, selected)
+    assert applied == selected and not skipped
+    raw = Document(io.BytesIO(corrected)).paragraphs[index]._p.pPr.find(qn('w:spacing'))
+    assert raw.get(qn('w:' + side)) == str(int(Decimal(str(required)) * 20))
+    compare_preservation(source, corrected, targets)
+    verify_reaudit(audit, source, corrected, selected)
+
+
+@pytest.mark.parametrize('kind,required', [('heading', 6.05), ('caption', 6.1), ('list', 12)])
+def test_point_spacing_follows_detector_fallback_precedence(kind, required):
+    from app.services.document_parser import extract_paragraphs
+    from app.services.guided_fix import _resolve_point_spacing_expected
+    from app.services.layout_engine import check_paragraph_typography
+
+    document = _spacing_document()
+    paragraph = document.paragraphs[0]
+    if kind == 'heading':
+        paragraph.style = 'Heading 1'
+    elif kind == 'caption':
+        paragraph.text = 'Figure 1: Synthetic evidence diagram'
+    else:
+        paragraph.style = 'List Bullet'
+    profile = new_custom_profile('Detector fallback precedence')
+    profile.body.space_after_pt = 6
+    profile.heading.space_after_pt = 6.05
+    profile.captions.space_after_pt = 6.1
+    profile.lists.space_after_pt = 12
+    snapshot = resolve_snapshot(profile)
+    paragraphs = extract_paragraphs(document)
+    findings = check_paragraph_typography(paragraphs, EffectiveProfileConfig(snapshot), document, ['BODY'])
+    finding = next(f for f in findings if f.rule_code == 'SPACE_AFTER')
+    assert finding.expected_value == f'{required}pt'
+    audit = SimpleNamespace(profile_snapshot=snapshot.to_dict())
+    assert _resolve_point_spacing_expected(finding, audit, document, 'BODY', paragraphs[0]) == int(
+        Decimal(str(required)) * 20
+    )
+
+
+@pytest.mark.parametrize('side', ['before', 'after'])
+@pytest.mark.parametrize('fault', ['source_hash', 'reviewed_target'])
+def test_point_spacing_output_oracle_requires_source_and_review_binding(side, fault):
+    from app.services.document_parser import extract_paragraphs, parse_document
+    from app.services.guided_fix import _validate_output, apply_guided_fixes
+    from app.services.role_classifier import classify_paragraphs
+
+    source, audit, selected = _point_snapshot_audit(side)
+    _, targets = review_targets(audit, source, selected)
+    corrected, applied, _ = apply_guided_fixes(audit, source, selected)
+    original = parse_document(source)
+    roles = classify_paragraphs(original, extract_paragraphs(original))
+    if fault == 'source_hash':
+        audit.document_sha256 = '0' * 64
+    else:
+        targets = set()
+    with pytest.raises(GuidedFixFailed):
+        _validate_output(corrected, original, applied, roles, audit, targets, original_source_bytes=source)
+
+
+def test_point_spacing_mixed_font_and_alignment_are_independently_verified():
+    from app.services.docx_preservation import compare_preservation
+    from app.services.guided_fix import apply_guided_fixes
+
+    document = _clean_font_fixture_context(_spacing_document())
+    paragraph = document.paragraphs[0]
+    paragraph.runs[0].font.name = 'Calibri'
+    paragraph.runs[0].font.size = Pt(11)
+    paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    profile = new_custom_profile('Mixed point font and alignment')
+    profile.body.space_before_pt = 6.05
+    profile.body.font_family = 'Times New Roman'
+    profile.body.font_size_pt = 12
+    profile.body.alignment = 'justify'
+    source, audit = _point_profile_audit(document, profile)
+    codes = {'SPACE_BEFORE', 'FONT_SIZE', 'FONT_CONSISTENCY', 'ALIGNMENT'}
+    selected = [finding for finding in audit.violations if finding.rule_code in codes]
+    assert {finding.rule_code for finding in selected} == codes
+    _, targets = review_targets(audit, source, selected)
+    corrected, applied, skipped = apply_guided_fixes(audit, source, selected)
+    assert applied == selected and not skipped
+    paragraph = Document(io.BytesIO(corrected)).paragraphs[0]
+    assert paragraph._p.pPr.find(qn('w:spacing')).get(qn('w:before')) == '121'
+    assert paragraph.runs[0].font.size.pt == 12
+    assert paragraph.runs[0].font.name == 'Times New Roman'
+    assert paragraph.alignment == WD_ALIGN_PARAGRAPH.JUSTIFY
+    compare_preservation(source, corrected, targets)
+    verify_reaudit(audit, source, corrected, selected)
+
+
+@pytest.mark.parametrize('side', ['before', 'after'])
+def test_point_spacing_accepts_leading_zero_source_twips(client, spacing_boundary_storage, side):
+    document = _spacing_document()
+    document.paragraphs[0]._p.pPr.find(qn('w:spacing')).set(qn('w:' + side), '000400')
+    source = _bold_bytes(document)
+    audit = _spacing_audit(client, source, **{side: 6.05})
+    root, ids = _spacing_selection(audit, (side,))
+    review = _upload(client, root + '/review', source, ids)
+    assert review.status_code == 200, review.text
+    applied = _upload(client, root, source, ids, review.json()['review_id'])
+    assert applied.status_code == 200, applied.text
+    download = client.get(root + '/download/' + applied.json()['download_token'])
+    assert download.status_code == 200
+    spacing = Document(io.BytesIO(download.content)).paragraphs[0]._p.pPr.find(qn('w:spacing'))
+    assert spacing.get(qn('w:' + side)) == '121'
+
 
 
 def _ambiguous_spacing_document(side, variant, layer='direct'):

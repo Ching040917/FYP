@@ -61,9 +61,21 @@ type SpacingCase = {
   before?: number
   after?: number
   override?: { side: 'before' | 'after'; layer: 'direct' | 'style' | 'base' | 'defaults'; kind: 'lines' | 'auto' | 'contextual' }
+  missing?: 'before' | 'after'
+  inherited?: boolean
+  structure?: 'field' | 'section' | 'bookmark-id' | 'bookmark-unpaired' | 'bookmark-reversed'
+  grouped?: boolean
 }
 
-function spacingFixture(options: SpacingCase) {
+type SpacingFixture = {
+  docx: string
+  profile: object
+  backendDir: string
+  python: string
+  file: { name: string; mimeType: string; buffer: Buffer }
+}
+
+function spacingFixture(options: SpacingCase): SpacingFixture {
   const backendDir = path.resolve(process.cwd(), '..', 'backend')
   const python = path.join(backendDir, '.venv', 'Scripts', 'python.exe')
   const fixture = JSON.parse(execFileSync(python, ['-B', '-c', `
@@ -82,6 +94,32 @@ p.paragraph_format.space_after = Pt(20)
 p.paragraph_format.line_spacing = 1.5
 p.runs[0].font.name = "Times New Roman"
 p.runs[0].font.size = Pt(12)
+if options.get("missing"):
+    p._p.pPr.spacing.attrib.pop(qn("w:" + options["missing"]), None)
+    if options.get("inherited"):
+        style = doc.styles.add_style("InheritedSpacingEvidence", WD_STYLE_TYPE.PARAGRAPH)
+        style.base_style = doc.styles["Normal"]
+        setattr(style.paragraph_format, "space_" + options["missing"], Pt(20))
+        p.style = style
+structure = options.get("structure")
+if structure == "field":
+    field = OxmlElement("w:fldSimple")
+    field.set(qn("w:instr"), "DATE")
+    p._p.append(field)
+elif structure == "section":
+    p._p.get_or_add_pPr().append(OxmlElement("w:sectPr"))
+elif structure and structure.startswith("bookmark"):
+    start, end = OxmlElement("w:bookmarkStart"), OxmlElement("w:bookmarkEnd")
+    start.set(qn("w:id"), "bad" if structure == "bookmark-id" else "42")
+    start.set(qn("w:name"), "Evidence")
+    end.set(qn("w:id"), "42")
+    if structure == "bookmark-reversed":
+        p._p.append(end)
+        p._p.append(start)
+    else:
+        p._p.append(start)
+        if structure != "bookmark-unpaired":
+            p._p.append(end)
 control = options.get("override")
 if control:
     layer = control["layer"]
@@ -122,6 +160,9 @@ if control:
             properties.append(spacing)
         attr = control["side"] + ("Lines" if control["kind"] == "lines" else "Autospacing")
         spacing.set(qn("w:" + attr), "100" if control["kind"] == "lines" else "1")
+if options.get("grouped"):
+    from copy import deepcopy
+    p._p.addnext(deepcopy(p._p))
 profile = new_custom_profile("Point spacing browser proof")
 profile.body.space_before_pt = options.get("before")
 profile.body.space_after_pt = options.get("after")
@@ -142,9 +183,60 @@ print(json.dumps({"docx": base64.b64encode(out.getvalue()).decode(), "profile": 
   }
 }
 
+async function openPointAudit(page: Page, fixture: SpacingFixture) {
+  const response = await page.request.post('/api/audit', {
+    multipart: { file: fixture.file, custom_profile: JSON.stringify(fixture.profile) }, timeout: 90_000,
+  })
+  expect(response.ok(), await response.text()).toBe(true)
+  const auditId = (await response.json()).audit_id as string
+  const before = await (await page.request.get(`/api/audit/${auditId}`)).json()
+  await page.goto(`/audit/${auditId}`)
+  return { auditId, before }
+}
+
+async function pointReportText(page: Page, auditId: string, fixture: { python: string; backendDir: string }) {
+  const report = await page.request.get(`/api/audit/${auditId}/export-pdf`)
+  expect(report.ok(), await report.text()).toBe(true)
+  return execFileSync(fixture.python, ['-B', '-c', `
+import io, sys
+from pypdf import PdfReader
+reader = PdfReader(io.BytesIO(sys.stdin.buffer.read()))
+print("\\n".join(page.extract_text() or "" for page in reader.pages))
+`], { cwd: fixture.backendDir, encoding: 'utf8', input: await report.body() })
+}
+
+function semanticPointValue(value: string) {
+  const token = value.replace(/^Required and proposed:\s*/, '').trim()
+  const match = /^([0-9]+)(?:\.([0-9]+))?\s*pt$/i.exec(token)
+  if (!match) throw new Error(`Invalid point value: ${value}`)
+  const whole = match[1].replace(/^0+(?=\d)/, '')
+  const fraction = (match[2] ?? '').replace(/0+$/, '')
+  return fraction ? `${whole}.${fraction}` : whole
+}
+
+async function reviewPointSelection(
+  page: Page, fixture: SpacingFixture,
+  targets: { side: 'before' | 'after'; paragraph: number }[],
+) {
+  await openGuidedFixes(page)
+  for (const { side, paragraph } of targets) {
+    await page.getByRole('checkbox', {
+      name: new RegExp(`Space ${side} the paragraph does not match, .*paragraph ${paragraph}`, 'i'),
+    }).check()
+  }
+  await page.getByRole('button', {
+    name: `Review ${targets.length} selected chang${targets.length === 1 ? 'e' : 'es'}`, exact: true,
+  }).click()
+  await page.locator('#guided-fixes-file-input').setInputFiles(fixture.file)
+  await page.getByRole('button', { name: 'Review safety and locations', exact: true }).click()
+  await expect(page.getByRole('dialog', { name: 'Guided Fixes — review confirmed changes' })).toBeVisible({ timeout: 60_000 })
+}
+
 type FontCase = {
   family?: boolean
   size?: number
+  pointBefore?: number
+  justify?: boolean
   grouped?: boolean
   unsafe?: 'character' | 'paragraph' | 'base' | 'defaults' | 'theme' | 'script' | 'mixed-slots' | 'non-ascii'
 }
@@ -172,6 +264,7 @@ function fontFixture(options: FontCase = { family: true }) {
 import base64, io, json, sys
 from docx import Document
 from docx.enum.style import WD_STYLE_TYPE
+from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Pt
@@ -192,6 +285,10 @@ for text in texts:
     run.font.name = "Calibri"
     run.font.size = Pt(11)
     run._r.rPr.rFonts.set(qn("w:eastAsia"), "Calibri")
+if options.get("pointBefore") is not None:
+    p.paragraph_format.space_before = Pt(20)
+if options.get("justify"):
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
 sibling = doc.add_paragraph("An unselected paragraph retains every original property.")
 sibling.runs[0].font.name = "Times New Roman"
 sibling.runs[0].font.size = Pt(options.get("size") or 12)
@@ -239,6 +336,10 @@ if options.get("family"):
     profile.body.font_family = "Times New Roman"
 if options.get("size") is not None:
     profile.body.font_size_pt = options["size"]
+if options.get("pointBefore") is not None:
+    profile.body.space_before_pt = options["pointBefore"]
+if options.get("justify"):
+    profile.body.alignment = "justify"
 out = io.BytesIO()
 doc.save(out)
 print(json.dumps({"docx": base64.b64encode(out.getvalue()).decode(), "profile": profile.to_dict()}))
@@ -724,8 +825,8 @@ test.describe('guided fixes workflow @guided-fixes', () => {
     await expect(opener).toBeFocused()
   })
 
-  for (const options of [{ before: 6 }, { after: 0 }, { before: 6, after: 0 }]) {
-    test(`point spacing ${JSON.stringify(options)} completes keyboard Review Apply Download with exact package proof`, async ({ page, baseURL }, testInfo) => {
+  for (const options of [{ before: 6 }, { after: 0 }, { before: 6, after: 0 }, { before: 0 }, { before: 6.05 }, { after: 6.05 }, { before: 6.1 }, { after: 6.1 }, { before: 6.05, after: 6.1 }]) {
+    test(`point decimal ${JSON.stringify(options)} completes keyboard Review Apply Download with exact package proof`, async ({ page, baseURL }, testInfo) => {
       const origin = new URL(baseURL!).origin
       await page.route('**/*', route => new URL(route.request().url()).origin === origin
         ? route.continue() : route.abort('blockedbyclient'))
@@ -737,6 +838,8 @@ test.describe('guided fixes workflow @guided-fixes', () => {
       expect(created.ok(), await created.text()).toBe(true)
       const auditId = (await created.json()).audit_id as string
       const before = await (await page.request.get(`/api/audit/${auditId}`)).json()
+      const historyBefore = await (await page.request.get('/api/audits')).json()
+      const reportBefore = await pointReportText(page, auditId, fixture)
       await page.goto(`/audit/${auditId}`)
       const opener = page.getByRole('button', { name: /^Guided Fixes/ })
       await tabTo(page, opener)
@@ -766,15 +869,37 @@ test.describe('guided fixes workflow @guided-fixes', () => {
       // The native file chooser is represented by Playwright's file-upload seam;
       // every dialog action before and after it uses actual keyboard navigation.
       await tabTo(page, page.locator('#guided-fixes-file-input'))
+      if (options.before === 6.05 && sides.length === 1) {
+        await page.locator('#guided-fixes-file-input').setInputFiles(spacingFixture({ before: 6, structure: 'field' }).file)
+        const pending = page.waitForResponse(response => new URL(response.url()).pathname === `/api/audit/${auditId}/guided-fixes/review`)
+        await page.getByRole('button', { name: 'Review safety and locations', exact: true }).click()
+        const rejected = await pending
+        expect(rejected.status()).toBe(409)
+        const body = await rejected.json()
+        expect(body).not.toHaveProperty('review_id')
+        expect(body).not.toHaveProperty('download_token')
+        await expect(page.getByRole('alert')).toContainText(MISMATCH_TEXT)
+        await expect(page.getByRole('button', { name: 'Apply and verify changes', exact: true })).toHaveCount(0)
+        await testInfo.attach('point-decimal-wrong-original.png', { body: await page.screenshot(), contentType: 'image/png' })
+        expect(await (await page.request.get(`/api/audit/${auditId}`)).json()).toEqual(before)
+      }
       await page.locator('#guided-fixes-file-input').setInputFiles(fixture.file)
       await tabTo(page, page.getByRole('button', { name: 'Review safety and locations', exact: true }))
       await page.keyboard.press('Enter')
       const review = page.getByRole('dialog', { name: 'Guided Fixes — review confirmed changes' })
       await expect(review).toBeVisible({ timeout: 60_000 })
+      const persistedExpected: string[] = []
       for (const side of sides) {
         await expect(review.getByText(`Property to change: space ${side}`, { exact: true })).toBeVisible()
-        await expect(review.getByText(new RegExp(`^Required and proposed: ${options[side]}(?:\\.0)?pt$`))).toBeVisible()
+        const finding = before.violations.find((item: { rule_code: string }) => item.rule_code === `SPACE_${side.toUpperCase()}`)
+        expect(finding?.expected_value).toBeTruthy()
+        persistedExpected.push(finding.expected_value)
       }
+      const proposedValues = review.getByText(/^Required and proposed:/)
+      await expect(proposedValues).toHaveCount(sides.length)
+      for (const value of await proposedValues.all()) await expect(value).toBeVisible()
+      expect((await proposedValues.allTextContents()).map(semanticPointValue).sort())
+        .toEqual(persistedExpected.map(semanticPointValue).sort())
       await expect(review.getByText(/^Current: 20(?:\.0)?pt$/)).toHaveCount(sides.length)
       await spacingStateEvidence(page, testInfo, 'point-spacing-review')
       const applyResponse = page.waitForResponse(response =>
@@ -808,6 +933,7 @@ test.describe('guided fixes workflow @guided-fixes', () => {
       expect((await page.request.get(`/api/audit/${auditId}/guided-fixes/download/${applied.download_token}`)).status()).toBe(410)
       const inspected = JSON.parse(execFileSync(fixture.python, ['-B', '-c', `
 import base64, hashlib, io, json, sys, zipfile
+from decimal import Decimal
 from lxml import etree
 data = json.load(sys.stdin)
 source, output = [base64.b64decode(data[key]) for key in ("source", "output")]
@@ -823,7 +949,10 @@ with zipfile.ZipFile(io.BytesIO(source)) as a, zipfile.ZipFile(io.BytesIO(output
     for side, points in data["required"].items():
         name = "{%s}%s" % (ns["w"], side)
         assert original.get(name) == "400"
-        assert saved.get(name) == str(points * 20)
+        numerator, denominator = Decimal(str(points)).as_integer_ratio()
+        twips, remainder = divmod(numerator * 20, denominator)
+        assert remainder == 0
+        assert saved.get(name) == str(twips)
         raw[side] = saved.get(name)
         saved.set(name, original.get(name))
     assert etree.tostring(old, method="c14n") == etree.tostring(new, method="c14n")
@@ -839,6 +968,8 @@ print(json.dumps({"source_sha256": hashlib.sha256(source).hexdigest(),
       await testInfo.attach('point-spacing-original.docx', { body: fixture.file.buffer, contentType: fixture.file.mimeType })
       await testInfo.attach('point-spacing-corrected.docx', { body: corrected, contentType: fixture.file.mimeType })
       expect(await (await page.request.get(`/api/audit/${auditId}`)).json()).toEqual(before)
+      expect(await (await page.request.get('/api/audits')).json()).toEqual(historyBefore)
+      expect(await pointReportText(page, auditId, fixture)).toBe(reportBefore)
       const reaudit = await page.request.post('/api/audit', {
         multipart: { file: { ...fixture.file, buffer: corrected }, custom_profile: JSON.stringify(fixture.profile) }, timeout: 90_000,
       })
@@ -846,6 +977,17 @@ print(json.dumps({"source_sha256": hashlib.sha256(source).hexdigest(),
       const after = await reaudit.json()
       const codes = sides.map(side => `SPACE_${side.toUpperCase()}`)
       expect(after.physical_layout_errors.filter((finding: { rule_code: string }) => codes.includes(finding.rule_code))).toEqual([])
+      const reauditSaved = await (await page.request.get(`/api/audit/${after.audit_id}`)).json() as FontAuditSnapshot
+      const untouched = [reauditSaved, before as FontAuditSnapshot].map(audit => audit.violations
+        .filter(finding => !codes.includes(finding.rule_code))
+        .map(({ rule_code, severity, location, expected_value, actual_value }) =>
+          JSON.stringify({ rule_code, severity, location, expected_value, actual_value })).sort())
+      expect(untouched[0]).toEqual(untouched[1])
+      expect(reauditSaved.weighted_score).toBeGreaterThanOrEqual(before.weighted_score)
+      for (const row of reauditSaved.score_breakdown) {
+        expect(row.deduction).toBeLessThanOrEqual(before.score_breakdown.find((prior: { category: string }) => prior.category === row.category)?.deduction ?? 0)
+      }
+      await testInfo.attach('point-decimal-independent-reaudit.json', { body: JSON.stringify(after, null, 2), contentType: 'application/json' })
       await tabTo(page, page.getByRole('button', { name: 'Close', exact: true }))
       await page.keyboard.press('Enter')
       await expect(opener).toBeFocused()
@@ -856,6 +998,444 @@ print(json.dumps({"source_sha256": hashlib.sha256(source).hexdigest(),
       await expect(opener).toBeFocused()
     })
   }
+
+  test('point decimal supported mixed spacing font and alignment selection', async ({ page }, testInfo) => {
+    const options = { family: true, size: 12, pointBefore: 6.05, justify: true }
+    const fixture = fontFixture(options)
+    const digest = createHash('sha256').update(fixture.file.buffer).digest('hex')
+    const { auditId, auditBefore } = await openFontAudit(page, fixture)
+    const historyBefore = await (await page.request.get('/api/audits')).json()
+    const reportBefore = await pointReportText(page, auditId, fixture)
+    const codes = ['SPACE_BEFORE', 'FONT_SIZE', 'FONT_CONSISTENCY', 'ALIGNMENT']
+    expect(auditBefore.violations.filter(finding => codes.includes(finding.rule_code))).toHaveLength(4)
+    await openGuidedFixes(page)
+    for (const label of [
+      'Space before the paragraph does not match', 'Font size does not match',
+      'Font family does not match', 'Paragraph alignment does not match',
+    ]) {
+      await page.getByRole('checkbox', { name: new RegExp(`${label}, .*paragraph 1`, 'i') }).check()
+    }
+    await page.getByRole('button', { name: 'Review 4 selected changes', exact: true }).click()
+    await page.locator('#guided-fixes-file-input').setInputFiles(fixture.file)
+    await page.getByRole('button', { name: 'Review safety and locations', exact: true }).click()
+    await expect(page.getByRole('dialog', { name: 'Guided Fixes — review confirmed changes' })).toBeVisible({ timeout: 60_000 })
+    const pending = page.waitForResponse(response => response.request().method() === 'POST'
+      && new URL(response.url()).pathname === `/api/audit/${auditId}/guided-fixes`)
+    await page.getByRole('button', { name: 'Apply and verify changes', exact: true }).click()
+    const applied = await (await pending).json()
+    expect(applied.status).toBe('passed')
+    await expect(page.getByRole('heading', { name: 'Fix applied; re-audit passed', exact: true })).toBeVisible({ timeout: 60_000 })
+    const downloading = page.waitForEvent('download')
+    await page.getByRole('button', { name: 'Download corrected document', exact: true }).click()
+    const stream = await (await downloading).createReadStream()
+    if (!stream) throw new Error('Mixed corrected copy was not readable')
+    const chunks: Buffer[] = []
+    for await (const chunk of stream) chunks.push(Buffer.from(chunk))
+    const corrected = Buffer.concat(chunks)
+    const proof = JSON.parse(execFileSync(fixture.python, ['-B', '-c', `
+import base64, hashlib, io, json, sys, zipfile
+from decimal import Decimal
+from docx import Document
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.oxml.ns import qn
+from app.services.docx_preservation import compare_preservation
+data = json.load(sys.stdin)
+source, output = [base64.b64decode(data[key]) for key in ("source", "output")]
+with zipfile.ZipFile(io.BytesIO(source)) as old, zipfile.ZipFile(io.BytesIO(output)) as new:
+    assert set(old.namelist()) == set(new.namelist())
+    assert old.read("word/_rels/document.xml.rels") == new.read("word/_rels/document.xml.rels")
+original, corrected = [Document(io.BytesIO(value)) for value in (source, output)]
+p, result = original.paragraphs[0], corrected.paragraphs[0]
+numerator, denominator = Decimal(str(data["required"])).as_integer_ratio()
+twips, remainder = divmod(numerator * 20, denominator)
+assert remainder == 0 and result._p.pPr.find(qn("w:spacing")).get(qn("w:before")) == str(twips)
+assert result.runs[0].font.name == "Times New Roman" and result.runs[0].font.size.pt == 12
+assert result.alignment == WD_ALIGN_PARAGRAPH.JUSTIFY
+assert p.text == result.text and [run.text for run in p.runs] == [run.text for run in result.runs]
+compare_preservation(source, output, {(0, None, "SPACE_BEFORE"), (0, None, "ALIGNMENT"),
+                                      (0, 0, "FONT_SIZE"), (0, 0, "FONT_CONSISTENCY")})
+print(json.dumps({"source_sha256": hashlib.sha256(source).hexdigest(), "raw_before": str(twips)}))
+`], { cwd: fixture.backendDir, encoding: 'utf8', input: JSON.stringify({
+      source: fixture.docx, output: corrected.toString('base64'), required: options.pointBefore,
+    }) }))
+    expect(proof.source_sha256).toBe(digest)
+    expect(proof.raw_before).toBe('121')
+    expect(await (await page.request.get(`/api/audit/${auditId}`)).json()).toEqual(auditBefore)
+    expect(await (await page.request.get('/api/audits')).json()).toEqual(historyBefore)
+    expect(await pointReportText(page, auditId, fixture)).toBe(reportBefore)
+    const reaudit = await page.request.post('/api/audit', {
+      multipart: { file: { ...fixture.file, buffer: corrected }, custom_profile: JSON.stringify(fixture.profile) }, timeout: 90_000,
+    })
+    expect(reaudit.ok(), await reaudit.text()).toBe(true)
+    const after = await reaudit.json()
+    expect(after.physical_layout_errors.filter((finding: { rule_code: string }) => codes.includes(finding.rule_code))).toEqual([])
+    await testInfo.attach('point-decimal-mixed-proof.json', { body: JSON.stringify(proof), contentType: 'application/json' })
+  })
+
+  test('point decimal grouped two paragraphs and combined before after exact output', async ({ page }, testInfo) => {
+    const fixture = spacingFixture({ before: 6.05, after: 6.1, grouped: true })
+    const digest = createHash('sha256').update(fixture.file.buffer).digest('hex')
+    const created = await page.request.post('/api/audit', {
+      multipart: { file: fixture.file, custom_profile: JSON.stringify(fixture.profile) }, timeout: 90_000,
+    })
+    expect(created.ok(), await created.text()).toBe(true)
+    const auditId = (await created.json()).audit_id as string
+    const before = await (await page.request.get(`/api/audit/${auditId}`)).json()
+    const historyBefore = await (await page.request.get('/api/audits')).json()
+    const reportBefore = await pointReportText(page, auditId, fixture)
+    for (const side of ['before', 'after']) {
+      expect(before.violations.filter((item: { rule_code: string }) => item.rule_code === `SPACE_${side.toUpperCase()}`)).toHaveLength(2)
+    }
+    await page.goto(`/audit/${auditId}`)
+    await openGuidedFixes(page)
+    for (const side of ['before', 'after']) {
+      for (const paragraph of [1, 2]) {
+        await page.getByRole('checkbox', { name: new RegExp(`Space ${side} the paragraph does not match, .*paragraph ${paragraph}`, 'i') }).check()
+      }
+    }
+    await page.getByRole('button', { name: 'Review 4 selected changes', exact: true }).click()
+    await page.locator('#guided-fixes-file-input').setInputFiles(fixture.file)
+    await page.getByRole('button', { name: 'Review safety and locations', exact: true }).click()
+    await expect(page.getByRole('dialog', { name: 'Guided Fixes — review confirmed changes' })).toBeVisible({ timeout: 60_000 })
+    const pending = page.waitForResponse(response => response.request().method() === 'POST'
+      && new URL(response.url()).pathname === `/api/audit/${auditId}/guided-fixes`)
+    await page.getByRole('button', { name: 'Apply and verify changes', exact: true }).click()
+    const applied = await (await pending).json()
+    expect(applied.status).toBe('passed')
+    await expect(page.getByRole('heading', { name: 'Fix applied; re-audit passed', exact: true })).toBeVisible({ timeout: 60_000 })
+    const downloading = page.waitForEvent('download')
+    await page.getByRole('button', { name: 'Download corrected document', exact: true }).click()
+    const stream = await (await downloading).createReadStream()
+    if (!stream) throw new Error('Grouped corrected copy was not readable')
+    const chunks: Buffer[] = []
+    for await (const chunk of stream) chunks.push(Buffer.from(chunk))
+    const corrected = Buffer.concat(chunks)
+    expect((await page.request.get(`/api/audit/${auditId}/guided-fixes/download/${applied.download_token}`)).status()).toBe(410)
+    const proof = JSON.parse(execFileSync(fixture.python, ['-B', '-c', `
+import base64, io, json, sys, zipfile
+from decimal import Decimal
+from lxml import etree
+data = json.load(sys.stdin)
+ns = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+with zipfile.ZipFile(io.BytesIO(base64.b64decode(data["source"]))) as a, zipfile.ZipFile(io.BytesIO(base64.b64decode(data["output"]))) as b:
+    assert set(a.namelist()) == set(b.namelist())
+    changed = [name for name in a.namelist() if a.read(name) != b.read(name)]
+    assert set(changed) <= {"word/document.xml", "docProps/core.xml", "docProps/app.xml"}
+    old, new = [etree.fromstring(z.read("word/document.xml")) for z in (a, b)]
+    originals, saved = [root.findall("w:body/w:p", ns) for root in (old, new)]
+    assert len(originals) == len(saved) == 2
+    for original, result in zip(originals, saved):
+        old_spacing = original.find("w:pPr/w:spacing", ns)
+        new_spacing = result.find("w:pPr/w:spacing", ns)
+        for side, value in data["required"].items():
+            numerator, denominator = Decimal(str(value)).as_integer_ratio()
+            twips, remainder = divmod(numerator * 20, denominator)
+            assert remainder == 0
+            key = "{%s}%s" % (ns["w"], side)
+            assert old_spacing.get(key) == "400"
+            assert new_spacing.get(key) == str(twips)
+            new_spacing.set(key, old_spacing.get(key))
+    assert etree.tostring(old, method="c14n") == etree.tostring(new, method="c14n")
+print(json.dumps({"changed_parts": changed, "paragraphs": len(saved)}))
+`], { cwd: fixture.backendDir, encoding: 'utf8', input: JSON.stringify({
+      source: fixture.docx, output: corrected.toString('base64'), required: { before: 6.05, after: 6.1 },
+    }) }))
+    await testInfo.attach('point-decimal-grouped-proof.json', { body: JSON.stringify(proof), contentType: 'application/json' })
+    expect(createHash('sha256').update(fixture.file.buffer).digest('hex')).toBe(digest)
+    expect(await (await page.request.get(`/api/audit/${auditId}`)).json()).toEqual(before)
+    expect(await (await page.request.get('/api/audits')).json()).toEqual(historyBefore)
+    expect(await pointReportText(page, auditId, fixture)).toBe(reportBefore)
+    const reaudit = await page.request.post('/api/audit', {
+      multipart: { file: { ...fixture.file, buffer: corrected }, custom_profile: JSON.stringify(fixture.profile) }, timeout: 90_000,
+    })
+    expect(reaudit.ok(), await reaudit.text()).toBe(true)
+    const after = await reaudit.json()
+    expect(after.physical_layout_errors.filter((item: { rule_code: string }) => ['SPACE_BEFORE', 'SPACE_AFTER'].includes(item.rule_code))).toEqual([])
+  })
+
+  for (const side of ['before', 'after'] as const) {
+    const cases: { name: string; options: SpacingCase; mayBeAbsent?: boolean }[] = [
+      ...[6.00000000001, 6.025, 6.001, 0.01, 0.025, 1.333].map(value => ({
+        name: `inexact ${value}`, options: { before: 6, after: 6, [side]: value },
+      })),
+      ...(['field', 'section', 'bookmark-id', 'bookmark-unpaired', 'bookmark-reversed'] as const).map(structure => ({
+        name: structure, options: { before: 6, after: 6, structure },
+      })),
+      { name: 'missing direct', options: { before: 6, after: 6, missing: side }, mayBeAbsent: true },
+      { name: 'inherited only', options: { before: 6, after: 6, missing: side, inherited: true }, mayBeAbsent: true },
+    ]
+    for (const scenario of cases) {
+      test(`point decimal ${side} ${scenario.name} refuses genuine findings atomically`, async ({ page }, testInfo) => {
+        const fixture = spacingFixture(scenario.options)
+        const digest = createHash('sha256').update(fixture.file.buffer).digest('hex')
+        const created = await page.request.post('/api/audit', {
+          multipart: { file: fixture.file, custom_profile: JSON.stringify(fixture.profile) }, timeout: 90_000,
+        })
+        expect(created.ok(), await created.text()).toBe(true)
+        const auditId = (await created.json()).audit_id as string
+        const before = await (await page.request.get(`/api/audit/${auditId}`)).json()
+        const selected = before.violations.filter((item: { rule_code: string }) =>
+          item.rule_code === `SPACE_${side.toUpperCase()}`)
+        if (scenario.mayBeAbsent && selected.length === 0) {
+          expect(selected).toEqual([])
+          await page.goto(`/audit/${auditId}`)
+          await openGuidedFixes(page)
+          await expect(page.getByRole('checkbox', { name: new RegExp(`Space ${side} the paragraph does not match`, 'i') })).toHaveCount(0)
+          await testInfo.attach('point-decimal-no-finding.json', {
+            body: JSON.stringify({ side, scenario: scenario.name, auditId, selected }, null, 2),
+            contentType: 'application/json',
+          })
+          await testInfo.attach('point-decimal-no-finding.png', { body: await page.screenshot(), contentType: 'image/png' })
+          expect(createHash('sha256').update(fixture.file.buffer).digest('hex')).toBe(digest)
+          expect(await (await page.request.get(`/api/audit/${auditId}`)).json()).toEqual(before)
+          return
+        }
+        expect(selected).toHaveLength(1)
+        await page.goto(`/audit/${auditId}`)
+        await openGuidedFixes(page)
+        const sides = scenario.options.structure ? [side] : ['before', 'after']
+        for (const selectedSide of sides) {
+          await page.getByRole('checkbox', { name: new RegExp(`Space ${selectedSide} the paragraph does not match, .*paragraph 1`, 'i') }).check()
+        }
+        await page.getByRole('button', { name: `Review ${sides.length} selected chang${sides.length === 1 ? 'e' : 'es'}`, exact: true }).click()
+        await page.locator('#guided-fixes-file-input').setInputFiles(fixture.file)
+        let applyRequests = 0
+        const downloads: string[] = []
+        page.on('download', event => downloads.push(event.suggestedFilename()))
+        page.on('request', request => {
+          if (request.method() === 'POST' && new URL(request.url()).pathname === `/api/audit/${auditId}/guided-fixes`) applyRequests++
+        })
+        const reviewing = page.waitForResponse(response =>
+          response.request().method() === 'POST' && new URL(response.url()).pathname === `/api/audit/${auditId}/guided-fixes/review`)
+        await page.getByRole('button', { name: 'Review safety and locations', exact: true }).click()
+        const response = await reviewing
+        expect(response.status()).toBe(422)
+        const rejected = await response.json()
+        expect(rejected).not.toHaveProperty('review_id')
+        expect(rejected).not.toHaveProperty('download_token')
+        await expect(page.getByRole('alert')).toContainText('Fix cannot be applied safely.')
+        await expect(page.getByRole('button', { name: 'Apply and verify changes', exact: true })).toHaveCount(0)
+        await expect(page.getByRole('button', { name: 'Download corrected document', exact: true })).toHaveCount(0)
+        if (side === 'before' && scenario.name === 'inexact 6.00000000001') {
+          await spacingStateEvidence(page, testInfo, 'point-decimal-manual')
+        }
+        expect(applyRequests).toBe(0)
+        expect(downloads).toEqual([])
+        expect(createHash('sha256').update(fixture.file.buffer).digest('hex')).toBe(digest)
+        expect(await (await page.request.get(`/api/audit/${auditId}`)).json()).toEqual(before)
+      })
+    }
+  }
+
+  for (const fault of [
+    'minus-one', 'plus-one', 'rounded', 'missing', 'partial', 'wrong-last',
+    'sibling', 'line', 'lineRule', 'preservation', 'reaudit', 'storage',
+  ]) {
+    test(`point decimal genuine ${fault} fault publishes no output`, async ({ page }, testInfo) => {
+      test.skip(process.env.ACA_POINT_FAULT_APP !== '1', 'Requires the isolated synthetic fault wrapper.')
+      const grouped = fault === 'partial' || fault === 'wrong-last'
+      const fixture = spacingFixture({ before: 6.05, grouped })
+      const digest = createHash('sha256').update(fixture.file.buffer).digest('hex')
+      const { auditId, before } = await openPointAudit(page, fixture)
+      const stateURL = `/api/__aca-point-evidence/${auditId}`
+      const baselineResponse = await page.request.get(stateURL)
+      expect(baselineResponse.ok()).toBe(true)
+      const baseline = await baselineResponse.json()
+      expect(baseline.output_tokens).toBe(0)
+      await reviewPointSelection(page, fixture, grouped
+        ? [{ side: 'before', paragraph: 1 }, { side: 'before', paragraph: 2 }]
+        : [{ side: 'before', paragraph: 1 }])
+      const endpoint = `**/api/audit/${auditId}/guided-fixes`
+      await page.route(endpoint, route => route.continue({
+        headers: { ...route.request().headers(), 'x-aca-synthetic-point-fault': fault },
+      }))
+      const downloads: string[] = []
+      page.on('download', download => downloads.push(download.suggestedFilename()))
+      const pending = page.waitForResponse(response => response.request().method() === 'POST'
+        && new URL(response.url()).pathname === `/api/audit/${auditId}/guided-fixes`)
+      await page.getByRole('button', { name: 'Apply and verify changes', exact: true }).click()
+      const response = await pending
+      expect(response.status()).toBe(fault === 'storage' ? 503 : 422)
+      const rejected = await response.json()
+      expect(rejected).not.toHaveProperty('download_token')
+      expect(rejected).not.toHaveProperty('output_filename')
+      await expect(page.getByRole('alert')).toBeVisible()
+      await expect(page.getByRole('button', { name: 'Download corrected document', exact: true })).toHaveCount(0)
+      const after = await (await page.request.get(stateURL)).json()
+      expect(after.output_tokens).toBe(0)
+      expect(after.all_output_file_count).toBe(baseline.all_output_file_count)
+      expect(after.fault_events.length).toBeGreaterThan(0)
+      expect(after.fault_events.every((event: { fault: string }) => event.fault === fault)).toBe(true)
+      expect(downloads).toEqual([])
+      expect(await (await page.request.get(`/api/audit/${auditId}`)).json()).toEqual(before)
+      expect(createHash('sha256').update(fixture.file.buffer).digest('hex')).toBe(digest)
+      await testInfo.attach(`point-decimal-${fault}-failure.json`, {
+        body: JSON.stringify({ fault, status: response.status(), rejected, baseline, after, downloads }, null, 2),
+        contentType: 'application/json',
+      })
+      if (fault === 'plus-one') await fontEvidence(page, testInfo, 'point-decimal-fault-no-output')
+      await page.unroute(endpoint)
+    })
+  }
+
+  for (const transition of ['audit switch', 'close and reopen'] as const) {
+    test(`point decimal delayed Download after ${transition} is suppressed`, async ({ page }, testInfo) => {
+      const fixture = spacingFixture({ before: 6.05 })
+      const first = await openPointAudit(page, fixture)
+      const second = await openPointAudit(page, fixture)
+      await page.goto(`/audit/${first.auditId}`)
+      await reviewPointSelection(page, fixture, [{ side: 'before', paragraph: 1 }])
+      await page.getByRole('button', { name: 'Apply and verify changes', exact: true }).click()
+      await expect(page.getByRole('heading', { name: 'Fix applied; re-audit passed', exact: true })).toBeVisible({ timeout: 60_000 })
+      const downloads: string[] = []
+      const requests: string[] = []
+      const received = Promise.withResolvers<void>()
+      const release = Promise.withResolvers<void>()
+      const pattern = `**/api/audit/${first.auditId}/guided-fixes/download/*`
+      const endpoint = `/api/audit/${first.auditId}/guided-fixes/download/`
+      page.on('download', download => downloads.push(download.suggestedFilename()))
+      page.on('request', request => {
+        if (new URL(request.url()).pathname.startsWith(endpoint)) requests.push(request.url())
+      })
+      await page.route(pattern, async route => {
+        const response = await route.fetch()
+        expect(response.status()).toBe(200)
+        received.resolve()
+        await release.promise
+        await route.fulfill({ response })
+      })
+      try {
+        await page.getByRole('button', { name: 'Download corrected document', exact: true }).click()
+        await received.promise
+        await expect(page.getByRole('button', { name: 'Downloading…', exact: true })).toBeDisabled()
+        if (transition === 'audit switch') {
+          await page.evaluate(id => {
+            window.history.pushState({}, '', `/audit/${id}`)
+            window.dispatchEvent(new PopStateEvent('popstate'))
+          }, second.auditId)
+          await expect(page).toHaveURL(new RegExp(`/audit/${second.auditId}$`))
+        } else {
+          await page.getByRole('button', { name: 'Close', exact: true }).click()
+        }
+        await expect(page.getByRole('dialog')).toHaveCount(0)
+        const responseReady = page.waitForResponse(response => new URL(response.url()).pathname.startsWith(endpoint))
+        release.resolve()
+        await responseReady
+        await page.waitForLoadState('networkidle')
+        expect(downloads).toEqual([])
+        expect(requests).toHaveLength(1)
+        await page.unroute(pattern)
+        await openGuidedFixes(page)
+        await expect(page.getByRole('button', { name: 'Download corrected document', exact: true })).toHaveCount(0)
+        await expect(page.getByRole('button', { name: 'Review 0 selected changes', exact: true })).toBeDisabled()
+        await testInfo.attach(`point-decimal-stale-${transition}.png`, { body: await page.screenshot(), contentType: 'image/png' })
+        expect(await (await page.request.get(`/api/audit/${first.auditId}`)).json()).toEqual(first.before)
+        expect(await (await page.request.get(`/api/audit/${second.auditId}`)).json()).toEqual(second.before)
+        await testInfo.attach('point-decimal-stale-events.json', {
+          body: JSON.stringify({ transition, downloads, requests, genuineResponse: 200 }, null, 2),
+          contentType: 'application/json',
+        })
+      } finally {
+        release.resolve()
+        await page.unroute(pattern)
+      }
+    })
+  }
+
+  test('point decimal native 100 and 200 percent Review keyboard evidence', async ({ baseURL }, testInfo) => {
+    const extension = process.env.ACA_FONT_ZOOM_EXTENSION
+    test.skip(!extension, 'Requires the task-owned Manifest V3 native zoom extension.')
+    test.setTimeout(600_000)
+    const context = await chromium.launchPersistentContext(testInfo.outputPath('point-native-profile'), {
+      channel: 'chromium', headless: false, viewport: null, baseURL,
+      args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`,
+        '--force-device-scale-factor=1',
+        '--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1, EXCLUDE localhost'],
+    })
+    let controller: Page | undefined
+    try {
+      const origin = new URL(baseURL!).origin
+      await context.route('**/*', route => new URL(route.request().url()).origin === origin
+        ? route.continue() : route.abort('blockedbyclient'))
+      const page = context.pages()[0] || await context.newPage()
+      const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker')
+      const extensionOrigin = `chrome-extension://${new URL(worker.url()).hostname}`
+      expect(new URL(worker.url()).protocol).toBe('chrome-extension:')
+      await context.route(`${extensionOrigin}/**`, route => route.continue())
+      controller = await context.newPage()
+      await controller.goto(`${extensionOrigin}/control.html`)
+      await page.bringToFront()
+      const fixture = spacingFixture({ before: 6.05, after: 6.1 })
+      const created = await page.request.post('/api/audit', {
+        multipart: { file: fixture.file, custom_profile: JSON.stringify(fixture.profile) }, timeout: 90_000,
+      })
+      expect(created.ok(), await created.text()).toBe(true)
+      const auditId = (await created.json()).audit_id as string
+      await page.goto(`/audit/${auditId}`)
+      await openGuidedFixes(page)
+      for (const side of ['before', 'after']) {
+        await page.getByRole('checkbox', { name: new RegExp(`Space ${side} the paragraph does not match, .*paragraph 1`, 'i') }).check()
+      }
+      await page.getByRole('button', { name: 'Review 2 selected changes', exact: true }).click()
+      await page.locator('#guided-fixes-file-input').setInputFiles(fixture.file)
+      await page.getByRole('button', { name: 'Review safety and locations', exact: true }).click()
+      await expect(page.getByRole('dialog', { name: 'Guided Fixes — review confirmed changes' })).toBeVisible({ timeout: 60_000 })
+      const cdp = await context.newCDPSession(page)
+      const { windowId } = await cdp.send('Browser.getWindowForTarget')
+      await cdp.send('Browser.setWindowBounds', { windowId, bounds: { windowState: 'normal', width: 1366, height: 768 } })
+      await expect.poll(async () => (await cdp.send('Browser.getWindowBounds', { windowId })).bounds).toMatchObject({ width: 1366, height: 768 })
+      let baseline: { width: number; height: number; dpr: number } | undefined
+      for (const zoom of [1, 2]) {
+        const actual = await controller.evaluate(`(async () => {
+          const tabs = await chrome.tabs.query({});
+          const tab = tabs.find(tab => tab.url === ${JSON.stringify(page.url())});
+          if (!tab || tab.id === undefined) throw new Error("Native zoom tab was not found");
+          await chrome.tabs.setZoom(tab.id, ${zoom});
+          return chrome.tabs.getZoom(tab.id);
+        })()`)
+        expect(actual).toBe(zoom)
+        await expect.poll(() => page.evaluate(() => devicePixelRatio)).toBe(zoom)
+        const bounds = await page.evaluate(() => ({ width: innerWidth, height: innerHeight, dpr: devicePixelRatio, outerWidth, outerHeight }))
+        if (baseline) {
+          expect(bounds.dpr / baseline.dpr).toBe(2)
+          expect(Math.abs(bounds.width * 2 - baseline.width)).toBeLessThanOrEqual(2)
+          expect(Math.abs(bounds.height * 2 - baseline.height)).toBeLessThanOrEqual(2)
+        } else baseline = bounds
+        await page.evaluate(async () => {
+          const { promise, resolve } = Promise.withResolvers<void>()
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+          await promise
+        })
+        await reviewKeyboardEvidence(page, testInfo, `point-decimal-native-${zoom * 100}`, zoom === 2)
+        await fontEvidence(page, testInfo, `point-decimal-native-${zoom * 100}-contrast`)
+        const axe = await new AxeBuilder({ page }).analyze()
+        await testInfo.attach(`point-decimal-native-${zoom * 100}.json`, {
+          body: JSON.stringify({ zoom: actual, bounds, window: (await cdp.send('Browser.getWindowBounds', { windowId })).bounds,
+            violations: axe.violations, incomplete: axe.incomplete }, null, 2), contentType: 'application/json',
+        })
+        await testInfo.attach(`point-decimal-native-${zoom * 100}.png`, { body: await fontScreenshot(page), contentType: 'image/png' })
+        expect(axe.violations.filter(item => item.impact === 'critical' || item.impact === 'serious')).toEqual([])
+      }
+    } finally {
+      try {
+        if (controller) {
+          const restored = await controller.evaluate(`(async () => {
+            const tabs = await chrome.tabs.query({});
+            const owned = tabs.filter(tab => tab.id !== undefined && tab.url && new URL(tab.url).origin === ${JSON.stringify(new URL(baseURL!).origin)});
+            return Promise.all(owned.map(async tab => {
+              await chrome.tabs.setZoom(tab.id, 1);
+              return chrome.tabs.getZoom(tab.id);
+            }));
+          })()`) as number[]
+          await testInfo.attach('point-native-restored.json', { body: JSON.stringify(restored), contentType: 'application/json' })
+          expect(restored.length).toBeGreaterThan(0)
+          expect(restored.every(value => value === 1)).toBe(true)
+        }
+      } finally {
+        await context.close()
+      }
+    }
+  })
 
   for (const side of ['before', 'after'] as const) {
     for (const layer of ['direct', 'style', 'base', 'defaults'] as const) {

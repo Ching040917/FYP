@@ -1,4 +1,5 @@
 """Guided Fixes: deterministic direct-format edits to a verified DOCX copy."""
+import hashlib
 import io
 import math
 import re
@@ -105,6 +106,25 @@ def _parse_pt(s) -> Optional[float]:
         return None
     value = float(m.group(1))
     return value if math.isfinite(value) else None
+
+
+def _point_twips(value: str, *, requirement: bool) -> Optional[int]:
+    """Return exact twentieths of a point without rounding the saved value."""
+    if not isinstance(value, str):
+        return None
+    match = _PT_RE.match(value)
+    if match is None:
+        return None
+    try:
+        points = Decimal(match.group(1))
+        if (not points.is_finite() or points < 0 or
+                (requirement and points > Decimal(str(_SPACING_PT_RANGE[1])))):
+            return None
+        numerator, denominator = points.as_integer_ratio()
+        twips, remainder = divmod(numerator * 20, denominator)
+        return twips if remainder == 0 else None
+    except (InvalidOperation, ValueError, OverflowError):
+        return None
 
 
 def _line_spacing_encoded(value: str) -> Optional[int]:
@@ -374,7 +394,7 @@ def _reference_heading_bold_targets(audit, doc, paragraphs, violation) -> Tuple[
         raise ReferenceHeadingBoldUnavailable("ambiguous_heading")
     index = location["paragraph_index"]
     indexes = _reference_heading_bold_run_indexes(doc, paragraphs, index)
-    expected = _resolve_expected(violation, audit, doc, None)
+    expected = _resolve_expected(violation, audit, doc, None, paragraphs[index])
     if type(expected) is not bool:
         raise ReferenceHeadingBoldUnavailable("unverifiable_bold")
     states = [doc.paragraphs[index].runs[i].font.bold for i in indexes]
@@ -500,8 +520,55 @@ def _resolve_line_spacing_expected(violation: Violation, audit, doc, role) -> Op
         return None
 
 
+def _resolve_point_spacing_expected(violation, audit, doc, role, para_dict) -> Optional[int]:
+    """Resolve the detector's point requirement from the immutable snapshot."""
+    from app.services.layout_engine import _heading_style_level, _is_caption_paragraph, _is_list_item
+    from app.services.profile_preset_adapter import EffectiveProfileConfig
+    from app.services.profile_snapshot import snapshot_from_dict
+    from app.services.role_eligibility import (
+        body_prose_paragraph, is_caption_role, is_reference_role, typography_skipped,
+    )
+
+    try:
+        location = violation.location
+        index = location.get("paragraph_index") if isinstance(location, dict) else None
+        if (type(index) is not int or not 0 <= index < len(doc.paragraphs) or
+                not isinstance(para_dict, dict) or para_dict.get("index") != index):
+            return None
+        side = "BEFORE" if violation.rule_code == "SPACE_BEFORE" else "AFTER"
+        para = doc.paragraphs[index]
+        config = EffectiveProfileConfig(snapshot_from_dict(audit.profile_snapshot))
+        if role is not None and (typography_skipped(role) or role == "REFERENCES_HEADING"):
+            return None
+        if is_caption_role(role):
+            saved = getattr(config, "CAPTION_SPACE_" + side)
+        else:
+            if role is not None and (is_reference_role(role) or
+                                     not body_prose_paragraph(role, para_dict.get("text") or "")):
+                return None
+            if _is_list_item(para_dict, para):
+                saved = config.LIST_SPACE_AFTER if side == "AFTER" else None
+            elif _is_caption_paragraph(para_dict, para, config):
+                saved = getattr(config, "CAPTION_SPACE_" + side)
+            else:
+                level = _heading_style_level(para_dict.get("style_name", ""), role)
+                saved = getattr(config, "SPACE_" + side + ("_HEADING" if level is not None else "_BODY"))
+        if type(saved) not in (int, float):
+            return None
+        saved_decimal = Decimal(str(saved))
+        expected = violation.expected_value
+        twips = _point_twips(expected, requirement=True)
+        if (not saved_decimal.is_finite() or
+                not Decimal(str(_SPACING_PT_RANGE[0])) <= saved_decimal <= Decimal(str(_SPACING_PT_RANGE[1])) or
+                twips is None or saved_decimal != Decimal(_PT_RE.match(expected).group(1))):
+            return None
+        return twips
+    except Exception:
+        return None
+
+
 def _resolve_expected(
-    violation: Violation, audit, doc, role
+    violation: Violation, audit, doc, role, para_dict
 ) -> Optional[Any]:
     """Resolve the persisted expected_value for a whitelisted rule, or None
     (= skip `expected_unresolved`)."""
@@ -525,11 +592,7 @@ def _resolve_expected(
     if rule_code == "LINE_SPACING":
         return _resolve_line_spacing_expected(violation, audit, doc, role)
     if rule_code in ("SPACE_BEFORE", "SPACE_AFTER"):
-        value = _parse_pt(expected_value)
-        return value if (
-            _in_bounds(value, *_SPACING_PT_RANGE)
-            and math.isclose(value * 20, round(value * 20), rel_tol=0, abs_tol=1e-9)
-        ) else None
+        return _resolve_point_spacing_expected(violation, audit, doc, role, para_dict)
     if rule_code == "ALIGNMENT":
         if expected_value in _ALIGNMENTS:
             return expected_value
@@ -606,30 +669,22 @@ def _fix_line_spacing(para, ratio: float) -> bool:
     return _direct_line_spacing(para) == encoded
 
 
-def _fix_space_before(para, pt: float) -> bool:
-    from docx.shared import Pt
-    pf = para.paragraph_format
-    pf.space_before = Pt(pt)
-    actual = pf.space_before
-    if actual is None:
+def _fix_space_before(para, twips: int) -> bool:
+    if type(twips) is not int or twips < 0:
         return False
-    try:
-        return abs(actual.pt - pt) <= 0.01
-    except Exception:
-        return False
+    spacing = para._p.pPr.find(_W + "spacing")
+    value = str(twips)
+    spacing.set(_W + "before", value)
+    return spacing.get(_W + "before") == value
 
 
-def _fix_space_after(para, pt: float) -> bool:
-    from docx.shared import Pt
-    pf = para.paragraph_format
-    pf.space_after = Pt(pt)
-    actual = pf.space_after
-    if actual is None:
+def _fix_space_after(para, twips: int) -> bool:
+    if type(twips) is not int or twips < 0:
         return False
-    try:
-        return abs(actual.pt - pt) <= 0.01
-    except Exception:
-        return False
+    spacing = para._p.pPr.find(_W + "spacing")
+    value = str(twips)
+    spacing.set(_W + "after", value)
+    return spacing.get(_W + "after") == value
 
 
 def _spacing_property_layers(para) -> List[Any]:
@@ -912,8 +967,42 @@ def _direct_spacing_points(para, rule_code: str) -> float:
         raise GuidedFixFailed("unverifiable paragraph spacing") from exc
 
 
+def _direct_spacing_twips(para, rule_code: str) -> int:
+    """Prove the selected direct setting and complete point-target structure."""
+    _direct_spacing_points(para, rule_code)
+    paragraph = para._p
+    allowed = {_W + "pPr", _W + "r", _W + "bookmarkStart", _W + "bookmarkEnd"}
+    if (any(child.tag not in allowed for child in paragraph) or
+            next(paragraph.iter(_W + "fldSimple"), None) is not None or
+            paragraph.pPr.find(_W + "sectPr") is not None):
+        raise GuidedFixFailed("unverifiable paragraph spacing")
+    starts, ends = set(), set()
+    for child in paragraph:
+        if child.tag not in (_W + "bookmarkStart", _W + "bookmarkEnd"):
+            continue
+        raw = child.get(_W + "id")
+        if raw is None or re.fullmatch(r"[0-9]+", raw) is None:
+            raise GuidedFixFailed("unverifiable paragraph spacing")
+        try:
+            bookmark = int(raw)
+        except ValueError as exc:
+            raise GuidedFixFailed("unverifiable paragraph spacing") from exc
+        if child.tag == _W + "bookmarkStart":
+            if bookmark in starts:
+                raise GuidedFixFailed("unverifiable paragraph spacing")
+            starts.add(bookmark)
+        else:
+            if bookmark in ends or bookmark not in starts:
+                raise GuidedFixFailed("unverifiable paragraph spacing")
+            ends.add(bookmark)
+    if starts != ends:
+        raise GuidedFixFailed("unverifiable paragraph spacing")
+    side = "before" if rule_code == "SPACE_BEFORE" else "after"
+    return int(paragraph.pPr.find(_W + "spacing").get(_W + side))
+
+
 # ---------------------------------------------------------------------------
-# Current-value comparators (font half-points are exact; paragraph rules retain tolerances)
+# Current-value comparators (point and font units are exact)
 # ---------------------------------------------------------------------------
 
 def _align_to_name(align) -> str:
@@ -950,7 +1039,7 @@ def _current_matches_expected(rule_code: str, expected: Any, para_dict: Dict, ru
         from app.services.formatting_evidence import resolve_alignment
         return para is not None and resolve_alignment(para).alignment == expected
     if rule_code in ("SPACE_BEFORE", "SPACE_AFTER"):
-        return abs(_direct_spacing_points(para, rule_code) - expected) <= 1
+        return abs(_direct_spacing_twips(para, rule_code) - expected) <= 20
     if rule_code == "LINE_SPACING":
         return (para is not None and
                 _direct_line_spacing(para) == _line_spacing_encoded(str(expected)))
@@ -984,10 +1073,8 @@ def _current_changed_from_actual(rule_code: str, para_dict: Dict, run_dict: Opti
     if rule_code == "LINE_SPACING":
         return para is None or actual_value != str(_direct_line_spacing(para) / 240)
     if rule_code in ("SPACE_BEFORE", "SPACE_AFTER"):
-        actual_pt = _parse_pt(actual_value)
-        if actual_pt is None:
-            return True
-        return abs(_direct_spacing_points(para, rule_code) - actual_pt) > 1
+        actual_twips = _point_twips(actual_value, requirement=False)
+        return actual_twips is None or _direct_spacing_twips(para, rule_code) != actual_twips
     if rule_code == "REFERENCE_HEADING_ALIGNMENT":
         from app.services.formatting_evidence import resolve_alignment
         return (para is None or not isinstance(actual_value, str) or
@@ -1369,7 +1456,7 @@ def review_targets(audit: AuditRecord, source_bytes: bytes, violations: List[Vio
                 raise GuidedFixFailed("paragraph target contains run indexes")
             run_indexes = [None]
         expected = bold_expected if code == "REFERENCE_HEADING_BOLD" else _resolve_expected(
-            violation, audit, doc, roles[index] if index < len(roles) else None,
+            violation, audit, doc, roles[index] if index < len(roles) else None, paragraphs[index],
         )
         if expected is None:
             raise GuidedFixFailed("unresolved requirement")
@@ -1500,7 +1587,7 @@ def apply_guided_fixes(
             continue
 
         # Resolve the expected value (never guessed).
-        expected = _resolve_expected(violation, audit, doc, role)
+        expected = _resolve_expected(violation, audit, doc, role, para_dict)
         if expected is None:
             skipped.append((violation, "expected_unresolved"))
             continue
@@ -1544,15 +1631,15 @@ def apply_guided_fixes(
     doc.save(output)
     corrected_bytes = output.getvalue()
 
-    if any(violation.rule_code == "LINE_SPACING" for violation in applied):
+    if any(violation.rule_code in ("LINE_SPACING", "SPACE_BEFORE", "SPACE_AFTER") for violation in applied):
         _validate_output(corrected_bytes, doc, applied, roles, audit, reviewed_targets,
-                         line_source_bytes=source_bytes)
+                         original_source_bytes=source_bytes)
     else:
         _validate_output(corrected_bytes, doc, applied, roles, audit, reviewed_targets)
     return corrected_bytes, applied, []
 
 
-def _validate_output(corrected_bytes: bytes, source_doc, applied: List[Violation], roles: List[str], audit, reviewed_targets, *, line_source_bytes: Optional[bytes] = None) -> None:
+def _validate_output(corrected_bytes: bytes, source_doc, applied: List[Violation], roles: List[str], audit, reviewed_targets, *, original_source_bytes: Optional[bytes] = None) -> None:
     """Reopen and verify every target's effective value, including grouped runs."""
     doc = parse_document(corrected_bytes)
     _preflight_font_targets(doc, applied)
@@ -1561,16 +1648,32 @@ def _validate_output(corrected_bytes: bytes, source_doc, applied: List[Violation
     if len(doc.paragraphs) != len(source_doc.paragraphs):
         raise GuidedFixFailed("paragraph count changed")
     line_targets = [violation for violation in applied if violation.rule_code == "LINE_SPACING"]
-    if line_targets:
+    point_targets = [violation for violation in applied if violation.rule_code in ("SPACE_BEFORE", "SPACE_AFTER")]
+    point_keys = set()
+    for violation in point_targets:
+        location = violation.location
+        index = location.get("paragraph_index") if isinstance(location, dict) else None
+        if type(index) is not int or not 0 <= index < len(doc.paragraphs):
+            raise GuidedFixFailed("invalid paragraph")
+        point_keys.add((index, None, violation.rule_code))
+    reviewed_points = {key for key in reviewed_targets if key[2] in ("SPACE_BEFORE", "SPACE_AFTER")}
+    if len(point_keys) != len(point_targets) or point_keys != reviewed_points:
+        raise GuidedFixFailed("incomplete reviewed point targets")
+    if line_targets or point_targets:
         from app.services.role_classifier import classify_paragraphs
 
-        if line_source_bytes is None:
-            raise GuidedFixFailed("original line-spacing evidence unavailable")
-        original = parse_document(line_source_bytes)
+        if original_source_bytes is None:
+            reason = ("original line-spacing evidence unavailable" if not point_targets
+                      else "original point-spacing evidence unavailable")
+            raise GuidedFixFailed(reason)
+        if point_targets and hashlib.sha256(original_source_bytes).hexdigest() != audit.document_sha256:
+            raise GuidedFixFailed("original point-spacing source differs from audit")
+        original = parse_document(original_source_bytes)
         _preflight_line_spacing_targets(original, line_targets)
         if len(original.paragraphs) != len(doc.paragraphs):
             raise GuidedFixFailed("original paragraph count changed")
-        original_roles = classify_paragraphs(original, extract_paragraphs(original))
+        original_paragraphs = extract_paragraphs(original)
+        original_roles = classify_paragraphs(original, original_paragraphs)
         output_roles = classify_paragraphs(doc, paragraphs)
 
         def run_boundaries(para):
@@ -1579,6 +1682,22 @@ def _validate_output(corrected_bytes: bytes, source_doc, applied: List[Violation
                  for child in run._r if child.tag != _W + "rPr"]
                 for run in para.runs
             ]
+
+        def point_content(para):
+            def node_content(node):
+                return (node.tag, node.text, node.tail, tuple(sorted(node.attrib.items())),
+                        tuple(node_content(child) for child in node))
+
+            content = []
+            for child in para._p:
+                if child.tag == _W + "pPr":
+                    continue
+                if child.tag == _W + "r":
+                    content.append((child.tag, child.text, child.tail, tuple(sorted(child.attrib.items())),
+                                    tuple(node_content(node) for node in child if node.tag != _W + "rPr")))
+                else:
+                    content.append(node_content(child))
+            return tuple(sorted(para._p.attrib.items())), content
 
         for violation in line_targets:
             index = violation.location["paragraph_index"]
@@ -1593,19 +1712,70 @@ def _validate_output(corrected_bytes: bytes, source_doc, applied: List[Violation
             if (expected is None or expected != original_expected or
                     _direct_line_spacing(after) != _line_spacing_encoded(violation.expected_value)):
                 raise GuidedFixFailed("line-spacing target differs after save")
+
+        line_indexes = {v.location["paragraph_index"] for v in line_targets}
+        for violation in point_targets:
+            index = violation.location["paragraph_index"]
+            before, after = original.paragraphs[index], doc.paragraphs[index]
+            if (before.text != after.text or point_content(before) != point_content(after) or
+                    original_roles[index] != output_roles[index]):
+                raise GuidedFixFailed("point-spacing target identity changed")
+            original_expected = _resolve_point_spacing_expected(
+                violation, audit, original, original_roles[index], original_paragraphs[index],
+            )
+            expected = _resolve_point_spacing_expected(
+                violation, audit, doc, output_roles[index], paragraphs[index],
+            )
+            actual = _point_twips(violation.actual_value, requirement=False)
+            source_twips = _direct_spacing_twips(before, violation.rule_code)
+            _direct_spacing_twips(after, violation.rule_code)
+            side = "before" if violation.rule_code == "SPACE_BEFORE" else "after"
+            raw = after._p.pPr.find(_W + "spacing").get(_W + side)
+            if (expected is None or expected != original_expected or actual != source_twips or
+                    abs(source_twips - expected) <= 20 or raw != str(expected)):
+                raise GuidedFixFailed("point-spacing target differs after save")
+
+        for index in {key[0] for key in point_keys}:
+            before_layers = _spacing_property_layers(original.paragraphs[index])
+            after_layers = _spacing_property_layers(doc.paragraphs[index])
+            if len(before_layers) != len(after_layers):
+                raise GuidedFixFailed("point-spacing controls changed")
+            allowed = {_W + side for side, code in (
+                ("before", "SPACE_BEFORE"), ("after", "SPACE_AFTER"),
+            ) if (index, None, code) in point_keys}
+            if (index, None, "LINE_SPACING") in reviewed_targets:
+                if index not in line_indexes:
+                    raise GuidedFixFailed("incomplete reviewed line target")
+                allowed.update({_W + "line", _W + "lineRule"})
+            for layer_index, (before_layer, after_layer) in enumerate(zip(before_layers, after_layers)):
+                before_spacing = before_layer.find(_W + "spacing")
+                after_spacing = after_layer.find(_W + "spacing")
+                if (before_spacing is None) != (after_spacing is None):
+                    raise GuidedFixFailed("point-spacing controls changed")
+                if before_spacing is not None:
+                    before_attributes = dict(before_spacing.attrib)
+                    after_attributes = dict(after_spacing.attrib)
+                    if layer_index == 0:
+                        for name in allowed:
+                            before_attributes.pop(name, None)
+                            after_attributes.pop(name, None)
+                    if before_attributes != after_attributes:
+                        raise GuidedFixFailed("point-spacing controls changed")
+                before_context = before_layer.find(_W + "contextualSpacing")
+                after_context = after_layer.find(_W + "contextualSpacing")
+                if ((before_context is None) != (after_context is None) or
+                        (before_context is not None and dict(before_context.attrib) != dict(after_context.attrib))):
+                    raise GuidedFixFailed("point-spacing controls changed")
     for violation in applied:
         location = violation.location
         index = location["paragraph_index"]
-        if violation.rule_code == "LINE_SPACING":
+        if violation.rule_code in ("LINE_SPACING", "SPACE_BEFORE", "SPACE_AFTER"):
             continue  # Independently certified against pristine bytes above.
-        expected = _resolve_expected(violation, audit, doc, roles[index] if index < len(roles) else None)
+        expected = _resolve_expected(
+            violation, audit, doc, roles[index] if index < len(roles) else None, paragraphs[index],
+        )
         if expected is None:
             raise GuidedFixFailed("requirement changed")
-        if violation.rule_code in ("SPACE_BEFORE", "SPACE_AFTER"):
-            current = _direct_spacing_points(doc.paragraphs[index], violation.rule_code)
-            if not math.isclose(current * 20, expected * 20, rel_tol=0, abs_tol=1e-9):
-                raise GuidedFixFailed("target value differs after save")
-            continue
         if violation.rule_code == "REFERENCE_HEADING_BOLD":
             indexes = _reference_heading_bold_run_indexes(doc, paragraphs, index)
             reviewed = sorted(run for paragraph, run, rule in reviewed_targets
