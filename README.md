@@ -25,6 +25,8 @@ Please note:
 3. Complete the installation — per-user, no administrator rights needed.
 4. Open ACA from the Windows Start Menu.
 5. Upload a DOCX document or use the sample document.
+   Encrypted or password-protected documents cannot be audited; remove password
+   protection in Word and try again.
 6. Review findings and export the PDF report.
 
 Python and Node.js are not required.

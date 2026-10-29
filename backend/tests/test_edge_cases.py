@@ -2,6 +2,8 @@
 import io
 import uuid
 
+import pytest
+
 
 def test_empty_docx_upload_returns_200(client, docx_factory):
     """An empty Document() (no paragraphs) should still be accepted."""
@@ -97,3 +99,107 @@ def test_ai_task_timeout_does_not_block_response(client, docx_factory, monkeypat
     get = client.get(f"/api/audit/{audit_id}")
     assert get.status_code == 200
     assert get.json()["id"] == audit_id
+
+
+OLE_SIGNATURE = bytes.fromhex("D0 CF 11 E0 A1 B1 1A E1")
+ENCRYPTED_DETAIL = (
+    "This document is encrypted or password-protected. ACA cannot audit encrypted files. "
+    "Remove password protection in Word and try again."
+)
+
+
+@pytest.mark.parametrize("payload", [OLE_SIGNATURE, OLE_SIGNATURE + b"inert", OLE_SIGNATURE * 2])
+def test_ole_upload_rejected_before_side_effects(client, test_engine, monkeypatch, tmp_path, caplog, payload):
+    from sqlalchemy import func, select
+    from app.database import Base
+    from app.api import routes
+    from sqlalchemy.orm import Session
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "PREVIEW_STORAGE_DIR", str(tmp_path / "preview"))
+    monkeypatch.setattr(settings, "GUIDED_FIX_STORAGE_DIR", str(tmp_path / "output"))
+
+    def unreachable(*args, **kwargs):
+        pytest.fail("processing must not be reached")
+
+    monkeypatch.setattr(routes, "resolve_request_profile", unreachable)
+    monkeypatch.setattr(routes, "parse_document", unreachable)
+    monkeypatch.setattr(routes, "convert_docx_to_pdf", unreachable)
+    monkeypatch.setattr(Session, "commit", unreachable)
+    with test_engine.connect() as conn:
+        before = {t.name: conn.execute(select(func.count()).select_from(t)).scalar_one()
+                  for t in Base.metadata.sorted_tables}
+    history = client.get("/api/audits").json()
+    reviews = dict(routes._reviews)
+    response = client.post("/api/audit", files={"file": ("test.docx", payload, "image/png")})
+    with test_engine.connect() as conn:
+        after = {t.name: conn.execute(select(func.count()).select_from(t)).scalar_one()
+                 for t in Base.metadata.sorted_tables}
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": ENCRYPTED_DETAIL}
+    assert before == after
+    assert client.get("/api/audits").json() == history
+    assert routes._reviews == reviews
+    assert not list(tmp_path.rglob("*"))
+    assert repr(payload) not in caplog.text
+
+
+@pytest.mark.parametrize("payload", [
+    b"", OLE_SIGNATURE[:7], OLE_SIGNATURE[:7] + b"X",
+    b"X" + OLE_SIGNATURE, b"prefix" + OLE_SIGNATURE, b"random invalid",
+])
+def test_non_ole_upload_retains_invalid_response(client, payload):
+    response = client.post("/api/audit", files={"file": ("test.docx", payload, "application/octet-stream")})
+    assert response.status_code == 500
+    assert response.json() == {"detail": (
+        "The document could not be processed. Please try again. "
+        "If the problem continues, use a different DOCX file."
+    )}
+
+
+@pytest.mark.parametrize("filename", ["test.DOCX", "test.Docx", "test.docx ", "test.doc", "test.docm"])
+def test_ole_upload_preserves_extension_precedence(client, filename):
+    response = client.post("/api/audit", files={"file": (filename, OLE_SIGNATURE, "application/octet-stream")})
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Unsupported file format. Only .docx files are accepted."}
+
+
+def test_oversize_ole_upload_preserves_size_precedence(client_with_small_cap):
+    response = client_with_small_cap.post(
+        "/api/audit", files={"file": ("test.docx", OLE_SIGNATURE + b"x" * 1024, "application/octet-stream")}
+    )
+    assert response.status_code == 400
+    assert response.json() == {"detail": "File size exceeds the 10MB security boundary."}
+
+
+def test_ole_signature_inside_docx_is_not_rejected(client, docx_factory):
+    import zipfile
+
+    source = io.BytesIO(docx_factory(paragraphs=["Synthetic document."]))
+    with zipfile.ZipFile(source, "a") as archive:
+        archive.writestr("custom/inert.bin", OLE_SIGNATURE)
+    response = client.post("/api/audit", files={"file": ("test.docx", source.getvalue(), "image/png")})
+    assert response.status_code == 200
+    assert response.json()["status"] == "Success"
+
+
+def test_large_ole_upload_is_rejected(client):
+    payload = OLE_SIGNATURE + b"x" * (1024 * 1024)
+    response = client.post("/api/audit", files={"file": ("test.docx", payload, "application/octet-stream")})
+    assert response.status_code == 400
+    assert response.json() == {"detail": ENCRYPTED_DETAIL}
+
+
+def test_concurrent_ole_uploads_leave_no_history(client_file_db):
+    from concurrent.futures import ThreadPoolExecutor
+
+    def submit(_):
+        return client_file_db.post(
+            "/api/audit", files={"file": ("test.docx", OLE_SIGNATURE, "application/octet-stream")}
+        )
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        responses = list(pool.map(submit, range(8)))
+    assert all(r.status_code == 400 and r.json() == {"detail": ENCRYPTED_DETAIL} for r in responses)
+    assert client_file_db.get("/api/audits").json() == []

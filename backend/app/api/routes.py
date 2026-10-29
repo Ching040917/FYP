@@ -69,6 +69,8 @@ from app.services import docx_preservation, guided_fix_storage
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
+_OLE_SIGNATURE = bytes.fromhex("D0 CF 11 E0 A1 B1 1A E1")
+
 # Converter error categories -> persisted safe preview categories.
 # Only the allowed non-sensitive set may ever reach the database.
 _CONVERTER_ERROR_MAP = {
@@ -99,9 +101,16 @@ async def audit_document(
         raise HTTPException(status_code=400, detail="Unsupported file format. Only .docx files are accepted.")
 
     # Read file
-    file_bytes = await file.read()
+    file_bytes = await file.read(settings.MAX_FILE_SIZE + 1)
     if len(file_bytes) > settings.MAX_FILE_SIZE:
         raise HTTPException(status_code=400, detail="File size exceeds the 10MB security boundary.")
+
+    if file_bytes.startswith(_OLE_SIGNATURE):
+        raise HTTPException(
+            status_code=400,
+            detail="This document is encrypted or password-protected. ACA cannot audit encrypted files. "
+                   "Remove password protection in Word and try again.",
+        )
 
     # ---- Resolve the immutable formatting profile snapshot BEFORE any
     # deterministic processing begins (Build 3). Missing input → recommended
