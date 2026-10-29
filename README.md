@@ -75,9 +75,8 @@ A mixed safe/unsafe selection is refused as a whole.
 The original DOCX, saved Audit, Snapshot, History, PDF, scoring and categories
 remain unchanged. This certifies eligible OOXML settings, not installed-font
 availability, font substitution, arbitrary-script rendering or Word pagination.
-No candidate was added. Grouped quantities and package-policy disposition
-remain separate release-closure work; these font checks do not certify the
-whole Guided Fix set.
+No candidate was added. Grouped quantities remain separate release-closure work;
+these font checks do not certify the whole Guided Fix set.
 
 In Review, Tab can focus the details area, marked by an inset focus ring.
 When its content overflows, use the arrow keys, Page Up/Page Down or Home/End
@@ -120,7 +119,7 @@ rendered-page evidence remains a refusal.
 The original DOCX, Audit, Snapshot, History, PDF, scoring and categories remain
 unchanged. This certifies eligible encoded settings, not Word rendering or
 physical pagination. It is not a complete Guided Fix freeze or release approval:
-grouped quantities and package-policy disposition remain independent closure work.
+grouped quantities remain independent closure work.
 
 ### Before/after paragraph spacing Guided Fix safety
 
@@ -150,8 +149,7 @@ grids and snap-to-grid are preserved. The original DOCX, saved audit, Snapshot,
 History and PDF remain unchanged.
 
 The before/after-spacing hardening alone does not establish complete Guided Fix
-release closure. Grouped-count wording, package safety and malformed DOCX issues
-remain independent.
+release closure. Grouped-count wording and malformed DOCX issues remain independent.
 
 ### Ambient aggregate re-audit hardening
 
@@ -161,6 +159,17 @@ capped at 10. Re-audit compares the available locations and total occurrence
 counts, and still rejects new or worsened findings. Selected findings must have
 complete target locations; Reference-specific entry aggregate rules remain
 manual-only. No Guided Fix candidate rules were added.
+
+### Guided Fix package safety
+
+Review refuses corrections for digitally signed, protected or write-protected,
+and macro-bearing packages, including macro-bearing files renamed `.docx`.
+Correct the selected findings manually in Word; the original remains unchanged.
+Unsigned, unprotected, macro-free DOCX files remain subject to the existing
+rule-specific Review, preservation and re-audit checks. Guided Fix does not execute
+macros or claim to preserve signatures or macro parts in corrected copies.
+Audit-only availability does not certify macro trust or safety. Native `.docm`
+uploads remain unsupported; encrypted-upload handling is separate work.
 
 ### Reference List heading bold Guided Fix
 

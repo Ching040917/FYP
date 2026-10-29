@@ -882,3 +882,160 @@ def test_new_citation_codes_are_never_selectable_guided_fixes(client, docx_facto
     assert r.status_code == 422
     assert r.json()["detail"] == "Fix cannot be applied safely. Manual correction required."
     assert r.content != file_bytes or r.headers.get("content-type", "").startswith("application/json")
+
+
+def _policy_fixture(rule, docx_factory):
+    """Build a genuine candidate and its profile before adding package evidence."""
+    from app.services.profile_schema import new_custom_profile
+    from tests.test_guided_fix_reference_heading import _source, _bold_doc, _bold_bytes
+    if rule == "FONT_CONSISTENCY":
+        return _font_fixture_bytes(docx_factory(paragraphs=["Body paragraph."], font_name="Calibri")), None
+    if rule == "FONT_SIZE":
+        return _font_fixture_bytes(docx_factory(paragraphs=["Body paragraph."], body_size=11)), None
+    if rule == "REFERENCE_HEADING_ALIGNMENT":
+        profile = new_custom_profile("Package policy heading alignment")
+        profile.references.check_heading_alignment = True
+        profile.references.heading_alignment = "center"
+        return _source(), profile
+    if rule == "REFERENCE_HEADING_BOLD":
+        profile = new_custom_profile("Package policy heading bold")
+        profile.references.check_heading_bold = True
+        profile.references.heading_bold = True
+        return _bold_bytes(_bold_doc()), profile
+    kwargs = {"alignment": WD_ALIGN_PARAGRAPH.LEFT} if rule == "ALIGNMENT" else {}
+    if rule == "LINE_SPACING":
+        kwargs["line_spacing"] = 1.0
+    document = Document(io.BytesIO(docx_factory(paragraphs=["Body paragraph."], **kwargs)))
+    if rule == "LINE_SPACING":
+        _clean_line_spacing_fixture_context(document)
+    if rule in ("SPACE_BEFORE", "SPACE_AFTER"):
+        setattr(document.paragraphs[0].paragraph_format, rule.lower(), Pt(20))
+    stream = io.BytesIO()
+    document.save(stream)
+    return stream.getvalue(), None
+
+
+def _policy_marker(data, marker):
+    from lxml import etree
+    from tests.test_guided_fix_preservation_storage import _add_parts, _change_part
+    if marker == "signed":
+        return _add_parts(data, {"_xmlsignatures/alternate.xml": b"<marker/>"})
+    if marker == "macro_part":
+        return _add_parts(data, {"word/vbaProject.bin": b"inert non-executable test data"})
+    if marker in ("documentProtection", "writeProtection"):
+        return _change_part(data, "word/settings.xml",
+                            lambda root: etree.SubElement(root, qn("w:" + marker)))
+    data = _add_parts(data, {"word/alternate.bin": b"inert non-executable test data"})
+    if marker == "macro_type":
+        def add_type(root):
+            etree.SubElement(root, root.tag.removesuffix("Types") + "Override",
+                             PartName="/word/alternate.bin",
+                             ContentType="application/vnd.ms-office.vbaProject")
+        return _change_part(data, "[Content_Types].xml", add_type)
+    if marker == "macro_relationship":
+        def add_binary_type(root):
+            etree.SubElement(root, root.tag.removesuffix("Types") + "Override",
+                             PartName="/word/alternate.bin", ContentType="application/octet-stream")
+        data = _change_part(data, "[Content_Types].xml", add_binary_type)
+        def add_relation(root):
+            etree.SubElement(root, root.tag.removesuffix("Relationships") + "Relationship",
+                             Id="policy-marker", Target="alternate.bin",
+                             Type="http://schemas.microsoft.com/office/2006/relationships/vbaProject")
+        return _change_part(data, "word/_rels/document.xml.rels", add_relation)
+    raise AssertionError(marker)
+
+
+@pytest.mark.parametrize("rule", [
+    "FONT_CONSISTENCY", "FONT_SIZE", "ALIGNMENT", "LINE_SPACING",
+    "SPACE_BEFORE", "SPACE_AFTER", "REFERENCE_HEADING_ALIGNMENT", "REFERENCE_HEADING_BOLD",
+])
+@pytest.mark.parametrize("marker", [
+    "signed", "documentProtection", "writeProtection", "macro_part", "macro_type", "macro_relationship",
+])
+def test_package_policy_refuses_each_genuine_candidate(client, docx_factory, monkeypatch, tmp_path, rule, marker):
+    from app.api import routes
+    from app.config import settings
+    from app.services.docx_pdf_converter import DocxConversionError
+
+    def no_conversion(_data):
+        raise DocxConversionError("libreoffice_unavailable")
+
+    monkeypatch.setattr(routes, "convert_docx_to_pdf", no_conversion)
+    monkeypatch.setattr(settings, "GUIDED_FIX_STORAGE_DIR", str(tmp_path))
+    ordinary, profile = _policy_fixture(rule, docx_factory)
+    data = {"custom_profile": json.dumps(profile.to_dict())} if profile else {}
+
+    def audit_and_review(source):
+        response = client.post("/api/audit", data=data, files={"file": ("renamed.docx", source, DOCX_MIME)})
+        assert response.status_code == 200, response.text
+        findings = _rule_ids(response, rule)
+        assert findings, (rule, response.json()["physical_layout_errors"])
+        audit_id = response.json()["audit_id"]
+        path = f"/api/audit/{audit_id}/guided-fixes"
+        fields = {"selection": json.dumps({"violation_ids": [findings[0]]})}
+        return audit_id, path, fields
+
+    control_id, control_path, control_fields = audit_and_review(ordinary)
+    control = client.post(control_path + "/review", data=control_fields,
+                          files={"file": ("renamed.docx", ordinary, DOCX_MIME)})
+    assert control.status_code == 200, (rule, control.text)
+    assert client.delete(control_path + "/review/" + control.json()["review_id"]).status_code == 204
+
+    source = _policy_marker(ordinary, marker)
+    digest = hashlib.sha256(source).digest()
+    audit_id, path, fields = audit_and_review(source)
+    before = client.get(f"/api/audit/{audit_id}").json()
+    history_before = client.get("/api/audits").json()
+    response = client.post(path + "/review", data=fields,
+                           files={"file": ("renamed.docx", source, DOCX_MIME)})
+    assert response.status_code == 422
+    assert response.json() == {"detail": (
+        "This correction is unavailable for signed, protected or macro-enabled documents. "
+        "Correct the selected findings manually in Word; your original document is unchanged."
+    )}
+    assert not any(review[0] == audit_id for review in routes._reviews.values())
+    assert not list(tmp_path.rglob("*.docx"))
+    assert hashlib.sha256(source).digest() == digest
+    assert client.get(f"/api/audit/{audit_id}").json() == before
+    assert client.get("/api/audits").json() == history_before
+
+
+def test_package_policy_fails_closed_on_unverifiable_xml(docx_factory):
+    from tests.test_guided_fix_preservation_storage import _replace_part
+    source = _replace_part(docx_factory(paragraphs=["Body paragraph."]), "word/settings.xml",
+                           lambda _: b"<broken")
+    with pytest.raises(GuidedFixFailed, match="unverifiable DOCX package"):
+        guided_fix._validate_guided_fix_package(source)
+
+
+def test_package_refusal_preserves_report_content(client, docx_factory, monkeypatch, tmp_path):
+    from app.api import routes
+    from app.config import settings
+    from app.services.docx_pdf_converter import DocxConversionError
+    from pypdf import PdfReader
+
+    def no_conversion(_data):
+        raise DocxConversionError("libreoffice_unavailable")
+
+    monkeypatch.setattr(routes, "convert_docx_to_pdf", no_conversion)
+    monkeypatch.setattr(settings, "GUIDED_FIX_STORAGE_DIR", str(tmp_path))
+    ordinary, _ = _policy_fixture("FONT_SIZE", docx_factory)
+    source = _policy_marker(ordinary, "signed")
+    audit = _post_audit_bytes(client, source)
+    assert audit.status_code == 200
+    audit_id = audit.json()["audit_id"]
+    ids = _rule_ids(audit, "FONT_SIZE")
+    assert ids
+    report_path = f"/api/audit/{audit_id}/export-pdf"
+
+    def report_text():
+        response = client.get(report_path)
+        assert response.status_code == 200
+        return [page.extract_text() for page in PdfReader(io.BytesIO(response.content)).pages]
+
+    before = report_text()
+    response = client.post(f"/api/audit/{audit_id}/guided-fixes/review",
+                           data={"selection": json.dumps({"violation_ids": [ids[0]]})},
+                           files={"file": ("renamed.docx", source, DOCX_MIME)})
+    assert response.status_code == 422
+    assert report_text() == before

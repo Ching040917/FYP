@@ -61,7 +61,7 @@ class GuidedFixFailed(Exception):
 
 
 class ReferenceHeadingBoldUnavailable(GuidedFixFailed):
-    """Only these candidate-specific reasons may cross the public Review boundary."""
+    """Only these explicitly approved reasons may cross the public Review boundary."""
 
     DETAILS = {
         "ambiguous_heading": (
@@ -74,7 +74,7 @@ class ReferenceHeadingBoldUnavailable(GuidedFixFailed):
         ),
         "unsupported_package": (
             "This correction is unavailable for signed, protected or macro-enabled documents. "
-            "Correct the heading manually; your original document is unchanged."
+            "Correct the selected findings manually in Word; your original document is unchanged."
         ),
     }
 
@@ -1378,6 +1378,19 @@ def _preflight_font_targets(doc, violations):
             raise GuidedFixFailed("unresolved alternate font slot")
 
 
+def _validate_guided_fix_package(source_bytes: bytes) -> None:
+    """Reject packages that cannot safely be corrected before Review."""
+    from app.services.docx_preservation import (
+        validate_reference_heading_bold_package, ReferenceHeadingBoldPackageUnsupported,
+    )
+    try:
+        validate_reference_heading_bold_package(source_bytes)
+    except ReferenceHeadingBoldPackageUnsupported as exc:
+        raise ReferenceHeadingBoldUnavailable("unsupported_package") from exc
+    except ValueError as exc:
+        raise GuidedFixFailed("unverifiable DOCX package") from exc
+
+
 def review_targets(audit: AuditRecord, source_bytes: bytes, violations: List[Violation]):
     """Resolve the complete persisted targets before any mutation.
 
@@ -1386,16 +1399,7 @@ def review_targets(audit: AuditRecord, source_bytes: bytes, violations: List[Vio
     """
     from app.services.role_classifier import classify_paragraphs
 
-    if any(v.rule_code == "REFERENCE_HEADING_BOLD" for v in violations):
-        from app.services.docx_preservation import (
-            validate_reference_heading_bold_package, ReferenceHeadingBoldPackageUnsupported,
-        )
-        try:
-            validate_reference_heading_bold_package(source_bytes)
-        except ReferenceHeadingBoldPackageUnsupported as exc:
-            raise ReferenceHeadingBoldUnavailable("unsupported_package") from exc
-        except ValueError as exc:
-            raise GuidedFixFailed("unverifiable DOCX package") from exc
+    _validate_guided_fix_package(source_bytes)
     doc = parse_document(source_bytes)
     _preflight_font_targets(doc, violations)
     _preflight_line_spacing_targets(doc, violations)

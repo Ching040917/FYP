@@ -59,6 +59,9 @@ export const INVALID_DOCX =
   'A valid .docx file is required. Choose a Word document (.docx) and try again.'
 export const OVERSIZE_DOCX =
   'This file is larger than the 10 MB limit. Choose a smaller document and try again.'
+const PACKAGE_POLICY_DETAIL =
+  'This correction is unavailable for signed, protected or macro-enabled documents. Correct the selected findings manually in Word; your original document is unchanged.'
+
 
 const BOLD_UNAVAILABLE_DETAILS: readonly string[] = [
   'ACA cannot identify one unambiguous Reference List heading. Correct this finding manually; your original document is unchanged.',
@@ -82,7 +85,7 @@ export function friendlyGuidedFixError(raw: string | null | undefined): string {
     return GENERIC_FAILURE
   }
   if (detail === MISMATCH_DETAIL || detail === LEGACY_DETAIL || detail === ZERO_DETAIL ||
-      BOLD_UNAVAILABLE_DETAILS.includes(detail)) {
+      detail === PACKAGE_POLICY_DETAIL || BOLD_UNAVAILABLE_DETAILS.includes(detail)) {
     return detail
   }
   if (/does not match the document/i.test(detail)) return MISMATCH_DETAIL

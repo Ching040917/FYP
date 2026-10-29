@@ -1471,7 +1471,7 @@ export function AuditPage() {
                           aria-modal="false"
                           tabIndex={-1}
                           aria-label="Filter findings by category"
-                          className="fixed z-40 overflow-y-auto rounded-md border border-border bg-card p-4 shadow-tonal-high [overflow-wrap:anywhere] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                          className="fixed z-40 overflow-y-auto rounded-md border border-primary bg-card p-4 shadow-[0_0_0_4px_#fff] [overflow-wrap:anywhere] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
                         >
                           <VerdictChecklist
                             context="report"

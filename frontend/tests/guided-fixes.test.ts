@@ -320,6 +320,18 @@ describe('error translation', () => {
     assert.ok(friendlyGuidedFixError(ZERO_DETAIL).includes('manual'))
   })
 
+  test('package policy guidance is exposed only as an exact approved detail', () => {
+    const detail = 'This correction is unavailable for signed, protected or macro-enabled documents. Correct the selected findings manually in Word; your original document is unchanged.'
+    assert.equal(friendlyGuidedFixError(detail), detail)
+    for (const unsafe of [
+      `${detail} C:\\private\\source.docx`,
+      `${detail} Traceback (most recent call last)`,
+      `${detail} word/vbaProject.bin`,
+      detail.replace('selected findings', 'heading'),
+      detail.replace('Word', 'another application'),
+    ]) assert.equal(friendlyGuidedFixError(unsafe), GENERIC_FAILURE)
+  })
+
   test('only exact proven heading-bold unavailability details are exposed', () => {
     for (const detail of [
       'ACA cannot identify one unambiguous Reference List heading. Correct this finding manually; your original document is unchanged.',

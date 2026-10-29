@@ -11,7 +11,7 @@
  * raw rule codes as primary labels, or internal OOXML terminology. The
  * client sends violation IDs only; the server alone confirms exact targets.
  */
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
 import { AlertCircle, ArrowLeft, Check, Download, Loader2, Wand2, X } from 'lucide-react'
@@ -134,6 +134,7 @@ export function GuidedFixesPanel({
   onOpenChange?: (open: boolean) => void
 }) {
   const navigate = useNavigate()
+  const resultHeadingId = useId()
   const triggerRef = useRef<HTMLButtonElement>(null)
   const [stage, setStage] = useState<GuidedFixStage>('idle')
   const [selectedIds, setSelectedIds] = useState<string[]>([])
@@ -652,7 +653,8 @@ export function GuidedFixesPanel({
               <X className="h-4 w-4" aria-hidden="true" />
             </Button>
           </div>
-          <div tabIndex={0} className="min-h-0 flex-1 overflow-y-auto px-5 py-3 scrollbar-thin focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary max-[240px]:px-2">
+          <div className="flex min-h-0 flex-1 flex-col border-2 border-transparent focus-within:border-primary">
+          <div tabIndex={0} className="min-h-0 flex-1 overflow-y-auto px-5 py-3 scrollbar-thin focus-visible:outline-none max-[240px]:px-2">
             <p className="text-sm text-foreground" role="status">
               Safety review passed for {review.items.length} selected {review.items.length === 1 ? 'finding' : 'findings'}. Nothing has been changed yet.
             </p>
@@ -679,6 +681,7 @@ export function GuidedFixesPanel({
               <p>Proposed filename: <span className="break-all font-medium text-foreground">{correctedFilename(review.output_filename, downloadedNames)}</span></p>
               <p>Review expires at {new Date(review.expires_at).toLocaleString()}.</p>
             </div>
+          </div>
           </div>
           <div className="flex shrink-0 flex-wrap justify-end gap-2 border-t border-border px-5 py-3 max-[240px]:px-2 max-[240px]:[&_button]:h-auto max-[240px]:[&_button]:w-full max-[240px]:[&_button]:min-w-0 max-[240px]:[&_button]:whitespace-normal">
             <Button variant="ghost" onClick={cancelReview}>Cancel review</Button>
@@ -789,10 +792,11 @@ export function GuidedFixesPanel({
     <>
       {trigger}
       <GuidedDialog label="Fix applied; re-audit passed" onDismiss={closeToIdle}>
-        <div className="min-h-0 flex-1 overflow-y-auto p-5 max-[240px]:p-2" tabIndex={0} aria-label="Re-audit results">
+        <div className="flex min-h-0 flex-1 flex-col border-2 border-transparent focus-within:border-primary">
+        <div className="min-h-0 flex-1 overflow-y-auto p-5 focus-visible:outline-none max-[240px]:p-2" tabIndex={0} role="region" aria-labelledby={resultHeadingId}>
           <div className="flex items-center gap-2">
             <Check className="h-5 w-5 text-success" aria-hidden="true" />
-            <h2 className="text-base font-semibold text-foreground">Fix applied; re-audit passed</h2>
+            <h2 id={resultHeadingId} className="text-base font-semibold text-foreground">Fix applied; re-audit passed</h2>
           </div>
           <p className="mt-2 text-sm text-foreground">
             {verification?.resolved.length ?? 0} selected {verification?.resolved.length === 1 ? 'finding' : 'findings'} resolved · No new findings.
@@ -839,9 +843,10 @@ export function GuidedFixesPanel({
           {downloaded && !errorMessage && <p role="status" className="mt-2 text-[13px] text-success">Downloaded. The one-use link has expired.</p>}
           {workflow}
         </div>
+        </div>
         <div className="flex shrink-0 flex-wrap justify-end gap-2 border-t border-border px-5 py-3 max-[240px]:px-2 max-[240px]:[&_button]:h-auto max-[240px]:[&_button]:w-full max-[240px]:[&_button]:min-w-0 max-[240px]:[&_button]:whitespace-normal">
           <Button variant="ghost" onClick={closeToIdle} data-dialog-initial-focus>Close</Button>
-          <Button variant="outline" onClick={() => navigate('/dashboard')}>Audit corrected copy</Button>
+          <Button variant="outline" className="border-primary active:bg-primary/20" onClick={() => navigate('/dashboard')}>Audit corrected copy</Button>
           <Button onClick={() => void downloadResult()} disabled={!verification || downloading || downloaded}>
             <Download className="h-4 w-4" aria-hidden="true" />
             {downloading ? 'Downloading…' : 'Download corrected document'}
