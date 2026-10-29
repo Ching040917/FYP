@@ -149,6 +149,7 @@ export function ErrorList({
 
   const totalFindings = result.physical_layout_errors.length
   const hiddenCount = totalFindings - filtered.length
+  const findingNoun = (count: number) => count === 1 ? 'finding' : 'findings'
   const filtersActive = severityFilter !== 'all' || categoryFilterValue !== 'all'
 
   // Filtered-empty: the audit HAS findings, the filters just hide them all.
@@ -163,10 +164,10 @@ export function ErrorList({
   const statusLine =
     filtered.length > 0
       ? visibleRange
-        ? `Showing ${visibleRange.first}–${visibleRange.last} of ${filtered.length} findings`
-        : `${filtered.length} findings · Scroll to review all`
+        ? `Showing ${visibleRange.first}–${visibleRange.last} of ${filtered.length} ${findingNoun(filtered.length)}`
+        : `${filtered.length} ${findingNoun(filtered.length)} · Scroll to review all`
       : totalFindings > 0
-        ? `Showing 0 of ${totalFindings} findings`
+        ? `Showing 0 of ${totalFindings} ${findingNoun(totalFindings)}`
         : null
 
   return (
@@ -181,7 +182,7 @@ export function ErrorList({
               <h2 className="flex items-center gap-2"><MapPin className="h-4 w-4 text-primary" aria-hidden="true" />Findings</h2>
             </CardTitle>
             <CardDescription>
-              {result.physical_layout_errors.length} findings · select to inspect evidence
+              {totalFindings} {findingNoun(totalFindings)} · select to inspect evidence
             </CardDescription>
           </div>
         </div>
@@ -288,8 +289,8 @@ export function ErrorList({
                 </p>
                 <p className="text-xs text-muted-foreground">
                   {severityFilter !== 'all' && categoryFilterValue === 'all'
-                    ? `${hiddenCount} other findings are hidden by the current filters.`
-                    : `${hiddenCount} findings are hidden.`}
+                    ? `${hiddenCount} other ${findingNoun(hiddenCount)} ${hiddenCount === 1 ? 'is' : 'are'} hidden by the current filters.`
+                    : `${hiddenCount} ${findingNoun(hiddenCount)} ${hiddenCount === 1 ? 'is' : 'are'} hidden.`}
                 </p>
                 {filtersActive && (
                   <button

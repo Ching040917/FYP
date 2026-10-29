@@ -15,6 +15,11 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, resolve } from 'node:path'
+import vm from 'node:vm'
+import { createRequire } from 'node:module'
+import React from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
+import ts from 'typescript'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const CARD = readFileSync(resolve(ROOT, 'src/components/audit/error-list.tsx'), 'utf8')
@@ -181,11 +186,54 @@ test('zero total findings and zero filtered findings read differently', () => {
   assert.match(CARD, /No \$\{severityBadge\(severityFilter\)\.label\} findings/)
 })
 
-test('the filtered-empty state states a truthful hidden count and Shows 0 of N', () => {
-  assert.match(CARD, /const hiddenCount = totalFindings - filtered\.length/)
-  assert.match(CARD, /other findings are hidden by the current filters\./)
-  assert.match(CARD, /findings are hidden\./)
-  assert.match(CARD, /Showing 0 of \$\{totalFindings\} findings/)
+/** Render the production list; UI primitives are transparent wrappers so these
+ * assertions exercise its filter/count branches, not its implementation text. */
+function renderFilteredFindings(total: number, severity = 'major'): string {
+  const require = createRequire(import.meta.url)
+  const exports: Record<string, React.ComponentType<Record<string, unknown>>> = {}
+  const compiled = ts.transpileModule(CARD, { compilerOptions: {
+    module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true,
+  } }).outputText
+  vm.runInNewContext(compiled, { exports, require(name: string) {
+    if (name === 'react' || name === 'react/jsx-runtime') return require(name)
+    if (name.includes('lib/audit/categories')) return require(resolve(ROOT, 'src/lib/audit/categories.ts'))
+    if (name.includes('lib/utils')) return { cn: () => '' }
+    if (name === 'lucide-react') return new Proxy({}, { get: () => () => null })
+    return new Proxy({}, { get: () => ({ children }: { children?: React.ReactNode }) => React.createElement('div', null, children) })
+  } })
+  const findings = Array.from({ length: total }, (_, i) => ({
+    id: `finding-${i}`, title: 'Font family does not match', severity: 'minor',
+    category: 'font_consistency', position: i + 1, detail: 'Synthetic evidence', suggestion: 'Times New Roman',
+  }))
+  return renderToStaticMarkup(React.createElement(exports.ErrorList, {
+    result: { physical_layout_errors: findings }, categoryFilter: 'all',
+    onCategoryFilterChange() {}, severityFilter: severity, onSeverityFilterChange() {},
+    auditStatus: 'completed',
+  })).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()
+}
+
+for (const [count, noun, verb] of [[1, 'finding', 'is'], [3, 'findings', 'are']] as const) {
+  test(`rendered filtered-empty state reports ${count} hidden ${noun} consistently`, () => {
+    const text = renderFilteredFindings(count)
+    assert.ok(text.includes(`${count} ${noun} · select to inspect evidence`), text)
+    assert.ok(text.includes(`Showing 0 of ${count} ${noun}`), text)
+    assert.ok(text.includes(`${count} other ${noun} ${verb} hidden by the current filters.`), text)
+    assert.doesNotMatch(text, /0 (?:other )?findings? (?:is|are) hidden|1 findings|1 other findings/)
+  })
+}
+
+test('rendered empty audit does not invent a positive hidden quantity', () => {
+  const text = renderFilteredFindings(0)
+  assert.ok(text.includes('0 findings · select to inspect evidence'), text)
+  assert.ok(text.includes('No compliance findings were detected.'), text)
+  assert.doesNotMatch(text, /Showing 0 of|findings? (?:is|are) hidden|No findings match these filters/)
+})
+
+test('rendered matching findings do not claim that visible findings are hidden', () => {
+  const text = renderFilteredFindings(1, 'all')
+  assert.ok(text.includes('1 finding · select to inspect evidence'), text)
+  assert.ok(text.includes('1 finding · Scroll to review all'), text)
+  assert.doesNotMatch(text, /Showing 0 of|findings? (?:is|are) hidden|No findings match these filters/)
 })
 
 test('the reset control names the action the reader understands', () => {

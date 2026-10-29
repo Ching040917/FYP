@@ -17,7 +17,7 @@ const compiled = ts.transpileModule(source, { compilerOptions: {
 class ApiRequestError extends Error {
   constructor(message, status) { super(message); this.status = status }
 }
-function harness() {
+function harness(options = {}) {
   const slots = []
   let cursor = 0
   let dirty = false
@@ -26,17 +26,22 @@ function harness() {
   let auditId = 'audit-A'
   const downloads = []
   const calls = []
+  const reviewRequests = []
   const writes = []
   const pending = []
   let reviewPending = null
   let applyPending = null
   const finding = { id: 'finding', rule_code: 'ALIGNMENT', severity: 'MINOR', location: { paragraph_index: 0 }, actual_value: 'left', expected_value: 'center', message: 'Alignment' }
-  const review = { review_id: 'review', items: [{ violation_id: 'finding', before: 'Left', after: 'Center', affected_count: 1, locations: ['Paragraph 1'], property: 'alignment' }], output_filename: 'audit-A.docx', limitations: [], expires_at: '2099-01-01' }
+  const findings = options.findings ?? [finding]
+  const review = options.review ?? { review_id: 'review', items: [{ violation_id: 'finding', before: 'Left', after: 'Center', affected_count: 1, locations: ['Paragraph 1'], property: 'alignment' }], output_filename: 'audit-A.docx', limitations: [], expires_at: '2099-01-01' }
   let generation = 0
   const api = {
     cancelGuidedFixReview: async () => { calls.push('cancel') },
-    reviewGuidedFixes: () => reviewPending?.promise ?? Promise.resolve(review),
-    applyGuidedFixes: () => applyPending?.promise ?? Promise.resolve({ status: 'passed', resolved: ['finding'], new_findings: [], before_findings: [], after_findings: [], download_token: `token-${++generation}`, output_filename: `${auditId}.docx`, expires_at: '2099-01-01' }),
+    reviewGuidedFixes: (_auditId, _file, ids) => {
+      reviewRequests.push(ids)
+      return reviewPending?.promise ?? Promise.resolve(review)
+    },
+    applyGuidedFixes: () => applyPending?.promise ?? Promise.resolve({ status: 'passed', resolved: findings.map(v => v.id), new_findings: [], before_findings: options.summaries ?? [], after_findings: [], download_token: `token-${++generation}`, output_filename: `${auditId}.docx`, expires_at: '2099-01-01' }),
     downloadGuidedFix: (id, token) => {
       calls.push(`${id}/${token}`)
       const next = Promise.withResolvers()
@@ -63,6 +68,7 @@ function harness() {
     },
     useRef(initial) { const index = cursor++; return slots[index] ??= { current: initial } },
     useMemo(fn) { cursor++; return fn() },
+    useId() { const index = cursor++; return slots[index] ??= `fixture-${index}` },
     useEffect: effect,
     useLayoutEffect: effect,
   }
@@ -85,7 +91,7 @@ function harness() {
   function render() {
     do {
       dirty = false; cursor = 0; effects = []
-      tree = exports.GuidedFixesPanel({ auditId, violations: [finding] })
+      tree = exports.GuidedFixesPanel({ auditId, violations: findings })
       for (const run of effects) run()
     } while (dirty)
   }
@@ -114,8 +120,8 @@ function harness() {
   }
   async function ready(stopAtReview = false) {
     click('Guided Fixes Beta')
-    nodes().find(n => n.type === 'input' && n.props.type === 'checkbox').props.onChange(); render()
-    click('Review 1 selected change')
+    click('Select all candidates in this view')
+    click(`Review ${findings.length} selected ${findings.length === 1 ? 'finding' : 'findings'}`)
     nodes().find(n => n.props?.id === 'guided-fixes-file-input').props.onChange({ target: { files: [{ name: 'source.docx' }] } }); render()
     click('Review safety and locations'); await flush()
     if (stopAtReview) return
@@ -124,6 +130,8 @@ function harness() {
   render()
   return {
     ready, click, button, text, flush, pending, downloads, calls, writes,
+    reviewRequests,
+    selection() { click('Guided Fixes Beta'); click('Select all candidates in this view'); return text().replace(/\s+/g, ' ').trim() },
     live() { return nodes().filter(node => node.props?.role === 'status' || node.props?.['aria-live']).map(text).filter(value => value.trim()) },
     switchAudit() { auditId = 'audit-B'; render() },
     unmount() { for (const slot of slots) slot?.cleanup?.() },
@@ -262,7 +270,7 @@ test('Download announcements are current during pending and reset after close an
     h.click('Guided Fixes Beta')
     assert.doesNotMatch(h.live().join(' '), /Downloading|Downloaded|Download is now available|re-audit passed|audit-A\.docx/)
     assert.doesNotMatch(h.text(), /Filename:|verified download is unavailable/)
-    assert.equal(h.button('Review 0 selected changes').disabled, true)
+    assert.equal(h.button('Review 0 selected findings').disabled, true)
   }
 })
 
@@ -307,4 +315,64 @@ test('audit switch and duplicate activation do not duplicate or contaminate live
   assert.deepEqual(h.live(), before)
   assert.doesNotMatch(h.live().join(' '), /Downloading|Downloaded|Download is now available/)
   assert.equal(h.downloads.length, 0)
+})
+
+const fontFinding = (id, paragraph, runs) => ({
+  id, rule_code: 'FONT_CONSISTENCY', severity: 'MINOR',
+  location: { paragraph_index: paragraph, run_index: runs[0], run_indexes: runs },
+  actual_value: 'Calibri', expected_value: 'Times New Roman', message: 'Synthetic font finding',
+})
+
+for (const [name, findings, locations] of [
+  ['single finding', [fontFinding('a', 0, [0])], 1],
+  ['one grouped finding', [fontFinding('a', 0, [0, 1])], 2],
+  ['two single-location findings', [fontFinding('a', 0, [0]), fontFinding('b', 1, [0])], 2],
+  ['two grouped findings', [fontFinding('a', 0, [0, 1]), fontFinding('b', 1, [0, 1, 2])], 5],
+  ['two properties sharing target locations', [fontFinding('a', 0, [0, 1]), { ...fontFinding('b', 0, [0, 1]), rule_code: 'FONT_SIZE' }], 2],
+]) {
+  test(`rendered grouped wording: ${name} in selection, Review and verified result`, async () => {
+    const review = {
+      review_id: 'review', output_filename: 'source_corrected.docx', limitations: [], expires_at: '2099-01-01',
+      items: findings.map(v => ({ violation_id: v.id, before: v.actual_value, after: v.expected_value,
+        affected_count: v.location.run_indexes.length, locations: [`Paragraph ${v.location.paragraph_index + 1}`], property: v.rule_code })),
+    }
+    const summaries = findings.map(v => ({ rule_code: v.rule_code, count: v.location.run_indexes.length,
+      locations: v.location.run_indexes.map(() => `Paragraph ${v.location.paragraph_index + 1}`) }))
+    const h = harness({ findings, review, summaries })
+    const noun = findings.length === 1 ? 'finding' : 'findings'
+    const location = `${locations} affected ${locations === 1 ? 'location' : 'locations'}`
+    assert.ok(h.selection().includes(`${findings.length} ${noun} selected · ${location}`))
+    assert.equal(h.button(`Review ${findings.length} selected ${noun}`).disabled, false)
+    h.click('Close Guided Fixes')
+    await h.ready(true)
+    assert.ok(h.text().replace(/\s+/g, ' ').includes(`Safety review passed for ${findings.length} selected ${noun} · ${location}`))
+    assert.deepEqual(h.reviewRequests, [findings.map(v => v.id)])
+    h.click('Apply and verify changes'); await h.flush()
+    const result = h.text().replace(/\s+/g, ' ')
+    assert.ok(result.includes(`${findings.length} selected ${noun} resolved · ${location} · No new findings.`))
+    for (const summary of summaries) {
+      assert.ok(result.includes(`1 finding · ${summary.count} ${summary.count === 1 ? 'occurrence' : 'occurrences'}`))
+    }
+    assert.doesNotMatch(result, /Paragraph 1, Paragraph 1/)
+  })
+}
+
+for (const [name, location] of [
+  ['missing', null], ['empty run list', { paragraph_index: 0, run_indexes: [] }],
+  ['incomplete aggregate', { paragraph_index: 0, paragraph_indexes: [0], occurrences: 3, run_indexes: [0] }],
+]) {
+  test(`rendered selection keeps ${name} location quantity unavailable without changing candidate selection`, () => {
+    const h = harness({ findings: [{ ...fontFinding('a', 0, [0]), location }] })
+    assert.ok(h.selection().includes('1 finding selected · Location count unavailable'))
+    assert.equal(h.button('Review 1 selected finding').disabled, false)
+    assert.doesNotMatch(h.text(), /0 affected locations/)
+  })
+}
+
+test('rendered empty selection uses singular candidate grammar and does not invent a location quantity', () => {
+  const h = harness()
+  h.click('Guided Fixes Beta')
+  assert.ok(h.text().includes('No findings selected · 1 candidate for safety review · Maximum 20'))
+  assert.equal(h.button('Review 0 selected findings').disabled, true)
+  assert.doesNotMatch(h.text(), /0 affected locations|1 candidates/)
 })

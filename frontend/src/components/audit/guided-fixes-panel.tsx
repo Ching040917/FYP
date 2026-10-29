@@ -22,7 +22,7 @@ import { cn } from '../../lib/utils'
 import {
   GF_INTRO, GF_SECONDARY, MAX_SELECTED, REFERENCE_HEADING_BOLD_PROPERTY, WORKFLOW_STEPS, correctedFilename,
   deselectInView, friendlyGuidedFixError, guidedCountLine, guidedLimitNotice,
-  guidedPresentationFor, guidedReviewLabel, selectAllInView, workflowStepForStage,
+  guidedAffectedLocationCount, guidedLocationLabel, guidedPresentationFor, guidedReviewLabel, selectAllInView, workflowStepForStage,
 } from '../../lib/guided-fixes'
 import { friendlyRuleTitle } from '../../lib/friendly-finding'
 import type { Violation } from '../../types/api'
@@ -224,6 +224,7 @@ export function GuidedFixesPanel({
     () => violations.filter((v) => selectedIds.includes(v.id)),
     [violations, selectedIds],
   )
+  const selectedLocationCount = useMemo(() => guidedAffectedLocationCount(selected), [selected])
   const allViewSelected =
     viewAvailableIds.length > 0 &&
     viewAvailableIds.every((id) => selectedIds.includes(id))
@@ -248,7 +249,7 @@ export function GuidedFixesPanel({
     setSelectedIds(next)
     const notice = guidedLimitNotice(next.length, availableCount)
     setLimitNotice(notice)
-    announce(notice ?? `${next.length} findings selected.`)
+    announce(notice ?? `${next.length} ${next.length === 1 ? 'finding' : 'findings'} selected.`)
   }
 
   /** Unselect the view's supported findings; hidden selections survive. */
@@ -556,7 +557,8 @@ export function GuidedFixesPanel({
               {classified.map(({ v, pres }) => {
                 if (!viewIds.has(v.id)) return null
                 const label = locationLabels?.get(v.id) ?? pres.friendlyLocation
-                const checkboxLabel = `${pres.friendlyName}, ${label ?? 'location unavailable'}`
+                const quantity = pres.supported ? guidedLocationLabel(guidedAffectedLocationCount([v])) : null
+                const checkboxLabel = [pres.friendlyName, quantity, label ?? 'location unavailable'].filter(Boolean).join(', ')
                 const checked = selectedIds.includes(v.id)
                 const atCap = !checked && selectedIds.length >= MAX_SELECTED
                 return (
@@ -580,7 +582,7 @@ export function GuidedFixesPanel({
                       <div className="min-w-0 flex-1">
                         <p className="text-sm font-medium text-foreground">{pres.friendlyName}</p>
                         <p className="mt-0.5 text-[11px] leading-[16px] text-muted-foreground">
-                          {label ?? 'Location unavailable'}
+                          {quantity && `${quantity} · `}{label ?? 'Location unavailable'}
                         </p>
                         {pres.supported ? (
                           <>
@@ -605,7 +607,7 @@ export function GuidedFixesPanel({
           </div>
 
           <div className="shrink-0 border-t border-border px-5 py-3 max-[240px]:px-2 max-[240px]:[&_button]:h-auto max-[240px]:[&_button]:w-full max-[240px]:[&_button]:min-w-0 max-[240px]:[&_button]:whitespace-normal">
-            <p className="text-[13px] text-muted-foreground">{guidedCountLine(selectedIds.length, availableCount)}</p>
+            <p className="text-[13px] text-muted-foreground">{guidedCountLine(selectedIds.length, availableCount, selectedLocationCount)}</p>
             {limitNotice && (
               <p className="mt-1 text-[13px] text-warning">{limitNotice}</p>
             )}
@@ -626,7 +628,7 @@ export function GuidedFixesPanel({
           </div>
         </GuidedDialog>
         <span role="status" aria-live="polite" className="sr-only">
-          {announcement ?? guidedCountLine(selectedIds.length, availableCount)}
+          {announcement ?? guidedCountLine(selectedIds.length, availableCount, selectedLocationCount)}
         </span>
       </>
     )
@@ -656,7 +658,7 @@ export function GuidedFixesPanel({
           <div className="flex min-h-0 flex-1 flex-col border-2 border-transparent focus-within:border-primary">
           <div tabIndex={0} className="min-h-0 flex-1 overflow-y-auto px-5 py-3 scrollbar-thin focus-visible:outline-none max-[240px]:px-2">
             <p className="text-sm text-foreground" role="status">
-              Safety review passed for {review.items.length} selected {review.items.length === 1 ? 'finding' : 'findings'}. Nothing has been changed yet.
+              Safety review passed for {review.items.length} selected {review.items.length === 1 ? 'finding' : 'findings'} · {guidedLocationLabel(selectedLocationCount)}. Nothing has been changed yet.
             </p>
             <ul className="mt-3 space-y-2">
               {review.items.map((item) => {
@@ -799,7 +801,7 @@ export function GuidedFixesPanel({
             <h2 id={resultHeadingId} className="text-base font-semibold text-foreground">Fix applied; re-audit passed</h2>
           </div>
           <p className="mt-2 text-sm text-foreground">
-            {verification?.resolved.length ?? 0} selected {verification?.resolved.length === 1 ? 'finding' : 'findings'} resolved · No new findings.
+            {verification?.resolved.length ?? 0} selected {verification?.resolved.length === 1 ? 'finding' : 'findings'} resolved · {guidedLocationLabel(selectedLocationCount)} · No new findings.
           </p>
           <p className="mt-1 text-[13px] text-muted-foreground">
             Score: {verification?.before_score} → {verification?.after_score}.
@@ -818,8 +820,8 @@ export function GuidedFixesPanel({
                       <li key={`${finding.rule_code}-${index}`}>
                         {finding.rule_code === 'REFERENCE_HEADING_BOLD'
                           ? REFERENCE_HEADING_BOLD_PROPERTY
-                          : friendlyRuleTitle(finding.rule_code) ?? 'Finding'}: {finding.count}
-                        {finding.locations.length > 0 && ` · ${finding.locations.join(', ')}`}
+                          : friendlyRuleTitle(finding.rule_code) ?? 'Finding'}: 1 finding · {finding.count} {finding.count === 1 ? 'occurrence' : 'occurrences'}
+                        {finding.locations.length > 0 && ` · ${[...new Set(finding.locations)].join(', ')}`}
                       </li>
                     ))}
                   </ul>}

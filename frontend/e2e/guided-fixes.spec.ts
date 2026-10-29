@@ -54,7 +54,7 @@ async function openCompletedAudit(page: Page) {
 async function openGuidedFixes(page: Page) {
   const open = page.getByRole('button', { name: 'Guided Fixes' })
   await open.click()
-  await expect(page.getByRole('button', { name: /Review .* selected chang(e|es)/ })).toBeVisible()
+  await expect(page.getByRole('button', { name: /Review .* selected finding(s)?/ })).toBeVisible()
 }
 
 type SpacingCase = {
@@ -225,7 +225,7 @@ async function reviewPointSelection(
     }).check()
   }
   await page.getByRole('button', {
-    name: `Review ${targets.length} selected chang${targets.length === 1 ? 'e' : 'es'}`, exact: true,
+    name: `Review ${targets.length} selected finding${targets.length === 1 ? '' : 's'}`, exact: true,
   }).click()
   await page.locator('#guided-fixes-file-input').setInputFiles(fixture.file)
   await page.getByRole('button', { name: 'Review safety and locations', exact: true }).click()
@@ -485,7 +485,7 @@ async function fontEvidence(page: Page, testInfo: TestInfo, state: string) {
 async function selectFontChanges(page: Page, fixture: FontFixture, options: FontCase, testInfo?: TestInfo) {
   await tabTo(page, page.getByRole('button', { name: 'Guided Fixes' }))
   await page.keyboard.press('Enter')
-  await expect(page.getByRole('button', { name: /Review .* selected chang(e|es)/ })).toBeVisible()
+  await expect(page.getByRole('button', { name: /Review .* selected finding(s)?/ })).toBeVisible()
   for (const label of [options.family && 'Font family does not match', options.size !== undefined && 'Font size does not match'].filter(Boolean)) {
     const checkbox = page.getByRole('checkbox', { name: new RegExp(`${label}, .*paragraph 1`, 'i') })
     await tabTo(page, checkbox)
@@ -493,7 +493,7 @@ async function selectFontChanges(page: Page, fixture: FontFixture, options: Font
     await expect(checkbox).toBeChecked()
   }
   if (testInfo) await fontEvidence(page, testInfo, `font-${options.family ? 'family' : 'size'}${options.grouped ? '-grouped' : ''}-candidate`)
-  await tabTo(page, page.getByRole('button', { name: /Review [12] selected chang/ }))
+  await tabTo(page, page.getByRole('button', { name: /Review [12] selected finding/ }))
   await page.keyboard.press('Enter')
   await page.locator('#guided-fixes-file-input').setInputFiles(fixture.file)
   await tabTo(page, page.getByRole('button', { name: 'Review safety and locations', exact: true }))
@@ -806,7 +806,7 @@ test.describe('guided fixes workflow @guided-fixes', () => {
     await expect(page.getByRole('button', { name: 'Review safety and locations', exact: true })).toBeVisible()
     await tabTo(page, page.getByRole('button', { name: 'Back to findings', exact: true }).last())
     await page.keyboard.press('Enter')
-    await expect(page.getByRole('button', { name: 'Review 2 selected changes', exact: true })).toBeEnabled()
+    await expect(page.getByRole('button', { name: 'Review 2 selected findings', exact: true })).toBeEnabled()
     await page.keyboard.press('Escape')
     await expect(opener).toBeFocused()
     await page.setViewportSize({ width: 1920, height: 1080 })
@@ -845,7 +845,7 @@ test.describe('guided fixes workflow @guided-fixes', () => {
       await tabTo(page, opener)
       await page.keyboard.press('Enter')
       const sides = Object.keys(options) as ('before' | 'after')[]
-      const selected = page.getByRole('button', { name: `Review ${sides.length} selected chang${sides.length === 1 ? 'e' : 'es'}`, exact: true })
+      const selected = page.getByRole('button', { name: `Review ${sides.length} selected finding${sides.length === 1 ? '' : 's'}`, exact: true })
       for (const side of sides) {
         const checkbox = page.getByRole('checkbox', { name: new RegExp(`Space ${side} the paragraph does not match, .*paragraph 1`, 'i') })
         await tabTo(page, checkbox)
@@ -854,7 +854,7 @@ test.describe('guided fixes workflow @guided-fixes', () => {
       }
       await tabTo(page, page.getByRole('button', { name: 'Clear selection', exact: true }))
       await page.keyboard.press('Enter')
-      await expect(page.getByRole('button', { name: 'Review 0 selected changes', exact: true })).toBeDisabled()
+      await expect(page.getByRole('button', { name: 'Review 0 selected findings', exact: true })).toBeDisabled()
       for (const side of sides) {
         await tabTo(page, page.getByRole('checkbox', { name: new RegExp(`Space ${side} the paragraph does not match, .*paragraph 1`, 'i') }))
         await page.keyboard.press('Space')
@@ -1015,7 +1015,7 @@ print(json.dumps({"source_sha256": hashlib.sha256(source).hexdigest(),
     ]) {
       await page.getByRole('checkbox', { name: new RegExp(`${label}, .*paragraph 1`, 'i') }).check()
     }
-    await page.getByRole('button', { name: 'Review 4 selected changes', exact: true }).click()
+    await page.getByRole('button', { name: 'Review 4 selected findings', exact: true }).click()
     await page.locator('#guided-fixes-file-input').setInputFiles(fixture.file)
     await page.getByRole('button', { name: 'Review safety and locations', exact: true }).click()
     await expect(page.getByRole('dialog', { name: 'Guided Fixes — review confirmed changes' })).toBeVisible({ timeout: 60_000 })
@@ -1093,7 +1093,7 @@ print(json.dumps({"source_sha256": hashlib.sha256(source).hexdigest(), "raw_befo
         await page.getByRole('checkbox', { name: new RegExp(`Space ${side} the paragraph does not match, .*paragraph ${paragraph}`, 'i') }).check()
       }
     }
-    await page.getByRole('button', { name: 'Review 4 selected changes', exact: true }).click()
+    await page.getByRole('button', { name: 'Review 4 selected findings', exact: true }).click()
     await page.locator('#guided-fixes-file-input').setInputFiles(fixture.file)
     await page.getByRole('button', { name: 'Review safety and locations', exact: true }).click()
     await expect(page.getByRole('dialog', { name: 'Guided Fixes — review confirmed changes' })).toBeVisible({ timeout: 60_000 })
@@ -1197,7 +1197,7 @@ print(json.dumps({"changed_parts": changed, "paragraphs": len(saved)}))
         for (const selectedSide of sides) {
           await page.getByRole('checkbox', { name: new RegExp(`Space ${selectedSide} the paragraph does not match, .*paragraph 1`, 'i') }).check()
         }
-        await page.getByRole('button', { name: `Review ${sides.length} selected chang${sides.length === 1 ? 'e' : 'es'}`, exact: true }).click()
+        await page.getByRole('button', { name: `Review ${sides.length} selected finding${sides.length === 1 ? '' : 's'}`, exact: true }).click()
         await page.locator('#guided-fixes-file-input').setInputFiles(fixture.file)
         let applyRequests = 0
         const downloads: string[] = []
@@ -1327,7 +1327,7 @@ print(json.dumps({"changed_parts": changed, "paragraphs": len(saved)}))
         await page.unroute(pattern)
         await openGuidedFixes(page)
         await expect(page.getByRole('button', { name: 'Download corrected document', exact: true })).toHaveCount(0)
-        await expect(page.getByRole('button', { name: 'Review 0 selected changes', exact: true })).toBeDisabled()
+        await expect(page.getByRole('button', { name: 'Review 0 selected findings', exact: true })).toBeDisabled()
         await testInfo.attach(`point-decimal-stale-${transition}.png`, { body: await page.screenshot(), contentType: 'image/png' })
         expect(await (await page.request.get(`/api/audit/${first.auditId}`)).json()).toEqual(first.before)
         expect(await (await page.request.get(`/api/audit/${second.auditId}`)).json()).toEqual(second.before)
@@ -1376,7 +1376,7 @@ print(json.dumps({"changed_parts": changed, "paragraphs": len(saved)}))
       for (const side of ['before', 'after']) {
         await page.getByRole('checkbox', { name: new RegExp(`Space ${side} the paragraph does not match, .*paragraph 1`, 'i') }).check()
       }
-      await page.getByRole('button', { name: 'Review 2 selected changes', exact: true }).click()
+      await page.getByRole('button', { name: 'Review 2 selected findings', exact: true }).click()
       await page.locator('#guided-fixes-file-input').setInputFiles(fixture.file)
       await page.getByRole('button', { name: 'Review safety and locations', exact: true }).click()
       await expect(page.getByRole('dialog', { name: 'Guided Fixes — review confirmed changes' })).toBeVisible({ timeout: 60_000 })
@@ -1465,7 +1465,7 @@ print(json.dumps({"changed_parts": changed, "paragraphs": len(saved)}))
           for (const selectedSide of ['before', 'after']) {
             await page.getByRole('checkbox', { name: new RegExp(`Space ${selectedSide} the paragraph does not match, .*paragraph 1`, 'i') }).check()
           }
-          await page.getByRole('button', { name: 'Review 2 selected changes', exact: true }).click()
+          await page.getByRole('button', { name: 'Review 2 selected findings', exact: true }).click()
           await page.locator('#guided-fixes-file-input').setInputFiles(fixture.file)
           const reviewing = page.waitForResponse(response =>
             response.request().method() === 'POST' && new URL(response.url()).pathname === `/api/audit/${auditId}/guided-fixes/review`)
@@ -1483,7 +1483,7 @@ print(json.dumps({"changed_parts": changed, "paragraphs": len(saved)}))
           }
           await tabTo(page, page.getByRole('button', { name: 'Back to findings', exact: true }).last())
           await page.keyboard.press('Enter')
-          await expect(page.getByRole('button', { name: 'Review 2 selected changes', exact: true })).toBeEnabled()
+          await expect(page.getByRole('button', { name: 'Review 2 selected findings', exact: true })).toBeEnabled()
           expect(events).toEqual([])
           expect(applyRequests).toBe(0)
           expect(createHash('sha256').update(fixture.file.buffer).digest('hex')).toBe(digest)
@@ -1528,13 +1528,13 @@ print(json.dumps({"changed_parts": changed, "paragraphs": len(saved)}))
 
     await expect(page.getByText(/selected · .*candidates for safety review · Maximum 20|selected · Maximum reached/).first()).toBeVisible()
     await expect(page.getByText(/Candidate only — safety review required/).first()).toBeVisible()
-    await page.getByRole('button', { name: /Review .* selected chang(e|es)/ }).click()
+    await page.getByRole('button', { name: /Review .* selected finding(s)?/ }).click()
     await expect(page.getByText('Upload the original DOCX')).toBeVisible()
     await expect(page.getByRole('button', { name: 'Apply and verify changes' })).toHaveCount(0)
     await expect(page.getByRole('button', { name: 'Back to findings' })).toHaveCount(2)
     await page.getByRole('button', { name: 'Back to findings' }).first().click()
-    await expect(page.getByText(/2 selected · .*candidates for safety review · Maximum 20/).first()).toBeVisible()
-    await page.getByRole('button', { name: /Review .* selected chang(e|es)/ }).focus()
+    await expect(page.getByText(/2 findings selected · .*candidates for safety review · Maximum 20/).first()).toBeVisible()
+    await page.getByRole('button', { name: /Review .* selected finding(s)?/ }).focus()
     await page.keyboard.press('Tab')
     await expect(page.getByRole('button', { name: 'Close Guided Fixes' })).toBeFocused()
     await page.keyboard.press('Escape')
@@ -1555,7 +1555,7 @@ print(json.dumps({"changed_parts": changed, "paragraphs": len(saved)}))
     await openGuidedFixes(page)
 
     await page.locator('input[type="checkbox"][aria-label]').first().check()
-    await page.getByRole('button', { name: /Review .* selected chang(e|es)/ }).click()
+    await page.getByRole('button', { name: /Review .* selected finding(s)?/ }).click()
     // Create a DIFFERENT docx (the long-filename fixture) for the mismatch path.
     const fixturesDir = path.resolve(process.cwd(), 'e2e', 'fixtures')
     const wrongPath = path.join(fixturesDir, 'long-filename-sample.docx')
@@ -1569,7 +1569,7 @@ print(json.dumps({"changed_parts": changed, "paragraphs": len(saved)}))
     // stays open — never closed automatically on error).
     await page.getByRole('button', { name: 'Back to findings' }).last().click()
     await expect(page.getByText(/selected · .*candidates for safety review · Maximum 20/)).toBeVisible()
-    await page.getByRole('button', { name: /Review .* selected chang(e|es)/ }).click()
+    await page.getByRole('button', { name: /Review .* selected finding(s)?/ }).click()
 
     // Replace with the EXACT original bytes used for the audit.
     await wrong.setInputFiles(summary.fixture.file)
@@ -1613,7 +1613,7 @@ print(json.dumps({"changed_parts": changed, "paragraphs": len(saved)}))
     await expect(page).toHaveURL(new RegExp(`/audit/${summary.auditId}$`))
     await page.reload()
     await openGuidedFixes(page)
-    await expect(page.getByRole('button', { name: 'Review 0 selected changes' })).toBeDisabled()
+    await expect(page.getByRole('button', { name: 'Review 0 selected findings' })).toBeDisabled()
     await expect(page.getByRole('button', { name: 'Download corrected document' })).toHaveCount(0)
     await page.getByRole('button', { name: 'Close Guided Fixes' }).click()
 
@@ -1652,7 +1652,7 @@ print(json.dumps({"docx": base64.b64encode(out.getvalue()).decode(), "profile": 
     const candidate = page.getByRole('checkbox', { name: /Reference List heading alignment does not match, Page 1 · Paragraph 2/i })
     await expect(candidate).toBeVisible()
     await candidate.check()
-    await page.getByRole('button', { name: /Review .* selected chang(e|es)/ }).click()
+    await page.getByRole('button', { name: /Review .* selected finding(s)?/ }).click()
     await page.locator('#guided-fixes-file-input').setInputFiles(file)
     await page.getByRole('button', { name: 'Review safety and locations' }).click()
     await expect(page.getByText(/Safety review passed for 1 selected finding/)).toBeVisible({ timeout: 60_000 })
@@ -1699,7 +1699,7 @@ print(json.dumps({"docx": base64.b64encode(source).decode(), "profile": profile.
       await expect(page.getByText(required
         ? 'Make the Reference List heading bold'
         : 'Use regular (not bold) text for the Reference List heading')).toBeVisible()
-      await page.getByRole('button', { name: 'Review 1 selected change', exact: true }).click()
+      await page.getByRole('button', { name: 'Review 1 selected finding', exact: true }).click()
       await page.locator('#guided-fixes-file-input').setInputFiles(file)
       await page.getByRole('button', { name: 'Review safety and locations' }).click()
       await expect(page.getByText('Property to change: Reference List heading bold (all heading text)', { exact: true })).toBeVisible({ timeout: 60_000 })
@@ -1708,7 +1708,7 @@ print(json.dumps({"docx": base64.b64encode(source).decode(), "profile": profile.
       await expect(page.getByText(/^1 affected location: Reference List heading "References ?".*Paragraph 2$/)).toBeVisible()
       await page.getByRole('button', { name: 'Apply and verify changes' }).click()
       await expect(page.getByRole('heading', { name: 'Fix applied; re-audit passed' })).toBeVisible({ timeout: 60_000 })
-      await expect(page.getByRole('dialog').getByText('Reference List heading bold (all heading text): 1')).toBeVisible()
+      await expect(page.getByRole('dialog').getByText('Reference List heading bold (all heading text): 1 finding · 1 occurrence')).toBeVisible()
       const events: string[] = []
       page.on('download', event => events.push(event.suggestedFilename()))
       const downloading = page.waitForEvent('download')
@@ -1783,7 +1783,7 @@ print(json.dumps({"docx": base64.b64encode(out.getvalue()).decode(), "profile": 
     await openGuidedFixes(page)
     await expect(page.getByRole('radio', { name: /Candidates for safety review · 0/ })).toBeVisible()
     await expect(page.getByText('No findings are candidates for Guided Fixes. Choose Manual correction required to view the other findings.')).toBeVisible()
-    await expect(page.getByRole('button', { name: 'Review 0 selected changes' })).toBeDisabled()
+    await expect(page.getByRole('button', { name: 'Review 0 selected findings' })).toBeDisabled()
     await page.getByRole('radio', { name: /Manual correction required/ }).click()
     await expect(page.getByText('ACA cannot safely correct this finding automatically. Follow its Required action in the audit report.').first()).toBeVisible()
     await expect(page.locator('input[type="checkbox"]')).toHaveCount(0)
@@ -1793,7 +1793,7 @@ print(json.dumps({"docx": base64.b64encode(out.getvalue()).decode(), "profile": 
     const { fixture } = await openFontAudit(page)
     await openGuidedFixes(page)
     await page.locator('input[type="checkbox"][aria-label]').first().check()
-    await page.getByRole('button', { name: /Review .* selected chang(e|es)/ }).click()
+    await page.getByRole('button', { name: /Review .* selected finding(s)?/ }).click()
     await page.locator('#guided-fixes-file-input').setInputFiles(fixture.file)
     await page.getByRole('button', { name: 'Review safety and locations' }).click()
     await expect(page.getByText(/Safety review passed for 1 selected finding/)).toBeVisible({ timeout: 60_000 })
@@ -1850,7 +1850,7 @@ print(json.dumps({"docx": base64.b64encode(out.getvalue()).decode(), "profile": 
     const { fixture } = await openFontAudit(page)
     await openGuidedFixes(page)
     await page.locator('input[type="checkbox"][aria-label]').first().check()
-    await page.getByRole('button', { name: /Review .* selected chang(e|es)/ }).click()
+    await page.getByRole('button', { name: /Review .* selected finding(s)?/ }).click()
     await page.locator('#guided-fixes-file-input').setInputFiles(fixture.file)
     await page.getByRole('button', { name: 'Review safety and locations' }).click()
     const review = page.getByRole('dialog', { name: 'Guided Fixes — review confirmed changes' })
@@ -1922,12 +1922,12 @@ print(json.dumps({"docx": base64.b64encode(out.getvalue()).decode(), "profile": 
       expect(bounds.primary!.right).toBeLessThanOrEqual(bounds.frame.right)
       expect(bounds.primary!.textFits).toBeTruthy()
     }
-    await assertDialogBounds('Review 0 selected changes')
+    await assertDialogBounds('Review 0 selected findings')
     const candidateWidth = await page.locator('input[type="checkbox"][aria-label]').first()
       .locator('..').locator('.min-w-0').evaluate((element) => element.getBoundingClientRect().width)
     expect(candidateWidth).toBeGreaterThanOrEqual(120)
     await page.locator('input[type="checkbox"][aria-label]').first().check()
-    await page.getByRole('button', { name: /Review .* selected chang(e|es)/ }).click()
+    await page.getByRole('button', { name: /Review .* selected finding(s)?/ }).click()
     await assertDialogBounds('Review safety and locations')
     await page.locator('#guided-fixes-file-input').setInputFiles(fixture.file)
     await page.getByRole('button', { name: 'Review safety and locations' }).click()
@@ -1998,7 +1998,7 @@ test.describe('strict direct font evidence @font-slot', () => {
       await page.keyboard.press('Enter')
       await expect(page.getByRole('button', { name: 'Guided Fixes' })).toBeFocused()
       await page.keyboard.press('Enter')
-      await expect(page.getByRole('button', { name: 'Review 0 selected changes', exact: true })).toBeDisabled()
+      await expect(page.getByRole('button', { name: 'Review 0 selected findings', exact: true })).toBeDisabled()
       await expect(page.getByRole('button', { name: 'Download corrected document', exact: true })).toHaveCount(0)
     })
   }
@@ -2350,7 +2350,7 @@ test.describe('font genuine stale responses @font-slot @font-stale', () => {
         await page.getByRole('button', { name: 'Close', exact: true }).click()
         await expect(page.getByRole('button', { name: 'Guided Fixes' })).toBeFocused()
         await page.keyboard.press('Enter')
-        await expect(page.getByRole('button', { name: 'Review 0 selected changes', exact: true })).toBeDisabled()
+        await expect(page.getByRole('button', { name: 'Review 0 selected findings', exact: true })).toBeDisabled()
         await expect(page.getByRole('button', { name: 'Download corrected document', exact: true })).toHaveCount(0)
         await expect(page.getByRole('status').filter({ hasText: /Downloading|Downloaded|Download is now available|re-audit passed/ })).toHaveCount(0)
       })
@@ -2431,7 +2431,7 @@ test.describe('font stale Download screenshot journeys @font-slot @font-stale-do
         await tabTo(page, opener)
         await page.keyboard.press('Enter')
         await expect(page.getByRole('button', { name: 'Close Guided Fixes', exact: true })).toBeFocused()
-        await expect(page.getByRole('button', { name: 'Review 0 selected changes', exact: true })).toBeDisabled()
+        await expect(page.getByRole('button', { name: 'Review 0 selected findings', exact: true })).toBeDisabled()
         await expect(page.getByRole('button', { name: 'Download corrected document', exact: true })).toHaveCount(0)
         await expect(page.getByRole('status').filter({ hasText: /Downloading|Downloaded|Download is now available|re-audit passed/ })).toHaveCount(0)
         await testInfo.attach('stale-download-reopened-reset.png', { body: await page.screenshot(), contentType: 'image/png' })
@@ -2456,7 +2456,7 @@ test.describe('font stale Download screenshot journeys @font-slot @font-stale-do
         await expect(opener).toBeFocused()
         await page.keyboard.press('Enter')
         await expect(page.getByRole('button', { name: 'Close Guided Fixes', exact: true })).toBeFocused()
-        await expect(page.getByRole('button', { name: 'Review 0 selected changes', exact: true })).toBeDisabled()
+        await expect(page.getByRole('button', { name: 'Review 0 selected findings', exact: true })).toBeDisabled()
         await expect(page.getByRole('status').filter({ hasText: /Downloading|Downloaded|Download is now available|re-audit passed/ })).toHaveCount(0)
         await testInfo.attach('stale-download-final-reopened-reset.png', { body: await page.screenshot(), contentType: 'image/png' })
         await page.keyboard.press('Escape')
@@ -2620,7 +2620,7 @@ async function selectLineChanges(page: Page, fixture: LineFixture) {
     await page.keyboard.press('Space')
     await expect(boxes.nth(i)).toBeChecked()
   }
-  await tabTo(page, page.getByRole('button', { name: new RegExp(`^Review ${fixture.selected.length} selected change`) }))
+  await tabTo(page, page.getByRole('button', { name: new RegExp(`^Review ${fixture.selected.length} selected finding`) }))
   await page.keyboard.press('Enter')
   await page.locator('#guided-fixes-file-input').setInputFiles(fixture.file)
   await tabTo(page, page.getByRole('button', { name: 'Review safety and locations', exact: true }))
@@ -2780,7 +2780,7 @@ test.describe('direct auto LINE evidence @line-spacing', () => {
       await page.keyboard.press('Enter')
       await expect(page.getByRole('button', { name: /^Guided Fixes/ })).toBeFocused()
       await page.keyboard.press('Enter')
-      await expect(page.getByRole('button', { name: 'Review 0 selected changes', exact: true })).toBeDisabled()
+      await expect(page.getByRole('button', { name: 'Review 0 selected findings', exact: true })).toBeDisabled()
     })
   }
 

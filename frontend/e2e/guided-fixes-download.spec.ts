@@ -34,7 +34,7 @@ print(json.dumps({"docx": base64.b64encode(out.getvalue()).decode(), "profile": 
 async function verifyCopy(page: Page, source: DownloadFixture) {
   await page.getByRole('button', { name: 'Guided Fixes', exact: false }).click()
   await page.getByRole('checkbox', { name: /Reference List heading alignment/ }).check()
-  await page.getByRole('button', { name: /Review 1 selected change/ }).click()
+  await page.getByRole('button', { name: /Review 1 selected finding/ }).click()
   await page.locator('#guided-fixes-file-input').setInputFiles(source.file)
   await page.getByRole('button', { name: 'Review safety and locations' }).click()
   await expect(page.getByRole('button', { name: 'Apply and verify changes' })).toBeVisible({ timeout: 60_000 })
@@ -99,7 +99,7 @@ for (const transition of ['audit switch', 'close'] as const) {
       await expect(page.getByRole('alert')).toHaveCount(0)
       await page.unroute(downloadPattern)
       await page.getByRole('button', { name: 'Guided Fixes', exact: false }).click()
-      await expect(page.getByRole('button', { name: 'Review 0 selected changes', exact: true })).toBeDisabled()
+      await expect(page.getByRole('button', { name: 'Review 0 selected findings', exact: true })).toBeDisabled()
       await expect(page.getByRole('status').filter({ hasText: /Downloading|Downloaded|Download is now available|re-audit passed/ })).toHaveCount(0)
       await page.keyboard.press('Escape')
       await verifyCopy(page, source)

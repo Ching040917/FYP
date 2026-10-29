@@ -153,26 +153,23 @@ export function deselectInView(
 }
 
 /** Candidate count is not a safety/availability determination. */
-export function guidedCountLine(selectedCount: number, candidateCount: number): string {
-  if (selectedCount >= MAX_SELECTED) return `${selectedCount} selected · Maximum reached`
-  if (selectedCount === 0) {
-    return `No findings selected · ${candidateCount} candidates for safety review · Maximum ${MAX_SELECTED}`
-  }
-  return `${selectedCount} selected · ${candidateCount} candidates for safety review · Maximum ${MAX_SELECTED}`
+export function guidedCountLine(selectedCount: number, candidateCount: number, locationCount: number | null): string {
+  const selection = selectedCount === 0 ? 'No findings selected'
+    : `${selectedCount} ${selectedCount === 1 ? 'finding' : 'findings'} selected · ${guidedLocationLabel(locationCount)}`
+  if (selectedCount >= MAX_SELECTED) return `${selection} · Maximum reached`
+  return `${selection} · ${candidateCount} ${candidateCount === 1 ? 'candidate' : 'candidates'} for safety review · Maximum ${MAX_SELECTED}`
 }
 
 /** Limit notice shown when a select-all attempt was truncated by the cap. */
 export function guidedLimitNotice(selectedCount: number, availableCount: number): string | null {
   if (selectedCount < MAX_SELECTED) return null
   if (availableCount <= MAX_SELECTED) return null
-  return `${MAX_SELECTED} selected. Guided Fixes can process up to ${MAX_SELECTED} findings at a time.`
+  return `${MAX_SELECTED} findings selected. Guided Fixes can process up to ${MAX_SELECTED} findings at a time.`
 }
 
 /** Primary review action label, singular below two selections. */
 export function guidedReviewLabel(selectedCount: number): string {
-  return selectedCount === 1
-    ? 'Review 1 selected change'
-    : `Review ${selectedCount} selected changes`
+  return `Review ${selectedCount} selected ${selectedCount === 1 ? 'finding' : 'findings'}`
 }
 
 /** Workflow indicator step for a stage (null for idle). */
@@ -215,6 +212,34 @@ export interface GuidedViolationLike {
   expected_value: string | null
   actual_value: string | null
   location: Record<string, unknown> | null
+}
+
+export function guidedLocationLabel(count: number | null): string {
+  return count === null ? 'Location count unavailable' : `${count} affected ${count === 1 ? 'location' : 'locations'}`
+}
+
+/** Presentation only: union the same paragraph/run identities used by review.
+ * Incomplete aggregate metadata cannot establish a total, even with a primary
+ * paragraph. This never grants or removes candidate eligibility. */
+export function guidedAffectedLocationCount(findings: readonly GuidedViolationLike[]): number | null {
+  const targets = new Set<string>()
+  for (const finding of findings) {
+    const loc = finding.location
+    const paragraph = loc?.paragraph_index
+    if (!loc || typeof paragraph !== 'number' || !Number.isInteger(paragraph) || paragraph < 0) return null
+    if (loc.occurrences !== undefined && loc.occurrences !== 1) return null
+    if (loc.paragraph_indexes !== undefined &&
+        (!Array.isArray(loc.paragraph_indexes) || loc.paragraph_indexes.length !== 1 || loc.paragraph_indexes[0] !== paragraph)) return null
+    if (finding.rule_code === 'FONT_CONSISTENCY' || finding.rule_code === 'FONT_SIZE') {
+      const runs = loc.run_indexes ?? [loc.run_index]
+      if (!Array.isArray(runs) || runs.length === 0 ||
+          runs.some(run => typeof run !== 'number' || !Number.isInteger(run) || run < 0)) return null
+      for (const run of runs) targets.add(`${paragraph}:${run}`)
+    } else {
+      targets.add(`${paragraph}:paragraph`)
+    }
+  }
+  return targets.size
 }
 
 export interface GuidedFindingPresentation {

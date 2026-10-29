@@ -54,6 +54,17 @@ Download progress is announced only while the current request is pending.
 Closing or restarting Guided Fixes clears obsolete notices; reopening does not
 replay a previous Download or availability announcement.
 
+### Guided Fix quantities and locations
+
+Selection, Review and verified results distinguish findings from affected
+locations. One grouped finding can affect several text locations within the
+same paragraph. Selection totals count shared paragraph/run targets once;
+the 20-finding limit and all safety checks remain unchanged. Incomplete location
+metadata is shown as **Location count unavailable**, not a guessed quantity.
+Before/after re-audit rows identify one finding and label its occurrence count;
+repeated paragraph labels are displayed once without changing that count.
+
+
 ### Font Guided Fix safety
 
 Existing `FONT_CONSISTENCY` and `FONT_SIZE` corrections now require supported
@@ -77,8 +88,7 @@ A mixed safe/unsafe selection is refused as a whole.
 The original DOCX, saved Audit, Snapshot, History, PDF, scoring and categories
 remain unchanged. This certifies eligible OOXML settings, not installed-font
 availability, font substitution, arbitrary-script rendering or Word pagination.
-No candidate was added. Grouped quantities remain separate release-closure work;
-these font checks do not certify the whole Guided Fix set.
+No candidate was added; these font checks do not certify the whole Guided Fix set.
 
 In Review, Tab can focus the details area, marked by an inset focus ring.
 When its content overflows, use the arrow keys, Page Up/Page Down or Home/End
@@ -120,8 +130,7 @@ rendered-page evidence remains a refusal.
 
 The original DOCX, Audit, Snapshot, History, PDF, scoring and categories remain
 unchanged. This certifies eligible encoded settings, not Word rendering or
-physical pagination. It is not a complete Guided Fix freeze or release approval:
-grouped quantities remain independent closure work.
+physical pagination. It is not a complete Guided Fix freeze or release approval.
 
 ### Before/after paragraph spacing Guided Fix safety
 
@@ -151,7 +160,7 @@ grids and snap-to-grid are preserved. The original DOCX, saved audit, Snapshot,
 History and PDF remain unchanged.
 
 The before/after-spacing hardening alone does not establish complete Guided Fix
-release closure. Grouped-count wording and malformed DOCX issues remain independent.
+release closure. Malformed DOCX issues remain independent.
 
 ### Ambient aggregate re-audit hardening
 
