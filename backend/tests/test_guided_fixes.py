@@ -135,15 +135,15 @@ def _make_docx(text="Body paragraph.", size=11.0, family="Calibri"):
 
 
 def _rezip(docx_bytes):
-    """Re-zip the same members with fresh (current-time) zip metadata.
-
-    Same document content, different bytes — simulates a Word resave for
-    identity tests."""
-    src = zipfile.ZipFile(io.BytesIO(docx_bytes))
+    """Preserve document contents but deterministically change ZIP metadata."""
     buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as dst:
-        for item in src.infolist():
-            dst.writestr(item.filename, src.read(item.filename))
+    with zipfile.ZipFile(io.BytesIO(docx_bytes)) as src, zipfile.ZipFile(buf, "w") as dst:
+        dst.comment = src.comment
+        for index, item in enumerate(src.infolist()):
+            if index == 0:
+                marker = b"ACA identity resave"
+                item.comment = b"" if item.comment == marker else marker
+            dst.writestr(item, src.read(item.filename))
     return buf.getvalue()
 
 
@@ -193,10 +193,8 @@ class TestIdentity:
         assert r.json()["detail"] == MISMATCH_DETAIL
 
     def test_resave_changes_hash(self, client, docx_factory):
-        # python-docx saves deterministically, so a real Word-style resave is
-        # simulated by re-zipping the exact members with a different zip
-        # layout/timestamps: identical content, different bytes, different
-        # hash — Guided Fixes must reject it (hash identity, not content).
+        # A content-preserving resave still fails byte identity, regardless
+        # of when it occurs or whether its ZIP timestamps change.
         original = docx_factory(paragraphs=["Body paragraph."], body_size=11)
         resp = _post_audit_bytes(client, original)
         assert resp.status_code == 200
@@ -211,6 +209,32 @@ class TestIdentity:
         r = _fix_post(client, audit_id, resaved, [ids[0]])
         assert r.status_code == 409
         assert r.json()["detail"] == MISMATCH_DETAIL
+        assert _post_audit_bytes(client, resaved).status_code == 200
+
+    @pytest.mark.parametrize("member_comment", [b"", b"ACA identity resave"])
+    def test_rezip_preserves_members_and_is_deterministic(self, docx_factory, member_comment):
+        source = docx_factory(paragraphs=["Body paragraph."])
+        stream = io.BytesIO()
+        with zipfile.ZipFile(io.BytesIO(source)) as src, zipfile.ZipFile(stream, "w") as dst:
+            dst.comment = b"Preserved archive comment"
+            for index, item in enumerate(src.infolist()):
+                if index == 0:
+                    item.comment = member_comment
+                dst.writestr(item, src.read(item.filename))
+        original = stream.getvalue()
+
+        resaved = _rezip(original)
+        assert resaved != original
+        assert _rezip(original) == resaved
+        assert zipfile.is_zipfile(io.BytesIO(resaved))
+        with zipfile.ZipFile(io.BytesIO(original)) as before, zipfile.ZipFile(io.BytesIO(resaved)) as after:
+            assert after.testzip() is None
+            assert after.namelist() == before.namelist()
+            assert after.comment == before.comment
+            assert after.infolist()[0].comment != before.infolist()[0].comment
+            for name in before.namelist():
+                assert after.read(name) == before.read(name)
+        assert Document(io.BytesIO(resaved)).paragraphs[0].text == "Body paragraph."
 
     def test_null_hash_409_legacy(self, client, test_engine, docx_factory):
         audit_id = str(uuid.uuid4())
