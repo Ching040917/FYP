@@ -27,6 +27,8 @@ Please note:
 5. Upload a DOCX document or use the sample document.
    Encrypted or password-protected documents cannot be audited; remove password
    protection in Word and try again.
+   Invalid or damaged DOCX files are rejected without creating an Audit or History
+   entry. Open the file in Word, save it again as a `.docx` file, and try again.
 6. Review findings and export the PDF report.
 
 Python and Node.js are not required.

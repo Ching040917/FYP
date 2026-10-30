@@ -3,6 +3,120 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.enum.style import WD_STYLE_TYPE
 from typing import List, Dict, Any, Optional
 import io
+import zipfile
+import zlib
+
+from lxml import etree
+from docx.opc.constants import CONTENT_TYPE, RELATIONSHIP_TYPE
+from docx.opc.packuri import PackURI
+
+
+class InvalidDocxError(Exception):
+    """Uploaded bytes have a verified ZIP, OPC, or required XML defect."""
+
+
+def validate_docx_upload(file_bytes: bytes) -> None:
+    """Validate the package read boundary without changing shared parser semantics.
+
+    Check structures used by python-docx before its readers assume their shape.
+    Generic implementation exceptions deliberately propagate, rather than being
+    reclassified as user input errors.
+    """
+    ct_ns = "{http://schemas.openxmlformats.org/package/2006/content-types}"
+    rel_ns = "{http://schemas.openxmlformats.org/package/2006/relationships}"
+    word_ns = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+    try:
+        archive = zipfile.ZipFile(io.BytesIO(file_bytes))
+    except (zipfile.BadZipFile, UnicodeDecodeError) as exc:
+        raise InvalidDocxError("unreadable ZIP") from exc
+
+    with archive:
+        members = {item.filename: item for item in archive.infolist()}
+
+        def read_member(name):
+            item = members.get(name)
+            if item is None:
+                raise InvalidDocxError("missing required package member")
+            if item.flag_bits & 1 or item.compress_type not in (
+                zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED,
+                zipfile.ZIP_BZIP2, zipfile.ZIP_LZMA,
+            ) or item.extract_version > zipfile.MAX_EXTRACT_VERSION:
+                raise InvalidDocxError("unreadable package member")
+            try:
+                return archive.read(item)
+            except (zipfile.BadZipFile, EOFError, zlib.error) as exc:
+                raise InvalidDocxError("corrupt package member") from exc
+
+        def read_xml(name):
+            data = read_member(name)
+            try:
+                return etree.fromstring(
+                    data, etree.XMLParser(resolve_entities=False, no_network=True),
+                )
+            except etree.XMLSyntaxError as exc:
+                raise InvalidDocxError("malformed required XML") from exc
+
+        types = read_xml("[Content_Types].xml")
+        if types.tag != ct_ns + "Types":
+            raise InvalidDocxError("invalid content-types root")
+        defaults, overrides = {}, {}
+        for entry in types:
+            if entry.tag not in (ct_ns + "Default", ct_ns + "Override"):
+                continue
+            attribute = "Extension" if entry.tag == ct_ns + "Default" else "PartName"
+            key, content_type = entry.get(attribute), entry.get("ContentType")
+            if not key or not content_type:
+                raise InvalidDocxError("missing content-type attribute")
+            (defaults if attribute == "Extension" else overrides)[key.lower()] = content_type
+
+        pending = [PackURI("/")]
+        visited = set()
+        main_part = None
+        while pending:
+            source = pending.pop()
+            rels_name = source.rels_uri.membername
+            if rels_name not in members and source != "/":
+                continue
+            relationships = read_xml(rels_name)
+            if relationships.tag != rel_ns + "Relationships":
+                raise InvalidDocxError("invalid relationships root")
+            for rel in relationships:
+                if rel.tag != rel_ns + "Relationship":
+                    continue
+                target, kind = rel.get("Target"), rel.get("Type")
+                if not rel.get("Id") or not target or not kind:
+                    raise InvalidDocxError("missing relationship attribute")
+                mode = rel.get("TargetMode", "Internal")
+                if mode not in ("Internal", "External"):
+                    raise InvalidDocxError("invalid relationship mode")
+                if mode == "External":
+                    continue
+                part = PackURI.from_rel_ref(source.baseURI, target)
+                if source == "/" and kind == RELATIONSHIP_TYPE.OFFICE_DOCUMENT:
+                    if main_part is not None:
+                        raise InvalidDocxError("ambiguous document relationship")
+                    main_part = part
+                if part in visited:
+                    continue
+                visited.add(part)
+                content_type = overrides.get(str(part).lower()) or defaults.get(part.ext.lower())
+                if not content_type:
+                    raise InvalidDocxError("missing required content type")
+                if content_type.endswith("+xml") or content_type in ("application/xml", "text/xml"):
+                    root = read_xml(part.membername)
+                    if content_type == CONTENT_TYPE.WML_DOCUMENT_MAIN:
+                        if root.tag != word_ns + "document" or root.find(word_ns + "body") is None:
+                            raise InvalidDocxError("missing document structure")
+                    elif content_type == CONTENT_TYPE.WML_STYLES and root.tag != word_ns + "styles":
+                        raise InvalidDocxError("invalid styles root")
+                else:
+                    read_member(part.membername)
+                pending.append(part)
+        if main_part is None:
+            raise InvalidDocxError("missing document relationship")
+        main_type = overrides.get(str(main_part).lower()) or defaults.get(main_part.ext.lower())
+        if main_type != CONTENT_TYPE.WML_DOCUMENT_MAIN:
+            raise InvalidDocxError("package is not a DOCX document")
 
 
 # ---------------------------------------------------------------------------

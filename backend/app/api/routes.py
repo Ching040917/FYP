@@ -35,6 +35,8 @@ from app.services.scoring import (
 from app.services.ai_citation import async_ai_citation_task
 from app.services.ai_citation_eligibility import is_local_ai_citation_eligible
 from app.services.document_parser import (
+    InvalidDocxError,
+    validate_docx_upload,
     parse_document,
     extract_paragraphs,
     extract_document_stats,
@@ -134,6 +136,26 @@ async def audit_document(
         detail = "; ".join(f"{path}: {msg}" for path, msg in exc.errors) if exc.errors else str(exc)
         raise HTTPException(status_code=400, detail=detail)
 
+    # Reject verified document defects before persistence or preview conversion.
+    try:
+        validate_docx_upload(file_bytes)
+        doc = parse_document(file_bytes)
+        paragraphs = extract_paragraphs(doc)
+    except InvalidDocxError:
+        logger.info("Invalid DOCX upload rejected before audit creation")
+        raise HTTPException(
+            status_code=400,
+            detail="This file is not a valid or readable DOCX document. Open it in Word, save it "
+                   "again as a .docx file, and try again.",
+        ) from None
+    except Exception:
+        logger.exception("Audit document opening failed before persistence")
+        raise HTTPException(
+            status_code=500,
+            detail="The document could not be processed. Please try again. "
+                   "If the problem continues, use a different DOCX file.",
+        ) from None
+
     # Create audit record with "processing" status
     audit = AuditRecord(
         id=str(uuid.uuid4()),
@@ -185,10 +207,6 @@ async def audit_document(
                 audit.id, audit.rendered_preview_error,
                 int((time.perf_counter() - preview_started) * 1000),
             )
-
-        # ---- Parse once, reuse for rules + stats ----
-        doc = parse_document(file_bytes)
-        paragraphs = extract_paragraphs(doc)
 
         # ---- Section boundary metadata (PoC) — persisted with the audit ----
         # Captured from the DOCX at creation time so GET / refresh / History
