@@ -24,7 +24,7 @@ Please note:
 2. Double-click the Setup EXE.
 3. Complete the installation — per-user, no administrator rights needed.
 4. Open ACA from the Windows Start Menu.
-5. Upload a DOCX document or use the sample document.
+5. Upload a DOCX document or use the sample document (bundled locally and works completely offline without network communication).
    Encrypted or password-protected documents cannot be audited; remove password
    protection in Word and try again.
    Invalid or damaged DOCX files are rejected without creating an Audit or History
