@@ -32,8 +32,12 @@ from app.services.scoring import (
     calculate_weighted_score_detailed,
     select_scoring_contract,
 )
-from app.services.ai_citation import async_ai_citation_task
+from app.services.ai_citation import (
+    async_ai_citation_task,
+    AI_STATUS_UNAVAILABLE,
+)
 from app.services.ai_citation_eligibility import is_local_ai_citation_eligible
+from app.services.loopback_validator import loopback_origin
 from app.services.document_parser import (
     InvalidDocxError,
     validate_docx_upload,
@@ -286,42 +290,58 @@ async def audit_document(
         ]
 
         # ---- Deterministic-first AI citation guidance (Build 7F) ----
-        # Collect only eligible paragraph-scoped CITATION_MISMATCH findings
-        # via the strict helper. AI provides correction guidance only —
-        # it never adds, removes, or reclassifies findings.
-        # A request-local finding_key (UUID) is attached to each finding
-        # so the provider can uniquely identify every item — even when
-        # multiple findings share the same paragraph_index.
-        citation_findings = []
-        for v in layout_violations:
-            # Strict gate: document-level root findings (missing References
-            # section), malformed indexes, empty snippets, REVIEW/unknown
-            # severities, Reference-entry targets and unsupported codes are
-            # never sent to the provider. Consolidated findings
-            # (occurrences > 1) stay eligible as one guidance unit.
-            if not is_local_ai_citation_eligible(v):
-                continue
-            paragraph_index = v.location.get("paragraph_index")
-            citation_findings.append({
-                "finding_key": str(uuid.uuid4()),
-                "paragraph_index": paragraph_index,
-                "rule_code": v.rule_code,
-                "severity": v.severity,
-                "snippet": v.actual_value or "",
-                "message": v.message,
-                "expected_value": v.expected_value,
-                "actual_value": v.actual_value,
-            })
+        if not settings.LOCAL_AI_ENABLED:
+            logger.info("Local AI disabled; skipping citation guidance audit_id=%s", audit.id)
+            audit.ai_review_status = None
+            audit.ai_provider = None
+            citation_responses = []
+        elif not loopback_origin(settings.OLLAMA_HOST):
+            logger.warning(
+                "Unsafe or non-loopback Ollama host configured; skipping citation guidance audit_id=%s",
+                audit.id,
+            )
+            audit.ai_review_status = AI_STATUS_UNAVAILABLE
+            audit.ai_provider = None
+            citation_responses = []
+        else:
+            # Collect only eligible paragraph-scoped CITATION_MISMATCH findings
+            # via the strict helper. AI provides correction guidance only —
+            # it never adds, removes, or reclassifies findings.
+            # A request-local finding_key (UUID) is attached to each finding
+            # so the provider can uniquely identify every item — even when
+            # multiple findings share the same paragraph_index.
+            citation_findings = []
+            for v in layout_violations:
+                # Strict gate: document-level root findings (missing References
+                # section), malformed indexes, empty snippets, REVIEW/unknown
+                # severities, Reference-entry targets and unsupported codes are
+                # never sent to the provider. Consolidated findings
+                # (occurrences > 1) stay eligible as one guidance unit.
+                if not is_local_ai_citation_eligible(v):
+                    continue
+                paragraph_index = v.location.get("paragraph_index")
+                citation_findings.append({
+                    "finding_key": str(uuid.uuid4()),
+                    "paragraph_index": paragraph_index,
+                    "rule_code": v.rule_code,
+                    "severity": v.severity,
+                    "snippet": v.actual_value or "",
+                    "message": v.message,
+                    "expected_value": v.expected_value,
+                    "actual_value": v.actual_value,
+                })
 
-        ai_result = await async_ai_citation_task(
-            audit_id=audit.id,
-            db=db,
-            citation_findings=citation_findings,
-        )
+            ai_result = await async_ai_citation_task(
+                audit_id=audit.id,
+                db=db,
+                citation_findings=citation_findings,
+            )
 
-        # Persist AI execution summary so GET retrieval stays truthful.
-        audit.ai_review_status = ai_result.status
-        audit.ai_provider = ai_result.provider
+            # Persist AI execution summary so GET retrieval stays truthful.
+            audit.ai_review_status = ai_result.status
+            audit.ai_provider = ai_result.provider
+            citation_responses = [CitationIssueResponse(**row) for row in ai_result.suggestions]
+
         db.commit()
 
         # Mark audit completed now that AI pass is done
@@ -329,10 +349,6 @@ async def audit_document(
         audit.completed_at = datetime.utcnow()
         db.commit()
         db.refresh(audit)
-
-        # Build response payloads — use issue_dicts directly (matches
-        # CitationIssueResponse shape exactly; see ai_citation.py return)
-        citation_responses = [CitationIssueResponse(**row) for row in ai_result.suggestions]
 
         breakdown_responses = [
             ScoreBreakdownResponse(**b.to_dict())
@@ -350,8 +366,8 @@ async def audit_document(
             document_stats=stats_response,
             major_count=score_result.major_count,
             minor_count=score_result.minor_count,
-            ai_review_status=ai_result.status,
-            ai_provider=ai_result.provider,
+            ai_review_status=audit.ai_review_status,
+            ai_provider=audit.ai_provider,
             sections=[SectionMetadata(**s) for s in section_metadata],
             profile_snapshot=profile_snapshot.to_dict(),
             paragraph_page_mapping=audit.paragraph_page_mapping,

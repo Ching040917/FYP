@@ -39,7 +39,7 @@ from typing import Literal
 from app.config import settings
 from app.services.docx_pdf_converter import find_soffice
 from app.services import preview_storage
-
+from app.services.loopback_validator import loopback_origin
 # ---------------------------------------------------------------------------
 # Contract constants
 # ---------------------------------------------------------------------------
@@ -123,14 +123,16 @@ async def _default_fetch_ollama_models() -> List[str]:
     """GET {host}/api/tags with a bounded timeout; returns model names.
 
     Read-only: /api/tags lists installed models and never loads one.
-    Raises on unreachable/timeout/non-2xx — callers translate to safe states.
+    Raises on unreachable/timeout/non-2xx/unsafe host — callers translate to safe states.
     """
-    async with httpx.AsyncClient(timeout=_OLLAMA_PROBE_TIMEOUT_S) as client:
-        resp = await client.get(f"{settings.OLLAMA_HOST}/api/tags")
+    origin = loopback_origin(settings.OLLAMA_HOST)
+    if origin is None:
+        raise RuntimeError("Refusing Ollama probe: host is not a verified loopback origin")
+    async with httpx.AsyncClient(timeout=_OLLAMA_PROBE_TIMEOUT_S, follow_redirects=False) as client:
+        resp = await client.get(f"{origin}/api/tags")
         resp.raise_for_status()
         models = resp.json().get("models", [])
         return [str(m.get("name") or "") for m in models if isinstance(m, dict)]
-
 
 @dataclass
 class ReadinessProbes:

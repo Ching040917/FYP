@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.models.audit import CitationIssue
-
+from app.services.loopback_validator import loopback_origin
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -290,10 +290,14 @@ def build_apa_suggestion(reason: str, source_type: str) -> str:
 
 async def call_ollama_local(prompt: str) -> str:
     """Call local Ollama via HTTP API."""
+    origin = loopback_origin(settings.OLLAMA_HOST)
+    if not origin:
+        raise RuntimeError("Refusing Ollama call: host is not a verified loopback origin")
+
     try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
+        async with httpx.AsyncClient(timeout=60.0, follow_redirects=False) as client:
             response = await client.post(
-                f"{settings.OLLAMA_HOST}/api/generate",
+                f"{origin}/api/generate",
                 json={
                     "model": settings.OLLAMA_MODEL,
                     "prompt": prompt,
@@ -302,11 +306,24 @@ async def call_ollama_local(prompt: str) -> str:
                 },
             )
             response.raise_for_status()
-            data = response.json()
-            return data.get("response", "")
-    except Exception as e:
-        raise RuntimeError(f"Ollama HTTP call failed: {e}")
+            if response.status_code != 200:
+                raise RuntimeError(f"Ollama returned unexpected HTTP status: {response.status_code}")
+    except (httpx.TimeoutException, httpx.RequestError, httpx.HTTPStatusError) as exc:
+        raise RuntimeError(f"Ollama HTTP transport failed: {type(exc).__name__}") from exc
 
+    try:
+        data = response.json()
+    except Exception as exc:
+        raise RuntimeError("Ollama response was not valid JSON") from exc
+
+    if not isinstance(data, dict):
+        raise RuntimeError("Ollama response JSON was not an object")
+
+    response_val = data.get("response")
+    if not isinstance(response_val, str):
+        raise RuntimeError("Ollama response missing string response field")
+
+    return response_val
 
 # ---------------------------------------------------------------------------
 # Server-side response parser and confidence validator
@@ -395,6 +412,17 @@ async def async_ai_citation_task(
     were produced. Provider failure is reported as UNAVAILABLE — never
     as a completed run.
     """
+    if not settings.LOCAL_AI_ENABLED:
+        logger.info("Local AI disabled; skipping citation guidance audit_id=%s", audit_id)
+        return AiCitationResult(status=AI_STATUS_UNAVAILABLE, provider=None, suggestions=[])
+
+    if not loopback_origin(settings.OLLAMA_HOST):
+        logger.warning(
+            "Unsafe or non-loopback Ollama host configured; refusing citation guidance audit_id=%s",
+            audit_id,
+        )
+        return AiCitationResult(status=AI_STATUS_UNAVAILABLE, provider=None, suggestions=[])
+
     if citation_findings is None:
         citation_findings = []
 

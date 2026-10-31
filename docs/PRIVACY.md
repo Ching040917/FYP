@@ -44,10 +44,13 @@ The download is performed by your local Ollama service, not by ACA. ACA's Backen
 
 ## What happens when Local AI is used?
 
-Local AI citation guidance uses the Ollama service installed on your own machine. When an audit has confirmed citation findings, ACA sends only the relevant citation snippets and finding context to your local Ollama service — never the full document as a file. Reference List entries and bibliography text are never sent to the model, and the citation comparison itself runs without it. Results stay on your machine.
+Local AI citation guidance uses the Ollama service installed on your own machine. Local AI is optional and can be disabled completely by setting `LOCAL_AI_ENABLED=false` in the backend configuration. When disabled, zero citation snippets are extracted or held in memory for AI, no background guidance task is dispatched, and no HTTP requests are made.
 
-No cloud AI provider is included in ACA. There is no external AI API key to configure, no provider selection, and no cloud opt-in; no document text, citation context, prompt, or finding is ever transmitted to a third-party AI service. Local AI requests go only to your own Ollama service at `127.0.0.1`.
+When enabled, ACA strictly restricts all AI guidance requests to verified loopback origins (`127.0.0.1`, `localhost`, or `[::1]`) on plain HTTP without user credentials, subpaths, queries, or fragments. HTTP redirects are rejected (`follow_redirects=False`) to prevent any redirection off loopback. Any non-loopback, LAN, or remote host configuration fails closed: citation snippets are never transmitted, guidance becomes unavailable, and deterministic audit scores and findings complete unaffected.
 
+When an audit has confirmed citation findings and a verified loopback host is configured, ACA sends only the relevant citation snippets and finding context to your local Ollama service — never the full document as a file. Reference List entries and bibliography text are never sent to the model, and the citation comparison itself runs without it. Results stay on your machine.
+
+No cloud AI provider is included in ACA. There is no external AI API key to configure, no provider selection, and no cloud opt-in; no document text, citation context, prompt, or finding is ever transmitted to a third-party AI service. Local AI requests go only to your own verified loopback Ollama service.
 ## What happens when I delete an audit?
 
 Deleting an audit from History or the Audit Workspace permanently removes that audit's records, findings, citation issues, and document blocks. Deletion cannot be undone from within ACA.

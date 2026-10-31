@@ -245,7 +245,7 @@ document, or offer an automatic correction. Current values retain source spellin
 Two optional components extend ACA, but neither is required:
 
 - **Page-rendered preview and LibreOffice:** In ACA v1.0.0, page-rendered preview and physical page mapping are disabled to enforce ACA's hard privacy contract: uploaded DOCX bytes are processed purely in memory and are never written to temporary files on disk. Extracted-text preview remains available for all audits.
-- **Ollama** enables optional **Local AI Citation Guidance** — suggestions for APA 7 in-text citation formatting only. It is never a full academic review, never rewrites or corrects your DOCX, and every suggestion needs your own review.
+- **Ollama** enables optional **Local AI Citation Guidance** — suggestions for APA 7 in-text citation formatting only. It is strictly restricted to verified loopback connections (`127.0.0.1`, `localhost`, `[::1]`); remote LAN/cloud hosts are rejected for privacy. It is never a full academic review, never rewrites or corrects your DOCX, and every suggestion needs your own review.
 
 Core deterministic audits — document checks, formatting findings, extracted-text preview, Guided Fixes, PDF report export, and Audit History — remain available without either component. When an optional component is missing, setup actions appear in the Dashboard's **System Readiness** card. ACA never installs third-party software; the only download it can start is the optional citation-guidance model, after you explicitly confirm it.
 

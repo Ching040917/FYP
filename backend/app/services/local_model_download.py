@@ -34,12 +34,13 @@ import asyncio
 import json
 import logging
 from typing import Dict, List, Literal, Optional
-from urllib.parse import urlsplit
 
 import httpx
 from pydantic import BaseModel, ConfigDict
 
 from app.config import settings
+from app.services.loopback_validator import loopback_origin as _pure_loopback_origin
+
 
 logger = logging.getLogger(__name__)
 
@@ -114,7 +115,6 @@ _PROBE_TIMEOUT_S = 3.0
 _PULL_START_ATTEMPTS = 3
 _PULL_RETRY_DELAY_S = 2.0
 
-_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 
 _VERIFYING_STATUSES = frozenset({
     "verifying sha256 digest",
@@ -221,7 +221,6 @@ def reset_state() -> None:
 # Origin validation — loopback only, never influenced by a request
 # ---------------------------------------------------------------------------
 
-
 def loopback_origin() -> Optional[str]:
     """Return the validated loopback Ollama origin, or None when refused.
 
@@ -230,39 +229,7 @@ def loopback_origin() -> Optional[str]:
     slash, and a syntactically valid port. The configured value is never
     echoed back to a caller or into an error message.
     """
-    raw = (settings.OLLAMA_HOST or "").strip()
-    if not raw:
-        return None
-    try:
-        parts = urlsplit(raw)
-    except ValueError:
-        return None
-
-    if parts.scheme != "http":
-        return None
-    if parts.username or parts.password:
-        return None
-    if parts.query or parts.fragment:
-        return None
-    if parts.path not in ("", "/"):
-        return None
-
-    host = parts.hostname or ""
-    if host not in _LOOPBACK_HOSTS:
-        return None
-
-    try:
-        port = parts.port
-    except ValueError:
-        # Malformed or out-of-range port.
-        return None
-    if port is None:
-        port = 80
-
-    # IPv6 literals must be bracketed to form a valid authority.
-    authority = f"[{host}]" if ":" in host else host
-    return f"http://{authority}:{port}"
-
+    return _pure_loopback_origin(settings.OLLAMA_HOST)
 
 # ---------------------------------------------------------------------------
 # Progress accounting
