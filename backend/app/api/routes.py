@@ -168,46 +168,18 @@ async def audit_document(
     db.add(audit)
     db.commit()
     db.refresh(audit)
+    logger.info("audit=%s status=processing", audit.id)
 
-    # True once *we* wrote the rendered preview file — the only case where
-    # cleanup (removal) is ours to perform.
     preview_pdf_written = False
     preview_pdf_bytes: bytes | None = None
 
     try:
-        # ---- Rendered PDF preview (Build 2): best-effort, never fails the audit ----
-        # Reuses the in-memory DOCX bytes; converts and persists atomically.
-        # Any failure marks the preview UNAVAILABLE with a safe category and
-        # the audit continues normally. The original DOCX is never stored.
-        preview_started = time.perf_counter()
-        try:
-            pdf_bytes = convert_docx_to_pdf(file_bytes)
-            preview_pdf_bytes = pdf_bytes
-            meta = preview_storage.store_pdf(audit.id, pdf_bytes)
-            preview_pdf_written = True
-            audit.rendered_preview_status = preview_storage.PREVIEW_STATUS_AVAILABLE
-            audit.rendered_preview_sha256 = meta.sha256
-            audit.rendered_preview_size = meta.size
-            audit.rendered_preview_pages = meta.pages
-            audit.rendered_preview_converted_at = meta.converted_at
-            audit.rendered_preview_error = None
-            logger.info(
-                "preview render audit=%s status=AVAILABLE duration_ms=%d pages=%d",
-                audit.id, int((time.perf_counter() - preview_started) * 1000), meta.pages,
-            )
-        except Exception as exc:
-            # Clean up only a file we created (e.g. store succeeded but a
-            # later step in this block failed); never touch pre-existing files.
-            if preview_pdf_written:
-                preview_storage.remove_preview(audit.id)
-            audit.rendered_preview_status = preview_storage.PREVIEW_STATUS_UNAVAILABLE
-            audit.rendered_preview_error = _preview_error_category(exc)
-            logger.info(
-                "preview render audit=%s status=UNAVAILABLE error=%s duration_ms=%d",
-                audit.id, audit.rendered_preview_error,
-                int((time.perf_counter() - preview_started) * 1000),
-            )
-
+        # In ACA v1.0.0, rendered PDF conversion for uploaded DOCX documents is disabled
+        # to enforce ACA's hard privacy constraint: uploaded document bytes are processed
+        # strictly in memory and are never passed to LibreOffice or written to temporary
+        # disk files. Extracted-text preview remains available as the active preview mode.
+        audit.rendered_preview_status = preview_storage.PREVIEW_STATUS_UNAVAILABLE
+        audit.rendered_preview_error = "preview_disabled"
         # ---- Section boundary metadata (PoC) — persisted with the audit ----
         # Captured from the DOCX at creation time so GET / refresh / History
         # keep it (never reconstructed from PDF text after the DOCX is gone).
@@ -802,7 +774,7 @@ async def get_rendered_preview(audit_id: str, db: Session = Depends(get_db)):
         raise HTTPException(
             status_code=409,
             detail=(
-                "The page-rendered preview could not be created. "
+                "Page-rendered preview is unavailable. "
                 "The extracted-text preview remains available."
             ),
             headers={"X-Preview-Error-Category": category},

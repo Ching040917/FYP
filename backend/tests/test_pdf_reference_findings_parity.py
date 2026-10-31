@@ -334,14 +334,13 @@ def test_owner_fixture_phase2_titles_are_present(client, owner_audit):
 
 def test_owner_fixture_phase3_titles_are_present(client, owner_audit):
     titles = _register_titles(_pdf_text(client.get(f"/api/audit/{owner_audit}/export-pdf").content))
+    assert "Reference List should start on a new page" not in titles
     for expected in (
         "Reference List heading should be bold",
-        "Reference List should start on a new page",
         "Reference entry hanging indent does not match",
         "Reference entry font size does not match",
     ):
         assert expected in titles, f"missing Phase 3 finding {expected!r}; got {sorted(titles)}"
-
 
 def test_every_expected_owner_fixture_rule_appears_in_the_register(client, owner_audit):
     """The complete expected rule set is present — nothing silently absent.
@@ -357,6 +356,7 @@ def test_every_expected_owner_fixture_rule_appears_in_the_register(client, owner
     text = _pdf_text(client.get(f"/api/audit/{owner_audit}/export-pdf").content)
     titles = _register_titles(text)
 
+    assert "REFERENCE_SECTION_NEW_PAGE" not in persisted
     expected_rules = {
         "CITATION_MISMATCH",
         "CITATION_REFERENCE_MISMATCH",
@@ -365,7 +365,6 @@ def test_every_expected_owner_fixture_rule_appears_in_the_register(client, owner
         "REFERENCE_NOT_CITED",
         "REFERENCE_DUPLICATE",
         "REFERENCE_HEADING_BOLD",
-        "REFERENCE_SECTION_NEW_PAGE",
         "REFERENCE_HANGING_INDENT",
         "REFERENCE_FONT_SIZE",
         "LINE_SPACING",
@@ -428,16 +427,11 @@ def test_hanging_indent_current_required_and_occurrence_count(client, owner_audi
 
 
 def test_new_page_current_and_required_values(client, owner_audit):
-    get = client.get(f"/api/audit/{owner_audit}").json()["violations"]
-    new_page = [v for v in get if v["rule_code"] == "REFERENCE_SECTION_NEW_PAGE"]
-    assert len(new_page) == 1
-    assert new_page[0]["actual_value"] == "Starts on the same page as preceding content"
-    assert new_page[0]["expected_value"] == "Start References on a new page"
-
-    text = _pdf_text(client.get(f"/api/audit/{owner_audit}/export-pdf").content)
-    assert "Starts on the same page as preceding content" in text
-    assert "Start References on a new page" in text
-
+    """REFERENCE_SECTION_NEW_PAGE is omitted because upload-time page mapping is absent."""
+    get = client.get(f"/api/audit/{owner_audit}").json()
+    new_page = [v for v in get["violations"] if v["rule_code"] == "REFERENCE_SECTION_NEW_PAGE"]
+    assert len(new_page) == 0, "Page-dependent rule must not be emitted without physical page mapping"
+    assert get.get("paragraph_page_mapping") is None
 
 def test_heading_bold_current_and_required_values(client, owner_audit):
     get = client.get(f"/api/audit/{owner_audit}").json()["violations"]

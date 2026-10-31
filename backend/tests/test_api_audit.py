@@ -308,9 +308,9 @@ def test_internal_exception_rolls_back_and_cleans_preview(
     assert row.status == "failed"
     aid = row.id
     s.close()
-    # The persisted rendered PDF was removed with the failed transaction.
+    # The persisted rendered PDF was not created or was removed with the failed transaction.
     assert not (preview_root / f"{aid}.pdf").exists()
-    assert list((preview_root / ".tmp").iterdir()) == []
+    assert not (preview_root / ".tmp").exists() or list((preview_root / ".tmp").iterdir()) == []
 
 
 def test_validation_errors_keep_specific_messages(client, docx_factory):

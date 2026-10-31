@@ -76,7 +76,7 @@ const FIT_PAGE_BOTTOM_RESERVE_PX = 12
 const FIT_CONTAINER_PADDING_PX = 32
 const FALLBACK_MESSAGES: Record<Exclude<RenderedPdfState['status'], 'loading' | 'available' | 'idle'>, string> = {
   historical: 'Rendered preview is unavailable for this older audit.',
-  unavailable: 'The page-rendered preview could not be created. The extracted-text preview remains available.',
+  unavailable: 'Page-rendered preview is unavailable. The extracted-text preview remains available.',
   corrupt: 'The rendered preview is no longer available. The extracted-text preview remains available.',
   missing: 'The rendered preview is no longer available. The extracted-text preview remains available.',
   error: 'The rendered preview could not be loaded. The extracted-text preview remains available.',

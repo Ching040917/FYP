@@ -27,7 +27,10 @@ export interface RenderedPdfState {
 
 function mapFailure(status: number, detail: string): RenderedPdfStatus {
   if (status === 404) return detail.includes('older audit') ? 'historical' : 'error'
-  if (status === 409) return detail.includes('could not be created') ? 'unavailable' : 'corrupt'
+  if (status === 409)
+    return detail.includes('could not be created') || detail.toLowerCase().includes('unavailable')
+      ? 'unavailable'
+      : 'corrupt'
   if (status === 410) return 'missing'
   return 'error'
 }

@@ -14,7 +14,7 @@ These limitations describe the current release. Nothing here describes a planned
 
 ## Optional components
 
-- **LibreOffice** is optional but is needed for rendered-page previews and original-document page locations. Without it, audits complete and extracted-text evidence remains available.
+- **Page-rendered preview and LibreOffice:** In ACA v1.0.0, page-rendered preview and physical page location mapping are disabled to preserve ACA's strict in-memory privacy contract: uploaded DOCX bytes are processed purely in memory and are never written to temporary files on disk. Extracted-text preview and paragraph-level evidence linking remain fully available for every audit.
 - **Local AI (Ollama)** is optional. It provides suggestions for APA 7 in-text citation formatting only, needs your own review, and is not required for deterministic document auditing, formatting findings, rendered-page preview, Guided Fixes, PDF report export, or Audit History.
 - Local AI performance depends on your computer's memory and processor, and **no minimum memory requirement is specified**. Low-memory computers can simply continue without local AI — deterministic checks are unaffected.
 - The optional **Citation Guidance Model** is downloaded separately, after you confirm it in the app, using the Ollama service on your own computer. No download size is displayed, because a model that is not installed locally cannot be measured from a trusted source before it is fetched — the app says *Check model information* rather than guessing.

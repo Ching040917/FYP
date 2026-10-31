@@ -4,14 +4,14 @@ ACA is a local-first application: your documents and audit results stay on your 
 
 ## Does ACA keep my original DOCX?
 
-**No.** Your original DOCX file is processed in memory and is never saved to disk as a document file. The file is read once for the audit (formatting checks, section extraction, and optional page conversion), then discarded. To audit the same document again, you upload it again.
+**No.** Your original DOCX file is processed in memory and is never saved to disk as a document file. The file is read once for the audit (formatting checks and section extraction), then discarded. To audit the same document again, you upload it again.
 
-ACA does keep *derived* information from the audit: findings, locations, expected and actual values, paragraph text used as evidence, section metadata, your formatting profile snapshot, citation suggestions, document statistics, and a generated page-preview PDF when available.
+ACA does keep *derived* information from the audit: findings, locations, expected and actual values, paragraph text used as evidence, section metadata, your formatting profile snapshot, citation suggestions, and document statistics. In ACA v1.0.0, page-rendered preview via LibreOffice conversion is disabled to ensure zero temporary document copies are written to disk; extracted-text preview is the active preview mode. Generated PDF audit reports and explicitly downloaded corrected DOCX copies are separate, user-requested outputs.
 
 ## What information is stored locally?
 
 - Your audit history: scores, findings, citation issues, paragraph evidence, profile snapshots, and document statistics.
-- Generated page-preview PDFs (when LibreOffice is available).
+- In-memory extracted-text preview (stored as paragraph blocks in your local database). Generated page-preview PDFs are unavailable in v1.0.0 to prevent temporary document writes.
 - Automatic database backups created before upgrades.
 - Diagnostic logs (start-up, port selection, health checks, safe error categories — never document text).
 - Browser storage: your saved custom profiles, current profile selection, an unsaved profile draft if you close the editor mid-edit, and whether you dismissed the first-run guidance.
@@ -50,7 +50,7 @@ No cloud AI provider is included in ACA. There is no external AI API key to conf
 
 ## What happens when I delete an audit?
 
-Deleting an audit from History or the Audit Workspace permanently removes that audit's records, findings, citation issues, and generated page preview. Deletion cannot be undone from within ACA.
+Deleting an audit from History or the Audit Workspace permanently removes that audit's records, findings, citation issues, and document blocks. Deletion cannot be undone from within ACA.
 
 One caveat: automatic database backups (kept in `backups\`) may still contain an older copy of the database that includes the deleted audit. Treat the `backups\` folder as sensitive — it is not automatically purged when you delete an audit.
 

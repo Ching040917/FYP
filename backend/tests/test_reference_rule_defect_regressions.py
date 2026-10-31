@@ -943,9 +943,7 @@ def test_d4_d5_real_pipeline_emits_and_persists_both_findings(
     }
     new_page = [v for v in body["physical_layout_errors"]
                 if v["rule_code"] == "REFERENCE_SECTION_NEW_PAGE"]
-    assert len(new_page) == 1
-    assert new_page[0]["location"] == {"paragraph_index": 1}
-    assert new_page[0]["severity"] == "MINOR"
+    assert len(new_page) == 0, "Page-dependent rule must not be emitted without physical page mapping"
 
     # GET (Audit page / History reopen) serves the same findings.
     get = client.get(f"/api/audit/{audit_id}")
@@ -956,10 +954,7 @@ def test_d4_d5_real_pipeline_emits_and_persists_both_findings(
     }
     assert ("REFERENCE_HANGING_INDENT", "0in", "0.5in") in served
     assert ("REFERENCE_HANGING_INDENT", "0.25in", "0.5in") in served
-    assert ("REFERENCE_SECTION_NEW_PAGE",
-            "Starts on the same page as preceding content",
-            "Start References on a new page") in served
-
+    assert not any(v[0] == "REFERENCE_SECTION_NEW_PAGE" for v in served)
     # History list + PDF export.
     listing = client.get("/api/audits")
     assert listing.status_code == 200

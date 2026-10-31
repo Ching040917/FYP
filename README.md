@@ -41,7 +41,7 @@ After an audit, ACA shows what it found and why:
 
 - Identifies supported formatting and citation issues, grouped by severity.
 - Shows the value found in your document and the required value (Current and Required).
-- Links supported body findings to a rendered page preview when the optional LibreOffice integration is available, or to extracted text otherwise. Structural reviews identify stored section/story definitions without a visual region.
+- Links supported body findings to extracted text in the Document Preview, with paragraph-level evidence highlights. Structural reviews identify stored section/story definitions without a visual region.
 - Produces a PDF report you can save or share.
 
 ![Academic Compliance Auditor workspace showing compact findings, Document Preview with inline Evidence details, and read-only Current and Required values.](docs/images/aca-audit-workspace.png)
@@ -244,10 +244,10 @@ document, or offer an automatic correction. Current values retain source spellin
 
 Two optional components extend ACA, but neither is required:
 
-- **LibreOffice** enables rendered-page previews and original-document page locations. Without it, extracted-text evidence remains available.
+- **Page-rendered preview and LibreOffice:** In ACA v1.0.0, page-rendered preview and physical page mapping are disabled to enforce ACA's hard privacy contract: uploaded DOCX bytes are processed purely in memory and are never written to temporary files on disk. Extracted-text preview remains available for all audits.
 - **Ollama** enables optional **Local AI Citation Guidance** — suggestions for APA 7 in-text citation formatting only. It is never a full academic review, never rewrites or corrects your DOCX, and every suggestion needs your own review.
 
-Core deterministic audits — document checks, formatting findings, rendered-page previews, Guided Fixes, PDF report export, and Audit History — remain available without either component. When an optional component is missing, setup actions appear in the Dashboard's **System Readiness** card. ACA never installs third-party software; the only download it can start is the optional citation-guidance model, after you explicitly confirm it.
+Core deterministic audits — document checks, formatting findings, extracted-text preview, Guided Fixes, PDF report export, and Audit History — remain available without either component. When an optional component is missing, setup actions appear in the Dashboard's **System Readiness** card. ACA never installs third-party software; the only download it can start is the optional citation-guidance model, after you explicitly confirm it.
 
 ## Documentation
 

@@ -74,24 +74,22 @@ def _audit_row(test_engine, audit_id):
 # success path
 # ---------------------------------------------------------------------------
 
-def test_post_creates_pdf_and_available_metadata(client, docx_factory, preview_root, converter_ok, test_engine):
+def test_post_upload_leaves_preview_unavailable_without_disk_write(client, docx_factory, preview_root, test_engine):
     resp = _post(client, docx_factory)
     assert resp.status_code == 200
     audit_id = resp.json()["audit_id"]
 
     final = preview_root / f"{audit_id}.pdf"
-    assert final.exists()
-    assert final.read_bytes().startswith(b"%PDF")
-    assert list((preview_root / ".tmp").iterdir()) == []
+    assert not final.exists()
+    assert not (preview_root / ".tmp").exists() or list((preview_root / ".tmp").iterdir()) == []
 
     row = _audit_row(test_engine, audit_id)
-    assert row.rendered_preview_status == "AVAILABLE"
-    assert len(row.rendered_preview_sha256) == 64
-    assert row.rendered_preview_size == final.stat().st_size
-    assert row.rendered_preview_pages == 2
-    assert row.rendered_preview_converted_at is not None
-    assert row.rendered_preview_error is None
-
+    assert row.rendered_preview_status == "UNAVAILABLE"
+    assert row.rendered_preview_error == "preview_disabled"
+    assert row.rendered_preview_sha256 is None
+    assert row.rendered_preview_size is None
+    assert row.rendered_preview_pages is None
+    assert row.rendered_preview_converted_at is None
 
 # ---------------------------------------------------------------------------
 # failure modes — audit must still complete
@@ -115,12 +113,11 @@ def test_conversion_failures_audit_still_completes(
 
     row = _audit_row(test_engine, audit_id)
     assert row.rendered_preview_status == "UNAVAILABLE"
-    assert row.rendered_preview_error == expected_error
+    assert row.rendered_preview_error == "preview_disabled"
     for field in ("rendered_preview_sha256", "rendered_preview_size",
                   "rendered_preview_pages", "rendered_preview_converted_at"):
         assert getattr(row, field) is None
     assert not (preview_root / f"{audit_id}.pdf").exists()
-
 
 def test_persistence_failure_audit_still_completes(
     client, docx_factory, preview_root, monkeypatch, test_engine,
@@ -136,7 +133,7 @@ def test_persistence_failure_audit_still_completes(
     audit_id = resp.json()["audit_id"]
     row = _audit_row(test_engine, audit_id)
     assert row.rendered_preview_status == "UNAVAILABLE"
-    assert row.rendered_preview_error == "persistence_failed"
+    assert row.rendered_preview_error == "preview_disabled"
     assert not (preview_root / f"{audit_id}.pdf").exists()
 
 
@@ -148,7 +145,7 @@ def test_error_category_always_in_allowed_set(
     resp = _post(client, docx_factory)
     assert resp.status_code == 200
     row = _audit_row(test_engine, resp.json()["audit_id"])
-    assert row.rendered_preview_error in preview_storage.PREVIEW_ERRORS
+    assert row.rendered_preview_error in ("preview_disabled", *preview_storage.PREVIEW_ERRORS)
 
 
 # ---------------------------------------------------------------------------
@@ -192,7 +189,7 @@ def test_db_failure_removes_final_pdf(client, docx_factory, preview_root, monkey
     assert resp.status_code == 500
     audit_id = _latest_failed(test_engine)
     assert not (preview_root / f"{audit_id}.pdf").exists()
-    assert list((preview_root / ".tmp").iterdir()) == []
+    assert not (preview_root / ".tmp").exists() or list((preview_root / ".tmp").iterdir()) == []
 
 
 def _latest_failed(test_engine):
@@ -230,7 +227,7 @@ def test_existing_final_file_not_overwritten(client, docx_factory, preview_root,
 
     row = _audit_row(test_engine, str(fixed))
     assert row.rendered_preview_status == "UNAVAILABLE"
-    assert row.rendered_preview_error == "persistence_failed"
+    assert row.rendered_preview_error == "preview_disabled"
     # original file untouched, no temp leftovers
     assert (preview_root / f"{fixed}.pdf").read_bytes() == original
     if (preview_root / ".tmp").exists():
@@ -242,7 +239,7 @@ def test_original_docx_never_persisted(client, docx_factory, preview_root, conve
     assert resp.status_code == 200
     files = [p for p in preview_root.rglob("*") if p.is_file()]
     assert all(p.suffix == ".pdf" for p in files), f"non-PDF persisted: {files}"
-    assert list((preview_root / ".tmp").iterdir()) == []
+    assert not (preview_root / ".tmp").exists() or list((preview_root / ".tmp").iterdir()) == []
 
 
 # ---------------------------------------------------------------------------
@@ -288,8 +285,8 @@ def test_concurrent_audits_use_isolated_files(client_file_db, docx_factory, prev
     ids = [r for r in results if r]
     assert len(set(ids)) == 4
     files = {p.name for p in preview_root.glob("*.pdf")}
-    assert files == {f"{aid}.pdf" for aid in ids}
-    assert list((preview_root / ".tmp").iterdir()) == []
+    assert files == set()
+    assert not (preview_root / ".tmp").exists() or list((preview_root / ".tmp").iterdir()) == []
 
 
 def test_post_response_remains_backward_compatible(client, docx_factory, preview_root, converter_ok):
@@ -315,4 +312,3 @@ def test_logs_contain_no_paths_or_content(client, docx_factory, preview_root, co
     assert "AcademicComplianceAuditor" not in joined
     assert "Body text" not in joined
     assert f"audit={audit_id}" in joined
-    assert "AVAILABLE" in joined
