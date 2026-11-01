@@ -173,9 +173,8 @@ export function DocumentPreview({
     [violations, blocks],
   )
 
-  // Scroll the linked block into view when selection changes (or when this
-  // preview becomes the active view). Scrolls ONLY the preview container —
-  // never the page — and never moves keyboard focus.
+  // Keyboard activation reveals its focused block without recentering it.
+  // Other selections scroll only the preview and never move keyboard focus.
   React.useEffect(() => {
     if (active === false) return
     if (!selectedViolationId || orderedBlocks === null) return
@@ -188,6 +187,8 @@ export function DocumentPreview({
     const el = blockRefs.current.get(idx)
     const container = containerRef.current
     if (!el || !container) return
+
+    if (el.matches(':focus-visible')) return
 
     // Smooth scroll only when user has not requested reduced motion.
     const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
@@ -479,11 +480,16 @@ export function DocumentPreview({
                   else blockRefs.current.delete(block.index)
                 }}
                 data-block-index={block.index}
-                onClick={() => onSelectViolation(viols![0].id)}
+                onClick={(event) => {
+                  if (event.currentTarget.matches(':focus-visible')) {
+                    event.currentTarget.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'instant' })
+                  }
+                  onSelectViolation(viols![0].id)
+                }}
                 aria-pressed={isSelected}
                 className={cn(
                   blockClass,
-                  'flex flex-col items-start',
+                  'flex scroll-mt-20 scroll-mb-1 flex-col items-start',
                   'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1 focus-visible:ring-offset-card',
                 )}
               >

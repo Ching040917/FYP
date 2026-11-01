@@ -3,7 +3,7 @@
  * Findings list header have distinct, descriptive accessible names.
  * Applies at all supported desktop viewports (no phone dependency).
  */
-import { test, expect } from '@playwright/test'
+import { chromium, test, expect, type Locator, type Page } from '@playwright/test'
 import { createSyntheticAudit, annotate } from './helpers'
 
 test.describe('audit filters — accessible names @a11y', () => {
@@ -357,4 +357,209 @@ test('audit loading is named and request failure retains dashboard recovery', as
   await expect(page.getByText('Audit unavailable for review', { exact: true }).first()).toBeVisible()
   await page.getByRole('button', { name: 'Back to Dashboard', exact: true }).click()
   await expect(page).toHaveURL(/\/dashboard$/)
+})
+
+async function openNativePreview(baseURL: string, profile: string, zoom: '1' | '2') {
+  const context = await chromium.launchPersistentContext(profile, {
+    channel: 'chrome',
+    headless: false,
+    viewport: null,
+    reducedMotion: 'reduce',
+    args: [
+      '--window-size=1051,798',
+      '--disable-background-networking',
+      '--disable-component-update',
+      '--disable-sync',
+      '--no-pings',
+      '--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1, EXCLUDE localhost',
+    ],
+  })
+  try {
+    await context.route('**/*', (route) => {
+      const host = new URL(route.request().url()).hostname
+      return host === '127.0.0.1' || host === 'localhost' ? route.continue() : route.abort()
+    })
+    const page = context.pages()[0] ?? await context.newPage()
+    await page.goto('chrome://settings/appearance')
+    const zoomControl = page.getByRole('combobox', { name: 'Page zoom' })
+    await zoomControl.selectOption(zoom)
+    await expect(zoomControl).toHaveValue(zoom)
+
+    await page.goto(`${baseURL}/dashboard`)
+    const dimensions = await page.evaluate(() => ({ outer: outerWidth, inner: innerWidth }))
+    expect(dimensions.inner / dimensions.outer).toBeLessThan(zoom === '2' ? 0.6 : 1.05)
+    if (zoom === '1') expect(dimensions.inner / dimensions.outer).toBeGreaterThan(0.9)
+    await expect(page.getByText('SUC Academic Report', { exact: true }).first()).toBeVisible()
+    const sampleResponse = page.waitForResponse((response) => response.url().endsWith('/samples/sample-thesis.docx'))
+    const auditResponse = page.waitForResponse((response) =>
+      new URL(response.url()).pathname === '/api/audit' && response.request().method() === 'POST',
+    )
+    await page.getByRole('button', { name: 'Try with the sample thesis' }).click()
+    expect((await sampleResponse).status()).toBe(200)
+    const response = await auditResponse
+    expect(response.status()).toBe(200)
+    const audit = await response.json()
+    expect(audit.weighted_compliance_score).toBe(62)
+    expect(audit.major_count).toBe(5)
+    expect(audit.minor_count).toBe(6)
+    expect(audit.paragraph_page_mapping).toBeNull()
+    const previewResponse = page.waitForResponse((result) =>
+      result.url().endsWith(`/api/audit/${audit.audit_id}/rendered-preview`),
+    )
+    await page.getByRole('button', { name: `View audit ${audit.audit_id}` }).first().click()
+    const preview = await previewResponse
+    expect(preview.status()).toBe(409)
+    expect(preview.headers()['x-preview-error-category']).toBe('preview_disabled')
+    return { context, page, auditId: audit.audit_id as string }
+  } catch (error) {
+    await context.close()
+    throw error
+  }
+}
+
+async function tabUntil(page: Page, selector: string, key: 'Tab' | 'Shift+Tab' = 'Tab') {
+  for (let i = 0; i < 90; i++) {
+    await page.keyboard.press(key)
+    if (await page.evaluate((target) => document.activeElement?.matches(target) ?? false, selector)) return
+  }
+  throw new Error(`Keyboard focus did not reach ${selector}`)
+}
+
+async function expectVisiblePreviewFocus(target: Locator) {
+  await expect(target).toBeFocused()
+  await expect.poll(() => target.evaluate((element) => {
+    const rect = element.getBoundingClientRect()
+    const header = document.querySelector('header')?.getBoundingClientRect()
+    const preview = element.closest('[role="region"][aria-label="Document preview"]')?.getBoundingClientRect()
+    if (!header || !preview || !element.matches(':focus-visible')) return false
+    const style = getComputedStyle(element)
+    const x = rect.left + rect.width / 2
+    const points = [rect.top + 3, rect.bottom - 3]
+    return style.boxShadow !== 'none'
+      && rect.top - 3 >= Math.max(header.bottom, preview.top)
+      && rect.bottom + 3 <= Math.min(innerHeight, preview.bottom)
+      && points.every((y) => {
+        const hit = document.elementFromPoint(x, y)
+        return hit !== null && (hit === element || element.contains(hit))
+      })
+  })).toBe(true)
+}
+
+async function obscureFocusedPreviewBlock(page: Page, target: Locator) {
+  const box = await target.boundingBox()
+  if (!box) throw new Error('Focused paragraph has no visible bounds')
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+  await page.mouse.wheel(0, 300)
+  await expect.poll(() => target.evaluate((element) =>
+    element.getBoundingClientRect().top - document.querySelector('header')!.getBoundingClientRect().bottom,
+  )).toBeLessThan(0)
+}
+
+async function guidedCandidateLabels(page: Page) {
+  await page.getByRole('button', { name: /^Guided Fixes/ }).filter({ visible: true }).first().click()
+  const dialog = page.getByRole('dialog', { name: /Guided Fixes/ })
+  await expect(dialog).toBeVisible()
+  const labels = await dialog.locator('input[type="checkbox"][aria-label]')
+    .evaluateAll((inputs) => inputs.map((input) => input.getAttribute('aria-label')))
+  await dialog.getByRole('button', { name: 'Close Guided Fixes' }).click()
+  return labels
+}
+
+test('native 200% preview selection keeps keyboard focus visible', async ({ baseURL }, testInfo) => {
+  testInfo.setTimeout(120_000)
+  if (!baseURL) throw new Error('A task-owned backend and frontend are required')
+  const { context, page, auditId } = await openNativePreview(baseURL, testInfo.outputPath('native-200-profile'), '2')
+  try {
+    const before = await (await page.request.get(`${baseURL}/api/audit/${auditId}`)).json()
+    const candidates = await guidedCandidateLabels(page)
+    await page.reload()
+    await tabUntil(page, '#tab-findings')
+    await page.keyboard.press('ArrowRight')
+    await expect(page.getByRole('tab', { name: 'Document', exact: true })).toBeFocused()
+    await tabUntil(page, '[data-block-index="6"]')
+    const middle = page.locator('#panel-document [data-block-index="6"]')
+    await expectVisiblePreviewFocus(middle)
+    await page.keyboard.press('Enter')
+    await expect(middle).toHaveAttribute('aria-pressed', 'true')
+    await expectVisiblePreviewFocus(middle)
+    await obscureFocusedPreviewBlock(page, middle)
+    await page.keyboard.press('Enter')
+    await expectVisiblePreviewFocus(middle)
+
+    await tabUntil(page, '[data-block-index="9"]')
+    const later = page.locator('#panel-document [data-block-index="9"]')
+    await expectVisiblePreviewFocus(later)
+    await page.keyboard.press('Space')
+    await expect(later).toHaveAttribute('aria-pressed', 'true')
+    await expectVisiblePreviewFocus(later)
+    await tabUntil(page, '[data-block-index="6"]', 'Shift+Tab')
+    await obscureFocusedPreviewBlock(page, middle)
+    await page.keyboard.press('Enter')
+    await expect(middle).toHaveAttribute('aria-pressed', 'true')
+    await expectVisiblePreviewFocus(middle)
+    await tabUntil(page, '[data-block-index="0"]', 'Shift+Tab')
+    const first = page.locator('#panel-document [data-block-index="0"]')
+    await page.keyboard.press('Enter')
+    await expect(first).toHaveAttribute('aria-pressed', 'true')
+    await expectVisiblePreviewFocus(first)
+    await tabUntil(page, '[data-block-index="6"]')
+    await page.keyboard.press('Enter')
+    await expectVisiblePreviewFocus(middle)
+
+    await tabUntil(page, '#tab-document', 'Shift+Tab')
+    await page.keyboard.press('ArrowLeft')
+    const selectedFinding = page.locator('#panel-findings button[aria-label="Heading levels skip a step, Major, Document paragraph 7"]')
+    await expect(selectedFinding).toHaveAttribute('aria-pressed', 'true')
+    await page.keyboard.press('ArrowRight')
+    await tabUntil(page, '[data-block-index="6"]')
+    await expect(middle).toHaveAttribute('aria-pressed', 'true')
+    await expectVisiblePreviewFocus(middle)
+
+    let leftPreview = false
+    for (let i = 0; i < 15; i++) {
+      await page.keyboard.press('Tab')
+      if (await page.evaluate(() => !document.activeElement?.closest('[role="region"][aria-label="Document preview"]'))) {
+        leftPreview = true
+        break
+      }
+    }
+    expect(leftPreview).toBe(true)
+    expect(await (await page.request.get(`${baseURL}/api/audit/${auditId}`)).json()).toEqual(before)
+    expect(await guidedCandidateLabels(page)).toEqual(candidates)
+  } finally {
+    await context.close()
+  }
+})
+
+test('native 100% preview preserves modal focus and pointer selection', async ({ baseURL }, testInfo) => {
+  testInfo.setTimeout(120_000)
+  if (!baseURL) throw new Error('A task-owned backend and frontend are required')
+  const { context, page, auditId } = await openNativePreview(baseURL, testInfo.outputPath('native-100-profile'), '1')
+  try {
+    const before = await (await page.request.get(`${baseURL}/api/audit/${auditId}`)).json()
+    const candidates = await guidedCandidateLabels(page)
+    await page.reload()
+    await tabUntil(page, '[data-block-index="6"]')
+    const middle = page.locator('#ws-tablet-document [data-block-index="6"]')
+    await expectVisiblePreviewFocus(middle)
+    await page.keyboard.press('Enter')
+    const detail = page.getByRole('dialog', { name: 'Finding details' })
+    await expect(detail).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Close finding details' })).toBeFocused()
+    await page.keyboard.press('Escape')
+    await expect(middle).toHaveAttribute('aria-pressed', 'true')
+    await expectVisiblePreviewFocus(middle)
+
+    const pointer = page.locator('#ws-tablet-document [data-block-index="4"]')
+    await pointer.click()
+    await expect(detail).toBeVisible()
+    await expect(pointer).toHaveAttribute('aria-pressed', 'true')
+    await page.keyboard.press('Escape')
+    const finding = page.locator('#ws-tablet-findings button[aria-label="Font size does not match, Minor, Document paragraph 5"]')
+    await expect(finding).toHaveAttribute('aria-pressed', 'true')
+    expect(await (await page.request.get(`${baseURL}/api/audit/${auditId}`)).json()).toEqual(before)
+    expect(await guidedCandidateLabels(page)).toEqual(candidates)
+  } finally {
+    await context.close()
+  }
 })
