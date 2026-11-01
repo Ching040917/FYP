@@ -481,8 +481,43 @@ export function DocumentPreview({
                 }}
                 data-block-index={block.index}
                 onClick={(event) => {
-                  if (event.currentTarget.matches(':focus-visible')) {
-                    event.currentTarget.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'instant' })
+                  const container = containerRef.current
+                  if (container && event.currentTarget.matches(':focus-visible')) {
+                    const element = event.currentTarget
+                    const revealInContainer = () => {
+                      const target = element.getBoundingClientRect()
+                      const bounds = container.getBoundingClientRect()
+                      const headerBottom = document.querySelector('header')?.getBoundingClientRect().bottom ?? 0
+                      const visibleTop = Math.max(bounds.top + container.clientTop, headerBottom, 0) + 4
+                      const visibleBottom = Math.min(bounds.top + container.clientTop + container.clientHeight, window.innerHeight) - 4
+                      const delta = target.top < visibleTop ? target.top - visibleTop
+                        : target.bottom > visibleBottom ? target.bottom - visibleBottom : 0
+                      if (delta !== 0) container.scrollTo({ top: container.scrollTop + delta, behavior: 'instant' })
+                    }
+                    revealInContainer()
+                    const target = element.getBoundingClientRect()
+                    const bounds = container.getBoundingClientRect()
+                    const viewportTop = Math.max(document.querySelector('header')?.getBoundingClientRect().bottom ?? 0, 0) + 4
+                    const viewportBottom = window.innerHeight - 4
+                    const containerTop = bounds.top + container.clientTop
+                    const containerBottom = containerTop + container.clientHeight
+                    const clippedTop = Math.max(viewportTop, containerTop + 4)
+                    const clippedBottom = Math.min(viewportBottom, containerBottom - 4)
+                    if (target.top < clippedTop - 0.5 || target.bottom > clippedBottom + 0.5) {
+                      // Find the smallest viewport movement that allows some container scroll position to fit the target.
+                      const maxScroll = container.scrollHeight - container.clientHeight
+                      const minTargetTop = Math.max(target.top + container.scrollTop - maxScroll, containerTop + 4)
+                      const maxTargetTop = Math.min(target.top + container.scrollTop, containerBottom - 4 - target.height)
+                      const lower = minTargetTop - (viewportBottom - target.height)
+                      const upper = maxTargetTop - viewportTop
+                      if (lower <= upper) {
+                        const viewportDelta = Math.max(lower, Math.min(0, upper))
+                        if (Math.abs(viewportDelta) > 0.5) {
+                          window.scrollBy({ top: viewportDelta, behavior: 'instant' })
+                          revealInContainer()
+                        }
+                      }
+                    }
                   }
                   onSelectViolation(viols![0].id)
                 }}

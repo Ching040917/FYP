@@ -445,14 +445,93 @@ async function expectVisiblePreviewFocus(target: Locator) {
   })).toBe(true)
 }
 
-async function obscureFocusedPreviewBlock(page: Page, target: Locator) {
-  const box = await target.boundingBox()
-  if (!box) throw new Error('Focused paragraph has no visible bounds')
-  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
-  await page.mouse.wheel(0, 300)
-  await expect.poll(() => target.evaluate((element) =>
-    element.getBoundingClientRect().top - document.querySelector('header')!.getBoundingClientRect().bottom,
-  )).toBeLessThan(0)
+async function obscureFocusedPreviewBlock(page: Page, target: Locator, geometry: 'container' | 'viewport' | 'below' = 'container') {
+  if (geometry !== 'container') {
+    const height = await page.evaluate(() => window.innerHeight)
+    await page.mouse.move(5, height - 45)
+    await page.mouse.wheel(0, geometry === 'below' ? -2000 : 1000)
+  } else {
+    const box = await target.boundingBox()
+    if (!box) throw new Error('Focused paragraph has no visible bounds')
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+    await page.mouse.wheel(0, 300)
+  }
+  await expect.poll(() => target.evaluate((element, mode) => {
+    const header = document.querySelector('header')!.getBoundingClientRect()
+    const preview = element.closest('[role="region"][aria-label="Document preview"]')!
+    const bounds = preview.getBoundingClientRect()
+    const target = element.getBoundingClientRect()
+    if (mode !== 'container') {
+      const top = Math.max(header.bottom, bounds.top + preview.clientTop, 0) + 4
+      const bottom = Math.min(window.innerHeight, bounds.top + preview.clientTop + preview.clientHeight) - 4
+      return bottom - top - target.height
+    }
+    return target.top - Math.max(header.bottom, bounds.top)
+  }, geometry)).toBeLessThan(0)
+}
+
+type PreviewScrollState = {
+  windowX: number
+  windowY: number
+  previewTop: number
+  previewLeft: number
+  ancestors: { scrollTop: number; scrollLeft: number }[]
+  previewMinY: number
+  previewMaxY: number
+  previewMaxScroll: number
+  targetTop: number
+  targetHeight: number
+  headerBottom: number
+  viewportHeight: number
+}
+
+async function previewScrollState(target: Locator): Promise<PreviewScrollState> {
+  return target.evaluate((element) => {
+    const preview = element.closest('[role="region"][aria-label="Document preview"]')!
+    const bounds = preview.getBoundingClientRect()
+    const rect = element.getBoundingClientRect()
+    const ancestors: { scrollTop: number; scrollLeft: number }[] = []
+    for (let ancestor = preview.parentElement; ancestor && ancestor !== document.body; ancestor = ancestor.parentElement) {
+      ancestors.push({ scrollTop: ancestor.scrollTop, scrollLeft: ancestor.scrollLeft })
+    }
+    return {
+      windowX: window.scrollX,
+      windowY: window.scrollY,
+      previewTop: preview.scrollTop,
+      previewLeft: preview.scrollLeft,
+      previewMinY: bounds.top + preview.clientTop,
+      previewMaxY: bounds.top + preview.clientTop + preview.clientHeight,
+      previewMaxScroll: preview.scrollHeight - preview.clientHeight,
+      targetTop: rect.top,
+      targetHeight: rect.height,
+      headerBottom: document.querySelector('header')!.getBoundingClientRect().bottom,
+      viewportHeight: window.innerHeight,
+      ancestors,
+    }
+  })
+}
+
+function expectViewportStable(
+  before: PreviewScrollState,
+  after: PreviewScrollState,
+  requirePreviewScroll = false,
+) {
+  expect(after.windowX).toBe(before.windowX)
+  expect(Math.abs(after.windowY - before.windowY)).toBeLessThanOrEqual(1)
+  expect(after.previewLeft).toBe(before.previewLeft)
+  expect(after.ancestors).toEqual(before.ancestors)
+  if (requirePreviewScroll) expect(Math.abs(after.previewTop - before.previewTop)).toBeGreaterThan(1)
+}
+
+function minimumViewportDelta(state: PreviewScrollState) {
+  const top = Math.max(state.headerBottom, 0) + 4
+  const bottom = state.viewportHeight - 4
+  const minTargetTop = Math.max(state.targetTop + state.previewTop - state.previewMaxScroll, state.previewMinY + 4)
+  const maxTargetTop = Math.min(state.targetTop + state.previewTop, state.previewMaxY - 4 - state.targetHeight)
+  const lower = minTargetTop - (bottom - state.targetHeight)
+  const upper = maxTargetTop - top
+  if (lower > upper) throw new Error('Focused block cannot fit in the viewport and preview')
+  return Math.max(lower, Math.min(0, upper))
 }
 
 async function guidedCandidateLabels(page: Page) {
@@ -479,32 +558,90 @@ test('native 200% preview selection keeps keyboard focus visible', async ({ base
     await tabUntil(page, '[data-block-index="6"]')
     const middle = page.locator('#panel-document [data-block-index="6"]')
     await expectVisiblePreviewFocus(middle)
+    const initialPosition = await previewScrollState(middle)
     await page.keyboard.press('Enter')
     await expect(middle).toHaveAttribute('aria-pressed', 'true')
     await expectVisiblePreviewFocus(middle)
+    expectViewportStable(initialPosition, await previewScrollState(middle))
     await obscureFocusedPreviewBlock(page, middle)
+    const repeatedPosition = await previewScrollState(middle)
     await page.keyboard.press('Enter')
     await expectVisiblePreviewFocus(middle)
+    expectViewportStable(repeatedPosition, await previewScrollState(middle), true)
 
     await tabUntil(page, '[data-block-index="9"]')
     const later = page.locator('#panel-document [data-block-index="9"]')
     await expectVisiblePreviewFocus(later)
+    const laterPosition = await previewScrollState(later)
     await page.keyboard.press('Space')
     await expect(later).toHaveAttribute('aria-pressed', 'true')
     await expectVisiblePreviewFocus(later)
+    expectViewportStable(laterPosition, await previewScrollState(later))
+    await obscureFocusedPreviewBlock(page, later, 'viewport')
+    const insufficientPosition = await previewScrollState(later)
+    const minimumDelta = minimumViewportDelta(insufficientPosition)
+    expect(minimumDelta).toBeLessThan(-1)
+    await page.keyboard.press('Space')
+    await expectVisiblePreviewFocus(later)
+    const revealedPosition = await previewScrollState(later)
+    expect(revealedPosition.windowX).toBe(insufficientPosition.windowX)
+    expect(Math.abs(revealedPosition.windowY - insufficientPosition.windowY - minimumDelta)).toBeLessThanOrEqual(1)
+    expect(revealedPosition.previewLeft).toBe(insufficientPosition.previewLeft)
+    expect(revealedPosition.ancestors).toEqual(insufficientPosition.ancestors)
+    await page.keyboard.press('Space')
+    await expectVisiblePreviewFocus(later)
+    expectViewportStable(revealedPosition, await previewScrollState(later))
+    await obscureFocusedPreviewBlock(page, later, 'below')
+    const belowPosition = await previewScrollState(later)
+    const downwardMinimum = minimumViewportDelta(belowPosition)
+    expect(downwardMinimum).toBeGreaterThan(1)
+    await page.keyboard.press('Space')
+    await expectVisiblePreviewFocus(later)
+    const downwardReveal = await previewScrollState(later)
+    expect(downwardReveal.windowX).toBe(belowPosition.windowX)
+    expect(Math.abs(downwardReveal.windowY - belowPosition.windowY - downwardMinimum)).toBeLessThanOrEqual(1)
+    expect(downwardReveal.previewLeft).toBe(belowPosition.previewLeft)
+    expect(downwardReveal.ancestors).toEqual(belowPosition.ancestors)
+    await page.keyboard.press('Space')
+    await expectVisiblePreviewFocus(later)
+    expectViewportStable(downwardReveal, await previewScrollState(later))
     await tabUntil(page, '[data-block-index="6"]', 'Shift+Tab')
     await obscureFocusedPreviewBlock(page, middle)
+    const returnPosition = await previewScrollState(middle)
     await page.keyboard.press('Enter')
     await expect(middle).toHaveAttribute('aria-pressed', 'true')
     await expectVisiblePreviewFocus(middle)
+    expectViewportStable(returnPosition, await previewScrollState(middle), true)
+    await tabUntil(page, '[data-block-index="9"]')
+    await expect(later).toHaveAttribute('aria-pressed', 'false')
+    await expectVisiblePreviewFocus(later)
+    await obscureFocusedPreviewBlock(page, later, 'viewport')
+    const newSelectionPosition = await previewScrollState(later)
+    const newSelectionMinimum = minimumViewportDelta(newSelectionPosition)
+    expect(newSelectionMinimum).toBeLessThan(-1)
+    await page.keyboard.press('Space')
+    await expect(later).toHaveAttribute('aria-pressed', 'true')
+    await expectVisiblePreviewFocus(later)
+    const newSelectionReveal = await previewScrollState(later)
+    expect(newSelectionReveal.windowX).toBe(newSelectionPosition.windowX)
+    expect(Math.abs(newSelectionReveal.windowY - newSelectionPosition.windowY - newSelectionMinimum)).toBeLessThanOrEqual(1)
+    expect(newSelectionReveal.previewLeft).toBe(newSelectionPosition.previewLeft)
+    expect(newSelectionReveal.ancestors).toEqual(newSelectionPosition.ancestors)
+    await tabUntil(page, '[data-block-index="6"]', 'Shift+Tab')
     await tabUntil(page, '[data-block-index="0"]', 'Shift+Tab')
     const first = page.locator('#panel-document [data-block-index="0"]')
+    await expectVisiblePreviewFocus(first)
+    const firstPosition = await previewScrollState(first)
     await page.keyboard.press('Enter')
     await expect(first).toHaveAttribute('aria-pressed', 'true')
     await expectVisiblePreviewFocus(first)
+    expectViewportStable(firstPosition, await previewScrollState(first))
     await tabUntil(page, '[data-block-index="6"]')
+    await expectVisiblePreviewFocus(middle)
+    const restoredPosition = await previewScrollState(middle)
     await page.keyboard.press('Enter')
     await expectVisiblePreviewFocus(middle)
+    expectViewportStable(restoredPosition, await previewScrollState(middle))
 
     await tabUntil(page, '#tab-document', 'Shift+Tab')
     await page.keyboard.press('ArrowLeft')
@@ -542,18 +679,33 @@ test('native 100% preview preserves modal focus and pointer selection', async ({
     await tabUntil(page, '[data-block-index="6"]')
     const middle = page.locator('#ws-tablet-document [data-block-index="6"]')
     await expectVisiblePreviewFocus(middle)
+    const initialPosition = await previewScrollState(middle)
     await page.keyboard.press('Enter')
     const detail = page.getByRole('dialog', { name: 'Finding details' })
     await expect(detail).toBeVisible()
+    expectViewportStable(initialPosition, await previewScrollState(middle))
     await expect(page.getByRole('button', { name: 'Close finding details' })).toBeFocused()
     await page.keyboard.press('Escape')
     await expect(middle).toHaveAttribute('aria-pressed', 'true')
+    await expectVisiblePreviewFocus(middle)
+    await obscureFocusedPreviewBlock(page, middle)
+    const repeatedPosition = await previewScrollState(middle)
+    await page.keyboard.press('Enter')
+    await expect(detail).toBeVisible()
+    expectViewportStable(repeatedPosition, await previewScrollState(middle), true)
+    await page.keyboard.press('Escape')
     await expectVisiblePreviewFocus(middle)
 
     const pointer = page.locator('#ws-tablet-document [data-block-index="4"]')
     await pointer.click()
     await expect(detail).toBeVisible()
     await expect(pointer).toHaveAttribute('aria-pressed', 'true')
+    const centering = await pointer.evaluate((element) => {
+      const preview = element.closest('[role="region"][aria-label="Document preview"]')!
+      const expected = element.offsetTop - (preview.clientHeight - element.clientHeight) / 2
+      return { actual: preview.scrollTop, expected: Math.max(0, Math.min(expected, preview.scrollHeight - preview.clientHeight)) }
+    })
+    expect(Math.abs(centering.actual - centering.expected)).toBeLessThanOrEqual(1)
     await page.keyboard.press('Escape')
     const finding = page.locator('#ws-tablet-findings button[aria-label="Font size does not match, Minor, Document paragraph 5"]')
     await expect(finding).toHaveAttribute('aria-pressed', 'true')
