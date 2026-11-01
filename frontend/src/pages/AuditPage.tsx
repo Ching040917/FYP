@@ -224,6 +224,10 @@ export function AuditPage() {
     blocksError,
     renderedPdf.status === 'available' ? renderedPdf.bytes : undefined,
   )
+  // Terminal preview failures cannot produce a future paragraph-to-page map.
+  const pageMappingUnavailable =
+    mappingStatus === 'error' ||
+    (renderedPdf.status !== 'idle' && renderedPdf.status !== 'loading' && renderedPdf.status !== 'available')
   // Figure outline evidence (Build 8F): operator-list geometry from the SAME
   // shared bytes, loaded once per audit. Geometry is independent of the
   // paragraph mapping — it can be ready before or after it.
@@ -266,6 +270,10 @@ export function AuditPage() {
   const pageCommandSeqRef = useRef(0)
   const [locatingId, setLocatingId] = useState<string | null>(null)
   const [navNotice, setNavNotice] = useState<string | null>(null)
+  const previewNotice = navNotice === TEXT_FALLBACK_NOTICE &&
+    !blocks?.some((block) => block.index === getParagraphIndex(selectedViolation))
+    ? OBJECT_NOTICE
+    : navNotice
   // Exact citation highlight (Build 6) — latest selected finding wins.
   const [citationRects, setCitationRects] = useState<CitationRect[] | null>(null)
   const [citationLabel, setCitationLabel] = useState<string | null>(null)
@@ -560,16 +568,21 @@ export function AuditPage() {
   // settles — never before. Overlay resolution on arrival belongs to the
   // derivation effect below (single writer).
   useEffect(() => {
+    if (locatingId !== null && locatingId !== selectedId) {
+      pendingNavRef.current?.reset()
+      setLocatingId(null)
+      return
+    }
     if (structuralSelectionRef.current) {
       pendingNavRef.current?.reset()
       return
     }
-    if (mappingStatus === 'ready' && mappingBundle) {
-      pendingNavRef.current?.onMappingReady(mappingBundle.byIndex, selectedId, emitNav)
-    } else if (mappingStatus === 'error') {
+    if (pageMappingUnavailable) {
       pendingNavRef.current?.onMappingFailed(selectedId, emitNav)
+    } else if (mappingStatus === 'ready' && mappingBundle) {
+      pendingNavRef.current?.onMappingReady(mappingBundle.byIndex, selectedId, emitNav)
     }
-  }, [mappingStatus, mappingBundle, selectedId, emitNav])
+  }, [mappingStatus, mappingBundle, pageMappingUnavailable, selectedId, locatingId, emitNav])
 
   // Table findings resolve as a BATCH (collision-safe): table_index is the
   // authoritative identity, uncaptioned tables map from surrounding blocks
@@ -1128,7 +1141,9 @@ export function AuditPage() {
     // Paragraph-evidence overlays follow through the single derivation
     // effect below (keyed on selection + mapping generation) — never
     // resolved imperatively here, so a stale selection can never paint.
-    pendingNavRef.current?.select(violation, mappingBundle?.byIndex, emitNav)
+    pendingNavRef.current?.select(violation, pageMappingUnavailable ? undefined : mappingBundle?.byIndex, emitNav)
+    // A selection made after a terminal failure will not trigger a status transition.
+    if (pageMappingUnavailable) pendingNavRef.current?.onMappingFailed(violation.id, emitNav)
   }
 
   // Overlay derivation — the SINGLE writer of paragraph-evidence overlay
@@ -1646,7 +1661,7 @@ export function AuditPage() {
                     active={mobileView === 'document'}
                     renderedPdf={renderedPdf}
                     structuralPage={selectedStructuralPage}
-                    notice={navNotice}
+                    notice={previewNotice}
                                         previewMode={previewMode}
                     onPreviewModeChange={setPreviewMode}
                     pendingPage={pageCommand}
@@ -1736,7 +1751,7 @@ export function AuditPage() {
                     fitRegion
                     renderedPdf={renderedPdf}
                     structuralPage={selectedStructuralPage}
-                    notice={navNotice}
+                    notice={previewNotice}
                                         previewMode={previewMode}
                     onPreviewModeChange={setPreviewMode}
                     pendingPage={pageCommand}
@@ -1806,7 +1821,7 @@ export function AuditPage() {
                       fitRegion
                       renderedPdf={renderedPdf}
                       structuralPage={selectedStructuralPage}
-                      notice={navNotice}
+                      notice={previewNotice}
                       previewMode={previewMode}
                       onPreviewModeChange={setPreviewMode}
                       pendingPage={pageCommand}
