@@ -126,6 +126,7 @@ export function DocumentPreview({
   const containerRef = React.useRef<HTMLDivElement>(null)
   const headingRef = React.useRef<HTMLHeadingElement>(null)
   const blockRefs = React.useRef<Map<number, HTMLElement>>(new Map())
+  const keyboardScrollFromBlock = React.useRef(false)
   const selectedEvidenceViolation = selectedViolationId
     ? (violations.find((vi) => vi.id === selectedViolationId) ?? null)
     : null
@@ -413,8 +414,36 @@ export function DocumentPreview({
         ref={containerRef}
         role="region"
         aria-label="Document preview"
+        tabIndex={0}
+        onFocusCapture={() => { keyboardScrollFromBlock.current = false }}
+        onPointerDown={() => { keyboardScrollFromBlock.current = false }}
+        onWheel={() => { keyboardScrollFromBlock.current = false }}
+        onKeyDown={(event) => {
+          keyboardScrollFromBlock.current =
+            event.target instanceof HTMLElement &&
+            event.target.hasAttribute('data-block-index') &&
+            !event.altKey && !event.ctrlKey && !event.metaKey &&
+            ['ArrowDown', 'ArrowUp', 'PageDown', 'PageUp', 'Home', 'End'].includes(event.key)
+        }}
+        onScroll={(event) => {
+          if (!keyboardScrollFromBlock.current) return
+          const container = event.currentTarget
+          const focused = document.activeElement
+          if (!(focused instanceof HTMLElement) || !focused.hasAttribute('data-block-index') || !container.contains(focused)) return
+          const bounds = container.getBoundingClientRect()
+          const target = focused.getBoundingClientRect()
+          const headerBottom = document.querySelector('header')?.getBoundingClientRect().bottom ?? 0
+          const top = Math.max(bounds.top + container.clientTop, headerBottom, 0)
+          const bottom = Math.min(bounds.top + container.clientTop + container.clientHeight, window.innerHeight)
+          if (top >= bottom) return
+          if (target.bottom <= top) {
+            container.scrollTo({ top: container.scrollTop + target.top - top, behavior: 'instant' })
+          } else if (target.top >= bottom) {
+            container.scrollTo({ top: container.scrollTop + target.bottom - bottom, behavior: 'instant' })
+          }
+        }}
         className={cn(
-          'relative overflow-y-auto rounded-md border border-border bg-card p-1 scrollbar-thin',
+          'relative overflow-y-auto rounded-md border border-border bg-card p-1 scrollbar-thin focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary',
           fitRegion && 'min-h-0 flex-1',
         )}
         style={fitRegion ? undefined : { maxHeight: '480px' }}

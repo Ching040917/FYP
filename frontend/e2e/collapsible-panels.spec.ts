@@ -233,7 +233,9 @@ test.describe('collapsible audit workspace @collapsible-panels', () => {
       // correctly absent and the extracted-text fallback stays available.
       await expect(page.getByRole('button', { name: 'Fit page' })).toHaveCount(0)
       await expect(page.getByRole('button', { name: 'Fit width' })).toHaveCount(0)
-      await expect(page.getByRole('region', { name: 'Document preview' })).toBeVisible()
+      const preview = page.getByRole('region', { name: 'Document preview', exact: true })
+      await expect(preview).toHaveCount(1)
+      await expect(preview).toBeVisible()
     }
   })
 
@@ -255,7 +257,13 @@ test.describe('collapsible audit workspace @collapsible-panels', () => {
     const checkbox = page.locator('input[type="checkbox"][aria-label]').first()
     await checkbox.click()
     await expect(checkbox).toBeChecked()
-    await expect(page.getByRole('button', { name: 'Review 1 selected change' })).toBeEnabled()
+    const dialog = page.getByRole('dialog', { name: 'Guided Fixes Beta — select candidate findings', exact: true })
+    const selectedCount = await dialog.getByRole('checkbox', { checked: true }).count()
+    const review = dialog.getByRole('button', {
+      name: `Review ${selectedCount} selected finding${selectedCount === 1 ? '' : 's'}`, exact: true,
+    })
+    await expect(review).toHaveCount(1)
+    await expect(review).toBeEnabled()
 
     // Focus entry is blocked while a modal dialog is open.
     await expect(page.getByRole('button', { name: 'Focus on document' })).toBeDisabled()
