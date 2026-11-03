@@ -306,7 +306,9 @@ test('readiness-card source exposes required a11y + progressive-disclosure marke
     'utf8',
   )
   assert.ok(src.includes('aria-expanded'))
-  assert.ok(src.includes('aria-controls={detailsId}'))
+  // The details IDREF is emitted only while the target is mounted; its full
+  // lifecycle is asserted against the rendered DOM in
+  // e2e/upload-audit-workflow.spec.ts rather than by matching source text.
   assert.ok(src.includes('aria-label="Refresh system readiness"'))
   assert.ok(src.includes('role="status"'))
   assert.ok(src.includes('role="alert"'))

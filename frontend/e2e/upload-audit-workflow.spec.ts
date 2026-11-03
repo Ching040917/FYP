@@ -47,25 +47,184 @@ test.describe('readiness card @readiness', () => {
       .first()
     await expect(viewDetails).toBeVisible({ timeout: 30_000 })
 
+    const details = page.locator('#readiness-details')
+    const expectResolvedRelationships = async () => {
+      const unresolved = await page.evaluate(() => {
+        const counts = new Map<string, number>()
+        for (const element of document.querySelectorAll('[id]')) {
+          counts.set(element.id, (counts.get(element.id) ?? 0) + 1)
+        }
+        const failures: { source: string; attribute: string; token: string; count: number }[] = []
+        for (const element of document.querySelectorAll('*')) {
+          for (const attribute of ['aria-controls', 'aria-labelledby', 'aria-describedby', 'aria-owns', 'aria-activedescendant']) {
+            for (const token of (element.getAttribute(attribute) ?? '').split(/\s+/).filter(Boolean)) {
+              const count = counts.get(token) ?? 0
+              if (count !== 1) failures.push({ source: element.outerHTML, attribute, token, count })
+            }
+          }
+        }
+        return failures
+      })
+      expect(unresolved, 'every present document ARIA ID reference resolves exactly once').toEqual([])
+    }
+
+    await expect(viewDetails).toHaveAttribute('aria-expanded', 'false')
+    await expect(viewDetails).not.toHaveAttribute('aria-controls')
+    await expect(details).toHaveCount(0)
+    await expectResolvedRelationships()
+
     // Keyboard activation: Enter.
     await viewDetails.focus()
     await expect(viewDetails).toBeFocused()
     await assertFocusVisible(page, viewDetails)
     await page.keyboard.press('Enter')
     await expect(viewDetails).toHaveAttribute('aria-expanded', 'true')
-    const row = page.getByText('Layout rules engine', { exact: false }).or(page.locator('#readiness-details'))
-    await expect(page.locator('#readiness-details')).toBeVisible()
+    await expect(viewDetails).toHaveAttribute('aria-controls', 'readiness-details')
+    await expect(details).toHaveCount(1)
+    await expect(details).toBeVisible()
+    await expect(viewDetails).toBeFocused()
+    await assertFocusVisible(page, viewDetails)
+    await expectResolvedRelationships()
 
     // Keyboard activation: Space collapses again.
     await page.keyboard.press('Space')
     await expect(viewDetails).toHaveAttribute('aria-expanded', 'false')
-    await expect(page.locator('#readiness-details')).toBeHidden()
-    void row
+    await expect(details).toBeHidden()
+    await expect(viewDetails).not.toHaveAttribute('aria-controls')
+    await expect(details).toHaveCount(0)
+    await expect(viewDetails).toBeFocused()
+    await assertFocusVisible(page, viewDetails)
+    await expectResolvedRelationships()
+
+    // A second cycle must not retain a stale target or create duplicate IDs.
+    await page.keyboard.press('Enter')
+    await expect(viewDetails).toHaveAttribute('aria-expanded', 'true')
+    await expect(viewDetails).toHaveAttribute('aria-controls', 'readiness-details')
+    await expect(details).toHaveCount(1)
+    await expect(details).toBeVisible()
+    await expect(viewDetails).toBeFocused()
+    await assertFocusVisible(page, viewDetails)
+    await expectResolvedRelationships()
+    await page.keyboard.press('Space')
+    await expect(viewDetails).toHaveAttribute('aria-expanded', 'false')
+    await expect(viewDetails).not.toHaveAttribute('aria-controls')
+    await expect(details).toHaveCount(0)
+    await expect(viewDetails).toBeFocused()
+    await assertFocusVisible(page, viewDetails)
+    await expectResolvedRelationships()
 
     // Degraded optional components do not block core audit controls.
     const runButton = page.getByRole('button', { name: 'Run compliance audit' })
     await expect(runButton).toBeAttached()
     await expectNoHorizontalOverflow(page)
+  })
+
+  test('stable failure exposes one visible alert without opening the details disclosure', async ({ page }, testInfo) => {
+    annotate(testInfo, {
+      id: 'READINESS-ERR',
+      objective: 'A failed readiness check announces and displays exactly one alert while the details disclosure stays collapsed and unreferenced; retry stays keyboard operable.',
+      precondition: 'Dashboard served by the isolated backend; readiness request answered with HTTP 503.',
+      steps: ['Answer readiness with 503', 'Open /dashboard', 'Inspect alert and disclosure', 'Focus Refresh', 'Retry with Enter'],
+      expected: 'One visible and accessible alert; no dangling readiness-details reference; retry recovers the card.',
+      severity: 'high',
+    })
+    await page.route('**/api/readiness*', (route) =>
+      route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ detail: 'unavailable' }) }),
+    )
+    await page.goto('/dashboard')
+
+    const region = page.getByRole('region', { name: 'System readiness' })
+    const alert = region.getByRole('alert')
+    await expect(alert).toHaveCount(1)
+    await expect(alert).toBeVisible()
+    await expect(alert).toContainText('System readiness could not be checked')
+    // Exactly one alert in the document, and it is the visible one.
+    await expect(page.locator('[role="alert"]')).toHaveCount(1)
+    await expect(page.locator('[role="alert"]:visible')).toHaveCount(1)
+    // Focus is never stolen by the alert.
+    expect(await alert.evaluate((element) => element.contains(document.activeElement))).toBe(false)
+
+    // The disclosure can never be forced open by an error.
+    await expect(region.getByRole('button', { name: /View details|Hide details/ })).toHaveCount(0)
+    await expect(page.locator('#readiness-details')).toHaveCount(0)
+    await expect(page.locator('[aria-controls="readiness-details"]')).toHaveCount(0)
+
+    const refresh = region.getByRole('button', { name: 'Refresh system readiness' })
+    await expect(refresh).toBeEnabled()
+    await refresh.focus()
+    await expect(refresh).toBeFocused()
+    await assertFocusVisible(page, refresh)
+
+    // Retry recovers without a reload, and the alert disappears with the error.
+    await page.unroute('**/api/readiness*')
+    await page.keyboard.press('Enter')
+    await expect(region.getByRole('button', { name: 'View details' })).toBeVisible({ timeout: 30_000 })
+    await expect(region.getByRole('alert')).toHaveCount(0)
+    await expect(region.getByRole('status')).toHaveCount(1)
+    await expectNoHorizontalOverflow(page)
+  })
+
+  test('repeated refresh activation while a request is pending sends only one request', async ({ page }, testInfo) => {
+    annotate(testInfo, {
+      id: 'READINESS-GUARD',
+      objective: 'The pending-refresh guard prevents duplicate readiness requests from keyboard and pointer activation, and the control stays truthful.',
+      precondition: 'Dashboard loaded; one real readiness refresh held open through request interception.',
+      steps: ['Hold one refresh response', 'Activate Refresh with Enter', 'Press Space and Enter again', 'Click with pointer', 'Release the held response'],
+      expected: 'Exactly one request while pending; control disabled then re-enabled; pointer works after completion; no focus trap.',
+      severity: 'medium',
+    })
+    await page.goto('/dashboard')
+    const region = page.getByRole('region', { name: 'System readiness' })
+    const refresh = region.getByRole('button', { name: 'Refresh system readiness' })
+    // The initial load holds the same duplicate-request guard, so wait for the
+    // loaded state before exercising refresh activation.
+    await expect(region.getByRole('button', { name: 'View details' })).toBeVisible({ timeout: 30_000 })
+    await expect(refresh).toBeEnabled()
+
+    let requests = 0
+    const hold = Promise.withResolvers<void>()
+    const reached = Promise.withResolvers<void>()
+    await page.route(
+      (url) => url.pathname === '/api/readiness' && url.searchParams.get('refresh') === '1',
+      async (route) => {
+        requests += 1
+        const response = await route.fetch()
+        reached.resolve()
+        await hold.promise
+        await route.fulfill({ response })
+      },
+    )
+
+    await refresh.focus()
+    await page.keyboard.press('Enter')
+    await reached.promise
+    await expect(refresh).toBeDisabled()
+    expect(requests).toBe(1)
+
+    await page.keyboard.press('Space')
+    await page.keyboard.press('Enter')
+    const box = await refresh.boundingBox()
+    if (box) await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2)
+    expect(requests, 'repeated activation while pending must not duplicate the request').toBe(1)
+
+    const settled = page.waitForResponse((r) => r.url().includes('/api/readiness?refresh=1'))
+    hold.resolve()
+    await settled
+    await expect(refresh).toBeEnabled()
+    expect(requests).toBe(1)
+
+    const second = page.waitForResponse((r) => r.url().includes('/api/readiness?refresh=1'))
+    await refresh.click()
+    await second
+    expect(requests, 'pointer activation works again after completion').toBe(2)
+
+    // No focus trap: the control takes focus and Tab still moves away.
+    await refresh.focus()
+    await expect(refresh).toBeFocused()
+    await page.keyboard.press('Tab')
+    await expect(refresh).not.toBeFocused()
+    await page.keyboard.press('Shift+Tab')
+    await expect(refresh).toBeFocused()
   })
 })
 

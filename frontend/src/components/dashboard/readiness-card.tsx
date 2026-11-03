@@ -267,9 +267,12 @@ export function ReadinessCard({
         >
           System readiness
         </CardTitle>
+        {/* The stable error state is announced once by the assertive alert
+            below; suppressing this polite region only avoids announcing the
+            same failure twice. */}
         <div
-          role="status"
-          aria-live="polite"
+          role={state === 'error' ? undefined : 'status'}
+          aria-live={state === 'error' ? undefined : 'polite'}
           className="min-w-0 flex-1 text-sm"
         >
           <p className="flex items-center gap-2 font-medium text-foreground">
@@ -286,7 +289,7 @@ export function ReadinessCard({
                   size="sm"
                   className="border-border text-foreground min-h-[44px]"
                   aria-expanded={expanded}
-                  aria-controls={detailsId}
+                  aria-controls={expanded ? detailsId : undefined}
                   onClick={() => setExpanded((e) => !e)}
                 >
                   {expanded ? (
@@ -320,15 +323,16 @@ export function ReadinessCard({
               </Button>
             </div>
       </CardHeader>
+      {state === 'error' && (
+        <div role="alert" className="mt-3 rounded-md border border-border bg-input/20 px-3 py-2.5 text-sm">
+          <p className="flex items-start gap-1.5 text-muted-foreground">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+            System readiness could not be checked. You can try again.
+          </p>
+        </div>
+      )}
       <CardContent className={expanded || refreshError ? 'space-y-3 px-0 pb-0 pt-3' : 'hidden'}>
-        {state === 'error' ? (
-          <div role="alert" className="rounded-md border border-border bg-input/20 px-3 py-2.5 text-sm">
-            <p className="flex items-start gap-1.5 text-muted-foreground">
-              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
-              System readiness could not be checked. You can try again.
-            </p>
-          </div>
-        ) : state === 'checking' ? (
+        {state === 'checking' ? (
           <p className="flex items-center gap-2 text-sm text-muted-foreground">
             <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
             Checking system readiness
