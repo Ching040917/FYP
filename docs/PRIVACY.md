@@ -30,6 +30,8 @@ Inside: `audit.db` (audit history database), `backups\` (verified backups, three
 
 **Core audits never send your document or findings anywhere.** Deterministic formatting and citation checks run entirely offline on your machine. ACA is bound to your computer only (`127.0.0.1`) and is not reachable from other machines.
 
+ACA bundles a synthetic sample thesis (`sample-thesis.docx`) generated with `python-docx`. The sample action loads this bundled file through the app's loopback-only server and automatically audits it using your selected profile, without Internet access. It contains only synthetic academic text and planted formatting variations, not Owner or user document data. This shipped sample is separate from uploaded DOCX files, which remain processed in memory without page-rendering conversion.
+
 Internet access happens only when you explicitly choose an optional action:
 
 - Downloading an optional component's installer from the official website (you click the link; ACA never downloads the installer).

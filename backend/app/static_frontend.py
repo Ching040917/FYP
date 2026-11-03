@@ -12,7 +12,7 @@ Route-safety contract:
 - Static assets are served by Starlette's StaticFiles (containment built in);
   SPA fallbacks return a fixed `index.html`, never user-controlled paths.
 """
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from starlette.staticfiles import StaticFiles
 import sys
@@ -65,6 +65,21 @@ def register_static_frontend(app: FastAPI, dist_dir: Path) -> None:
             "/assets",
             StaticFiles(directory=dist_dir / "assets"),
             name="spa-assets",
+        )
+
+    sample_docx = dist_dir / "samples" / "sample-thesis.docx"
+
+    @app.api_route(
+        "/samples/sample-thesis.docx",
+        methods=["GET", "HEAD"],
+        include_in_schema=False,
+    )
+    def _serve_sample_thesis() -> FileResponse:
+        if not sample_docx.is_file():
+            raise HTTPException(status_code=404, detail="Sample document not found")
+        return FileResponse(
+            path=sample_docx,
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         )
 
     def _spa() -> FileResponse:
