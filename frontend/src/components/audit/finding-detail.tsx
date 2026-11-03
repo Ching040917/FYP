@@ -68,9 +68,11 @@ function documentParagraphLabel(v: Violation): string | null {
 }
 
 export function FindingDetail({
+  detailId,
   violation,
   locationLabel,
 }: {
+  detailId: string
   violation: Violation | null
   /**
    * Shared friendly location label ("Page 9 · Paragraph 3") — the same value
@@ -83,6 +85,7 @@ export function FindingDetail({
   if (!violation) {
     return (
       <section
+        id={detailId}
         aria-label="Finding detail"
         className="rounded-md border border-dashed border-border px-6 py-10 text-center"
       >
@@ -179,7 +182,7 @@ export function FindingDetail({
 
   return (
     <section
-      id="finding-detail"
+      id={detailId}
       aria-label="Finding detail"
       tabIndex={-1}
       className="min-w-0 scroll-mt-20 rounded-md [overflow-wrap:anywhere] focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background"

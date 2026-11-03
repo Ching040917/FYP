@@ -1339,9 +1339,10 @@ export function AuditPage() {
   const selectedLocationLabel = selectedViolation
     ? locationLabels?.get(selectedViolation.id) ?? null
     : null
-  const renderDetailStack = (a: AuditResponse) => (
+  const renderDetailStack = (a: AuditResponse, detailId: string) => (
     <>
       <FindingDetail
+        detailId={detailId}
         violation={selectedViolation}
         locationLabel={selectedLocationLabel}
       />
@@ -1468,7 +1469,7 @@ export function AuditPage() {
                         size="sm"
                         aria-haspopup="dialog"
                         aria-expanded={categoryOpen}
-                        aria-controls="category-panel"
+                        aria-controls={categoryOpen ? 'category-panel' : undefined}
                         className="max-[240px]:h-auto max-[240px]:max-w-full max-[240px]:flex-wrap max-[240px]:whitespace-normal"
                         onClick={() => setCategoryOpen((o) => !o)}
                       >
@@ -1701,7 +1702,7 @@ export function AuditPage() {
                   tabIndex={0}
                   className="mt-4 scroll-mt-20 space-y-6 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
                 >
-                  {renderDetailStack(audit)}
+                  {renderDetailStack(audit, 'finding-detail-compact')}
                   <div>
                     <Button onClick={() => activateCompactView('findings')} variant="ghost" size="sm">
                       Back to findings
@@ -1910,7 +1911,7 @@ export function AuditPage() {
                       !detailsOpen && 'hidden',
                     )}
                   >
-                    {renderDetailStack(audit)}
+                    {renderDetailStack(audit, 'finding-detail-desktop')}
                   </div>
                 </div>
               </div>
@@ -1952,7 +1953,7 @@ export function AuditPage() {
                     aria-label="Finding details"
                     className="min-h-0 flex-1 space-y-6 overflow-y-auto px-4 py-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background"
                   >
-                    {renderDetailStack(audit)}
+                    {renderDetailStack(audit, 'finding-detail-drawer')}
                   </div>
                 </div>
               </div>

@@ -40,6 +40,59 @@ async function assertBounds(page: Page, dialog: Locator) {
   expect(bounds.headerTop).toBeGreaterThanOrEqual(bounds.top)
 }
 
+test('saved Profile details exposes a unique dialog relationship only while open', async ({ page }) => {
+  await page.setViewportSize(sizes[0])
+  const audit = await createSyntheticAudit(page)
+  await page.goto(`/audit/${audit.auditId}`)
+  const trigger = page.getByRole('button', { name: 'Profile details', exact: true })
+  const dialog = page.getByRole('dialog', { name: 'Profile details', exact: true })
+  let panelId: string | null = null
+
+  await expect(trigger).toHaveAttribute('aria-haspopup', 'dialog')
+  for (const key of ['Enter', 'Space', 'Enter', 'Space']) {
+    await expect(trigger).toHaveAttribute('aria-expanded', 'false')
+    await expect(trigger).not.toHaveAttribute('aria-controls')
+    await expect(dialog).toHaveCount(0)
+    await trigger.focus()
+    await page.keyboard.press(key)
+    await expect(dialog).toBeVisible()
+    await expect(trigger).toHaveAttribute('aria-expanded', 'true')
+    const id = await trigger.getAttribute('aria-controls')
+    expect(id).toBeTruthy()
+    if (panelId !== null) expect(id).toBe(panelId)
+    panelId = id
+    await expect(dialog).toHaveAttribute('id', id!)
+    expect(await dialog.evaluate((element, targetId) => {
+      const matches = Array.from(document.querySelectorAll('[id]')).filter(candidate => candidate.id === targetId)
+      return matches.length === 1 && matches[0] === element
+    }, id)).toBe(true)
+    const labelId = await dialog.getAttribute('aria-labelledby')
+    expect(labelId).toBeTruthy()
+    expect(await page.locator('[id]').evaluateAll(
+      (elements, value) => elements.filter(element => element.id === value).length,
+      labelId,
+    )).toBe(1)
+
+    const close = dialog.getByRole('button', { name: 'Close', exact: true })
+    await expect(close).toBeFocused()
+    await page.keyboard.press('Shift+Tab')
+    expect(await dialog.evaluate(element => element.contains(document.activeElement))).toBe(true)
+    await page.keyboard.press('Tab')
+    await expect(close).toBeFocused()
+    await page.keyboard.press('Tab')
+    expect(await dialog.evaluate(element => element.contains(document.activeElement))).toBe(true)
+    await page.keyboard.press('Shift+Tab')
+    await expect(close).toBeFocused()
+    await page.keyboard.press('Escape')
+    await expect(dialog).toHaveCount(0)
+    await expect(trigger).toBeFocused()
+    await expect(trigger).toHaveAttribute('aria-expanded', 'false')
+    await expect(trigger).not.toHaveAttribute('aria-controls')
+  }
+  await page.keyboard.press('Tab')
+  await expect(trigger).not.toBeFocused()
+})
+
 for (const saved of [false, true]) {
   const surface = saved ? 'saved audit Profile details' : 'current Full profile requirements'
   test(`${surface}: complete groups, responsive bounds and final-item scroll`, async ({ page }) => {

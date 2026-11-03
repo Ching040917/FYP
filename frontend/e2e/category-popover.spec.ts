@@ -51,7 +51,7 @@ test.describe('category popover @a11y', () => {
     // Trigger semantics before opening.
     await expect(trigger).toHaveAttribute('aria-haspopup', 'dialog')
     await expect(trigger).toHaveAttribute('aria-expanded', 'false')
-    await expect(trigger).toHaveAttribute('aria-controls', 'category-panel')
+    expect(await trigger.getAttribute('aria-controls')).toBeNull()
 
     await page.keyboard.press('Enter')
     const panel = page.locator('#category-panel')
@@ -61,6 +61,8 @@ test.describe('category popover @a11y', () => {
     await expect(panel).toHaveAttribute('aria-modal', 'false')
     await expect(panel).toHaveAttribute('aria-label', 'Filter findings by category')
     await expect(trigger).toHaveAttribute('aria-expanded', 'true')
+    await expect(trigger).toHaveAttribute('aria-controls', 'category-panel')
+    await expect(page.locator('[id="category-panel"]')).toHaveCount(1)
 
     // Focus moved to the first meaningful interactive element.
     const firstCategoryButton = panel.getByRole('button').first()
@@ -77,19 +79,29 @@ test.describe('category popover @a11y', () => {
     await page.keyboard.press('Enter')
     await expect(firstCategoryButton).toHaveAttribute('aria-pressed', pressedBefore ? 'false' : 'true')
 
+    let focusLeftPanel = false
+    for (let i = 0; i < 30 && !focusLeftPanel; i++) {
+      await page.keyboard.press('Tab')
+      focusLeftPanel = !(await panel.evaluate((el) => el.contains(document.activeElement)))
+    }
+    expect(focusLeftPanel, 'Non-modal category panel must not trap focus').toBe(true)
+
     // Escape closes and restores focus to the trigger.
     await page.keyboard.press('Escape')
     await expect(panel).toHaveCount(0)
     await expect(trigger).toHaveAttribute('aria-expanded', 'false')
+    expect(await trigger.getAttribute('aria-controls')).toBeNull()
     await expect(trigger).toBeFocused()
 
     // Outside click still closes after a reopen (at supported desktop
     // widths the 90vw panel never covers the chosen outside point).
-    await trigger.click()
+    await page.keyboard.press('Space')
     await expect(panel).toBeVisible()
+    await expect(trigger).toHaveAttribute('aria-controls', 'category-panel')
     await page.mouse.click(10, 400)
     await expect(panel).toHaveCount(0)
     await expect(trigger).toHaveAttribute('aria-expanded', 'false')
+    expect(await trigger.getAttribute('aria-controls')).toBeNull()
 
     await evidenceShot(page, `category-popover-${testInfo.project.name}.png`)
   })

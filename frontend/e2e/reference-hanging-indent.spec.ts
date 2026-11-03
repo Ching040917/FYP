@@ -21,6 +21,7 @@
  * selected-evidence chip and Finding Details. A bare "Paragraph N" never
  * appears.
  */
+import { execFileSync } from 'node:child_process'
 import path from 'node:path'
 import { expect, test, type Page } from '@playwright/test'
 import { annotate, createSyntheticAudit, evidenceShot, expectNoHorizontalOverflow } from './helpers'
@@ -91,7 +92,7 @@ test.describe('reference hanging indent, location and filters @reference', () =>
     await hangingRow.click()
     // The detail stack renders in responsive containers; assert on the
     // visible instance only.
-    const detail = page.locator('#finding-detail:visible').first()
+    const detail = page.getByRole('region', { name: 'Finding detail', exact: true }).locator('visible=true').first()
     await expect(detail).toBeVisible()
     await expect(detail.getByText('0 in', { exact: true })).toBeVisible()
     await expect(detail.getByText('0.5 in', { exact: true })).toBeVisible()
@@ -201,7 +202,7 @@ test.describe('reference hanging indent, location and filters @reference', () =>
     // ---------------------------------------------------------------
     const lineSpacingRow = page.getByRole('button', { name: /Line spacing does not match/ }).first()
     await lineSpacingRow.click()
-    const lsDetail = page.locator('#finding-detail:visible').first()
+    const lsDetail = page.getByRole('region', { name: 'Finding detail', exact: true }).locator('visible=true').first()
     await expect(lsDetail.getByText('Line spacing does not match')).toBeVisible()
     await expect(page.getByRole('heading', { name: 'Local AI Citation Guidance' })).toHaveCount(0)
     const lsCardLocation = (await lineSpacingRow.locator('span.text-ink-muted').first().innerText()).trim()
@@ -223,5 +224,150 @@ test.describe('reference hanging indent, location and filters @reference', () =>
     // The heading never renders for the ineligible findings checked above.
     await expect(page.getByRole('heading', { name: 'AI-assisted guidance' })).toHaveCount(0)
     await evidenceShot(page, `ref-eligible-citation-${testInfo.project.name}.png`)
+  })
+
+  test('finding detail identities remain unique across responsive copies and drawer lifecycle', async ({ page }) => {
+    await page.setViewportSize({ width: 1366, height: 768 })
+    const audit = await createSyntheticAudit(page, FIXTURE, 'reference-hanging-indent-synthetic.docx', 'apa7-student-paper')
+    await page.goto(`/audit/${audit.auditId}`)
+    await page.waitForLoadState('networkidle')
+
+    const compact = page.locator('#finding-detail-compact')
+    const desktop = page.locator('#finding-detail-desktop')
+    const drawer = page.locator('#finding-detail-drawer')
+    const assertIdentities = async (drawerMounted: boolean) => {
+      await expect(compact).toHaveCount(1)
+      await expect(desktop).toHaveCount(1)
+      await expect(drawer).toHaveCount(drawerMounted ? 1 : 0)
+      const ids = await page.locator('section[aria-label="Finding detail"]').evaluateAll(
+        sections => sections.map(section => section.id).sort(),
+      )
+      expect(ids).toEqual([
+        'finding-detail-compact',
+        'finding-detail-desktop',
+        ...(drawerMounted ? ['finding-detail-drawer'] : []),
+      ])
+      for (const id of ids) {
+        expect(await page.locator('[id]').evaluateAll(
+          (elements, value) => elements.filter(element => element.id === value).length,
+          id,
+        )).toBe(1)
+      }
+      const duplicates = await page.locator('[id]').evaluateAll(elements => {
+        const seen = new Set<string>()
+        const repeated = new Set<string>()
+        for (const element of elements) {
+          if (!element.id) continue
+          if (seen.has(element.id)) repeated.add(element.id)
+          seen.add(element.id)
+        }
+        return [...repeated].sort()
+      })
+      expect(duplicates).toEqual([])
+    }
+
+    const hanging = page.getByRole('button', { name: /Reference entry hanging indent does not match/ }).first()
+    const spacing = page.getByRole('button', { name: /Line spacing does not match/ }).first()
+    await hanging.click()
+    await expect(desktop).toContainText('Reference entry hanging indent does not match')
+    await expect(compact).toContainText('Reference entry hanging indent does not match')
+    await assertIdentities(false)
+    await spacing.click()
+    await expect(desktop).toContainText('Line spacing does not match')
+    await expect(compact).toContainText('Line spacing does not match')
+    await assertIdentities(false)
+
+    await page.setViewportSize({ width: 1024, height: 768 })
+    await assertIdentities(false)
+    await page.locator('#ws-tablet-findings').getByRole('button', { name: /Reference entry hanging indent does not match/ }).click()
+    await expect(drawer).toBeVisible()
+    await expect(drawer).toContainText('Reference entry hanging indent does not match')
+    await expect(compact).toContainText('Reference entry hanging indent does not match')
+    await expect(desktop).toContainText('Reference entry hanging indent does not match')
+    await assertIdentities(true)
+    await page.getByRole('button', { name: 'Close finding details' }).click()
+    await assertIdentities(false)
+    await page.locator('#ws-tablet-findings').getByRole('button', { name: /Line spacing does not match/ }).click()
+    await expect(drawer).toContainText('Line spacing does not match')
+    await expect(compact).toContainText('Line spacing does not match')
+    await expect(desktop).toContainText('Line spacing does not match')
+    await assertIdentities(true)
+    await page.getByRole('button', { name: 'Close finding details' }).click()
+    await assertIdentities(false)
+
+    await page.setViewportSize({ width: 768, height: 800 })
+    await page.getByRole('tab', { name: 'Details', exact: true }).click()
+    await expect(compact).toBeVisible()
+    await expect(compact).toContainText('Line spacing does not match')
+    await assertIdentities(false)
+    await page.getByRole('tab', { name: 'Findings', exact: true }).click()
+    await page.locator('#panel-findings').getByRole('button', { name: /Reference entry hanging indent does not match/ }).click()
+    await page.getByRole('tab', { name: 'Details', exact: true }).click()
+    await expect(compact).toContainText('Reference entry hanging indent does not match')
+    await assertIdentities(false)
+  })
+
+  test('empty finding details retain unique layout identities', async ({ page }) => {
+    const python = path.join(process.cwd(), '..', 'backend', '.venv', 'Scripts', 'python.exe')
+    const document = execFileSync(python, ['-B', '-c', `
+import io
+import sys
+from docx import Document
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.shared import Inches, Pt
+
+doc = Document()
+section = doc.sections[0]
+section.left_margin = Inches(1.5)
+section.right_margin = section.top_margin = section.bottom_margin = Inches(1)
+body = doc.add_paragraph("Body paragraph.")
+body.paragraph_format.line_spacing = 1.5
+body.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+for run in body.runs:
+    run.font.name = "Times New Roman"
+    run.font.size = Pt(12)
+heading = doc.add_paragraph("References")
+for run in heading.runs:
+    run.font.name = "Times New Roman"
+    run.font.size = Pt(16)
+entry = doc.add_paragraph("Smith, J. (2020). Title. Press.")
+for run in entry.runs:
+    run.font.name = "Times New Roman"
+    run.font.size = Pt(12)
+buffer = io.BytesIO()
+doc.save(buffer)
+sys.stdout.buffer.write(buffer.getvalue())
+`], { maxBuffer: 1024 * 1024 })
+    const response = await page.request.post('/api/audit?profile_id=suc-academic-report', {
+      multipart: {
+        file: {
+          name: 'clean.docx',
+          mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          buffer: document,
+        },
+      },
+    })
+    expect(response.ok(), await response.text()).toBe(true)
+    const { audit_id: auditId } = await response.json()
+    const report = await page.request.get(`/api/audit/${auditId}`)
+    expect(report.ok()).toBe(true)
+    expect((await report.json()).violations).toEqual([])
+
+    await page.setViewportSize({ width: 1366, height: 768 })
+    await page.goto(`/audit/${auditId}`)
+    const compact = page.locator('#finding-detail-compact')
+    const desktop = page.locator('#finding-detail-desktop')
+    await expect(compact).toHaveCount(1)
+    await expect(desktop).toHaveCount(1)
+    await expect(desktop).toContainText('Select a finding from the list to inspect its evidence.')
+    await page.setViewportSize({ width: 768, height: 800 })
+    await page.getByRole('tab', { name: 'Details', exact: true }).click()
+    await expect(compact).toBeVisible()
+    await expect(compact).toContainText('Select a finding from the list to inspect its evidence.')
+    await expect(desktop).toHaveCount(1)
+    const ids = await page.locator('section[aria-label="Finding detail"]').evaluateAll(
+      sections => sections.map(section => section.id).sort(),
+    )
+    expect(ids).toEqual(['finding-detail-compact', 'finding-detail-desktop'])
   })
 })

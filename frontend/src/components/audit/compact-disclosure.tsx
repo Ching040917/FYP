@@ -107,7 +107,7 @@ export function CompactDisclosure({
         className="h-6 shrink-0 gap-1 bg-card px-2 text-[11px]"
         aria-haspopup="dialog"
         aria-expanded={open}
-        aria-controls={panelId}
+        aria-controls={open ? panelId : undefined}
         onClick={() => (open ? close() : announceOpen())}
       >
         {detailsLabel}
