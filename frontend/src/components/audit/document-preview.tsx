@@ -155,6 +155,21 @@ export function DocumentPreview({
     [blocks],
   )
 
+  // Fit document headings beneath the preview's h2 without changing source levels.
+  const accessibleHeadingLevels = React.useMemo(() => {
+    const ancestors: number[] = []
+    return orderedBlocks?.map(({ heading_level: level }) => {
+      if (typeof level !== 'number' || !Number.isInteger(level) || level < 1 || level > 6) {
+        return null
+      }
+      while (ancestors.length > 0 && ancestors[ancestors.length - 1] >= level) {
+        ancestors.pop()
+      }
+      ancestors.push(level)
+      return Math.min(6, 2 + ancestors.length)
+    }) ?? []
+  }, [orderedBlocks])
+
   // Findings keyed by document block index (paragraph_index), not array position.
   const indexedViolations = React.useMemo(() => {
     const map = new Map<number, Violation[]>()
@@ -448,7 +463,7 @@ export function DocumentPreview({
         )}
         style={fitRegion ? undefined : { maxHeight: '480px' }}
       >
-        {orderedBlocks!.map((block) => {
+        {orderedBlocks!.map((block, position) => {
           const viols = indexedViolations.get(block.index)
           const hasMajor = viols?.some((v) => v.severity === 'MAJOR')
           const hasMinor = viols?.some((v) => v.severity === 'MINOR')
@@ -481,7 +496,7 @@ export function DocumentPreview({
                   </span>
                 )}
               </div>
-              <BlockContent block={block} interactive={interactive} />
+              <BlockContent block={block} interactive={interactive} accessibleLevel={accessibleHeadingLevels[position]} />
             </>
           )
 
@@ -661,17 +676,16 @@ function ModeButton({
  * --------------------------------------------------------------------------- */
 
 /**
- * Renders block text. Valid document heading levels (1–6) use a labelled
- * heading role at the document's own level: aria-level preserves the
- * document hierarchy without leaking document headings into the route
- * heading outline (the page's h1 is the filename, its h2s are the page
- * sections). Interactive blocks use a span — heading elements are not valid
- * inside a <button>. Invalid or null heading levels render as plain
- * paragraphs. Headings are never inferred from text prefixes.
+ * Keep source levels for visual styling while exposing the normalized level to
+ * heading navigation. Interactive blocks use a span inside the finding button.
  */
-function BlockContent({ block, interactive }: { block: DocumentBlock; interactive: boolean }) {
+function BlockContent({ block, interactive, accessibleLevel }: {
+  block: DocumentBlock
+  interactive: boolean
+  accessibleLevel: number | null
+}) {
   const level = block.heading_level
-  const isHeading = typeof level === 'number' && level >= 1 && level <= 6
+  const isHeading = typeof level === 'number' && accessibleLevel !== null
 
   if (!isHeading) {
     return interactive ? (
@@ -687,7 +701,7 @@ function BlockContent({ block, interactive }: { block: DocumentBlock; interactiv
 
   const headingProps = {
     role: 'heading',
-    'aria-level': level,
+    'aria-level': accessibleLevel,
     className: headingClass(level),
   } as const
   return interactive ? (

@@ -6,6 +6,7 @@
  * future narrow exclusion must be individually justified in code comments.
  */
 import { test, expect } from '@playwright/test'
+import type { Page, TestInfo } from '@playwright/test'
 import { AxeBuilder } from '@axe-core/playwright'
 import { createSyntheticAudit, annotate } from './helpers'
 
@@ -16,8 +17,13 @@ const ROUTES = [
   { name: 'profile-editor', path: '/profiles/custom' },
 ] as const
 
-async function assertNoCriticalOrSerious(page: import('@playwright/test').Page, label: string) {
+async function assertNoCriticalOrSerious(page: Page, label: string, testInfo: TestInfo) {
   const results = await new AxeBuilder({ page }).analyze()
+  await testInfo.attach(`${label}-axe.json`, {
+    body: JSON.stringify({ violations: results.violations, incomplete: results.incomplete }, null, 2),
+    contentType: 'application/json',
+  })
+  expect(results.violations.filter(v => v.id === 'heading-order'), `${label}: heading-order violations`).toEqual([])
   const blocking = results.violations.filter(
     (v) => v.impact === 'critical' || v.impact === 'serious',
   )
@@ -35,7 +41,7 @@ test.describe('axe scans @axe', () => {
       annotate(testInfo, {
         id: `AXE-${route.name.toUpperCase()}`,
         objective: `Automated axe scan of the ${route.name} view reports no critical or serious violations.`,
-        precondition: 'App served at 127.0.0.1:5173 with isolated backend; synthetic data only.',
+        precondition: 'App served with isolated backend; synthetic data only.',
         steps: ['Open route', 'Run full axe-core scan', 'Filter impact=critical/serious'],
         expected: 'Zero critical and zero serious violations.',
         severity: 'high',
@@ -43,27 +49,64 @@ test.describe('axe scans @axe', () => {
       })
       await page.goto(route.path)
       await expectNoLoadError(page)
-      await assertNoCriticalOrSerious(page, route.name)
+      await assertNoCriticalOrSerious(page, route.name, testInfo)
     })
   }
 
   test('axe: completed audit view has no critical or serious violations', async ({ page }, testInfo) => {
     annotate(testInfo, {
       id: 'AXE-AUDIT',
-      objective: 'Automated axe scan of a completed audit report view reports no critical or serious violations.',
+      objective: 'Scan the real sample Workspace extracted-text preview before and after selecting a finding.',
       precondition: 'Synthetic audit created via API from the committed sample DOCX.',
-      steps: ['Create synthetic audit via API', 'Open /audit/{id}', 'Wait for findings', 'Run axe scan'],
-      expected: 'Zero critical and zero serious violations.',
+      steps: ['Open the completed audit', 'Show extracted text or its automatic fallback', 'Scan before and after selecting a document finding'],
+      expected: 'Zero heading-order, critical and serious violations in both states.',
       severity: 'high',
     })
+    await page.setViewportSize({ width: 1366, height: 768 })
     const summary = await createSyntheticAudit(page)
     await page.goto(`/audit/${summary.auditId}`)
     await page.waitForLoadState('networkidle')
-    await assertNoCriticalOrSerious(page, 'completed-audit')
+
+    const preview = page.locator('#ws-panel-preview')
+    await expect(preview.getByText('Loading rendered preview…')).toHaveCount(0)
+    const textMode = preview.getByRole('button', { name: 'Extracted text', exact: true })
+    if (await textMode.isVisible()) await textMode.click()
+    const document = preview.getByRole('region', { name: 'Document preview', exact: true })
+    await expect(document).toBeVisible()
+    await expect(document.getByRole('heading', { name: 'Literature Review', exact: true })).toBeVisible()
+    await expect(document.getByRole('heading', { name: 'Deep Subsection', exact: true })).toBeVisible()
+
+    const initial = await new AxeBuilder({ page }).analyze()
+    await testInfo.attach('workspace-initial-axe.json', {
+      body: JSON.stringify({ violations: initial.violations, incomplete: initial.incomplete }, null, 2),
+      contentType: 'application/json',
+    })
+
+    const finding = document.getByRole('button').filter({ hasText: 'This paragraph uses Calibri instead of Times New Roman' })
+    await expect(finding).toBeVisible()
+    await finding.click()
+    await expect(finding).toHaveAttribute('aria-pressed', 'true')
+    const details = page.locator('#ws-panel-details')
+    await expect(details).toContainText('Font family does not match')
+    await expect(details.getByRole('heading', { name: 'What ACA found' })).toBeVisible()
+    await expect(details).toContainText('Calibri')
+    await expect(details.getByText('Current', { exact: true })).toBeVisible()
+    await expect(details.getByText('Required', { exact: true })).toBeVisible()
+    await expect(document).toBeVisible()
+
+    const selected = await new AxeBuilder({ page }).analyze()
+    await testInfo.attach('workspace-selected-finding-axe.json', {
+      body: JSON.stringify({ violations: selected.violations, incomplete: selected.incomplete }, null, 2),
+      contentType: 'application/json',
+    })
+    for (const [label, result] of [['initial', initial], ['selected finding', selected]] as const) {
+      expect.soft(result.violations.filter(v => v.id === 'heading-order'), `${label}: heading-order violations`).toEqual([])
+      expect.soft(result.violations.filter(v => v.impact === 'critical' || v.impact === 'serious'), `${label}: critical/serious violations`).toEqual([])
+    }
   })
 })
 
-async function expectNoLoadError(page: import('@playwright/test').Page) {
+async function expectNoLoadError(page: Page) {
   await page.waitForLoadState('networkidle')
   const alert = page.locator('[role="alert"]').first()
   await expect(alert).toHaveCount(0)
