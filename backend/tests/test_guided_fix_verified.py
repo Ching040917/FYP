@@ -141,6 +141,119 @@ def test_reference_page_check_never_passes_without_rendered_evidence(monkeypatch
     with pytest.raises(GuidedFixFailed):
         verify_reaudit(audit, source, source, [])
 
+
+def _page_evidence_audit():
+    """Synthetic audit whose profile requires page evidence no stored mapping can supply."""
+    profile = new_custom_profile('Reference page evidence')
+    profile.references.check_start_on_new_page = True
+    snapshot = resolve_snapshot(profile)
+    doc = Document()
+    doc.add_paragraph('Body text before the Reference List.')
+    doc.add_paragraph('References')
+    doc.add_paragraph('Smith, A. (2020). A synthetic reference. Press.')
+    buffer = io.BytesIO()
+    doc.save(buffer)
+    source = buffer.getvalue()
+    findings = run_static_rules_engine(source, config=EffectiveProfileConfig(snapshot))
+    audit = SimpleNamespace(
+        profile_snapshot=snapshot.to_dict(), paragraph_page_mapping=None,
+        violations=findings, weighted_score=calculate_weighted_score_detailed(findings).total,
+    )
+    return audit, source
+
+
+def test_reaudit_fails_closed_before_any_original_byte_write(monkeypatch, tmp_path):
+    """D-05: no original byte may reach a disk-write sink during re-audit."""
+    import builtins
+    import pathlib
+    import shutil
+    import tempfile
+    from app.services import docx_pdf_converter
+
+    audit, source = _page_evidence_audit()
+    conversions, sinks = [], []
+
+    def forbidden_converter(data):
+        conversions.append(len(data))
+        raise AssertionError('original bytes reached the converter')
+
+    monkeypatch.setattr(docx_pdf_converter, 'convert_docx_to_pdf', forbidden_converter)
+
+    real_write_bytes = pathlib.Path.write_bytes
+
+    def record_write_bytes(self, data):
+        sinks.append(('Path.write_bytes', len(data)))
+        return real_write_bytes(self, data)
+
+    monkeypatch.setattr(pathlib.Path, 'write_bytes', record_write_bytes)
+
+    real_open = builtins.open
+
+    def record_open(file, mode='r', *args, **kwargs):
+        if isinstance(mode, str) and 'b' in mode and set(mode) & set('wax'):
+            sinks.append(('open', mode))
+        return real_open(file, mode, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, 'open', record_open)
+
+    for name in ('mkstemp', 'mkdtemp', 'NamedTemporaryFile', 'TemporaryDirectory'):
+        real_factory = getattr(tempfile, name)
+
+        def record_factory(*args, _real=real_factory, _name=name, **kwargs):
+            sinks.append(('tempfile.' + _name, 0))
+            return _real(*args, **kwargs)
+
+        monkeypatch.setattr(tempfile, name, record_factory)
+
+    real_copyfile = shutil.copyfile
+
+    def record_copyfile(*args, **kwargs):
+        sinks.append(('shutil.copyfile', 0))
+        return real_copyfile(*args, **kwargs)
+
+    monkeypatch.setattr(shutil, 'copyfile', record_copyfile)
+
+    with pytest.raises(GuidedFixFailed):
+        verify_reaudit(audit, source, source, [])
+
+    assert conversions == []
+    assert sinks == []
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize('renderer_state', ['available', 'unavailable', 'prohibited'])
+def test_page_evidence_profile_fails_closed_for_every_renderer_state(renderer_state, monkeypatch):
+    """Same fail-closed outcome whether or not a renderer could succeed."""
+    from app.services import docx_pdf_converter
+
+    audit, source = _page_evidence_audit()
+    calls = []
+
+    def renderer(data):
+        calls.append(len(data))
+        if renderer_state == 'prohibited':
+            raise AssertionError('conversion path prohibited')
+        if renderer_state == 'available':
+            return b'%PDF-1.4\n1 0 obj<</Type/Page>>endobj\n'
+        raise RuntimeError('libreoffice unavailable')
+
+    monkeypatch.setattr(docx_pdf_converter, 'convert_docx_to_pdf', renderer)
+
+    with pytest.raises(GuidedFixFailed) as excinfo:
+        verify_reaudit(audit, source, source, [])
+    assert 'page evidence' in str(excinfo.value)
+    assert calls == []
+
+
+def test_frozen_guided_fix_rule_inventory_is_exact():
+    from app.services.guided_fix import SAFE_PARA_RULES, SAFE_RUN_RULES
+
+    assert SAFE_RUN_RULES | SAFE_PARA_RULES == {
+        'FONT_CONSISTENCY', 'FONT_SIZE', 'ALIGNMENT', 'LINE_SPACING',
+        'SPACE_BEFORE', 'SPACE_AFTER',
+        'REFERENCE_HEADING_ALIGNMENT', 'REFERENCE_HEADING_BOLD',
+    }
+
 @pytest.mark.parametrize('rule,attribute', [
     ('FONT_SIZE', 'szCs'), ('FONT_CONSISTENCY', 'asciiTheme'),
 ])
@@ -1174,7 +1287,8 @@ def test_point_spacing_missing_page_evidence_never_publishes(
     monkeypatch.setattr(docx_pdf_converter, 'convert_docx_to_pdf', unavailable_renderer)
     applied = _upload(client, root, source, ids, review.json()['review_id'])
     assert applied.status_code == 422, applied.text
-    assert attempts
+    # D-05: the original bytes must never reach the disk-backed converter.
+    assert attempts == []
     _assert_no_bold_output(applied, spacing_boundary_storage, audit['audit_id'])
     assert _saved_source_state(test_engine, audit['audit_id']) == saved
 

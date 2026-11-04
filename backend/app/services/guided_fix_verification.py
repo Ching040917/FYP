@@ -82,13 +82,10 @@ def verify_reaudit(audit, source_bytes: bytes, fixed_bytes: bytes, selected):
             from app.services.docx_pdf_converter import convert_docx_to_pdf
             from app.services.page_mapping import compute_paragraph_page_mapping
             if source_mapping is None:
-                source_pdf = convert_docx_to_pdf(source_bytes)
-                source_mapping = compute_paragraph_page_mapping(source_paragraphs, source_pdf)
-                if source_mapping is None:
-                    raise GuidedFixFailed('rendered source evidence unavailable')
-                mapped_before = run_static_rules_engine(source_bytes, config=config, page_mapping=source_mapping)
-                if _evidence(mapped_before) != _evidence(before):
-                    raise GuidedFixFailed('source page evidence differs from stored audit')
+                # D-05: the converter writes DOCX bytes to a temporary file. The
+                # original document is never rendered, so page evidence from a
+                # fresh render is unavailable and verification fails closed.
+                raise GuidedFixFailed('source page evidence unavailable without conversion')
             fixed_doc = parse_document(fixed_bytes)
             fixed_paragraphs = extract_paragraphs(fixed_doc)
             fixed_pdf = convert_docx_to_pdf(fixed_bytes)
