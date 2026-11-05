@@ -31,9 +31,13 @@ the server keeps downloading after a client disconnects (ollama/ollama issue
 Ollama is never terminated to imitate one.
 """
 import asyncio
+from dataclasses import dataclass
 import json
 import logging
+import secrets
+import time
 from typing import Dict, List, Literal, Optional
+from urllib.parse import urlsplit
 
 import httpx
 from pydantic import BaseModel, ConfigDict
@@ -146,6 +150,65 @@ class LocalModelDownloadStatus(BaseModel):
     error_category: Optional[ErrorCategory] = None
 
 
+
+# ---------------------------------------------------------------------------
+# Consent contract constants and models (B-PRIV-03)
+# ---------------------------------------------------------------------------
+
+CONSENT_TTL_SECONDS = 300.0
+MAX_PENDING_CONSENT_TOKENS = 32
+_APPROVED_FRONTEND_PORTS = frozenset({3000, 5173, 8000, 8010, 8011, 8012, 8013, 8014, 8015})
+
+
+class ConsentError(Exception):
+    """Base exception for model download consent errors."""
+
+
+class ConsentCapacityExceededError(ConsentError):
+    """Pending consent store is at capacity."""
+
+
+class DownloadAlreadyActiveError(ConsentError):
+    """A download job is already active."""
+
+
+class InvalidConsentError(ConsentError):
+    """Consent token is missing, replayed, or invalid."""
+
+
+class ExpiredConsentError(ConsentError):
+    """Consent token has expired."""
+
+
+class ModelMismatchConsentError(ConsentError):
+    """Configured model has changed since consent was issued."""
+
+
+class OriginMismatchConsentError(ConsentError):
+    """Request origin does not match the consented origin."""
+
+
+@dataclass
+class _ConsentRecord:
+    token: str
+    model_name: str
+    origin: str
+    expires_at_monotonic: float
+
+
+class LocalModelConsentResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid", protected_namespaces=())
+
+    consent_token: str
+    model_name: str
+    warning_id: str = "network_and_disk_usage"
+    expires_in_seconds: int = int(CONSENT_TTL_SECONDS)
+
+
+class LocalModelDownloadRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    consent_token: str
 # ---------------------------------------------------------------------------
 # In-memory job state
 #
@@ -156,6 +219,7 @@ class LocalModelDownloadStatus(BaseModel):
 
 _lock = asyncio.Lock()
 _status: Optional[Dict[str, object]] = None
+_consent_store: Dict[str, _ConsentRecord] = {}
 _task: Optional["asyncio.Task[None]"] = None
 
 
@@ -203,19 +267,14 @@ def get_status() -> Dict[str, object]:
 
 
 def reset_state() -> None:
-    """Test helper — drop the job snapshot and cancel any in-flight task.
-
-    Mirrors ``setup_readiness.reset_cache``. Safe to call between tests: the
-    superseded job can no longer publish because its snapshot identity no
-    longer matches the module-level status.
-    """
-    global _status, _task
+    """Test helper — drop the job snapshot, clear consent tokens, and cancel in-flight task."""
+    global _status, _task, _consent_store
 
     task, _task = _task, None
     _status = None
+    _consent_store.clear()
     if task is not None and not task.done():
         task.cancel()
-
 
 # ---------------------------------------------------------------------------
 # Origin validation — loopback only, never influenced by a request
@@ -230,6 +289,90 @@ def loopback_origin() -> Optional[str]:
     echoed back to a caller or into an error message.
     """
     return _pure_loopback_origin(settings.OLLAMA_HOST)
+
+
+def validate_origin(origin_headers: List[str], request_port: Optional[int] = None) -> Optional[str]:
+    """Validate that the request Origin is an approved local/loopback origin.
+
+    Rejects missing, null, empty, multiple, external, malformed, or unapproved
+    origins (B-PRIV-03).
+    """
+    if not origin_headers or len(origin_headers) != 1:
+        return None
+    raw = origin_headers[0].strip()
+    if not raw or raw.lower() == "null":
+        return None
+    normalized = _pure_loopback_origin(raw)
+    if normalized is None:
+        return None
+    parts = urlsplit(normalized)
+    allowed = set(_APPROVED_FRONTEND_PORTS)
+    if request_port is not None and isinstance(request_port, int) and 1 <= request_port <= 65535:
+        allowed.add(request_port)
+    if parts.port not in allowed:
+        return None
+    return normalized
+
+
+def _purge_expired_tokens_locked(now_mono: float) -> None:
+    expired = [
+        tok for tok, rec in _consent_store.items()
+        if now_mono > rec.expires_at_monotonic
+    ]
+    for tok in expired:
+        _consent_store.pop(tok, None)
+
+
+async def issue_consent(origin: str) -> LocalModelConsentResponse:
+    """Issue a one-use, short-lived consent challenge token for model download."""
+    now_mono = time.monotonic()
+    async with _lock:
+        _purge_expired_tokens_locked(now_mono)
+        if _status is not None and _status.get("state") in MODEL_DOWNLOAD_ACTIVE_STATES:
+            raise DownloadAlreadyActiveError("A model download is already in progress.")
+        if len(_consent_store) >= MAX_PENDING_CONSENT_TOKENS:
+            raise ConsentCapacityExceededError("Too many pending consent requests. Please wait before retrying.")
+        token = secrets.token_urlsafe(32)
+        _consent_store[token] = _ConsentRecord(
+            token=token,
+            model_name=settings.OLLAMA_MODEL,
+            origin=origin,
+            expires_at_monotonic=now_mono + CONSENT_TTL_SECONDS,
+        )
+        logger.info("local_model_download consent issued model=%s", settings.OLLAMA_MODEL)
+        return LocalModelConsentResponse(
+            consent_token=token,
+            model_name=settings.OLLAMA_MODEL,
+            warning_id="network_and_disk_usage",
+            expires_in_seconds=int(CONSENT_TTL_SECONDS),
+        )
+
+
+async def redeem_and_start(token: str, origin: str) -> Optional[Dict[str, object]]:
+    """Atomically consume consent token and initiate model download."""
+    global _task, _status
+    now_mono = time.monotonic()
+    async with _lock:
+        _purge_expired_tokens_locked(now_mono)
+        # Atomically pop token to enforce single-use redemption
+        record = _consent_store.pop(token, None)
+        if record is None:
+            raise InvalidConsentError("Invalid, expired, or previously redeemed consent token.")
+        if now_mono > record.expires_at_monotonic:
+            raise ExpiredConsentError("Consent token has expired.")
+        if record.model_name != settings.OLLAMA_MODEL:
+            raise ModelMismatchConsentError("Configured model has changed since consent was issued.")
+        if record.origin != origin:
+            raise OriginMismatchConsentError("Request origin does not match the consented origin.")
+        if _status is not None and _status.get("state") in MODEL_DOWNLOAD_ACTIVE_STATES:
+            # Token is consumed, but download is already active -> return None (maps to 409)
+            return None
+
+        job = _new_status(MODEL_DOWNLOAD_STARTING)
+        _status = job
+        _task = asyncio.create_task(_run_pull(job))
+        logger.info("local_model_download state=%s category=None", MODEL_DOWNLOAD_STARTING)
+        return dict(job)
 
 # ---------------------------------------------------------------------------
 # Progress accounting

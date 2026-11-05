@@ -191,7 +191,8 @@ export function ReadinessCard({
     setDownloadHidden(false)
     setDownloadStartFailed(false)
     try {
-      await api.startLocalModelDownload()
+      const consent = await api.requestLocalModelDownloadConsent()
+      await api.startLocalModelDownload(consent.consent_token)
       await refreshDownloadStatus()
     } catch {
       // Never surface the raw failure; the manual command stays available.

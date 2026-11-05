@@ -45,6 +45,13 @@ async function handleResponse<T>(response: Response): Promise<T> {
   return response.json()
 }
 
+export interface LocalModelConsentResponse {
+  consent_token: string
+  model_name: string
+  warning_id: string
+  expires_in_seconds: number
+}
+
 function parseContentDispositionFilename(header: string | null): string | null {
   if (!header) return null
   const encoded = header.match(/filename\*=UTF-8''([^;]+)/i)?.[1]
@@ -127,10 +134,38 @@ export const api = {
    * already active, which callers treat as "keep polling" rather than an
    * error. The manual `ollama pull` command remains available as a fallback.
    */
-  async startLocalModelDownload(): Promise<void> {
+  /**
+   * Local AI Citation Guidance — request a short-lived consent token
+   * (POST /api/setup/local-model/download/consent).
+   *
+   * Called only after visible user confirmation. Never stored or logged (B-PRIV-03).
+   */
+  async requestLocalModelDownloadConsent(): Promise<LocalModelConsentResponse> {
+    const response = await fetchWithTimeout(
+      `${API_BASE}/setup/local-model/download/consent`,
+      { method: 'POST' },
+      POLL_TIMEOUT_MS,
+    )
+    if (!response.ok) throw new Error(`HTTP ${response.status}`)
+    return response.json()
+  },
+
+  /**
+   * Local AI Citation Guidance — start downloading the optional local model
+   * (POST /api/setup/local-model/download).
+   *
+   * Requires a single-use consent token issued by the backend (B-PRIV-03).
+   * A 409 means a download is already active, which callers treat as "keep polling"
+   * rather than an error. The manual `ollama pull` command remains available as a fallback.
+   */
+  async startLocalModelDownload(consentToken: string): Promise<void> {
     const response = await fetchWithTimeout(
       `${API_BASE}/setup/local-model/download`,
-      { method: 'POST' },
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ consent_token: consentToken }),
+      },
       POLL_TIMEOUT_MS,
     )
     if (response.status === 409) return

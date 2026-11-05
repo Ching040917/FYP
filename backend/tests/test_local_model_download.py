@@ -10,6 +10,7 @@ service, the network, a database row, or the filesystem.
 import asyncio
 import inspect
 import json
+import logging
 
 import httpx
 import pytest
@@ -285,10 +286,13 @@ async def test_already_installed_model_is_reported_ready_without_bytes(monkeypat
 # ---------------------------------------------------------------------------
 
 
-def test_start_route_declares_no_application_parameters():
-    assert list(inspect.signature(start_local_model_download).parameters) == []
+def test_start_route_declares_only_consent_token_and_request():
+    """The route accepts only a consent token and request; no model, host, or path can be injected."""
+    params = inspect.signature(start_local_model_download).parameters
+    assert list(params) == ["payload", "request"]
+    assert params["payload"].annotation is lmd.LocalModelDownloadRequest
+    assert set(lmd.LocalModelDownloadRequest.model_fields.keys()) == {"consent_token"}
     assert list(inspect.signature(get_local_model_download_status).parameters) == []
-
 
 async def test_pull_targets_the_configured_model_only(monkeypatch):
     requests = []
@@ -736,7 +740,19 @@ def test_route_contract_and_no_audit_row_written(client, test_engine, monkeypatc
     assert status_response.status_code == 200
     assert set(status_response.json()) == EXPECTED_FIELDS
 
-    start_response = client.post("/api/setup/local-model/download")
+    dev_origin = "http://localhost:5173"
+    consent_resp = client.post("/api/setup/local-model/download/consent", headers={"Origin": dev_origin})
+    assert consent_resp.status_code == 200
+    token = consent_resp.json()["consent_token"]
+    assert token
+    assert consent_resp.json()["model_name"] == settings.OLLAMA_MODEL
+    assert consent_resp.json()["expires_in_seconds"] == 300
+
+    start_response = client.post(
+        "/api/setup/local-model/download",
+        headers={"Origin": dev_origin},
+        json={"consent_token": token},
+    )
     assert start_response.status_code == 200
     body = start_response.json()
     assert set(body) == EXPECTED_FIELDS
@@ -759,13 +775,29 @@ def test_second_route_start_returns_409(client, monkeypatch):
 
     _install(monkeypatch, _handler)
 
-    first = client.post("/api/setup/local-model/download")
+    dev_origin = "http://localhost:5173"
+    consent1 = client.post("/api/setup/local-model/download/consent", headers={"Origin": dev_origin})
+    token1 = consent1.json()["consent_token"]
+    first = client.post(
+        "/api/setup/local-model/download",
+        headers={"Origin": dev_origin},
+        json={"consent_token": token1},
+    )
     assert first.status_code == 200
 
-    second = client.post("/api/setup/local-model/download")
-    assert second.status_code == 409
-    assert "already in progress" in second.json()["detail"]
+    # Issuance during active pull returns 409
+    consent2 = client.post("/api/setup/local-model/download/consent", headers={"Origin": dev_origin})
+    assert consent2.status_code == 409
+    assert "already in progress" in consent2.json()["detail"]
 
+    # Second start with replayed token returns 403 (token consumed on first call)
+    second = client.post(
+        "/api/setup/local-model/download",
+        headers={"Origin": dev_origin},
+        json={"consent_token": token1},
+    )
+    assert second.status_code == 403
+    assert "previously redeemed" in second.json()["detail"]
 
 async def test_no_document_or_citation_data_is_transmitted(monkeypatch):
     requests = []
@@ -838,3 +870,260 @@ def test_http_client_never_follows_redirects():
             await client.aclose()
 
     asyncio.run(_exercise())
+
+
+# ---------------------------------------------------------------------------
+# B-PRIV-03 Consent Issuance, Redemption, and Origin Tests
+# ---------------------------------------------------------------------------
+
+def test_origin_validation_matrix():
+    """Verify validate_origin rejects untrusted/malformed and accepts approved local origins."""
+    # Missing
+    assert lmd.validate_origin([]) is None
+    # Null
+    assert lmd.validate_origin(["null"]) is None
+    assert lmd.validate_origin(["NULL"]) is None
+    # Empty
+    assert lmd.validate_origin([""]) is None
+    assert lmd.validate_origin(["   "]) is None
+    # External
+    assert lmd.validate_origin(["http://evil.com"]) is None
+    assert lmd.validate_origin(["http://evil.com:11434"]) is None
+    assert lmd.validate_origin(["http://localhost.evil.com:5173"]) is None
+    assert lmd.validate_origin(["https://localhost:5173"]) is None
+    # Multiple / comma-joined
+    assert lmd.validate_origin(["http://localhost:5173", "http://evil.com"]) is None
+    assert lmd.validate_origin(["http://localhost:5173, http://evil.com"]) is None
+    # Credentials / path / query / fragment
+    assert lmd.validate_origin(["http://user:pw@localhost:5173"]) is None
+    assert lmd.validate_origin(["http://localhost:5173/path"]) is None
+    assert lmd.validate_origin(["http://localhost:5173?q=1"]) is None
+    assert lmd.validate_origin(["http://localhost:5173#frag"]) is None
+    # Unapproved port
+    assert lmd.validate_origin(["http://localhost:9999"]) is None
+    assert lmd.validate_origin(["http://127.0.0.1:4000"]) is None
+    # Approved development origins
+    assert lmd.validate_origin(["http://localhost:5173"]) == "http://localhost:5173"
+    assert lmd.validate_origin(["http://127.0.0.1:5173"]) == "http://127.0.0.1:5173"
+    assert lmd.validate_origin(["http://[::1]:5173"]) == "http://[::1]:5173"
+    assert lmd.validate_origin(["http://localhost:3000"]) == "http://localhost:3000"
+    assert lmd.validate_origin(["http://127.0.0.1:3000"]) == "http://127.0.0.1:3000"
+    # Approved packaged origins
+    assert lmd.validate_origin(["http://localhost:8000"]) == "http://localhost:8000"
+    assert lmd.validate_origin(["http://127.0.0.1:8000"]) == "http://127.0.0.1:8000"
+    assert lmd.validate_origin(["http://127.0.0.1:8012"]) == "http://127.0.0.1:8012"
+    # Dynamic request port support
+    assert lmd.validate_origin(["http://127.0.0.1:61501"], request_port=61501) == "http://127.0.0.1:61501"
+
+
+@pytest.mark.asyncio
+async def test_consent_store_bounded_and_purges_expired(monkeypatch):
+    """Verify consent store limits capacity and purges expired records."""
+    lmd.reset_state()
+    origin = "http://localhost:5173"
+    tokens = []
+    for _ in range(lmd.MAX_PENDING_CONSENT_TOKENS):
+        resp = await lmd.issue_consent(origin)
+        tokens.append(resp.consent_token)
+    assert len(lmd._consent_store) == lmd.MAX_PENDING_CONSENT_TOKENS
+
+    # Next issuance raises capacity exceeded
+    with pytest.raises(lmd.ConsentCapacityExceededError):
+        await lmd.issue_consent(origin)
+
+    # Simulate expiration of older tokens
+    for tok in tokens[:10]:
+        lmd._consent_store[tok].expires_at_monotonic = 0
+
+    # Now issuing consent succeeds because expired tokens are purged
+    new_resp = await lmd.issue_consent(origin)
+    assert new_resp.consent_token
+    assert len(lmd._consent_store) == lmd.MAX_PENDING_CONSENT_TOKENS - 10 + 1
+
+
+@pytest.mark.parametrize("bad_origin", [
+    None,
+    "null",
+    "http://evil.com",
+    "http://localhost:9999",
+    "http://user:pw@localhost:5173",
+    "https://localhost:5173",
+])
+def test_route_consent_and_start_reject_unapproved_origins(client, bad_origin):
+    """Verify routes reject missing, null, external, and malformed origins."""
+    headers = {} if bad_origin is None else {"Origin": bad_origin}
+    # Challenge endpoint
+    r1 = client.post("/api/setup/local-model/download/consent", headers=headers)
+    assert r1.status_code == 403
+    assert "origin" in r1.json()["detail"].lower()
+
+    # Start endpoint
+    r2 = client.post("/api/setup/local-model/download", headers=headers, json={"consent_token": "dummy"})
+    assert r2.status_code == 403
+    assert "origin" in r2.json()["detail"].lower()
+
+
+def test_consent_issuance_starts_no_pull(client, monkeypatch):
+    """Calling /consent issues a token but creates no background pull job."""
+    requests = []
+    _install(monkeypatch, lambda r: _installed([]), requests)
+
+    resp = client.post("/api/setup/local-model/download/consent", headers={"Origin": "http://localhost:5173"})
+    assert resp.status_code == 200
+    assert resp.json()["consent_token"]
+    assert lmd._task is None
+    assert lmd.get_status()["state"] == "idle"
+    assert len(requests) == 0
+
+
+def test_valid_token_starts_exactly_one_pull(client, monkeypatch):
+    """Redeeming a valid token starts exactly one pull."""
+    requests = []
+    _install(monkeypatch, lambda r: _installed([settings.OLLAMA_MODEL]), requests)
+
+    consent = client.post("/api/setup/local-model/download/consent", headers={"Origin": "http://localhost:5173"}).json()
+    token = consent["consent_token"]
+
+    resp = client.post(
+        "/api/setup/local-model/download",
+        headers={"Origin": "http://localhost:5173"},
+        json={"consent_token": token},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["state"] in lmd.MODEL_DOWNLOAD_ACTIVE_STATES or resp.json()["state"] == "idle"
+
+
+def test_consent_token_single_use_replay_rejected(client, monkeypatch):
+    """Tokens cannot be replayed; second use is rejected with 403."""
+    _install(monkeypatch, lambda r: _installed([settings.OLLAMA_MODEL]))
+
+    consent = client.post("/api/setup/local-model/download/consent", headers={"Origin": "http://localhost:5173"}).json()
+    token = consent["consent_token"]
+
+    r1 = client.post(
+        "/api/setup/local-model/download",
+        headers={"Origin": "http://localhost:5173"},
+        json={"consent_token": token},
+    )
+    assert r1.status_code == 200
+
+    # Second redemption attempt fails
+    r2 = client.post(
+        "/api/setup/local-model/download",
+        headers={"Origin": "http://localhost:5173"},
+        json={"consent_token": token},
+    )
+    assert r2.status_code == 403
+    assert "previously redeemed" in r2.json()["detail"].lower()
+
+
+def test_consent_token_expiry_rejected(client):
+    """Expired tokens are rejected."""
+    consent = client.post("/api/setup/local-model/download/consent", headers={"Origin": "http://localhost:5173"}).json()
+    token = consent["consent_token"]
+
+    # Manually expire the token in the store
+    lmd._consent_store[token].expires_at_monotonic = 0
+
+    r = client.post(
+        "/api/setup/local-model/download",
+        headers={"Origin": "http://localhost:5173"},
+        json={"consent_token": token},
+    )
+    assert r.status_code == 403
+    assert "expired" in r.json()["detail"].lower()
+
+
+def test_consent_token_model_change_rejected(client, monkeypatch):
+    """A token issued for model A cannot be redeemed for model B."""
+    consent = client.post("/api/setup/local-model/download/consent", headers={"Origin": "http://localhost:5173"}).json()
+    token = consent["consent_token"]
+
+    monkeypatch.setattr(settings, "OLLAMA_MODEL", "different-model:latest")
+
+    r = client.post(
+        "/api/setup/local-model/download",
+        headers={"Origin": "http://localhost:5173"},
+        json={"consent_token": token},
+    )
+    assert r.status_code == 400
+    assert "model" in r.json()["detail"].lower()
+
+
+def test_consent_token_origin_change_rejected(client):
+    """A token issued for one origin cannot be redeemed from a different origin."""
+    consent = client.post("/api/setup/local-model/download/consent", headers={"Origin": "http://localhost:5173"}).json()
+    token = consent["consent_token"]
+
+    r = client.post(
+        "/api/setup/local-model/download",
+        headers={"Origin": "http://localhost:8000"},
+        json={"consent_token": token},
+    )
+    assert r.status_code == 403
+    assert "origin" in r.json()["detail"].lower()
+
+
+def test_backend_restart_clears_consent_tokens(client):
+    """Tokens do not survive backend restart (reset_state)."""
+    consent = client.post("/api/setup/local-model/download/consent", headers={"Origin": "http://localhost:5173"}).json()
+    token = consent["consent_token"]
+
+    lmd.reset_state()
+
+    r = client.post(
+        "/api/setup/local-model/download",
+        headers={"Origin": "http://localhost:5173"},
+        json={"consent_token": token},
+    )
+    assert r.status_code == 403
+    assert "invalid" in r.json()["detail"].lower() or "previously redeemed" in r.json()["detail"].lower()
+
+
+def test_failed_start_consumes_consent_token(client, monkeypatch):
+    """If start fails due to active pull, the token is still consumed and cannot be replayed."""
+    async def _handler(request):
+        await asyncio.sleep(30)
+        return httpx.Response(200, content=b"")
+    _install(monkeypatch, _handler)
+
+    c1 = client.post("/api/setup/local-model/download/consent", headers={"Origin": "http://localhost:5173"}).json()
+    c2 = client.post("/api/setup/local-model/download/consent", headers={"Origin": "http://localhost:5173"}).json()
+
+    # Start first job
+    r1 = client.post("/api/setup/local-model/download", headers={"Origin": "http://localhost:5173"}, json={"consent_token": c1["consent_token"]})
+    assert r1.status_code == 200
+
+    # Second start returns 409 because pull is active
+    r2 = client.post("/api/setup/local-model/download", headers={"Origin": "http://localhost:5173"}, json={"consent_token": c2["consent_token"]})
+    assert r2.status_code == 409
+
+    # Now retry using c2's token — must be 403 because it was consumed during the 409 attempt!
+    r3 = client.post("/api/setup/local-model/download", headers={"Origin": "http://localhost:5173"}, json={"consent_token": c2["consent_token"]})
+    assert r3.status_code == 403
+
+
+def test_start_download_rejects_missing_or_extra_body_fields(client):
+    """Download endpoint strictly requires only consent_token."""
+    origin = "http://localhost:5173"
+    # No body
+    assert client.post("/api/setup/local-model/download", headers={"Origin": origin}).status_code == 422
+    # Empty body
+    assert client.post("/api/setup/local-model/download", headers={"Origin": origin}, json={}).status_code == 422
+    # Extra field
+    assert client.post("/api/setup/local-model/download", headers={"Origin": origin}, json={"consent_token": "a", "extra": 1}).status_code == 422
+
+
+def test_consent_token_never_in_logs_or_status(client, monkeypatch, caplog):
+    """Verify consent token is never logged or exposed in status polling."""
+    _install(monkeypatch, lambda r: _installed([settings.OLLAMA_MODEL]))
+
+    with caplog.at_level(logging.DEBUG):
+        consent = client.post("/api/setup/local-model/download/consent", headers={"Origin": "http://localhost:5173"}).json()
+        token = consent["consent_token"]
+        client.post("/api/setup/local-model/download", headers={"Origin": "http://localhost:5173"}, json={"consent_token": token})
+        status = client.get("/api/setup/local-model/download/status").json()
+
+    assert token not in caplog.text, "Token leaked in logs!"
+    assert "consent_token" not in status, "Token leaked in status response!"
+    assert token not in json.dumps(status), "Token value leaked in status response!"

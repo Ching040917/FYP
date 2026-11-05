@@ -343,3 +343,37 @@ def test_no_snippet_or_host_in_logs(client, docx_factory, monkeypatch, caplog):
     for record in caplog.records:
         assert secret_snippet not in record.message, f"Secret snippet leaked into log: {record.message}"
         assert "malicious-external-host" not in record.message, f"Remote host leaked into log: {record.message}"
+
+
+# ---------------------------------------------------------------------------
+# 9. B-PRIV-03: Model Download Gating When Local AI Is Disabled
+# ---------------------------------------------------------------------------
+
+def test_disabled_local_ai_blocks_model_download_consent_and_start(client, monkeypatch):
+    """When LOCAL_AI_ENABLED=False, both consent issuance and model pull start are refused."""
+    monkeypatch.setattr(settings, "LOCAL_AI_ENABLED", False)
+    origin = "http://localhost:5173"
+
+    # Consent challenge refused
+    r1 = client.post("/api/setup/local-model/download/consent", headers={"Origin": origin})
+    assert r1.status_code == 403
+    assert "disabled" in r1.json()["detail"].lower()
+
+    # Start download refused
+    r2 = client.post("/api/setup/local-model/download", headers={"Origin": origin}, json={"consent_token": "any-token"})
+    assert r2.status_code == 403
+    assert "disabled" in r2.json()["detail"].lower()
+
+
+def test_unsafe_origin_blocks_model_download_consent_and_start(client, monkeypatch):
+    """External or spoofed origins are rejected with 403 Forbidden."""
+    monkeypatch.setattr(settings, "LOCAL_AI_ENABLED", True)
+    bad_origin = "http://evil.com"
+
+    r1 = client.post("/api/setup/local-model/download/consent", headers={"Origin": bad_origin})
+    assert r1.status_code == 403
+    assert "origin" in r1.json()["detail"].lower()
+
+    r2 = client.post("/api/setup/local-model/download", headers={"Origin": bad_origin}, json={"consent_token": "any-token"})
+    assert r2.status_code == 403
+    assert "origin" in r2.json()["detail"].lower()

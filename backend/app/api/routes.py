@@ -577,29 +577,98 @@ async def get_readiness(refresh: bool = Query(False, description="Bypass the 30s
     return await build_readiness(force_refresh=refresh)
 
 
-@router.post("/api/setup/local-model/download",
-             response_model=local_model_download.LocalModelDownloadStatus)
-async def start_local_model_download():
+@router.post(
+    "/api/setup/local-model/download/consent",
+    response_model=local_model_download.LocalModelConsentResponse,
+)
+async def request_local_model_download_consent(request: Request):
+    """Issue a short-lived, one-use consent token for model download (B-PRIV-03)."""
+    if not settings.LOCAL_AI_ENABLED:
+        raise HTTPException(
+            status_code=403,
+            detail="Local AI is disabled in settings. Model download is not permitted.",
+        )
+    origin = local_model_download.validate_origin(
+        request.headers.getlist("origin"),
+        request_port=request.url.port,
+    )
+    if origin is None:
+        raise HTTPException(
+            status_code=403,
+            detail="Untrusted, missing, or malformed request origin.",
+        )
+    try:
+        return await local_model_download.issue_consent(origin)
+    except local_model_download.DownloadAlreadyActiveError:
+        raise HTTPException(
+            status_code=409,
+            detail="A model download is already in progress.",
+        )
+    except local_model_download.ConsentCapacityExceededError:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many pending consent requests. Please wait before retrying.",
+        )
+
+
+@router.post(
+    "/api/setup/local-model/download",
+    response_model=local_model_download.LocalModelDownloadStatus,
+)
+async def start_local_model_download(
+    payload: local_model_download.LocalModelDownloadRequest,
+    request: Request,
+):
     """Start downloading the optional citation-guidance model (Local AI).
 
-    Deliberately declares NO parameters: no request value can influence the
-    model name, the Ollama origin, the port, insecure mode, the registry, or
-    a storage path. Only `settings.OLLAMA_MODEL` is ever pulled, from the
-    validated loopback origin. The endpoint never contacts the model registry
-    itself — it asks the user's own Ollama service to pull.
-
-    Returns 409 when a download is already active, so a second concurrent
-    pull is refused rather than queued. Read-only with respect to audits:
-    nothing is written to the database or to Audit History.
+    Requires a valid, unexpired, one-use consent token issued for the exact
+    configured model and approved origin (B-PRIV-03).
     """
-    snapshot = await local_model_download.start_download()
+    if not settings.LOCAL_AI_ENABLED:
+        raise HTTPException(
+            status_code=403,
+            detail="Local AI is disabled in settings. Model download is not permitted.",
+        )
+    origin = local_model_download.validate_origin(
+        request.headers.getlist("origin"),
+        request_port=request.url.port,
+    )
+    if origin is None:
+        raise HTTPException(
+            status_code=403,
+            detail="Untrusted, missing, or malformed request origin.",
+        )
+    try:
+        snapshot = await local_model_download.redeem_and_start(
+            payload.consent_token, origin
+        )
+    except local_model_download.InvalidConsentError:
+        raise HTTPException(
+            status_code=403,
+            detail="Invalid, expired, or previously redeemed consent token.",
+        )
+    except local_model_download.ExpiredConsentError:
+        raise HTTPException(
+            status_code=403,
+            detail="Consent token has expired.",
+        )
+    except local_model_download.ModelMismatchConsentError:
+        raise HTTPException(
+            status_code=400,
+            detail="Configured model has changed since consent was issued.",
+        )
+    except local_model_download.OriginMismatchConsentError:
+        raise HTTPException(
+            status_code=403,
+            detail="Request origin does not match the consented origin.",
+        )
+
     if snapshot is None:
         raise HTTPException(
             status_code=409,
             detail="A model download is already in progress.",
         )
     return snapshot
-
 
 @router.get("/api/setup/local-model/download/status",
             response_model=local_model_download.LocalModelDownloadStatus)
