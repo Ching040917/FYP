@@ -67,7 +67,7 @@ async def startup():
             # Migration/schema mismatch must fail startup rather than serve
             # against an incompatible database. Safe message — no paths,
             # stack traces, or document content.
-            logger.exception("stale audit reconciliation failed at startup")
+            logger.error("stale audit reconciliation failed at startup")
             raise RuntimeError(
                 "Database schema is not ready for the current application. "
                 "Run: python -m alembic upgrade head"

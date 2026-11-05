@@ -815,7 +815,7 @@ async def export_audit_pdf(audit_id: str, db: Session = Depends(get_db)):
             profile_snapshot=audit.profile_snapshot,
         )
     except Exception:
-        logger.exception("PDF export failed for audit_id=%s", audit_id)
+        logger.error("PDF export failed for audit_id=%s", audit_id)
         raise HTTPException(
             status_code=500,
             detail="Could not generate the PDF report. Please try again.",
@@ -1135,5 +1135,5 @@ async def delete_audit(audit_id: str, db: Session = Depends(get_db)):
         # error response.
         logger.warning("audit delete audit=%s preview=cleanup_failed", audit_id)
 
-    logger.info("Deleted audit id=%s filename=%s", audit_id, filename)
+    logger.info("Deleted audit id=%s", audit_id)
     return {"status": "deleted", "audit_id": audit_id, "filename": filename}
