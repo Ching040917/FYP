@@ -24,6 +24,15 @@ $ReleaseDir = Join-Path $RepoRoot "release-output"
 $IssFile = Join-Path $InstallerDir "AcademicComplianceAuditor.iss"
 $VenvPython = Join-Path $BackendDir ".venv\Scripts\python.exe"
 $BundleRoot = Join-Path $BackendDir "dist\run-frozen"
+$ChecksScript = Join-Path $BackendDir "scripts\packaging_checks.py"
+$ManifestPath = Join-Path $ReleaseDir "input-manifest.json"
+$PocScript = Join-Path $BackendDir "scripts\build-packaging-poc.ps1"
+
+# Verify-manifest exit codes that permit an automatic rebuild: the checked-out
+# inputs are valid and only the existing runtime is absent or stale. Every other
+# non-zero code is a hard fail - a rebuild must never hide an invalid input
+# boundary, an unsafe path, an unstable tree or an unsupported manifest contract.
+$RebuildExits = @(20, 23, 24, 26, 27, 28)
 
 $RequiredISCCVersion = "6.7.3"
 $RequiredPythonMajorMinor = "3.12"
@@ -51,20 +60,32 @@ function Find-ISCC {
     return $null
 }
 
-# ---- Locate the controlled clean runtime. Build it if absent. ----
+# ---- Locate the controlled clean runtime. Reuse only when provenance is proven. ----
 function Ensure-CleanRuntime {
     $exe = Join-Path $BundleRoot "run-frozen.exe"
     $internal = Join-Path $BundleRoot "_internal"
     if ((Test-Path $exe) -and (Test-Path $internal)) {
-        Write-Host "Clean runtime present: $BundleRoot"
-        return
+        & $VenvPython $ChecksScript "verify-manifest" $RepoRoot $BundleRoot "--manifest" $ManifestPath
+        $verifyExit = $LASTEXITCODE
+        if ($verifyExit -eq 0) {
+            Write-Host "Runtime reuse proven by input manifest."
+            return
+        }
+        if ($RebuildExits -notcontains $verifyExit) {
+            Fail "Runtime reuse refused (verify-manifest exit $verifyExit). This failure does not permit a rebuild; fix the reported condition first."
+        }
+        Write-Host "Runtime provenance stale (verify-manifest exit $verifyExit). Rebuilding from reviewed inputs."
     }
-    Write-Host "Clean runtime missing - building via build-packaging-poc.ps1..."
-    $buildScript = Join-Path $BackendDir "scripts\build-packaging-poc.ps1"
-    if (-not (Test-Path $buildScript)) { Fail "Missing build script: $buildScript" }
-    powershell -NoProfile -ExecutionPolicy Bypass -File $buildScript
+    else {
+        Write-Host "Clean runtime missing - building via build-packaging-poc.ps1..."
+    }
+    if (-not (Test-Path $PocScript)) { Fail "Missing build script: $PocScript" }
+    powershell -NoProfile -ExecutionPolicy Bypass -File $PocScript
     if ($LASTEXITCODE -ne 0) { Fail "build-packaging-poc.ps1 failed" }
     if (-not ((Test-Path $exe) -and (Test-Path $internal))) { Fail "Runtime still missing after build" }
+    & $VenvPython $ChecksScript "verify-manifest" $RepoRoot $BundleRoot "--manifest" $ManifestPath
+    if ($LASTEXITCODE -ne 0) { Fail "Freshly built runtime is not proven by the input manifest (exit $LASTEXITCODE)." }
+    Write-Host "Rebuilt runtime proven by input manifest."
 }
 
 try {
@@ -147,6 +168,10 @@ try {
     if (-not (Test-Path (Join-Path $BundleRoot "_internal\frontend-dist\index.html"))) { Fail "_internal\frontend-dist\index.html missing from source runtime" }
     $issText = Get-Content $IssFile -Raw
     if ($issText -notmatch 'run-frozen\\\*') { Fail ".iss does not package the full run-frozen tree" }
+
+    Write-Host "=== 4b. Runtime/manifest parity after compile ==="
+    & $VenvPython $ChecksScript "verify-manifest" $RepoRoot $BundleRoot "--manifest" $ManifestPath
+    if ($LASTEXITCODE -ne 0) { Fail "Inputs or runtime changed during the installer build (verify-manifest exit $LASTEXITCODE)." }
 
     $sha = (Get-FileHash $exeOut -Algorithm SHA256).Hash
     Write-Host "SIZE_BYTES=$size"

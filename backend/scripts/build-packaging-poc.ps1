@@ -217,6 +217,22 @@ try {
     Remove-Item Env:\ACA_DISABLE_BROWSER -ErrorAction SilentlyContinue
     if ($fails.Count -gt 0) { Fail "Smoke failures: $($fails -join '; ')" }
     Write-Host "Smoke OK"
+
+    Write-Host "=== 8. Release input manifest ==="
+    $pyChecks = Join-Path $BackendDir "scripts\packaging_checks.py"
+    $manifestPath = Join-Path (Join-Path $RepoRoot "release-output") "input-manifest.json"
+    New-Item -ItemType Directory -Force -Path (Split-Path $manifestPath) | Out-Null
+    $nodeVer = (& node --version 2>$null | Select-Object -First 1)
+    $npmVer = (& npm --version 2>$null | Select-Object -First 1)
+    $manifestArgs = @("manifest", $RepoRoot, $BundleRoot, "--output", $manifestPath)
+    if ($nodeVer) { $manifestArgs += @("--node-version", "$nodeVer") }
+    if ($npmVer) { $manifestArgs += @("--npm-version", "$npmVer") }
+    & $VenvPython $pyChecks @manifestArgs
+    if ($LASTEXITCODE -ne 0) { Fail "Manifest generation failed (exit $LASTEXITCODE)." }
+    & $VenvPython $pyChecks "verify-manifest" $RepoRoot $BundleRoot "--manifest" $manifestPath
+    if ($LASTEXITCODE -ne 0) { Fail "Fresh manifest does not prove the built runtime (exit $LASTEXITCODE)." }
+    Write-Host "Manifest OK: $manifestPath"
+
     Write-Host "Source hash $srcHash Bundled $bHash"
 }
 finally {

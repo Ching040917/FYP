@@ -2,13 +2,24 @@
 
 Used by build-packaging-poc.ps1 via the controlled backend/.venv interpreter.
 Kept free of third-party imports so tests run in any environment.
+
+Two responsibilities:
+
+1. Bundle guards - contamination and size (the original checks, unchanged).
+2. Release input manifest - deterministic provenance over the governed inputs,
+   toolchain identity and the produced runtime tree, so an existing runtime is
+   never reused on path presence alone.
 """
 
 from __future__ import annotations
 
+import datetime
+import hashlib
+import json
 import os
 import re
 import sys
+import unicodedata
 from pathlib import Path
 
 PROHIBITED_PACKAGES = (
@@ -121,12 +132,625 @@ def size_errors(bundle_root: Path, max_bytes: int = DEFAULT_MAX_BYTES):
     return errors, total, count
 
 
-if __name__ == "__main__":
-    # CLI used by the PowerShell build script.
-    root = Path(sys.argv[1]).resolve()
+# ---------------------------------------------------------------------------
+# Release input manifest (B-PACK-01)
+#
+# The manifest is a provenance cache, never an authority: verification always
+# recomputes every governed input, the toolchain identity and the runtime tree
+# digest from the working tree and the bundle on disk.
+# ---------------------------------------------------------------------------
+
+MANIFEST_SCHEMA_VERSION = 1
+
+EXIT_PARITY = 0
+EXIT_MANIFEST_MISSING = 20
+EXIT_SCHEMA = 21
+EXIT_MALFORMED = 22
+EXIT_TAMPERED = 23
+EXIT_CHANGED = 24
+EXIT_MISSING_INPUT = 25
+EXIT_ADDED_INPUT = 26
+EXIT_TOOLCHAIN = 27
+EXIT_RUNTIME = 28
+EXIT_UNSAFE_PATH = 29
+EXIT_UNSTABLE = 30
+EXIT_UNSAFE_MANIFEST = 31
+
+MANIFEST_GENERATOR = "backend/scripts/packaging_checks.py"
+
+_VENV_PYTHON_REL = "backend/.venv/Scripts/python.exe"
+_VENV_SITE_PACKAGES_REL = "backend/.venv/Lib/site-packages"
+
+# Directory names never walked while collecting governed inputs: build output,
+# caches, vendored environments and VCS metadata.
+_GOVERNED_PRUNE = frozenset(
+    {".git", ".venv", "build", "dist", ".pytest_cache", "__pycache__", "node_modules"}
+)
+
+# Governed directory trees, in collection order. Alembic comes first so its
+# files keep the backend-alembic category instead of the generic backend one.
+_GOVERNED_TREES = (
+    ("backend/alembic", "backend-alembic", True),
+    ("frontend/src", "frontend-source", True),
+    ("frontend/dist", "frontend-dist", True),
+)
+
+# The only governed tree that is filtered by suffix: every other tree
+# contributes all of its files.
+_PYTHON_ONLY_TREES = ("backend",)
+
+# Individual governed files. All are required: a governed input that cannot be
+# hashed means the tree is not reviewable, so generation fails closed.
+_GOVERNED_EXPLICIT = (
+    ("backend/alembic.ini", "backend"),
+    ("backend/ACA.spec", "backend"),
+    ("backend/requirements.txt", "backend"),
+    ("backend/requirements-dev.txt", "backend"),
+    ("frontend/index.html", "frontend-source"),
+    ("frontend/vite.config.ts", "frontend-source"),
+    ("frontend/tailwind.config.js", "frontend-source"),
+    ("frontend/postcss.config.js", "frontend-source"),
+    ("frontend/tsconfig.json", "frontend-source"),
+    ("frontend/tsconfig.node.json", "frontend-source"),
+    ("frontend/package.json", "frontend-source"),
+    ("frontend/package-lock.json", "frontend-source"),
+    ("frontend/public/samples/sample-thesis.docx", "sample"),
+    ("assets/branding/aca-icon.ico", "assets"),
+    ("assets/branding/aca-icon-wizard.bmp", "assets"),
+    ("assets/branding/aca-icon-source.png", "assets"),
+    ("installer/AcademicComplianceAuditor.iss", "packaging"),
+    ("scripts/build-installer.ps1", "packaging"),
+    ("backend/scripts/build-packaging-poc.ps1", "packaging"),
+    ("backend/scripts/packaging_checks.py", "packaging"),
+)
+
+# Licensing inputs are hashed only once they exist: B-LIC-01 creates LICENSE and
+# B-LIC-03/B-LIC-04 reconcile the license texts. Their later appearance changes
+# the manifest content and therefore forces a rebuild instead of a silent reuse.
+_GOVERNED_CONDITIONAL_FILES = (
+    ("THIRD_PARTY_NOTICES.md", "licensing"),
+    ("LICENSE", "licensing"),
+)
+_GOVERNED_CONDITIONAL_TREES = (("licenses", "licensing"),)
+
+_DRIVE_PREFIX_RE = re.compile(r"^[A-Za-z]:")
+
+
+class ManifestProblem(Exception):
+    """A provenance failure carrying the contract exit code and a safe detail."""
+
+    def __init__(self, code: int, detail: str):
+        super().__init__(detail)
+        self.code = code
+        self.detail = detail
+
+
+def _normalise_rel(rel: str) -> str:
+    """Normalise to NFC, POSIX separators, and no leading "./"."""
+    value = str(rel).replace("\\", "/")
+    value = unicodedata.normalize("NFC", value)
+    while value.startswith("./"):
+        value = value[2:]
+    return value
+
+
+def _unsafe_path_reason(rel: str) -> str | None:
+    """Return why a manifest path is unsafe, or None when it is acceptable."""
+    if not rel:
+        return "empty path"
+    if rel.startswith("//"):
+        return "UNC path"
+    if rel.startswith("/"):
+        return "absolute path"
+    if _DRIVE_PREFIX_RE.match(rel):
+        return "drive prefix"
+    if "\\" in rel:
+        return "backslash separator"
+    for segment in rel.split("/"):
+        if segment in ("", ".", ".."):
+            return "unsafe segment"
+    return None
+
+
+def _is_within(child: Path, parent: Path) -> bool:
+    try:
+        child.relative_to(parent)
+        return True
+    except ValueError:
+        return False
+
+
+def _utc_now() -> str:
+    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _iter_tree(root: Path):
+    """Yield files under ``root`` in deterministic order, pruning build output."""
+    if not root.is_dir():
+        raise ManifestProblem(EXIT_MISSING_INPUT, f"MISSING {_normalise_rel(root.name)}")
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = sorted(d for d in dirnames if d not in _GOVERNED_PRUNE)
+        for name in sorted(filenames):
+            yield Path(dirpath) / name
+
+
+def _check_regular(path: Path, repo_root: Path, rel: str) -> None:
+    """Reject symlinks, junctions and realpath escapes. Never follow a link."""
+    if path.is_symlink():
+        raise ManifestProblem(EXIT_UNSAFE_PATH, f"UNSAFE {rel}: symbolic link")
+    is_junction = getattr(path, "is_junction", None)
+    if callable(is_junction) and is_junction():
+        raise ManifestProblem(EXIT_UNSAFE_PATH, f"UNSAFE {rel}: junction")
+    if not _is_within(path.resolve(), repo_root.resolve()):
+        raise ManifestProblem(EXIT_UNSAFE_PATH, f"UNSAFE {rel}: resolves outside the repository")
+
+
+def _hash_path(path: Path, repo_root: Path, rel: str) -> tuple[str, int]:
+    """Return (sha256, size) for a governed file, rejecting unstable reads."""
+    _check_regular(path, repo_root, rel)
+    try:
+        before = path.stat()
+    except OSError as exc:
+        raise ManifestProblem(EXIT_MISSING_INPUT, f"MISSING {rel}: {exc.strerror}") from exc
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(chunk)
+    after = path.stat()
+    if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
+        raise ManifestProblem(EXIT_UNSTABLE, f"UNSTABLE {rel}")
+    return digest.hexdigest(), after.st_size
+
+
+def _is_governed_file(path: Path, repo_root: Path) -> bool:
+    """True when ``path`` belongs to the governed input set."""
+    try:
+        rel = _normalise_rel(path.relative_to(repo_root).as_posix())
+    except ValueError:
+        return False
+    if _unsafe_path_reason(rel) is not None:
+        return False
+    if rel in {name for name, _ in _GOVERNED_EXPLICIT}:
+        return True
+    if rel in {name for name, _ in _GOVERNED_CONDITIONAL_FILES}:
+        return True
+    for root, _ in _GOVERNED_CONDITIONAL_TREES:
+        if rel.startswith(root + "/"):
+            return True
+    for root, _, _ in _GOVERNED_TREES:
+        if rel.startswith(root + "/"):
+            return True
+    if rel.startswith("backend/") and rel.endswith(".py"):
+        return not any(part in _GOVERNED_PRUNE for part in rel.split("/")[:-1])
+    return False
+
+
+def _insert_input(rows: dict, path: Path, repo_root: Path, category: str, rel=None) -> None:
+    rel = rel or _normalise_rel(path.relative_to(repo_root).as_posix())
+    key = rel.casefold()
+    if key in rows:
+        if rows[key]["path"] != rel:
+            raise ManifestProblem(
+                EXIT_UNSAFE_MANIFEST,
+                f"UNSAFE duplicate governed path {rel} / {rows[key]['path']}",
+            )
+        return
+    sha256, size = _hash_path(path, repo_root, rel)
+    rows[key] = {"path": rel, "category": category, "sha256": sha256, "size": size}
+
+
+def collect_inputs(repo_root: Path) -> list[dict]:
+    """Hash every governed input and return them in deterministic order."""
+    repo_root = Path(repo_root)
+    rows: dict[str, dict] = {}
+
+    for rel_root, category, _required in _GOVERNED_TREES:
+        for path in _iter_tree(repo_root / rel_root):
+            _insert_input(rows, path, repo_root, category)
+
+    for rel_root in _PYTHON_ONLY_TREES:
+        for path in _iter_tree(repo_root / rel_root):
+            if path.suffix != ".py":
+                continue
+            _insert_input(rows, path, repo_root, "backend")
+
+    for rel, category in _GOVERNED_EXPLICIT:
+        path = repo_root / rel
+        if not path.is_file():
+            raise ManifestProblem(EXIT_MISSING_INPUT, f"MISSING {rel}")
+        _insert_input(rows, path, repo_root, category, rel=rel)
+
+    for rel, category in _GOVERNED_CONDITIONAL_FILES:
+        path = repo_root / rel
+        if path.is_file():
+            _insert_input(rows, path, repo_root, category, rel=rel)
+
+    for rel_root, category in _GOVERNED_CONDITIONAL_TREES:
+        base = repo_root / rel_root
+        if base.is_dir():
+            for path in _iter_tree(base):
+                _insert_input(rows, path, repo_root, category)
+
+    return [rows[key] for key in sorted(rows, key=lambda k: (rows[k]["path"].casefold(), rows[k]["path"]))]
+
+
+def _dist_identity(dist_info: Path) -> tuple[str, str]:
+    """Return (name, version) from METADATA, falling back to the directory name."""
+    name = version = None
+    try:
+        with open(dist_info / "METADATA", encoding="utf-8", errors="replace") as handle:
+            for line in handle:
+                if not line.strip():
+                    break
+                if name is None and line.startswith("Name:"):
+                    name = line[len("Name:") :].strip()
+                elif version is None and line.startswith("Version:"):
+                    version = line[len("Version:") :].strip()
+    except OSError:
+        pass
+    if not name or not version:
+        base = dist_info.name[: -len(".dist-info")]
+        if "-" in base:
+            fallback_name, fallback_version = base.rsplit("-", 1)
+            name = name or fallback_name
+            version = version or fallback_version
+        else:
+            name = name or base
+            version = version or ""
+    return name, version
+
+
+def _collect_distributions(repo_root: Path) -> list[dict]:
+    site_packages = repo_root / _VENV_SITE_PACKAGES_REL
+    if not site_packages.is_dir():
+        raise ManifestProblem(
+            EXIT_MISSING_INPUT, f"MISSING {_VENV_SITE_PACKAGES_REL}"
+        )
+    rows = []
+    seen = set()
+    for dist_info in sorted(
+        site_packages.glob("*.dist-info"), key=lambda p: (p.name.casefold(), p.name)
+    ):
+        name, version = _dist_identity(dist_info)
+        key = name.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        rows.append({"name": name, "version": version})
+    rows.sort(key=lambda row: (row["name"].casefold(), row["name"]))
+    return rows
+
+
+def collect_toolchain(
+    repo_root: Path,
+    *,
+    python_version=None,
+    implementation=None,
+    machine=None,
+    system=None,
+):
+    """Collect the toolchain identity that produced (or must produce) the bundle."""
+    repo_root = Path(repo_root)
+    python_path = repo_root / _VENV_PYTHON_REL
+    if not python_path.is_file():
+        raise ManifestProblem(EXIT_MISSING_INPUT, f"MISSING {_VENV_PYTHON_REL}")
+    python_sha256, _ = _hash_path(python_path, repo_root, _VENV_PYTHON_REL)
+    distributions = _collect_distributions(repo_root)
+    pyinstaller_version = next(
+        (row["version"] for row in distributions if row["name"].casefold() == "pyinstaller"),
+        None,
+    )
+    import platform as _platform
+
+    return {
+        "python_sha256": python_sha256,
+        "python_version": python_version if python_version is not None else sys.version,
+        "implementation": implementation
+        if implementation is not None
+        else sys.implementation.name,
+        "machine": machine if machine is not None else _platform.machine(),
+        "system": system if system is not None else _platform.system(),
+        "pyinstaller_version": pyinstaller_version,
+        "distributions": distributions,
+    }
+
+
+def bundle_tree_digest(bundle_root: Path) -> dict:
+    """Return {tree_sha256, file_count, total_bytes} for the runtime tree."""
+    bundle_root = Path(bundle_root)
+    if not bundle_root.is_dir():
+        raise ManifestProblem(EXIT_MISSING_INPUT, f"MISSING {bundle_root.name}/")
+
+    rows = []
+    seen: dict[str, str] = {}
+    total_bytes = 0
+    for dirpath, dirnames, filenames in os.walk(bundle_root, followlinks=False):
+        dirnames[:] = sorted(dirnames)
+        for name in sorted(filenames):
+            path = Path(dirpath) / name
+            rel = _normalise_rel(path.relative_to(bundle_root).as_posix())
+            reason = _unsafe_path_reason(rel)
+            if reason is not None:
+                raise ManifestProblem(EXIT_UNSAFE_PATH, f"UNSAFE runtime path {rel}: {reason}")
+            key = rel.casefold()
+            if key in seen:
+                raise ManifestProblem(
+                    EXIT_UNSAFE_MANIFEST, f"UNSAFE duplicate runtime path {rel} / {seen[key]}"
+                )
+            seen[key] = rel
+            sha256, size = _hash_path(path, bundle_root, rel)
+            rows.append((rel, sha256))
+            total_bytes += size
+
+    rows.sort(key=lambda row: (row[0].casefold(), row[0]))
+    tree_digest = hashlib.sha256()
+    for rel, sha256 in rows:
+        tree_digest.update(f"{rel}\t{sha256}\n".encode("utf-8"))
+    return {
+        "tree_sha256": tree_digest.hexdigest(),
+        "file_count": len(rows),
+        "total_bytes": total_bytes,
+    }
+
+
+def _content_digest(content: dict) -> str:
+    serialised = json.dumps(
+        content, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+    )
+    return hashlib.sha256(serialised.encode("utf-8")).hexdigest()
+
+
+def build_manifest(
+    repo_root: Path,
+    bundle_root: Path,
+    recorded: dict | None = None,
+) -> dict:
+    """Build the deterministic manifest content plus non-deterministic metadata."""
+    content = {
+        "inputs": collect_inputs(repo_root),
+        "toolchain": collect_toolchain(repo_root),
+        "runtime": bundle_tree_digest(bundle_root),
+    }
+    recorded = dict(recorded or {})
+    recorded.setdefault("generated_at_utc", _utc_now())
+    recorded.setdefault("generator", MANIFEST_GENERATOR)
+    return {
+        "schema_version": MANIFEST_SCHEMA_VERSION,
+        "content": content,
+        "content_sha256": _content_digest(content),
+        "recorded": recorded,
+    }
+
+
+def write_manifest_atomic(path: Path, manifest: dict) -> None:
+    """Write the manifest atomically: temp file, fsync, then os.replace."""
+    path = Path(path)
+    if path.parent and not path.parent.is_dir():
+        path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = Path(str(path) + ".tmp")
+    text = json.dumps(manifest, indent=2, ensure_ascii=False) + "\n"
+    with open(tmp, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(text)
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(tmp, path)
+
+
+def _validate_content_shape(content: dict) -> None:
+    if not isinstance(content, dict):
+        raise ManifestProblem(EXIT_MALFORMED, "manifest content is not an object")
+    inputs = content.get("inputs")
+    toolchain = content.get("toolchain")
+    runtime = content.get("runtime")
+    if not isinstance(inputs, list) or not isinstance(toolchain, dict) or not isinstance(runtime, dict):
+        raise ManifestProblem(EXIT_MALFORMED, "manifest content is missing inputs/toolchain/runtime")
+    for row in inputs:
+        if not isinstance(row, dict):
+            raise ManifestProblem(EXIT_MALFORMED, "manifest input entry is not an object")
+        if not isinstance(row.get("path"), str) or not isinstance(row.get("sha256"), str):
+            raise ManifestProblem(EXIT_MALFORMED, "manifest input entry lacks path or sha256")
+        if not isinstance(row.get("size"), int):
+            raise ManifestProblem(EXIT_MALFORMED, "manifest input entry lacks an integer size")
+        if not re.fullmatch(r"[0-9a-f]{64}", row["sha256"]):
+            raise ManifestProblem(EXIT_MALFORMED, f"manifest input {row['path']} has a non-64-hex sha256")
+    if not isinstance(runtime.get("tree_sha256"), str) or not re.fullmatch(
+        r"[0-9a-f]{64}", runtime["tree_sha256"]
+    ):
+        raise ManifestProblem(EXIT_MALFORMED, "manifest runtime tree_sha256 is not 64 lowercase hex")
+    if not isinstance(runtime.get("file_count"), int) or not isinstance(runtime.get("total_bytes"), int):
+        raise ManifestProblem(EXIT_MALFORMED, "manifest runtime counters are not integers")
+
+
+def _validate_manifest_paths(inputs: list[dict]) -> None:
+    seen: dict[str, str] = {}
+    for row in inputs:
+        rel = row["path"]
+        reason = _unsafe_path_reason(rel)
+        if reason is not None:
+            raise ManifestProblem(EXIT_UNSAFE_MANIFEST, f"UNSAFE manifest path {rel!r}: {reason}")
+        key = _normalise_rel(rel).casefold()
+        if key in seen:
+            raise ManifestProblem(
+                EXIT_UNSAFE_MANIFEST, f"UNSAFE duplicate manifest path {rel!r} / {seen[key]!r}"
+            )
+        seen[key] = rel
+
+
+def load_manifest(path: Path) -> dict:
+    """Load and validate a manifest. Never trusts it without recomputation."""
+    path = Path(path)
+    if not path.is_file():
+        raise ManifestProblem(
+            EXIT_MANIFEST_MISSING, f"manifest is absent: {_normalise_rel(path.name)}"
+        )
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise ManifestProblem(EXIT_MALFORMED, f"manifest is not valid JSON: {exc}") from exc
+    if not isinstance(data, dict):
+        raise ManifestProblem(EXIT_MALFORMED, "manifest root is not an object")
+    schema = data.get("schema_version")
+    if schema != MANIFEST_SCHEMA_VERSION:
+        raise ManifestProblem(
+            EXIT_SCHEMA, f"unsupported manifest schema_version {schema!r} (expected {MANIFEST_SCHEMA_VERSION})"
+        )
+    content = data.get("content")
+    _validate_content_shape(content)
+    _validate_manifest_paths(content["inputs"])
+    stored = data.get("content_sha256")
+    if not isinstance(stored, str) or stored != _content_digest(content):
+        raise ManifestProblem(EXIT_TAMPERED, "manifest self-digest does not match its content")
+    return data
+
+
+_TOOLCHAIN_FIELDS = (
+    "python_sha256",
+    "python_version",
+    "implementation",
+    "machine",
+    "system",
+    "pyinstaller_version",
+    "distributions",
+)
+
+
+def manifest_problems(
+    repo_root: Path,
+    bundle_root: Path,
+    manifest: dict,
+) -> tuple[int, list[str]]:
+    """Compare a loaded manifest against the working tree and the bundle."""
+    recorded_content = manifest["content"]
+    current = {
+        "inputs": collect_inputs(repo_root),
+        "toolchain": collect_toolchain(repo_root),
+        "runtime": bundle_tree_digest(bundle_root),
+    }
+
+    recorded_inputs = {row["path"]: row for row in recorded_content["inputs"]}
+    current_inputs = {row["path"]: row for row in current["inputs"]}
+
+    changed = []
+    missing = []
+    for rel in sorted(recorded_inputs, key=lambda p: (p.casefold(), p)):
+        row = recorded_inputs[rel]
+        now = current_inputs.get(rel)
+        if now is None:
+            missing.append(rel)
+        elif now["sha256"] != row["sha256"] or now["size"] != row["size"]:
+            changed.append(rel)
+
+    added = [
+        rel
+        for rel in sorted(current_inputs, key=lambda p: (p.casefold(), p))
+        if rel not in recorded_inputs
+    ]
+
+    toolchain_diffs = [
+        field
+        for field in _TOOLCHAIN_FIELDS
+        if recorded_content["toolchain"].get(field) != current["toolchain"].get(field)
+    ]
+    runtime_differs = recorded_content["runtime"] != current["runtime"]
+
+    if changed:
+        return EXIT_CHANGED, [f"CHANGED {rel}" for rel in changed]
+    if missing:
+        return EXIT_MISSING_INPUT, [f"MISSING {rel}" for rel in missing]
+    if added:
+        return EXIT_ADDED_INPUT, [f"ADDED {rel}" for rel in added]
+    if toolchain_diffs:
+        return EXIT_TOOLCHAIN, [f"TOOLCHAIN {field}" for field in toolchain_diffs]
+    if runtime_differs:
+        return EXIT_RUNTIME, ["RUNTIME tree_sha256 mismatch"]
+    return EXIT_PARITY, [
+        f"inputs={len(current_inputs)} runtime_files={current['runtime']['file_count']} "
+        f"bytes={current['runtime']['total_bytes']}"
+    ]
+
+
+def verify_manifest(
+    repo_root: Path,
+    bundle_root: Path,
+    path: Path,
+) -> tuple[int, list[str]]:
+    """Return (exit_code, messages). Exit 0 means parity is proven."""
+    try:
+        manifest = load_manifest(path)
+        return manifest_problems(repo_root, bundle_root, manifest)
+    except ManifestProblem as exc:
+        return exc.code, [exc.detail]
+
+
+def _parse_manifest_cli(argv):
+    options = {"--output": None, "--manifest": None, "--node-version": None, "--npm-version": None}
+    positional = []
+    index = 1
+    while index < len(argv):
+        token = argv[index]
+        if token in options:
+            if index + 1 >= len(argv):
+                raise ManifestProblem(EXIT_MALFORMED, f"usage: {token} requires a value")
+            options[token] = argv[index + 1]
+            index += 2
+            continue
+        positional.append(token)
+        index += 1
+    if len(positional) < 2:
+        raise ManifestProblem(
+            EXIT_MALFORMED,
+            "usage: packaging_checks.py {manifest --output PATH | verify-manifest --manifest PATH} "
+            "<repo_root> <bundle_root>",
+        )
+    return options, Path(positional[0]).resolve(), Path(positional[1]).resolve()
+
+
+def _manifest_cli(argv) -> int:
+    action = argv[0]
+    try:
+        options, repo_root, bundle_root = _parse_manifest_cli(argv)
+        if action == "manifest":
+            if not options["--output"]:
+                raise ManifestProblem(EXIT_MALFORMED, "usage: manifest requires --output <path>")
+            recorded = {}
+            if options["--node-version"]:
+                recorded["node_version"] = options["--node-version"]
+            if options["--npm-version"]:
+                recorded["npm_version"] = options["--npm-version"]
+            manifest = build_manifest(repo_root, bundle_root, recorded)
+            output = Path(options["--output"])
+            write_manifest_atomic(output, manifest)
+            content = manifest["content"]
+            print(f"MANIFEST_WRITTEN {_normalise_rel(output.as_posix())}")
+            print(f"MANIFEST_CONTENT_SHA256 {manifest['content_sha256']}")
+            print(f"MANIFEST_INPUTS {len(content['inputs'])}")
+            print(
+                "MANIFEST_RUNTIME files={} bytes={}".format(
+                    content["runtime"]["file_count"], content["runtime"]["total_bytes"]
+                )
+            )
+            return EXIT_PARITY
+        if not options["--manifest"]:
+            raise ManifestProblem(EXIT_MALFORMED, "usage: verify-manifest requires --manifest <path>")
+        code, messages = verify_manifest(repo_root, bundle_root, Path(options["--manifest"]))
+        for message in messages:
+            print(message)
+        if code == EXIT_PARITY:
+            print("MANIFEST_OK")
+        else:
+            print(f"MANIFEST_NOT_PROVEN code={code}")
+        return code
+    except ManifestProblem as exc:
+        print(f"MANIFEST_FAIL code={exc.code} {exc.detail}")
+        return exc.code
+
+
+def _legacy_main(argv) -> int:
+    """Original positional CLI: <bundle_root> [toc_path ...]."""
+    root = Path(argv[0]).resolve()
     max_bytes = int(os.environ.get("ACA_MAX_BUNDLE_BYTES", str(DEFAULT_MAX_BYTES)))
     toc_roots = []
-    for raw in sys.argv[2:]:
+    for raw in argv[1:]:
         p = Path(raw)
         if p.is_dir():
             toc_roots.extend(p.glob("*.toc"))
@@ -137,12 +761,20 @@ if __name__ == "__main__":
     for err in contam:
         print(f"PROHIBITED {err}")
     if contam:
-        sys.exit(2)
+        return 2
 
     size_errs, total, count = size_errors(root, max_bytes)
     print(f"SIZE bytes={total} files={count} ceiling={max_bytes}")
     for err in size_errs:
         print(f"SIZE_FAIL {err}")
     if size_errs:
-        sys.exit(3)
+        return 3
     print("PACKAGING_CHECKS_OK")
+    return 0
+
+
+if __name__ == "__main__":
+    cli_args = sys.argv[1:]
+    if cli_args and cli_args[0] in ("manifest", "verify-manifest"):
+        sys.exit(_manifest_cli(cli_args))
+    sys.exit(_legacy_main(cli_args))

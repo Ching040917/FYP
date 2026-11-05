@@ -81,6 +81,10 @@ Assert ($b.Contains("Get-FileHash")) "SHA-256 computed"
 Assert (-not $b.Contains("& winget install")) "Build script never runs winget to install the compiler"
 Assert (-not $b.Contains("choco install")) "Build script never auto-installs the compiler"
 Assert ($b.Contains("The installer build never auto-installs the compiler.")) "Build script documents manual compiler install only"
+Assert ($b.Contains("verify-manifest")) "Build script proves runtime reuse from the input manifest"
+Assert ($b.Contains("input-manifest.json")) "Build script locates the release input manifest"
+Assert (-not $b.Contains("Clean runtime present")) "Path presence alone is never accepted as provenance"
+Assert ($b.Contains("=== 4b. Runtime/manifest parity after compile ===")) "Build script re-verifies parity after ISCC compilation"
 
 Write-Host "=== Branding ==="
 $icoPath = Join-Path $RepoRoot "assets\branding\aca-icon.ico"
@@ -114,6 +118,13 @@ Assert (Test-Path $favFile) "Favicon asset exists in frontend public assets"
 Write-Host "=== Release output location ==="
 $gi = Get-Content (Join-Path $RepoRoot ".gitignore") -Raw
 Assert ($gi.Contains("release-output/")) "release-output/ is gitignored"
+
+Write-Host "=== Release input manifest gate ==="
+$poc = Get-Content (Join-Path $RepoRoot "backend\scripts\build-packaging-poc.ps1") -Raw
+Assert ($poc.Contains("packaging_checks.py") -and $poc.Contains("manifest")) "POC build generates the release input manifest"
+Assert ($poc.Contains("verify-manifest")) "POC build verifies the manifest it just wrote"
+$pc = Get-Content (Join-Path $RepoRoot "backend\scripts\packaging_checks.py") -Raw
+Assert ($pc.Contains("MANIFEST_SCHEMA_VERSION")) "Manifest schema version is declared in packaging_checks.py"
 
 if ($failures.Count -gt 0) {
     Write-Host "`nCONTRACT_TEST_FAILURES=$($failures.Count)" -ForegroundColor Red

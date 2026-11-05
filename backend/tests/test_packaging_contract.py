@@ -11,9 +11,14 @@ global Python installation, and never build the bundle. They verify that:
 5. The size guard flags oversized bundles.
 """
 
+import builtins
+import json
+import os
 import re
+import subprocess
 import sys
 import textwrap
+import time
 from pathlib import Path
 
 import pytest
@@ -308,3 +313,378 @@ def test_size_report_shape(tmp_path):
     errs, total, count = packaging_checks.size_errors(bundle, max_bytes=DEFAULT_MAX)
     assert total == 5
     assert count == 1
+
+
+# ---------------------------------------------------------------------------
+# Release input manifest (B-PACK-01)
+#
+# Everything below is hermetic: the governed inputs, the fake controlled venv
+# and the fake runtime bundle are all created under tmp_path. No test reads the
+# real repository tree or the real backend/.venv.
+# ---------------------------------------------------------------------------
+
+BUNDLE_REL = "backend/dist/run-frozen"
+
+
+def _write(path, data=b"x"):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if isinstance(data, str):
+        data = data.encode("utf-8")
+    path.write_bytes(data)
+    return path
+
+
+def _tmp_repo(tmp_path, *, dist_text="dist-a", pyinstaller_version="6.22.2", python_bytes=b"python-3.12.10"):
+    """Minimal governed repository: sources, dist, assets, packaging, venv, bundle."""
+    repo = tmp_path / "repo"
+    for rel, data in (
+        ("backend/ACA.spec", "spec"),
+        ("backend/alembic.ini", "alembic-ini"),
+        ("backend/frozen_main.py", "frozen-main"),
+        ("backend/requirements.txt", "fastapi==0.110.1\n"),
+        ("backend/requirements-dev.txt", "PyInstaller==6.22.2\n"),
+        ("backend/alembic/versions/0001_init.py", "migration"),
+        ("backend/scripts/packaging_checks.py", "checks"),
+        ("backend/scripts/build-packaging-poc.ps1", "poc"),
+        ("frontend/index.html", "<html></html>"),
+        ("frontend/vite.config.ts", "vite"),
+        ("frontend/tailwind.config.js", "tailwind"),
+        ("frontend/postcss.config.js", "postcss"),
+        ("frontend/tsconfig.json", "{}"),
+        ("frontend/tsconfig.node.json", "{}"),
+        ("frontend/package.json", "{}"),
+        ("frontend/package-lock.json", "{}"),
+        ("frontend/src/main.ts", "src"),
+        ("frontend/dist/index.html", dist_text),
+        ("frontend/public/samples/sample-thesis.docx", b"docx-bytes"),
+        ("assets/branding/aca-icon.ico", b"ico"),
+        ("assets/branding/aca-icon-wizard.bmp", b"bmp"),
+        ("assets/branding/aca-icon-source.png", b"png"),
+        ("installer/AcademicComplianceAuditor.iss", "iss"),
+        ("scripts/build-installer.ps1", "build-installer"),
+    ):
+        _write(repo / rel, data)
+
+    site_packages = repo / "backend/.venv/Lib/site-packages"
+    _write(
+        site_packages / "pyinstaller-6.22.2.dist-info/METADATA",
+        f"Name: PyInstaller\nVersion: {pyinstaller_version}\n\nbody\n",
+    )
+    _write(
+        site_packages / "alembic-1.11.1.dist-info/METADATA",
+        "Name: alembic\nVersion: 1.11.1\n\n",
+    )
+    _write(repo / "backend/.venv/Scripts/python.exe", python_bytes)
+
+    bundle = repo / BUNDLE_REL
+    _write(bundle / "run-frozen.exe", b"exe")
+    _write(bundle / "_internal/frontend-dist/index.html", dist_text)
+    return repo
+
+
+def _generate(repo, tmp_path, name="input-manifest.json"):
+    path = tmp_path / name
+    packaging_checks.write_manifest_atomic(
+        path, packaging_checks.build_manifest(repo, repo / BUNDLE_REL)
+    )
+    return path
+
+
+def _verify(repo, path):
+    return packaging_checks.verify_manifest(repo, repo / BUNDLE_REL, path)
+
+
+def _dump(path, manifest):
+    path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    return path
+
+
+def test_manifest_is_deterministic(tmp_path):
+    repo = _tmp_repo(tmp_path)
+    first = packaging_checks.build_manifest(repo, repo / BUNDLE_REL)
+    time.sleep(1.1)
+    second = packaging_checks.build_manifest(repo, repo / BUNDLE_REL)
+    assert first["content"] == second["content"]
+    assert first["content_sha256"] == second["content_sha256"]
+    assert "generated_at_utc" in first["recorded"]
+    assert "generated_at_utc" not in json.dumps(first["content"])
+
+
+def test_manifest_input_order_is_sorted(tmp_path):
+    repo = _tmp_repo(tmp_path)
+    paths = [row["path"] for row in packaging_checks.collect_inputs(repo)]
+    assert paths == sorted(paths, key=lambda p: (p.casefold(), p))
+
+
+def test_manifest_distribution_order_is_sorted(tmp_path):
+    repo = _tmp_repo(tmp_path)
+    _write(
+        repo / "backend/.venv/Lib/site-packages/Zeta-1.0.dist-info/METADATA",
+        "Name: Zeta\nVersion: 1.0\n\n",
+    )
+    dists = packaging_checks.collect_toolchain(repo)["distributions"]
+    names = [row["name"] for row in dists]
+    assert names == sorted(names, key=lambda n: (n.casefold(), n))
+    assert [row["version"] for row in dists if row["name"] == "PyInstaller"] == ["6.22.2"]
+
+
+def test_manifest_hashes_are_full_sha256(tmp_path):
+    repo = _tmp_repo(tmp_path)
+    manifest = packaging_checks.build_manifest(repo, repo / BUNDLE_REL)
+    assert re.fullmatch(r"[0-9a-f]{64}", manifest["content_sha256"])
+    for row in manifest["content"]["inputs"]:
+        assert re.fullmatch(r"[0-9a-f]{64}", row["sha256"]), row["path"]
+    for key in ("tree_sha256",):
+        assert re.fullmatch(r"[0-9a-f]{64}", manifest["content"]["runtime"][key])
+    assert re.fullmatch(r"[0-9a-f]{64}", manifest["content"]["toolchain"]["python_sha256"])
+
+
+def test_manifest_parity_accepts_unchanged_inputs(tmp_path):
+    repo = _tmp_repo(tmp_path)
+    path = _generate(repo, tmp_path)
+    code, messages = _verify(repo, path)
+    assert code == packaging_checks.EXIT_PARITY, messages
+
+
+def test_manifest_rejects_changed_source(tmp_path):
+    repo = _tmp_repo(tmp_path)
+    path = _generate(repo, tmp_path)
+    _write(repo / "backend/frozen_main.py", "frozen-main-edited")
+    code, messages = _verify(repo, path)
+    assert code == packaging_checks.EXIT_CHANGED
+    assert "CHANGED backend/frozen_main.py" in messages
+
+
+def test_manifest_rejects_changed_frontend_asset(tmp_path):
+    repo = _tmp_repo(tmp_path)
+    path = _generate(repo, tmp_path)
+    _write(repo / "frontend/dist/index.html", "dist-b")
+    code, messages = _verify(repo, path)
+    assert code == packaging_checks.EXIT_CHANGED
+    assert "CHANGED frontend/dist/index.html" in messages
+
+
+def test_manifest_rejects_changed_package_lock(tmp_path):
+    repo = _tmp_repo(tmp_path)
+    path = _generate(repo, tmp_path)
+    _write(repo / "frontend/package-lock.json", '{"lock": 2}')
+    code, messages = _verify(repo, path)
+    assert code == packaging_checks.EXIT_CHANGED
+    assert "CHANGED frontend/package-lock.json" in messages
+
+
+def test_manifest_rejects_changed_notice_input(tmp_path):
+    repo = _tmp_repo(tmp_path)
+    _write(repo / "THIRD_PARTY_NOTICES.md", "notices-v1")
+    path = _generate(repo, tmp_path)
+    _write(repo / "THIRD_PARTY_NOTICES.md", "notices-v2")
+    code, messages = _verify(repo, path)
+    assert code == packaging_checks.EXIT_CHANGED
+    assert "CHANGED THIRD_PARTY_NOTICES.md" in messages
+
+
+def test_verify_manifest_missing_file_exit_20(tmp_path):
+    repo = _tmp_repo(tmp_path)
+    code, messages = _verify(repo, tmp_path / "absent-manifest.json")
+    assert code == packaging_checks.EXIT_MANIFEST_MISSING
+    assert messages
+
+
+def test_verify_manifest_malformed_exit_22(tmp_path):
+    repo = _tmp_repo(tmp_path)
+    path = tmp_path / "broken.json"
+    path.write_text("{", encoding="utf-8")
+    code, messages = _verify(repo, path)
+    assert code == packaging_checks.EXIT_MALFORMED
+    assert messages
+
+
+def test_verify_manifest_schema_exit_21(tmp_path):
+    repo = _tmp_repo(tmp_path)
+    manifest = packaging_checks.build_manifest(repo, repo / BUNDLE_REL)
+    manifest["schema_version"] = 999
+    path = _dump(tmp_path / "schema.json", manifest)
+    code, messages = _verify(repo, path)
+    assert code == packaging_checks.EXIT_SCHEMA
+    assert messages
+
+
+def test_manifest_rejects_missing_input(tmp_path):
+    repo = _tmp_repo(tmp_path)
+    path = _generate(repo, tmp_path)
+    (repo / "backend/frozen_main.py").unlink()
+    code, messages = _verify(repo, path)
+    assert code == packaging_checks.EXIT_MISSING_INPUT
+    assert "MISSING backend/frozen_main.py" in messages
+
+
+def test_manifest_rejects_added_input(tmp_path):
+    repo = _tmp_repo(tmp_path)
+    path = _generate(repo, tmp_path)
+    _write(repo / "frontend/src/extra.ts", "extra")
+    code, messages = _verify(repo, path)
+    assert code == packaging_checks.EXIT_ADDED_INPUT
+    assert "ADDED frontend/src/extra.ts" in messages
+
+
+def test_manifest_rejects_toolchain_change(tmp_path):
+    repo = _tmp_repo(tmp_path)
+    path = _generate(repo, tmp_path)
+    _write(
+        repo / "backend/.venv/Lib/site-packages/pyinstaller-6.22.2.dist-info/METADATA",
+        "Name: PyInstaller\nVersion: 6.22.3\n\n",
+    )
+    code, messages = _verify(repo, path)
+    assert code == packaging_checks.EXIT_TOOLCHAIN
+    assert "TOOLCHAIN pyinstaller_version" in messages
+
+
+def test_manifest_rejects_changed_python_identity(tmp_path):
+    repo = _tmp_repo(tmp_path)
+    path = _generate(repo, tmp_path)
+    _write(repo / "backend/.venv/Scripts/python.exe", b"python-3.12.11")
+    code, messages = _verify(repo, path)
+    assert code == packaging_checks.EXIT_TOOLCHAIN
+    assert "TOOLCHAIN python_sha256" in messages
+
+
+def test_manifest_requires_runtime_digest(tmp_path):
+    repo = _tmp_repo(tmp_path)
+    path = _generate(repo, tmp_path)
+    _write(repo / BUNDLE_REL / "_internal/frontend-dist/index.html", "dist-b")
+    code, messages = _verify(repo, path)
+    assert code == packaging_checks.EXIT_RUNTIME, messages
+    assert "RUNTIME tree_sha256 mismatch" in messages
+
+
+def test_manifest_write_is_atomic(tmp_path):
+    repo = _tmp_repo(tmp_path)
+    path = _generate(repo, tmp_path)
+    assert path.is_file()
+    assert not Path(str(path) + ".tmp").exists()
+    stray = Path(str(path) + ".tmp")
+    stray.write_text("{ not json", encoding="utf-8")
+    code, messages = _verify(repo, path)
+    assert code == packaging_checks.EXIT_PARITY, messages
+
+
+def test_manifest_paths_use_forward_slashes_and_no_absolute(tmp_path):
+    repo = _tmp_repo(tmp_path)
+    manifest = packaging_checks.build_manifest(repo, repo / BUNDLE_REL)
+    for row in manifest["content"]["inputs"]:
+        path = row["path"]
+        assert "\\" not in path
+        assert not path.startswith("/")
+        assert not path.startswith("./")
+        assert ":" not in path
+        assert not any(segment in ("", ".", "..") for segment in path.split("/"))
+
+
+def test_manifest_rejects_unsafe_path_entries(tmp_path):
+    repo = _tmp_repo(tmp_path)
+    manifest = packaging_checks.build_manifest(repo, repo / BUNDLE_REL)
+    row = {"path": "/etc/passwd", "category": "backend", "sha256": "0" * 64, "size": 1}
+    manifest["content"]["inputs"].append(row)
+    path = _dump(tmp_path / "unsafe-absolute.json", manifest)
+    assert _verify(repo, path)[0] == packaging_checks.EXIT_UNSAFE_MANIFEST
+
+    manifest = packaging_checks.build_manifest(repo, repo / BUNDLE_REL)
+    manifest["content"]["inputs"].append(
+        {"path": "../outside.py", "category": "backend", "sha256": "0" * 64, "size": 1}
+    )
+    path = _dump(tmp_path / "unsafe-dotdot.json", manifest)
+    assert _verify(repo, path)[0] == packaging_checks.EXIT_UNSAFE_MANIFEST
+
+    manifest = packaging_checks.build_manifest(repo, repo / BUNDLE_REL)
+    manifest["content"]["inputs"].append(
+        {"path": "C:/windows/x.py", "category": "backend", "sha256": "0" * 64, "size": 1}
+    )
+    path = _dump(tmp_path / "unsafe-drive.json", manifest)
+    assert _verify(repo, path)[0] == packaging_checks.EXIT_UNSAFE_MANIFEST
+
+
+def test_manifest_rejects_case_fold_collision(tmp_path):
+    repo = _tmp_repo(tmp_path)
+    manifest = packaging_checks.build_manifest(repo, repo / BUNDLE_REL)
+    manifest["content"]["inputs"].append(
+        {"path": "Frontend/SRC/Main.ts", "category": "frontend-source", "sha256": "0" * 64, "size": 1}
+    )
+    path = _dump(tmp_path / "casefold.json", manifest)
+    assert _verify(repo, path)[0] == packaging_checks.EXIT_UNSAFE_MANIFEST
+
+
+def test_manifest_rejects_nfc_equivalent_collision(tmp_path):
+    repo = _tmp_repo(tmp_path)
+    manifest = packaging_checks.build_manifest(repo, repo / BUNDLE_REL)
+    manifest["content"]["inputs"].extend(
+        [
+            {"path": "frontend/src/caf\u00e9.ts", "category": "frontend-source", "sha256": "0" * 64, "size": 1},
+            {"path": "frontend/src/cafe\u0301.ts", "category": "frontend-source", "sha256": "0" * 64, "size": 1},
+        ]
+    )
+    path = _dump(tmp_path / "nfc.json", manifest)
+    assert _verify(repo, path)[0] == packaging_checks.EXIT_UNSAFE_MANIFEST
+
+
+def test_manifest_rejects_symlinked_input(tmp_path):
+    repo = _tmp_repo(tmp_path)
+    path = _generate(repo, tmp_path)
+    outside = _write(tmp_path / "outside.py", "outside")
+    link = repo / "backend/linked.py"
+    try:
+        os.symlink(outside, link)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlink creation is not permitted on this host")
+    code, messages = _verify(repo, path)
+    assert code == packaging_checks.EXIT_UNSAFE_PATH
+    assert any("UNSAFE" in message for message in messages)
+
+
+def test_manifest_rejects_unstable_input(tmp_path, monkeypatch):
+    repo = _tmp_repo(tmp_path)
+    path = _generate(repo, tmp_path)
+    target = repo / "backend/frozen_main.py"
+    real_open = builtins.open
+    fired = {"done": False}
+
+    def mutating_open(file, *args, **kwargs):
+        handle = real_open(file, *args, **kwargs)
+        if not fired["done"] and Path(file) == target:
+            fired["done"] = True
+            # Genuine mid-read mutation: the post-read stat now disagrees with
+            # the pre-read stat, which is exactly what must fail closed.
+            with real_open(target, "ab") as appender:
+                appender.write(b"-mutated-during-hash")
+        return handle
+
+    monkeypatch.setattr(packaging_checks, "open", mutating_open, raising=False)
+    code, messages = _verify(repo, path)
+    assert fired["done"] is True
+    assert code == packaging_checks.EXIT_UNSTABLE
+    assert "UNSTABLE backend/frozen_main.py" in messages
+
+
+def test_legacy_cli_contamination_exit_2(tmp_path):
+    bundle = _tmp_bundle(tmp_path, dirs=("numpy",))
+    completed = subprocess.run(
+        [sys.executable, str(CHECKS_MODULE), str(bundle)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 2, completed.stdout + completed.stderr
+    assert "PROHIBITED" in completed.stdout
+
+
+def test_legacy_cli_oversize_exit_3(tmp_path):
+    bundle = _tmp_bundle(tmp_path, files=(("blob.bin", "x" * 100),))
+    env = dict(os.environ, ACA_MAX_BUNDLE_BYTES="10")
+    completed = subprocess.run(
+        [sys.executable, str(CHECKS_MODULE), str(bundle)],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+    assert completed.returncode == 3, completed.stdout + completed.stderr
+    assert "SIZE_FAIL" in completed.stdout
