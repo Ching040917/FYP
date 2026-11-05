@@ -26,6 +26,7 @@ $VenvPython = Join-Path $BackendDir ".venv\Scripts\python.exe"
 $BundleRoot = Join-Path $BackendDir "dist\run-frozen"
 $ChecksScript = Join-Path $BackendDir "scripts\packaging_checks.py"
 $ManifestPath = Join-Path $ReleaseDir "input-manifest.json"
+$InventoryPath = Join-Path $ReleaseDir "file-inventory.json"
 $PocScript = Join-Path $BackendDir "scripts\build-packaging-poc.ps1"
 
 # Verify-manifest exit codes that permit an automatic rebuild: the checked-out
@@ -33,6 +34,11 @@ $PocScript = Join-Path $BackendDir "scripts\build-packaging-poc.ps1"
 # non-zero code is a hard fail - a rebuild must never hide an invalid input
 # boundary, an unsafe path, an unstable tree or an unsupported manifest contract.
 $RebuildExits = @(20, 23, 24, 26, 27, 28)
+
+# Delivered-file inventory: a missing/malformed inventory (33) or one that no
+# longer matches the tree (34) is a stale-cache state and may be rebuilt.
+# Hygiene failures (32/35) and unsafe paths (31) never rebuild.
+$InventoryRebuildExits = @(33, 34)
 
 $RequiredISCCVersion = "6.7.3"
 $RequiredPythonMajorMinor = "3.12"
@@ -60,21 +66,32 @@ function Find-ISCC {
     return $null
 }
 
+# ---- Verify a runtime candidate against provenance, inventory and hygiene. ----
+function Test-RuntimeProven {
+    & $VenvPython $ChecksScript "verify-manifest" $RepoRoot $BundleRoot "--manifest" $ManifestPath 2>&1 | Out-Host
+    $manifestExit = $LASTEXITCODE
+    if ($manifestExit -ne 0) { return $manifestExit }
+    & $VenvPython $ChecksScript "verify-inventory" $BundleRoot "--inventory" $InventoryPath 2>&1 | Out-Host
+    $inventoryExit = $LASTEXITCODE
+    if ($inventoryExit -ne 0) { return $inventoryExit }
+    & $VenvPython $ChecksScript "hygiene" $BundleRoot 2>&1 | Out-Host
+    return $LASTEXITCODE
+}
+
 # ---- Locate the controlled clean runtime. Reuse only when provenance is proven. ----
 function Ensure-CleanRuntime {
     $exe = Join-Path $BundleRoot "run-frozen.exe"
     $internal = Join-Path $BundleRoot "_internal"
     if ((Test-Path $exe) -and (Test-Path $internal)) {
-        & $VenvPython $ChecksScript "verify-manifest" $RepoRoot $BundleRoot "--manifest" $ManifestPath
-        $verifyExit = $LASTEXITCODE
-        if ($verifyExit -eq 0) {
-            Write-Host "Runtime reuse proven by input manifest."
+        $provenExit = Test-RuntimeProven
+        if ($provenExit -eq 0) {
+            Write-Host "Runtime reuse proven by input manifest, file inventory and hygiene."
             return
         }
-        if ($RebuildExits -notcontains $verifyExit) {
-            Fail "Runtime reuse refused (verify-manifest exit $verifyExit). This failure does not permit a rebuild; fix the reported condition first."
+        if (($RebuildExits -notcontains $provenExit) -and ($InventoryRebuildExits -notcontains $provenExit)) {
+            Fail "Runtime reuse refused (provenance/inventory/hygiene exit $provenExit). This failure does not permit a rebuild; fix the reported condition first."
         }
-        Write-Host "Runtime provenance stale (verify-manifest exit $verifyExit). Rebuilding from reviewed inputs."
+        Write-Host "Runtime provenance or inventory stale (exit $provenExit). Rebuilding from reviewed inputs."
     }
     else {
         Write-Host "Clean runtime missing - building via build-packaging-poc.ps1..."
@@ -83,9 +100,9 @@ function Ensure-CleanRuntime {
     powershell -NoProfile -ExecutionPolicy Bypass -File $PocScript
     if ($LASTEXITCODE -ne 0) { Fail "build-packaging-poc.ps1 failed" }
     if (-not ((Test-Path $exe) -and (Test-Path $internal))) { Fail "Runtime still missing after build" }
-    & $VenvPython $ChecksScript "verify-manifest" $RepoRoot $BundleRoot "--manifest" $ManifestPath
-    if ($LASTEXITCODE -ne 0) { Fail "Freshly built runtime is not proven by the input manifest (exit $LASTEXITCODE)." }
-    Write-Host "Rebuilt runtime proven by input manifest."
+    $provenExit = Test-RuntimeProven
+    if ($provenExit -ne 0) { Fail "Freshly built runtime is not proven (exit $provenExit)." }
+    Write-Host "Rebuilt runtime proven by manifest, inventory and hygiene."
 }
 
 try {
@@ -141,6 +158,12 @@ try {
     Write-Host "=== 2. Verify .iss ==="
     if (-not (Test-Path $IssFile)) { Fail "Missing .iss: $IssFile" }
 
+    Write-Host "=== 2b. Hygiene and inventory re-check before ISCC ==="
+    & $VenvPython $ChecksScript "hygiene" $BundleRoot
+    if ($LASTEXITCODE -ne 0) { Fail "Bundle hygiene failed before compilation (exit $LASTEXITCODE)." }
+    & $VenvPython $ChecksScript "verify-inventory" $BundleRoot "--inventory" $InventoryPath
+    if ($LASTEXITCODE -ne 0) { Fail "Inventory no longer matches the runtime (exit $LASTEXITCODE)." }
+
     Write-Host "=== 3. Compile installer ==="
     New-Item -ItemType Directory -Force -Path $ReleaseDir | Out-Null
     Push-Location $InstallerDir
@@ -172,6 +195,10 @@ try {
     Write-Host "=== 4b. Runtime/manifest parity after compile ==="
     & $VenvPython $ChecksScript "verify-manifest" $RepoRoot $BundleRoot "--manifest" $ManifestPath
     if ($LASTEXITCODE -ne 0) { Fail "Inputs or runtime changed during the installer build (verify-manifest exit $LASTEXITCODE)." }
+    & $VenvPython $ChecksScript "hygiene" $BundleRoot
+    if ($LASTEXITCODE -ne 0) { Fail "Bundle hygiene failed after compilation (exit $LASTEXITCODE)." }
+    & $VenvPython $ChecksScript "verify-inventory" $BundleRoot "--inventory" $InventoryPath
+    if ($LASTEXITCODE -ne 0) { Fail "Inventory no longer matches the runtime after compilation (exit $LASTEXITCODE)." }
 
     $sha = (Get-FileHash $exeOut -Algorithm SHA256).Hash
     Write-Host "SIZE_BYTES=$size"

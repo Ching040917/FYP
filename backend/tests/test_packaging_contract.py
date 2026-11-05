@@ -12,6 +12,7 @@ global Python installation, and never build the bundle. They verify that:
 """
 
 import builtins
+import hashlib
 import json
 import os
 import re
@@ -688,3 +689,417 @@ def test_legacy_cli_oversize_exit_3(tmp_path):
     )
     assert completed.returncode == 3, completed.stdout + completed.stderr
     assert "SIZE_FAIL" in completed.stdout
+
+
+# ---------------------------------------------------------------------------
+# Packaging hygiene and delivered-file inventory (B-HYGIENE-01)
+# ---------------------------------------------------------------------------
+
+
+def _tmp_runtime(tmp_path, entries=()):
+    """Bundle root at tmp_path/runtime with entries relative to the bundle root."""
+    root = tmp_path / "runtime"
+    root.mkdir(parents=True, exist_ok=True)
+    for name, content in entries:
+        path = root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if isinstance(content, str):
+            content = content.encode("utf-8")
+        path.write_bytes(content)
+    return root
+
+
+def _inventory_path(tmp_path, name="file-inventory.json"):
+    return tmp_path / name
+
+
+def _legacy_tree_digest(bundle):
+    """Reimplementation of the published B-PACK-01 digest, for regression proof."""
+    rows = []
+    total = 0
+    for dirpath, dirnames, filenames in os.walk(bundle, followlinks=False):
+        dirnames[:] = sorted(dirnames)
+        for name in sorted(filenames):
+            path = Path(dirpath) / name
+            rel = path.relative_to(bundle).as_posix()
+            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+            rows.append((rel, digest))
+            total += path.stat().st_size
+    rows.sort(key=lambda row: (row[0].casefold(), row[0]))
+    tree = hashlib.sha256()
+    for rel, digest in rows:
+        tree.update(f"{rel}\t{digest}\n".encode("utf-8"))
+    return {"tree_sha256": tree.hexdigest(), "file_count": len(rows), "total_bytes": total}
+
+
+def test_inventory_covers_every_file(tmp_path):
+    bundle = _tmp_runtime(
+        tmp_path,
+        (("run-frozen.exe", b"exe"), ("_internal/a/b/c.txt", b"c"), ("_internal/d.dll", b"d")),
+    )
+    inventory = packaging_checks.build_inventory(bundle)
+    assert [row["path"] for row in inventory["files"]] == [
+        "_internal/a/b/c.txt",
+        "_internal/d.dll",
+        "run-frozen.exe",
+    ]
+    assert inventory["summary"]["file_count"] == 3
+    assert inventory["summary"]["total_bytes"] == 5
+
+
+def test_inventory_order_is_deterministic(tmp_path):
+    bundle = _tmp_runtime(tmp_path, (("z.txt", b"z"), ("a.txt", b"a"), ("m/m.txt", b"m")))
+    rows = packaging_checks.inventory_files(bundle)
+    paths = [row["path"] for row in rows]
+    assert paths == sorted(paths, key=lambda p: (p.casefold(), p))
+
+
+def test_inventory_hashes_are_full_sha256(tmp_path):
+    bundle = _tmp_runtime(tmp_path, (("a.txt", b"a"), ("_internal/b.txt", b"bb")))
+    inventory = packaging_checks.build_inventory(bundle)
+    assert re.fullmatch(r"[0-9a-f]{64}", inventory["content_sha256"])
+    assert re.fullmatch(r"[0-9a-f]{64}", inventory["summary"]["tree_sha256"])
+    for row in inventory["files"]:
+        assert re.fullmatch(r"[0-9a-f]{64}", row["sha256"])
+
+
+def test_inventory_tree_digest_matches_bundle_digest(tmp_path):
+    bundle = _tmp_runtime(tmp_path, (("a.txt", b"a"), ("_internal/x/y.txt", b"y")))
+    inventory = packaging_checks.build_inventory(bundle)
+    digest = packaging_checks.bundle_tree_digest(bundle)
+    assert inventory["summary"]["tree_sha256"] == digest["tree_sha256"]
+    assert inventory["summary"]["file_count"] == digest["file_count"]
+    assert inventory["summary"]["total_bytes"] == digest["total_bytes"]
+
+
+def test_inventory_is_independent_of_creation_order(tmp_path):
+    first = _tmp_runtime(tmp_path / "one", (("a.txt", b"a"), ("b.txt", b"b")))
+    second = _tmp_runtime(tmp_path / "two", (("b.txt", b"b"), ("a.txt", b"a")))
+    assert (
+        packaging_checks.build_inventory(first)["content_sha256"]
+        == packaging_checks.build_inventory(second)["content_sha256"]
+    )
+
+
+def test_inventory_empty_bundle(tmp_path):
+    bundle = _tmp_runtime(tmp_path)
+    inventory = packaging_checks.build_inventory(bundle)
+    assert inventory["files"] == []
+    assert inventory["summary"] == {
+        "file_count": 0,
+        "total_bytes": 0,
+        "tree_sha256": hashlib.sha256(b"").hexdigest(),
+    }
+
+
+def test_inventory_write_is_atomic(tmp_path):
+    bundle = _tmp_runtime(tmp_path, (("a.txt", b"a"),))
+    inventory = packaging_checks.build_inventory(bundle)
+    path = _inventory_path(tmp_path)
+    packaging_checks.write_manifest_atomic(path, inventory)
+    assert path.is_file()
+    assert not Path(str(path) + ".tmp").exists()
+    Path(str(path) + ".tmp").write_text("{ not json", encoding="utf-8")
+    assert packaging_checks.verify_inventory(bundle, path)[0] == 0
+
+
+def test_hygiene_rejects_env_file(tmp_path):
+    bundle = _tmp_runtime(tmp_path, ((".env", b"SECRET=1"),))
+    assert any("PROHIBITED .env" in error for error in packaging_checks.sensitive_errors(bundle))
+
+
+def test_hygiene_rejects_env_variants(tmp_path):
+    bundle = _tmp_runtime(tmp_path, ((".env.local", b"x"), (".env.production", b"y")))
+    errors = packaging_checks.sensitive_errors(bundle)
+    assert any(".env.local" in error for error in errors)
+    assert any(".env.production" in error for error in errors)
+
+
+def test_hygiene_rejects_database_files(tmp_path):
+    bundle = _tmp_runtime(
+        tmp_path, (("audit.db", b"x"), ("_internal/x.sqlite", b"y"), ("_internal/y.sqlite3", b"z"))
+    )
+    errors = packaging_checks.sensitive_errors(bundle)
+    for name in ("audit.db", "x.sqlite", "y.sqlite3"):
+        assert any(name in error for error in errors), name
+
+
+def test_hygiene_rejects_log_files(tmp_path):
+    bundle = _tmp_runtime(tmp_path, (("_internal/logs/app.log", b"log"),))
+    errors = packaging_checks.sensitive_errors(bundle)
+    assert errors and "app.log" in errors[0]
+
+
+def test_hygiene_rejects_source_maps(tmp_path):
+    bundle = _tmp_runtime(tmp_path, (("_internal/frontend-dist/assets/app.js.map", b"{}"),))
+    assert packaging_checks.sensitive_errors(bundle)
+
+
+def test_hygiene_rejects_bytecode(tmp_path):
+    bundle = _tmp_runtime(tmp_path, (("_internal/m.pyc", b"x"), ("_internal/n.pyo", b"y")))
+    errors = packaging_checks.sensitive_errors(bundle)
+    assert any("m.pyc" in error for error in errors)
+    assert any("n.pyo" in error for error in errors)
+
+
+def test_hygiene_rejects_pycache_directory(tmp_path):
+    bundle = _tmp_runtime(tmp_path, (("_internal/alembic/__pycache__/env.pyc", b"x"),))
+    errors = packaging_checks.sensitive_errors(bundle)
+    assert any("__pycache__" in error for error in errors)
+
+
+def test_hygiene_rejects_key_and_pem_files(tmp_path):
+    bundle = _tmp_runtime(
+        tmp_path,
+        (("server.key", b"k"), ("_internal/secret.pem", b"p"), ("_internal/cert.p12", b"c")),
+    )
+    errors = packaging_checks.sensitive_errors(bundle)
+    for name in ("server.key", "secret.pem", "cert.p12"):
+        assert any(name in error for error in errors), name
+
+
+def test_hygiene_rejects_evidence_and_test_output_dirs(tmp_path):
+    bundle = _tmp_runtime(
+        tmp_path,
+        (
+            ("evidence/x.json", b"{}"),
+            ("test-results/y.json", b"{}"),
+            ("playwright-report/z.html", "<html></html>"),
+        ),
+    )
+    errors = packaging_checks.sensitive_errors(bundle)
+    for name in ("evidence", "test-results", "playwright-report"):
+        assert any(name in error for error in errors), name
+
+
+def test_hygiene_match_is_case_insensitive(tmp_path):
+    bundle = _tmp_runtime(
+        tmp_path,
+        (("AUDIT.DB", b"x"), (".ENV", b"y"), ("_internal/Cache/__PYCACHE__/x.PYC", b"z")),
+    )
+    errors = packaging_checks.sensitive_errors(bundle)
+    assert len(errors) >= 3
+
+
+def test_hygiene_detects_nested_prohibited_files(tmp_path):
+    bundle = _tmp_runtime(tmp_path, (("_internal/a/b/c/app.log", b"log"),))
+    errors = packaging_checks.sensitive_errors(bundle)
+    assert any("_internal/a/b/c/app.log" in error for error in errors)
+
+
+def test_hygiene_allows_sample_docx(tmp_path):
+    bundle = _tmp_runtime(
+        tmp_path, (("_internal/frontend-dist/samples/sample-thesis.docx", b"docx"),)
+    )
+    assert packaging_checks.sensitive_errors(bundle) == []
+
+
+def test_hygiene_allows_docx_template(tmp_path):
+    bundle = _tmp_runtime(tmp_path, (("_internal/docx/templates/default.docx", b"docx"),))
+    assert packaging_checks.sensitive_errors(bundle) == []
+
+
+def test_hygiene_allows_runtime_binary_extensions(tmp_path):
+    bundle = _tmp_runtime(
+        tmp_path,
+        (
+            ("run-frozen.exe", b"exe"),
+            ("_internal/a.dll", b"dll"),
+            ("_internal/b.pyd", b"pyd"),
+            ("_internal/c.ico", b"ico"),
+            ("_internal/d.bmp", b"bmp"),
+            ("_internal/e.woff2", b"woff"),
+            ("_internal/f/METADATA", b"Name: x"),
+        ),
+    )
+    assert packaging_checks.sensitive_errors(bundle) == []
+
+
+def test_hygiene_allows_certifi_ca_bundle(tmp_path):
+    bundle = _tmp_runtime(tmp_path, (("_internal/certifi/cacert.pem", b"ca"),))
+    assert packaging_checks.sensitive_errors(bundle) == []
+
+
+def test_hygiene_rejects_other_pem_outside_certifi(tmp_path):
+    bundle = _tmp_runtime(tmp_path, (("_internal/other/cacert.pem", b"ca"),))
+    errors = packaging_checks.sensitive_errors(bundle)
+    assert any("other/cacert.pem" in error for error in errors)
+
+
+def test_hygiene_rejects_nested_launcher_copy(tmp_path):
+    bundle = _tmp_runtime(tmp_path, (("run-frozen.exe", b"exe"), ("_internal/copy.exe", b"exe")))
+    errors = packaging_checks.sensitive_errors(bundle)
+    assert any("copy.exe" in error for error in errors)
+
+
+def test_hygiene_messages_use_relative_paths(tmp_path):
+    bundle = _tmp_runtime(tmp_path, (("_internal/a/b/app.log", b"log"),))
+    errors = packaging_checks.sensitive_errors(bundle)
+    assert errors
+    for error in errors:
+        assert str(tmp_path) not in error
+        assert ":" not in error.split("]")[0].replace("PROHIBITED ", "")
+        assert not error.split()[1].startswith("/")
+
+
+def test_hygiene_rejects_unsafe_path_shapes():
+    # ADS, drive prefix, UNC, traversal and trailing dot/space are all rejected.
+    for bad in ("_internal/x.txt:secret", "C:/x", "//server/share/x", "../x", "/etc/passwd"):
+        assert packaging_checks._unsafe_path_reason(bad) is not None, bad
+    assert packaging_checks._trailing_dot_or_space("_internal/engine.pyc.") is True
+    assert packaging_checks._trailing_dot_or_space("_internal/name ") is True
+    assert packaging_checks._trailing_dot_or_space("_internal/name") is False
+
+
+def test_hygiene_rejects_symlinked_directory(tmp_path):
+    bundle = _tmp_runtime(tmp_path, (("_internal/a.txt", b"a"),))
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.log").write_text("log", encoding="utf-8")
+    link = bundle / "_internal" / "linked"
+    try:
+        os.symlink(outside, link, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlink creation is not permitted on this host")
+    with pytest.raises(packaging_checks.ManifestProblem) as excinfo:
+        packaging_checks.sensitive_errors(bundle)
+    assert excinfo.value.code == packaging_checks.EXIT_UNSAFE_PATH
+
+
+def test_hygiene_refuses_unstable_walk(tmp_path, monkeypatch):
+    bundle = _tmp_runtime(tmp_path, (("_internal/a.txt", b"a"),))
+    real_open = builtins.open
+    fired = {"done": False}
+    target = bundle / "_internal" / "a.txt"
+
+    def mutating_open(file, *args, **kwargs):
+        handle = real_open(file, *args, **kwargs)
+        if not fired["done"] and Path(file) == target:
+            fired["done"] = True
+            with real_open(target, "ab") as appender:
+                appender.write(b"-mutated")
+        return handle
+
+    monkeypatch.setattr(packaging_checks, "open", mutating_open, raising=False)
+    with pytest.raises(packaging_checks.ManifestProblem) as excinfo:
+        packaging_checks.inventory_files(bundle)
+    assert excinfo.value.code == packaging_checks.EXIT_UNSTABLE
+
+
+def test_verify_inventory_rejects_stale_inventory(tmp_path):
+    bundle = _tmp_runtime(tmp_path, (("a.txt", b"a"),))
+    path = _inventory_path(tmp_path)
+    packaging_checks.write_manifest_atomic(path, packaging_checks.build_inventory(bundle))
+    (bundle / "b.txt").write_bytes(b"b")
+    code, messages = packaging_checks.verify_inventory(bundle, path)
+    assert code == packaging_checks.EXIT_INVENTORY_STALE
+    assert any("ADDED b.txt" in message for message in messages)
+
+
+def test_verify_inventory_rejects_malformed_inventory(tmp_path):
+    bundle = _tmp_runtime(tmp_path, (("a.txt", b"a"),))
+    path = _inventory_path(tmp_path)
+    path.write_text("{", encoding="utf-8")
+    assert packaging_checks.verify_inventory(bundle, path)[0] == packaging_checks.EXIT_INVENTORY
+
+
+def test_verify_inventory_rejects_bad_self_digest(tmp_path):
+    bundle = _tmp_runtime(tmp_path, (("a.txt", b"a"),))
+    inventory = packaging_checks.build_inventory(bundle)
+    inventory["content_sha256"] = "0" * 64
+    path = _inventory_path(tmp_path)
+    path.write_text(json.dumps(inventory), encoding="utf-8")
+    assert packaging_checks.verify_inventory(bundle, path)[0] == packaging_checks.EXIT_INVENTORY
+
+
+def test_verify_inventory_rejects_unsafe_entries(tmp_path):
+    bundle = _tmp_runtime(tmp_path, (("a.txt", b"a"),))
+    inventory = packaging_checks.build_inventory(bundle)
+    inventory["files"].append({"path": "../escape.txt", "size": 1, "sha256": "0" * 64})
+    path = _inventory_path(tmp_path)
+    path.write_text(json.dumps(inventory), encoding="utf-8")
+    assert (
+        packaging_checks.verify_inventory(bundle, path)[0]
+        == packaging_checks.EXIT_UNSAFE_MANIFEST
+    )
+
+
+def test_hygiene_precedence_over_stale_inventory(tmp_path):
+    bundle = _tmp_runtime(tmp_path, (("a.txt", b"a"),))
+    path = _inventory_path(tmp_path)
+    packaging_checks.write_manifest_atomic(path, packaging_checks.build_inventory(bundle))
+    (bundle / "audit.db").write_bytes(b"db")
+    code, messages = packaging_checks.verify_inventory(bundle, path)
+    assert code == packaging_checks.EXIT_HYGIENE
+    assert any("audit.db" in message for message in messages)
+
+
+def test_hygiene_cli_and_inventory_cli(tmp_path):
+    bundle = _tmp_runtime(tmp_path, (("run-frozen.exe", b"exe"),))
+    path = _inventory_path(tmp_path)
+    hygiene = subprocess.run(
+        [sys.executable, str(CHECKS_MODULE), "hygiene", str(bundle)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert hygiene.returncode == 0 and "HYGIENE_OK files=1" in hygiene.stdout
+    made = subprocess.run(
+        [sys.executable, str(CHECKS_MODULE), "inventory", str(bundle), "--output", str(path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert made.returncode == 0 and "INVENTORY_WRITTEN" in made.stdout
+    verified = subprocess.run(
+        [
+            sys.executable,
+            str(CHECKS_MODULE),
+            "verify-inventory",
+            str(bundle),
+            "--inventory",
+            str(path),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert verified.returncode == 0 and "INVENTORY_OK" in verified.stdout
+    (bundle / ".env").write_bytes(b"x")
+    dirty = subprocess.run(
+        [sys.executable, str(CHECKS_MODULE), "hygiene", str(bundle)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert dirty.returncode == packaging_checks.EXIT_HYGIENE
+    assert "HYGIENE_FAIL count=" in dirty.stdout
+
+
+def test_bpack01_tree_digest_unchanged(tmp_path):
+    bundle = _tmp_runtime(
+        tmp_path,
+        (("run-frozen.exe", b"exe"), ("_internal/a/b.txt", b"b"), ("_internal/c.dll", b"c")),
+    )
+    assert packaging_checks.bundle_tree_digest(bundle) == _legacy_tree_digest(bundle)
+
+
+def test_legacy_and_manifest_exit_codes_preserved(tmp_path):
+    contaminated = _tmp_bundle(tmp_path / "bad", dirs=("numpy",))
+    completed = subprocess.run(
+        [sys.executable, str(CHECKS_MODULE), str(contaminated)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 2
+    oversize = _tmp_bundle(tmp_path / "big", files=(("blob.bin", "x" * 100),))
+    env = dict(os.environ, ACA_MAX_BUNDLE_BYTES="10")
+    completed = subprocess.run(
+        [sys.executable, str(CHECKS_MODULE), str(oversize)],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+    assert completed.returncode == 3

@@ -14,6 +14,7 @@ $FrontendDir = Join-Path $RepoRoot "frontend"
 $FrontendDist = Join-Path $FrontendDir "dist"
 $VenvDir = Join-Path $BackendDir ".venv"
 $VenvPython = Join-Path $VenvDir "Scripts\python.exe"
+$pyChecks = Join-Path $BackendDir "scripts\packaging_checks.py"
 
 # Repository-owned exact PyInstaller pin (must match requirements-dev.txt).
 $RequiredPythonMajorMinor = "3.12"
@@ -163,6 +164,19 @@ try {
     $BundleRoot = Join-Path $BackendDir "dist/run-frozen"
     Test-BundleChecks -BundleRoot $BundleRoot
 
+    Write-Host "=== 6b. Sensitive-file hygiene ==="
+    & $VenvPython $pyChecks "hygiene" $BundleRoot
+    if ($LASTEXITCODE -ne 0) { Fail "Bundle hygiene failed (exit $LASTEXITCODE). Remove the reported file(s) from the runtime." }
+
+    Write-Host "=== 6c. Delivered-file inventory ==="
+    $inventoryPath = Join-Path (Join-Path $RepoRoot "release-output") "file-inventory.json"
+    New-Item -ItemType Directory -Force -Path (Split-Path $inventoryPath) | Out-Null
+    & $VenvPython $pyChecks "inventory" $BundleRoot "--output" $inventoryPath
+    if ($LASTEXITCODE -ne 0) { Fail "File inventory failed (exit $LASTEXITCODE)." }
+    & $VenvPython $pyChecks "verify-inventory" $BundleRoot "--inventory" $inventoryPath
+    if ($LASTEXITCODE -ne 0) { Fail "Fresh file inventory does not match the runtime (exit $LASTEXITCODE)." }
+    Write-Host "Inventory OK: $inventoryPath"
+
     Write-Host "=== 7. Frozen smoke (isolated runtime root) ==="
     $env:ACA_DISABLE_BROWSER = "1"
     Remove-Item Env:\ACA_BROWSER_RECORD_FILE -ErrorAction SilentlyContinue
@@ -219,7 +233,6 @@ try {
     Write-Host "Smoke OK"
 
     Write-Host "=== 8. Release input manifest ==="
-    $pyChecks = Join-Path $BackendDir "scripts\packaging_checks.py"
     $manifestPath = Join-Path (Join-Path $RepoRoot "release-output") "input-manifest.json"
     New-Item -ItemType Directory -Force -Path (Split-Path $manifestPath) | Out-Null
     $nodeVer = (& node --version 2>$null | Select-Object -First 1)

@@ -85,6 +85,11 @@ Assert ($b.Contains("verify-manifest")) "Build script proves runtime reuse from 
 Assert ($b.Contains("input-manifest.json")) "Build script locates the release input manifest"
 Assert (-not $b.Contains("Clean runtime present")) "Path presence alone is never accepted as provenance"
 Assert ($b.Contains("=== 4b. Runtime/manifest parity after compile ===")) "Build script re-verifies parity after ISCC compilation"
+Assert ($b.Contains("hygiene")) "Installer build invokes the hygiene gate"
+Assert ($b.Contains("verify-inventory")) "Installer build verifies the delivered-file inventory"
+Assert ($b.Contains("file-inventory.json")) "Installer build locates the delivered-file inventory"
+$poc = Get-Content (Join-Path $RepoRoot "backend\scripts\build-packaging-poc.ps1") -Raw
+Assert ($poc.Contains("inventory")) "POC build generates and verifies the delivered-file inventory"
 
 Write-Host "=== Branding ==="
 $icoPath = Join-Path $RepoRoot "assets\branding\aca-icon.ico"
@@ -125,6 +130,21 @@ Assert ($poc.Contains("packaging_checks.py") -and $poc.Contains("manifest")) "PO
 Assert ($poc.Contains("verify-manifest")) "POC build verifies the manifest it just wrote"
 $pc = Get-Content (Join-Path $RepoRoot "backend\scripts\packaging_checks.py") -Raw
 Assert ($pc.Contains("MANIFEST_SCHEMA_VERSION")) "Manifest schema version is declared in packaging_checks.py"
+
+Write-Host "=== Packaging hygiene gate ==="
+$iss = Get-Content $IssPath -Raw
+Assert ($iss -match 'Excludes: "') "Recursive [Files] entry declares sensitive-file exclusions"
+$excludesLine = ($iss -split "`r?`n" | Where-Object { $_ -match '^Source:.*Excludes:' } | Select-Object -First 1)
+Assert ($null -ne $excludesLine) "Excludes is declared on the recursive [Files] source entry"
+Assert ($excludesLine.Contains("__pycache__\*")) "Bytecode cache directories are excluded"
+Assert ($excludesLine.Contains("*.pyc")) "Bytecode files are excluded"
+Assert ($excludesLine.Contains(".env.*")) "Environment files are excluded"
+Assert ($excludesLine -notmatch '\*\.docx') "No blanket *.docx exclusion (sample + template are product content)"
+Assert ($excludesLine -notmatch '\*\.pem') "No blanket *.pem exclusion (certifi CA bundle is required)"
+$poc = Get-Content (Join-Path $RepoRoot "backend\scripts\build-packaging-poc.ps1") -Raw
+Assert ($poc.Contains('"hygiene"')) "POC build runs the hygiene gate"
+Assert ($poc.Contains('"inventory"')) "POC build generates the inventory"
+Assert ($poc.Contains('"verify-inventory"')) "POC build verifies the inventory"
 
 if ($failures.Count -gt 0) {
     Write-Host "`nCONTRACT_TEST_FAILURES=$($failures.Count)" -ForegroundColor Red

@@ -66,8 +66,14 @@ Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription
 ; The complete verified PyInstaller one-folder tree is packaged whole.
 ; run-frozen.exe and _internal must stay together; never package the launcher
 ; alone. ignoreversion is required so an in-place upgrade overwrites files.
+;
+; Excludes is defense in depth only: the authoritative hygiene gate is
+; backend/scripts/packaging_checks.py ("hygiene" / "verify-inventory"), which
+; fails the build before ISCC runs. *.docx is intentionally NOT excluded (the
+; bundled sample and the python-docx template are product content) and *.pem is
+; intentionally NOT excluded (the certifi CA bundle is required for TLS).
 [Files]
-Source: "..\backend\dist\run-frozen\*"; DestDir: "{app}"; Flags: recursesubdirs ignoreversion createallsubdirs
+Source: "..\backend\dist\run-frozen\*"; DestDir: "{app}"; Flags: recursesubdirs ignoreversion createallsubdirs; Excludes: ".env,.env.*,*.db,*.sqlite,*.sqlite3,*.log,*.map,*.pyc,*.pyo,__pycache__\*,*__pycache__\*,*.pytest_cache\*,test-results\*,playwright-report\*,evidence\*,*.key,*.p12,*.pfx,.git\*"
 
 [Icons]
 Name: "{autoprograms}\Academic Compliance Auditor"; Filename: "{app}\run-frozen.exe"; WorkingDir: "{app}"; IconFilename: "{app}\run-frozen.exe"; Comment: "Launch Academic Compliance Auditor"

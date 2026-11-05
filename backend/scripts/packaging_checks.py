@@ -14,6 +14,7 @@ Two responsibilities:
 from __future__ import annotations
 
 import datetime
+import fnmatch
 import hashlib
 import json
 import os
@@ -156,6 +157,79 @@ EXIT_UNSAFE_PATH = 29
 EXIT_UNSTABLE = 30
 EXIT_UNSAFE_MANIFEST = 31
 
+# Packaging hygiene (B-HYGIENE-01). These codes extend, and never reuse, the
+# legacy 2/3 contamination-size codes or the B-PACK-01 manifest codes 20-31.
+HYGIENE_SCHEMA_VERSION = 1
+EXIT_HYGIENE = 32            # prohibited file or directory present
+EXIT_INVENTORY = 33          # inventory missing, malformed or failing its own self-digest
+EXIT_INVENTORY_STALE = 34    # inventory does not match the current runtime tree
+EXIT_HYGIENE_UNSTABLE = 35   # a file changed while the walk hashed it
+
+# Exact bundle-relative paths that are required product content and must never
+# be rejected by a name rule. certifi's CA bundle is the only certificate the
+# runtime needs; a broad *.pem allowlist would defeat the point of the rule.
+HYGIENE_ALLOWED_PATHS = (
+    "_internal/certifi/cacert.pem",
+    "run-frozen.exe",
+)
+
+# Basename patterns, matched case-insensitively against the file name only.
+HYGIENE_PROHIBITED_NAMES = (
+    ".env",
+    ".env.*",
+    "*.key",
+    "*.p12",
+    "*.pfx",
+    "*.jks",
+    "id_rsa*",
+    "id_ed25519*",
+    "id_ecdsa*",
+    "*.pem",
+    "*.db",
+    "*.sqlite",
+    "*.sqlite3",
+    "*.log",
+    "*.dmp",
+    "*.hprof",
+    "*.coverage",
+    ".coverage",
+    "*.map",
+    "*.pyc",
+    "*.pyo",
+    "*.tmp",
+    "*.bak",
+    "*.orig",
+    "*.rej",
+    "*.swp",
+    "*~",
+    "*.pdb",
+    "*.whl",
+    "*.msi",
+    "*.msix",
+    "*.exe",
+)
+
+# Directory names, matched case-insensitively against any path segment.
+HYGIENE_PROHIBITED_DIRS = (
+    "__pycache__",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+    "test-results",
+    "playwright-report",
+    "coverage",
+    "htmlcov",
+    "evidence",
+    ".git",
+    ".github",
+    ".serena",
+    ".opencode",
+)
+_HYGIENE_DIR_SET = frozenset(name.casefold() for name in HYGIENE_PROHIBITED_DIRS)
+_HYGIENE_ALLOWED = frozenset(path.casefold() for path in HYGIENE_ALLOWED_PATHS)
+
+INVENTORY_GENERATOR = "backend/scripts/packaging_checks.py"
+
 MANIFEST_GENERATOR = "backend/scripts/packaging_checks.py"
 
 _VENV_PYTHON_REL = "backend/.venv/Scripts/python.exe"
@@ -244,6 +318,8 @@ def _unsafe_path_reason(rel: str) -> str | None:
         return "absolute path"
     if _DRIVE_PREFIX_RE.match(rel):
         return "drive prefix"
+    if ":" in rel:
+        return "colon in path (drive letter or alternate data stream)"
     if "\\" in rel:
         return "backslash separator"
     for segment in rel.split("/"):
@@ -455,15 +531,14 @@ def collect_toolchain(
     }
 
 
-def bundle_tree_digest(bundle_root: Path) -> dict:
-    """Return {tree_sha256, file_count, total_bytes} for the runtime tree."""
+def _bundle_rows(bundle_root: Path) -> list[dict]:
+    """Return deterministic [{path, size, sha256}] rows for every bundle file."""
     bundle_root = Path(bundle_root)
     if not bundle_root.is_dir():
         raise ManifestProblem(EXIT_MISSING_INPUT, f"MISSING {bundle_root.name}/")
 
     rows = []
     seen: dict[str, str] = {}
-    total_bytes = 0
     for dirpath, dirnames, filenames in os.walk(bundle_root, followlinks=False):
         dirnames[:] = sorted(dirnames)
         for name in sorted(filenames):
@@ -479,17 +554,26 @@ def bundle_tree_digest(bundle_root: Path) -> dict:
                 )
             seen[key] = rel
             sha256, size = _hash_path(path, bundle_root, rel)
-            rows.append((rel, sha256))
-            total_bytes += size
+            rows.append({"path": rel, "size": size, "sha256": sha256})
 
-    rows.sort(key=lambda row: (row[0].casefold(), row[0]))
+    rows.sort(key=lambda row: (row["path"].casefold(), row["path"]))
+    return rows
+
+
+def bundle_tree_digest(bundle_root: Path) -> dict:
+    """Return {tree_sha256, file_count, total_bytes} for the runtime tree.
+
+    The digest formula is the published B-PACK-01 one and must not drift:
+    sha256 over f"{rel}\\t{sha256}\\n" for rows sorted by (rel.casefold(), rel).
+    """
+    rows = _bundle_rows(bundle_root)
     tree_digest = hashlib.sha256()
-    for rel, sha256 in rows:
-        tree_digest.update(f"{rel}\t{sha256}\n".encode("utf-8"))
+    for row in rows:
+        tree_digest.update(f"{row['path']}\t{row['sha256']}\n".encode("utf-8"))
     return {
         "tree_sha256": tree_digest.hexdigest(),
         "file_count": len(rows),
-        "total_bytes": total_bytes,
+        "total_bytes": sum(row["size"] for row in rows),
     }
 
 
@@ -682,6 +766,273 @@ def verify_manifest(
         return exc.code, [exc.detail]
 
 
+def _trailing_dot_or_space(rel: str) -> bool:
+    """True when a name ends in a space or dot (silently stripped by Windows)."""
+    name = rel.rsplit("/", 1)[-1]
+    return unicodedata.normalize("NFC", name).endswith((" ", "."))
+
+
+def _hygiene_hit(rel: str) -> str | None:
+    """Return the policy rule that prohibits ``rel``, or None when it is clean."""
+    name = rel.rsplit("/", 1)[-1].casefold()
+    for pattern in HYGIENE_PROHIBITED_NAMES:
+        if fnmatch.fnmatchcase(name, pattern):
+            return pattern
+    for segment in rel.casefold().split("/")[:-1]:
+        if segment in _HYGIENE_DIR_SET:
+            return f"directory {segment}"
+    return None
+
+
+def _count_files(bundle_root: Path) -> int:
+    """Count bundle files without hashing them."""
+    total = 0
+    for _dirpath, dirnames, filenames in os.walk(bundle_root, followlinks=False):
+        dirnames[:] = sorted(dirnames)
+        total += len(filenames)
+    return total
+
+
+def sensitive_errors(bundle_root: Path) -> list[str]:
+    """Return ['PROHIBITED <rel> [rule]'] for every prohibited bundle entry."""
+    bundle_root = Path(bundle_root)
+    if not bundle_root.is_dir():
+        raise ManifestProblem(EXIT_MISSING_INPUT, f"MISSING {bundle_root.name}/")
+
+    errors: list[str] = []
+    for dirpath, dirnames, filenames in os.walk(bundle_root, followlinks=False):
+        dirnames[:] = sorted(dirnames)
+        for directory in dirnames:
+            directory_path = Path(dirpath) / directory
+            rel_dir = _normalise_rel(directory_path.relative_to(bundle_root).as_posix())
+            if directory_path.is_symlink() or (
+                callable(getattr(directory_path, "is_junction", None))
+                and directory_path.is_junction()
+            ):
+                raise ManifestProblem(EXIT_UNSAFE_PATH, f"UNSAFE {rel_dir}/: linked directory")
+            if directory.casefold() in _HYGIENE_DIR_SET:
+                errors.append(f"PROHIBITED {rel_dir}/ [directory {directory.casefold()}]")
+        for name in sorted(filenames):
+            path = Path(dirpath) / name
+            rel = _normalise_rel(path.relative_to(bundle_root).as_posix())
+            reason = _unsafe_path_reason(rel)
+            if reason is not None:
+                raise ManifestProblem(EXIT_UNSAFE_PATH, f"UNSAFE {rel}: {reason}")
+            if _trailing_dot_or_space(rel):
+                raise ManifestProblem(
+                    EXIT_UNSAFE_PATH, f"UNSAFE {rel}: name ends with a space or dot"
+                )
+            if rel.casefold() in _HYGIENE_ALLOWED:
+                continue
+            hit = _hygiene_hit(rel)
+            if hit is not None:
+                errors.append(f"PROHIBITED {rel} [{hit}]")
+    return sorted(set(errors))
+
+
+def inventory_files(bundle_root: Path) -> list[dict]:
+    """Rows for every delivered file; refuses a bundle that fails hygiene."""
+    errors = sensitive_errors(bundle_root)
+    if errors:
+        raise ManifestProblem(
+            EXIT_HYGIENE,
+            f"HYGIENE_FAIL count={len(errors)} first={errors[0]}",
+        )
+    return _bundle_rows(bundle_root)
+
+
+def _inventory_content(rows: list[dict]) -> dict:
+    tree = hashlib.sha256()
+    for row in rows:
+        tree.update(f"{row['path']}\t{row['sha256']}\n".encode("utf-8"))
+    return {
+        "schema_version": HYGIENE_SCHEMA_VERSION,
+        "bundle_root": ".",
+        "files": rows,
+        "summary": {
+            "file_count": len(rows),
+            "total_bytes": sum(row["size"] for row in rows),
+            "tree_sha256": tree.hexdigest(),
+        },
+    }
+
+
+def build_inventory(
+    bundle_root: Path,
+    recorded: dict | None = None,
+) -> dict:
+    """Build the deterministic delivered-file inventory."""
+    content = _inventory_content(inventory_files(bundle_root))
+    recorded = dict(recorded or {})
+    recorded.setdefault("generated_at_utc", _utc_now())
+    recorded.setdefault("generator", INVENTORY_GENERATOR)
+    document = dict(content)
+    document["recorded"] = recorded
+    document["content_sha256"] = _content_digest(content)
+    return document
+
+
+def _validate_inventory_shape(data: dict) -> None:
+    if not isinstance(data, dict):
+        raise ManifestProblem(EXIT_INVENTORY, "inventory root is not an object")
+    if data.get("schema_version") != HYGIENE_SCHEMA_VERSION:
+        raise ManifestProblem(
+            EXIT_INVENTORY,
+            f"unsupported inventory schema_version {data.get('schema_version')!r}",
+        )
+    if data.get("bundle_root") != ".":
+        raise ManifestProblem(EXIT_INVENTORY, "inventory bundle_root is not '.'")
+    files = data.get("files")
+    summary = data.get("summary")
+    if not isinstance(files, list) or not isinstance(summary, dict):
+        raise ManifestProblem(EXIT_INVENTORY, "inventory is missing files or summary")
+    for row in files:
+        if not isinstance(row, dict):
+            raise ManifestProblem(EXIT_INVENTORY, "inventory file row is not an object")
+        if not isinstance(row.get("path"), str) or not isinstance(row.get("sha256"), str):
+            raise ManifestProblem(EXIT_INVENTORY, "inventory file row lacks path or sha256")
+        if not isinstance(row.get("size"), int):
+            raise ManifestProblem(EXIT_INVENTORY, "inventory file row lacks an integer size")
+        if not re.fullmatch(r"[0-9a-f]{64}", row["sha256"]):
+            raise ManifestProblem(
+                EXIT_INVENTORY, f"inventory row {row['path']} has a non-64-hex sha256"
+            )
+    for field in ("file_count", "total_bytes"):
+        if not isinstance(summary.get(field), int):
+            raise ManifestProblem(EXIT_INVENTORY, f"inventory summary {field} is not an integer")
+    if not isinstance(summary.get("tree_sha256"), str) or not re.fullmatch(
+        r"[0-9a-f]{64}", summary["tree_sha256"]
+    ):
+        raise ManifestProblem(EXIT_INVENTORY, "inventory tree_sha256 is not 64 lowercase hex")
+
+
+def _load_inventory(path: Path) -> dict:
+    path = Path(path)
+    if not path.is_file():
+        raise ManifestProblem(
+            EXIT_INVENTORY, f"inventory is absent: {_normalise_rel(path.name)}"
+        )
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise ManifestProblem(EXIT_INVENTORY, f"inventory is not valid JSON: {exc}") from exc
+    _validate_inventory_shape(data)
+    _validate_manifest_paths(data["files"])
+    content = {
+        "schema_version": data["schema_version"],
+        "bundle_root": data["bundle_root"],
+        "files": data["files"],
+        "summary": data["summary"],
+    }
+    stored = data.get("content_sha256")
+    if not isinstance(stored, str) or stored != _content_digest(content):
+        raise ManifestProblem(EXIT_INVENTORY, "inventory self-digest does not match its content")
+    return data
+
+
+def verify_inventory(
+    bundle_root: Path,
+    path: Path,
+) -> tuple[int, list[str]]:
+    """Return (exit_code, messages). Exit 0 means the inventory matches the tree."""
+    try:
+        errors = sensitive_errors(bundle_root)
+        if errors:
+            return EXIT_HYGIENE, errors + [f"HYGIENE_FAIL count={len(errors)}"]
+        recorded = _load_inventory(path)
+        current = _inventory_content(_bundle_rows(bundle_root))
+        recorded_rows = {row["path"]: row for row in recorded["files"]}
+        current_rows = {row["path"]: row for row in current["files"]}
+        messages: list[str] = []
+        for rel in sorted(recorded_rows, key=lambda key: (key.casefold(), key)):
+            row = recorded_rows[rel]
+            now = current_rows.get(rel)
+            if now is None:
+                messages.append(f"MISSING {rel}")
+            elif now["sha256"] != row["sha256"] or now["size"] != row["size"]:
+                messages.append(f"CHANGED {rel}")
+        for rel in sorted(current_rows, key=lambda key: (key.casefold(), key)):
+            if rel not in recorded_rows:
+                messages.append(f"ADDED {rel}")
+        if messages:
+            return EXIT_INVENTORY_STALE, messages + [f"INVENTORY_NOT_PROVEN code={EXIT_INVENTORY_STALE}"]
+        summary = current["summary"]
+        return EXIT_PARITY, [
+            f"INVENTORY_OK files={summary['file_count']} tree={summary['tree_sha256']}"
+        ]
+    except ManifestProblem as exc:
+        return exc.code, [exc.detail]
+
+
+def _parse_action_options(argv, known):
+    """Minimal ``--flag value`` parser for the hygiene/inventory actions."""
+    options = {flag: None for flag in known}
+    positional = []
+    index = 0
+    while index < len(argv):
+        token = argv[index]
+        if token in options:
+            if index + 1 >= len(argv):
+                raise ManifestProblem(EXIT_MALFORMED, f"usage: {token} requires a value")
+            options[token] = argv[index + 1]
+            index += 2
+            continue
+        positional.append(token)
+        index += 1
+    return options, positional
+
+
+def _inventory_cli(argv) -> int:
+    action = argv[0]
+    try:
+        options, positional = _parse_action_options(argv[1:], ("--output", "--inventory"))
+        if len(positional) != 1:
+            raise ManifestProblem(
+                EXIT_MALFORMED,
+                "usage: packaging_checks.py {hygiene | inventory --output P | "
+                "verify-inventory --inventory P} <bundle_root>",
+            )
+        bundle_root = Path(positional[0]).resolve()
+        if action == "hygiene":
+            errors = sensitive_errors(bundle_root)
+            for message in errors:
+                print(message)
+            if errors:
+                print(f"HYGIENE_FAIL count={len(errors)}")
+                return EXIT_HYGIENE
+            print(f"HYGIENE_OK files={_count_files(bundle_root)}")
+            return EXIT_PARITY
+        if action == "inventory":
+            if not options["--output"]:
+                raise ManifestProblem(EXIT_MALFORMED, "usage: inventory requires --output <path>")
+            errors = sensitive_errors(bundle_root)
+            for message in errors:
+                print(message)
+            if errors:
+                print(f"HYGIENE_FAIL count={len(errors)}")
+                return EXIT_HYGIENE
+            inventory = build_inventory(bundle_root)
+            output = Path(options["--output"])
+            write_manifest_atomic(output, inventory)
+            print(f"INVENTORY_WRITTEN {_normalise_rel(output.as_posix())}")
+            print(f"INVENTORY_FILES {inventory['summary']['file_count']}")
+            print(f"INVENTORY_TREE_SHA256 {inventory['summary']['tree_sha256']}")
+            return EXIT_PARITY
+        if not options["--inventory"]:
+            raise ManifestProblem(
+                EXIT_MALFORMED, "usage: verify-inventory requires --inventory <path>"
+            )
+        code, messages = verify_inventory(bundle_root, Path(options["--inventory"]))
+        for message in messages:
+            print(message)
+        if code != EXIT_PARITY:
+            print(f"INVENTORY_NOT_PROVEN code={code}")
+        return code
+    except ManifestProblem as exc:
+        print(f"INVENTORY_FAIL code={exc.code} {exc.detail}")
+        return exc.code
+
+
 def _parse_manifest_cli(argv):
     options = {"--output": None, "--manifest": None, "--node-version": None, "--npm-version": None}
     positional = []
@@ -777,4 +1128,6 @@ if __name__ == "__main__":
     cli_args = sys.argv[1:]
     if cli_args and cli_args[0] in ("manifest", "verify-manifest"):
         sys.exit(_manifest_cli(cli_args))
+    if cli_args and cli_args[0] in ("hygiene", "inventory", "verify-inventory"):
+        sys.exit(_inventory_cli(cli_args))
     sys.exit(_legacy_main(cli_args))
