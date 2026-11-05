@@ -42,7 +42,9 @@ Starting a model download sends only the model name and download flags to your l
 
 ## What happens when the citation-guidance model is downloaded?
 
-The download is performed by your local Ollama service, not by ACA. ACA's Backend sends a single request to `127.0.0.1` naming the configured model, and progress state (status text and byte counts) is held in memory only: it is never written to the database, to Audit History, to a log, or to disk. Nothing about your documents is involved, and closing ACA discards the progress display.
+The download is performed by the Ollama service running on your own computer (`127.0.0.1`), not by ACA. After you explicitly confirm the download, ACA coordinates with your local Ollama service through loopback requests: verifying whether the model is already installed, initiating the download pull, and verifying completion.
+
+Download progress is held in memory for the active user interface display; closing ACA discards the in-memory progress display. Progress is never written to the database, to Audit History, or to user document storage. Application diagnostic logs may record download state transitions and byte-count progress metrics for troubleshooting. These log entries contain operational telemetry only: no document content, uploaded document text, citation text, model prompts, model responses, or consent tokens are ever logged. Nothing about your documents is involved.
 
 ## What happens when Local AI is used?
 
