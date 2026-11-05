@@ -361,8 +361,18 @@ def _check_regular(path: Path, repo_root: Path, rel: str) -> None:
         raise ManifestProblem(EXIT_UNSAFE_PATH, f"UNSAFE {rel}: resolves outside the repository")
 
 
-def _hash_path(path: Path, repo_root: Path, rel: str) -> tuple[str, int]:
-    """Return (sha256, size) for a governed file, rejecting unstable reads."""
+def _hash_path(
+    path: Path,
+    repo_root: Path,
+    rel: str,
+    *,
+    unstable_code: int = EXIT_UNSTABLE,
+) -> tuple[str, int]:
+    """Return (sha256, size) for a governed file, rejecting unstable reads.
+
+    ``unstable_code`` lets the inventory callers report 35 while the provenance
+    manifest keeps its published 30.
+    """
     _check_regular(path, repo_root, rel)
     try:
         before = path.stat()
@@ -374,7 +384,7 @@ def _hash_path(path: Path, repo_root: Path, rel: str) -> tuple[str, int]:
             digest.update(chunk)
     after = path.stat()
     if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
-        raise ManifestProblem(EXIT_UNSTABLE, f"UNSTABLE {rel}")
+        raise ManifestProblem(unstable_code, f"UNSTABLE {rel}")
     return digest.hexdigest(), after.st_size
 
 
@@ -531,8 +541,16 @@ def collect_toolchain(
     }
 
 
-def _bundle_rows(bundle_root: Path) -> list[dict]:
-    """Return deterministic [{path, size, sha256}] rows for every bundle file."""
+def _bundle_rows(
+    bundle_root: Path,
+    *,
+    unstable_code: int = EXIT_UNSTABLE,
+) -> list[dict]:
+    """Return deterministic [{path, size, sha256}] rows for every bundle file.
+
+    ``unstable_code`` is forwarded to :func:`_hash_path`; the default keeps the
+    published B-PACK-01 behaviour (exit 30) for the provenance manifest.
+    """
     bundle_root = Path(bundle_root)
     if not bundle_root.is_dir():
         raise ManifestProblem(EXIT_MISSING_INPUT, f"MISSING {bundle_root.name}/")
@@ -553,7 +571,7 @@ def _bundle_rows(bundle_root: Path) -> list[dict]:
                     EXIT_UNSAFE_MANIFEST, f"UNSAFE duplicate runtime path {rel} / {seen[key]}"
                 )
             seen[key] = rel
-            sha256, size = _hash_path(path, bundle_root, rel)
+            sha256, size = _hash_path(path, bundle_root, rel, unstable_code=unstable_code)
             rows.append({"path": rel, "size": size, "sha256": sha256})
 
     rows.sort(key=lambda row: (row["path"].casefold(), row["path"]))
@@ -838,7 +856,7 @@ def inventory_files(bundle_root: Path) -> list[dict]:
             EXIT_HYGIENE,
             f"HYGIENE_FAIL count={len(errors)} first={errors[0]}",
         )
-    return _bundle_rows(bundle_root)
+    return _bundle_rows(bundle_root, unstable_code=EXIT_HYGIENE_UNSTABLE)
 
 
 def _inventory_content(rows: list[dict]) -> dict:
@@ -906,6 +924,41 @@ def _validate_inventory_shape(data: dict) -> None:
         raise ManifestProblem(EXIT_INVENTORY, "inventory tree_sha256 is not 64 lowercase hex")
 
 
+def _validate_inventory_entry_paths(raw_files: object) -> None:
+    """Tolerant path-safety pass over whatever path data the inventory exposes.
+
+    This establishes only whether a higher-priority unsafe-path condition exists.
+    It never certifies the inventory as valid: absent, non-list or non-object
+    entries and non-string paths are skipped and classified later as EXIT_INVENTORY.
+    """
+    if not isinstance(raw_files, list):
+        return
+    seen: dict[str, str] = {}
+    for row in raw_files:
+        if not isinstance(row, dict):
+            continue
+        rel = row.get("path")
+        if not isinstance(rel, str):
+            continue
+        reason = _unsafe_path_reason(rel)
+        if reason is not None:
+            raise ManifestProblem(
+                EXIT_UNSAFE_MANIFEST, f"UNSAFE inventory path {rel!r}: {reason}"
+            )
+        if _trailing_dot_or_space(rel):
+            raise ManifestProblem(
+                EXIT_UNSAFE_MANIFEST,
+                f"UNSAFE inventory path {rel!r}: name ends with a space or dot",
+            )
+        key = _normalise_rel(rel).casefold()
+        if key in seen:
+            raise ManifestProblem(
+                EXIT_UNSAFE_MANIFEST,
+                f"UNSAFE duplicate inventory path {rel!r} / {seen[key]!r}",
+            )
+        seen[key] = rel
+
+
 def _load_inventory(path: Path) -> dict:
     path = Path(path)
     if not path.is_file():
@@ -916,6 +969,10 @@ def _load_inventory(path: Path) -> dict:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
         raise ManifestProblem(EXIT_INVENTORY, f"inventory is not valid JSON: {exc}") from exc
+    if not isinstance(data, dict):
+        raise ManifestProblem(EXIT_INVENTORY, "inventory root is not an object")
+    # Path safety outranks general shape classification when it is provable.
+    _validate_inventory_entry_paths(data.get("files"))
     _validate_inventory_shape(data)
     _validate_manifest_paths(data["files"])
     content = {
@@ -939,8 +996,12 @@ def verify_inventory(
         errors = sensitive_errors(bundle_root)
         if errors:
             return EXIT_HYGIENE, errors + [f"HYGIENE_FAIL count={len(errors)}"]
+        # Hash the runtime tree before the inventory is loaded or trusted, so an
+        # unstable read (35) outranks any inventory classification (31/33).
+        current = _inventory_content(
+            _bundle_rows(bundle_root, unstable_code=EXIT_HYGIENE_UNSTABLE)
+        )
         recorded = _load_inventory(path)
-        current = _inventory_content(_bundle_rows(bundle_root))
         recorded_rows = {row["path"]: row for row in recorded["files"]}
         current_rows = {row["path"]: row for row in current["files"]}
         messages: list[str] = []

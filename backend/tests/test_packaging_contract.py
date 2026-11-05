@@ -966,7 +966,7 @@ def test_hygiene_rejects_symlinked_directory(tmp_path):
     assert excinfo.value.code == packaging_checks.EXIT_UNSAFE_PATH
 
 
-def test_hygiene_refuses_unstable_walk(tmp_path, monkeypatch):
+def test_inventory_files_refuses_unstable_walk(tmp_path, monkeypatch):
     bundle = _tmp_runtime(tmp_path, (("_internal/a.txt", b"a"),))
     real_open = builtins.open
     fired = {"done": False}
@@ -983,7 +983,9 @@ def test_hygiene_refuses_unstable_walk(tmp_path, monkeypatch):
     monkeypatch.setattr(packaging_checks, "open", mutating_open, raising=False)
     with pytest.raises(packaging_checks.ManifestProblem) as excinfo:
         packaging_checks.inventory_files(bundle)
-    assert excinfo.value.code == packaging_checks.EXIT_UNSTABLE
+    # Inventory walks report the hygiene unstable code (35), never the
+    # B-PACK-01 provenance code (30).
+    assert excinfo.value.code == packaging_checks.EXIT_HYGIENE_UNSTABLE
 
 
 def test_verify_inventory_rejects_stale_inventory(tmp_path):
@@ -1103,3 +1105,116 @@ def test_legacy_and_manifest_exit_codes_preserved(tmp_path):
         check=False,
     )
     assert completed.returncode == 3
+
+
+# ---------------------------------------------------------------------------
+# BLOCK-PRECEDENCE-01: 32 -> 35 -> 31 -> 33 -> 34
+# ---------------------------------------------------------------------------
+
+
+def _install_unstable_open(monkeypatch, target):
+    """Make the first read of ``target`` mutate it, so hashing sees a change."""
+    real_open = builtins.open
+    fired = {"done": False}
+
+    def mutating_open(file, *args, **kwargs):
+        handle = real_open(file, *args, **kwargs)
+        if not fired["done"] and Path(file) == target:
+            fired["done"] = True
+            with real_open(target, "ab") as appender:
+                appender.write(b"-mutated")
+        return handle
+
+    monkeypatch.setattr(packaging_checks, "open", mutating_open, raising=False)
+    return fired
+
+
+def _resign(inventory):
+    content = {
+        "schema_version": inventory.get("schema_version"),
+        "bundle_root": inventory.get("bundle_root"),
+        "files": inventory.get("files"),
+        "summary": inventory.get("summary"),
+    }
+    inventory["content_sha256"] = packaging_checks._content_digest(content)
+    return inventory
+
+
+def _written(tmp_path, name, inventory):
+    path = tmp_path / name
+    path.write_text(json.dumps(inventory), encoding="utf-8")
+    return path
+
+
+def test_verify_inventory_unstable_tree_precedes_bad_inventory(tmp_path, monkeypatch):
+    bundle = _tmp_runtime(tmp_path, (("_internal/a.txt", b"a"),))
+    bad = tmp_path / "bad.json"
+    bad.write_text("{", encoding="utf-8")
+    fired = _install_unstable_open(monkeypatch, bundle / "_internal" / "a.txt")
+    code, messages = packaging_checks.verify_inventory(bundle, bad)
+    assert fired["done"] is True
+    assert code == packaging_checks.EXIT_HYGIENE_UNSTABLE
+    assert any("UNSTABLE _internal/a.txt" in message for message in messages)
+    assert all(str(tmp_path) not in message for message in messages)
+
+
+def test_verify_inventory_unsafe_path_precedes_shape_error(tmp_path):
+    bundle = _tmp_runtime(tmp_path, (("a.txt", b"a"),))
+    inventory = packaging_checks.build_inventory(bundle)
+    inventory["files"].append(
+        {"path": "../escape.txt", "size": "not-an-int", "sha256": "0" * 64}
+    )
+    path = _written(tmp_path, "unsafe.json", _resign(inventory))
+    code, messages = packaging_checks.verify_inventory(bundle, path)
+    assert code == packaging_checks.EXIT_UNSAFE_MANIFEST
+    assert any("escape.txt" in message for message in messages)
+
+
+def test_verify_inventory_unstable_precedes_unsafe_inventory(tmp_path, monkeypatch):
+    bundle = _tmp_runtime(tmp_path, (("_internal/a.txt", b"a"),))
+    inventory = packaging_checks.build_inventory(bundle)
+    inventory["files"].append({"path": "C:/escape.txt", "size": 1, "sha256": "0" * 64})
+    path = _written(tmp_path, "unsafe-valid-shape.json", _resign(inventory))
+    fired = _install_unstable_open(monkeypatch, bundle / "_internal" / "a.txt")
+    code, _ = packaging_checks.verify_inventory(bundle, path)
+    assert fired["done"] is True
+    assert code == packaging_checks.EXIT_HYGIENE_UNSTABLE
+
+
+def test_verify_inventory_prohibited_precedes_malformed_inventory(tmp_path):
+    bundle = _tmp_runtime(tmp_path, (("a.txt", b"a"), (".env", b"SECRET=1")))
+    bad = tmp_path / "bad.json"
+    bad.write_text("{", encoding="utf-8")
+    code, messages = packaging_checks.verify_inventory(bundle, bad)
+    assert code == packaging_checks.EXIT_HYGIENE
+    assert any("PROHIBITED .env" in message for message in messages)
+
+
+def test_verify_inventory_rejects_unusable_files_structure(tmp_path):
+    bundle = _tmp_runtime(tmp_path, (("a.txt", b"a"),))
+    base = packaging_checks.build_inventory(bundle)
+
+    missing = json.loads(json.dumps(base))
+    missing.pop("files")
+    variants = {
+        "missing-files": missing,
+        "non-list-files": {**json.loads(json.dumps(base)), "files": {}},
+        "non-object-entry": {**json.loads(json.dumps(base)), "files": ["nope"]},
+        "non-string-path": {
+            **json.loads(json.dumps(base)),
+            "files": [{"path": 123, "size": 1, "sha256": "0" * 64}],
+        },
+    }
+    for name, inventory in variants.items():
+        path = _written(tmp_path, f"{name}.json", _resign(inventory))
+        code, _ = packaging_checks.verify_inventory(bundle, path)
+        assert code == packaging_checks.EXIT_INVENTORY, name
+
+
+def test_verify_inventory_safe_path_with_bad_fields_is_33(tmp_path):
+    bundle = _tmp_runtime(tmp_path, (("a.txt", b"a"),))
+    inventory = packaging_checks.build_inventory(bundle)
+    inventory["files"][0]["size"] = "not-an-int"
+    path = _written(tmp_path, "bad-size.json", _resign(inventory))
+    code, _ = packaging_checks.verify_inventory(bundle, path)
+    assert code == packaging_checks.EXIT_INVENTORY
