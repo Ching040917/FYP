@@ -1,4 +1,4 @@
-from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Query, Response, Form, Body
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from typing import List, Optional
@@ -50,6 +50,7 @@ from app.services.document_parser import (
 from app.services.docx_pdf_converter import convert_docx_to_pdf, DocxConversionError
 from app.services import local_model_download
 from app.services import preview_storage
+from app.services.bounded_multipart import BoundedMultipartError, read_bounded_form
 from app.services.pdf_report import generate_audit_pdf, build_export_filename
 from app.services.page_mapping import compute_paragraph_page_mapping
 from app.services.profile_resolver import (
@@ -97,18 +98,29 @@ def _preview_error_category(exc: Exception) -> str:
 
 @router.post("/api/audit", response_model=AuditSubmitResponse)
 async def audit_document(
-    file: UploadFile = File(...),
+    request: Request,
     profile_id: Optional[str] = Query(None, description="Built-in formatting profile id"),
-    custom_profile: Optional[str] = Form(None, description="Validated custom formatting profile payload (JSON string)"),
     db: Session = Depends(get_db),
 ):
-    # Validate file type
-    if not file.filename.endswith('.docx'):
-        raise HTTPException(status_code=400, detail="Unsupported file format. Only .docx files are accepted.")
+    # D-03: read the bounded multipart body in memory. Starlette's form parser
+    # completes before this handler and spools file parts above 1 MiB to disk.
+    try:
+        form = await read_bounded_form(
+            request,
+            file_field="file",
+            allowed_fields=frozenset({"custom_profile"}),
+            max_file_bytes=settings.MAX_FILE_SIZE,
+        )
+    except BoundedMultipartError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from None
+    filename = form.filename
+    file_bytes = form.file_bytes
+    custom_profile = form.fields.get("custom_profile")
 
-    # Read file
-    file_bytes = await file.read(settings.MAX_FILE_SIZE + 1)
-    if len(file_bytes) > settings.MAX_FILE_SIZE:
+    # Validate file type
+    if not filename.endswith('.docx'):
+        raise HTTPException(status_code=400, detail="Unsupported file format. Only .docx files are accepted.")
+    if form.file_oversize:
         raise HTTPException(status_code=400, detail="File size exceeds the 10MB security boundary.")
 
     if file_bytes.startswith(_OLE_SIGNATURE):
@@ -153,7 +165,7 @@ async def audit_document(
                    "again as a .docx file, and try again.",
         ) from None
     except Exception:
-        logger.exception("Audit document opening failed before persistence")
+        logger.error("Audit document opening failed before persistence")
         raise HTTPException(
             status_code=500,
             detail="The document could not be processed. Please try again. "
@@ -163,7 +175,7 @@ async def audit_document(
     # Create audit record with "processing" status
     audit = AuditRecord(
         id=str(uuid.uuid4()),
-        filename=file.filename,
+        filename=filename,
         file_size=len(file_bytes),
         document_sha256=hashlib.sha256(file_bytes).hexdigest(),
         weighted_score=0,
@@ -381,10 +393,8 @@ async def audit_document(
         # Re-raise validation errors (400 from .docx/size) untouched
         raise
     except Exception:
-        # Privacy-safe server-side log: exception details (traceback, SQL,
-        # paths, document content, provider responses) stay in the server
-        # log — never in the HTTP response or the database.
-        logger.exception("Audit processing failed for audit_id=%s", audit.id)
+        # Exception details may contain document text, SQL, or local paths.
+        logger.error("Audit processing failed for audit_id=%s", audit.id)
         # PDF persisted but the audit transaction failed: remove the final
         # file so no orphan remains; preserve the original failure behavior.
         if preview_pdf_written:
@@ -848,11 +858,13 @@ def _clean_reviews():
     guided_fix_storage.cleanup()
 
 
-async def _guided_request(audit_id: str, file: UploadFile, selection: str, db: Session):
-    if not file.filename or not file.filename.lower().endswith(".docx"):
+async def _guided_request(
+    audit_id: str, source: bytes, filename: str, selection: str, db: Session,
+    *, oversize: bool = False,
+):
+    if not filename or not filename.lower().endswith(".docx"):
         raise HTTPException(status_code=400, detail="Unsupported file format. Only .docx files are accepted.")
-    source = await file.read(settings.MAX_FILE_SIZE + 1)
-    if len(source) > settings.MAX_FILE_SIZE:
+    if oversize or len(source) > settings.MAX_FILE_SIZE:
         raise HTTPException(status_code=400, detail="File size exceeds the 10MB security boundary.")
     if not zipfile.is_zipfile(io.BytesIO(source)):
         raise HTTPException(status_code=400, detail="The uploaded file is not a valid DOCX.")
@@ -891,13 +903,33 @@ async def _guided_request(audit_id: str, file: UploadFile, selection: str, db: S
     return audit, source, [owned[id] for id in ids], tuple(ids)
 
 
+async def _bounded_guided_form(request: Request, *, require_review_id: bool):
+    """Read the guided-fix multipart body in memory (D-03)."""
+    required = (
+        frozenset({"selection", "review_id"}) if require_review_id else frozenset({"selection"})
+    )
+    try:
+        return await read_bounded_form(
+            request,
+            file_field="file",
+            allowed_fields=frozenset({"selection", "review_id"}),
+            required_fields=required,
+            case_sensitive_filename=False,
+            max_file_bytes=settings.MAX_FILE_SIZE,
+        )
+    except BoundedMultipartError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from None
+
+
 @router.post("/api/audit/{audit_id}/guided-fixes/review")
 async def review_guided_fixes_endpoint(
-    audit_id: str, file: UploadFile = File(...), selection: str = Form(...),
-    db: Session = Depends(get_db),
+    audit_id: str, request: Request, db: Session = Depends(get_db),
 ):
     _clean_reviews()
-    audit, source, selected, ids = await _guided_request(audit_id, file, selection, db)
+    form = await _bounded_guided_form(request, require_review_id=False)
+    audit, source, selected, ids = await _guided_request(
+        audit_id, form.file_bytes, form.filename, form.fields["selection"], db,
+        oversize=form.file_oversize)
     try:
         items, _ = review_targets(audit, source, selected)
     except ReferenceHeadingBoldUnavailable as exc:
@@ -905,7 +937,7 @@ async def review_guided_fixes_endpoint(
     except GuidedFixFailed:
         raise HTTPException(status_code=422, detail="Fix cannot be applied safely. Manual correction required.")
     except Exception:
-        logger.exception("guided review failed audit=%s", audit_id)
+        logger.error("guided review failed audit=%s", audit_id)
         raise HTTPException(status_code=422, detail="Fix cannot be applied safely. Manual correction required.")
     token = secrets.token_urlsafe(32)
     expiry = time.time() + _REVIEW_SECONDS
@@ -934,11 +966,14 @@ async def cancel_guided_review(audit_id: str, review_id: str):
 
 @router.post("/api/audit/{audit_id}/guided-fixes")
 async def apply_guided_fixes_endpoint(
-    audit_id: str, file: UploadFile = File(...), selection: str = Form(...),
-    review_id: str = Form(...), db: Session = Depends(get_db),
+    audit_id: str, request: Request, db: Session = Depends(get_db),
 ):
     _clean_reviews()
-    audit, source, selected, ids = await _guided_request(audit_id, file, selection, db)
+    form = await _bounded_guided_form(request, require_review_id=True)
+    audit, source, selected, ids = await _guided_request(
+        audit_id, form.file_bytes, form.filename, form.fields["selection"], db,
+        oversize=form.file_oversize)
+    review_id = form.fields["review_id"]
     with _review_lock:
         binding = _reviews.get(review_id)
         if binding is None or binding[3] <= time.time() or binding[:2] != (audit_id, audit.document_sha256):
@@ -960,13 +995,13 @@ async def apply_guided_fixes_endpoint(
     except (GuidedFixFailed, ValueError):
         raise HTTPException(status_code=422, detail="Fix applied; verification failed. No file was produced.")
     except Exception:
-        logger.exception("guided verification failed audit=%s", audit_id)
+        logger.error("guided verification failed audit=%s", audit_id)
         raise HTTPException(status_code=422, detail="Fix applied; verification failed. No file was produced.")
     name = build_corrected_filename(audit.filename)
     try:
         download_token, expires_at = guided_fix_storage.store(audit_id, corrected, name)
     except OSError:
-        logger.exception("guided output storage failed audit=%s", audit_id)
+        logger.error("guided output storage failed audit=%s", audit_id)
         raise HTTPException(status_code=503, detail="Verified copy could not be stored. Try again.")
     return {
         "status": "passed", "resolved": [v.id for v in applied],
