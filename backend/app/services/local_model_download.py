@@ -459,7 +459,7 @@ async def _make_client(timeout: httpx.Timeout) -> httpx.AsyncClient:
     Redirects are never followed: a redirect could not be allowed to move the
     request to a non-loopback host.
     """
-    return httpx.AsyncClient(timeout=timeout, follow_redirects=False)
+    return httpx.AsyncClient(timeout=timeout, follow_redirects=False, trust_env=False)
 
 
 async def _fetch_installed_models(origin: str) -> List[str]:

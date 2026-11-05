@@ -872,6 +872,23 @@ def test_http_client_never_follows_redirects():
     asyncio.run(_exercise())
 
 
+def test_http_client_disables_environment_proxies(monkeypatch):
+    """An injected proxy must never intercept a Local AI loopback request."""
+    monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.1:8888")
+    monkeypatch.delenv("NO_PROXY", raising=False)
+    monkeypatch.delenv("no_proxy", raising=False)
+
+    async def _exercise():
+        client = await lmd._make_client(lmd._PROBE_TIMEOUT)
+        try:
+            assert client.trust_env is False
+            assert not client._mounts
+        finally:
+            await client.aclose()
+
+    asyncio.run(_exercise())
+
+
 # ---------------------------------------------------------------------------
 # B-PRIV-03 Consent Issuance, Redemption, and Origin Tests
 # ---------------------------------------------------------------------------

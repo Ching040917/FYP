@@ -128,7 +128,7 @@ async def _default_fetch_ollama_models() -> List[str]:
     origin = loopback_origin(settings.OLLAMA_HOST)
     if origin is None:
         raise RuntimeError("Refusing Ollama probe: host is not a verified loopback origin")
-    async with httpx.AsyncClient(timeout=_OLLAMA_PROBE_TIMEOUT_S, follow_redirects=False) as client:
+    async with httpx.AsyncClient(timeout=_OLLAMA_PROBE_TIMEOUT_S, follow_redirects=False, trust_env=False) as client:
         resp = await client.get(f"{origin}/api/tags")
         resp.raise_for_status()
         models = resp.json().get("models", [])

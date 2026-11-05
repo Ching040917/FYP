@@ -455,3 +455,36 @@ def test_endpoint_all_ready_shape(api_client):
     assert "cloud_ai" not in ids
     raw = json.dumps(body).lower()
     assert "localhost" not in raw and "11434" not in raw
+
+
+async def test_default_probe_client_disables_environment_proxies(monkeypatch):
+    """The readiness probe must never inherit OS/environment proxy settings."""
+    captured = {}
+
+    class _FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"models": [{"name": "qwen3.5:4b"}]}
+
+    class _FakeClient:
+        def __init__(self, *args, **kwargs):
+            captured.update(kwargs)
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def get(self, url):
+            captured["url"] = url
+            return _FakeResponse()
+
+    monkeypatch.setattr(sr.httpx, "AsyncClient", _FakeClient)
+
+    assert await sr._default_fetch_ollama_models() == ["qwen3.5:4b"]
+    assert captured["trust_env"] is False
+    assert captured["follow_redirects"] is False
+    assert captured["url"].endswith("/api/tags")

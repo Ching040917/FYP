@@ -295,7 +295,7 @@ async def call_ollama_local(prompt: str) -> str:
         raise RuntimeError("Refusing Ollama call: host is not a verified loopback origin")
 
     try:
-        async with httpx.AsyncClient(timeout=60.0, follow_redirects=False) as client:
+        async with httpx.AsyncClient(timeout=60.0, follow_redirects=False, trust_env=False) as client:
             response = await client.post(
                 f"{origin}/api/generate",
                 json={

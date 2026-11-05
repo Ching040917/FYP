@@ -266,6 +266,29 @@ async def test_transport_rejects_redirects(monkeypatch):
         await call_ollama_local("test prompt")
 
 
+@pytest.mark.asyncio
+async def test_call_ollama_local_disables_environment_proxies(monkeypatch):
+    """The Local AI client must never inherit OS/environment proxy settings."""
+    monkeypatch.setattr(settings, "OLLAMA_HOST", "http://127.0.0.1:11434")
+
+    captured = {}
+    original_async_client = httpx.AsyncClient
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"response": "[]"}, request=request)
+
+    def spy_async_client(*args, **kwargs):
+        captured.update(kwargs)
+        kwargs["transport"] = httpx.MockTransport(handler)
+        return original_async_client(*args, **kwargs)
+
+    monkeypatch.setattr(httpx, "AsyncClient", spy_async_client)
+
+    assert await call_ollama_local("test prompt") == "[]"
+    assert captured["trust_env"] is False
+    assert captured["follow_redirects"] is False
+
+
 # ---------------------------------------------------------------------------
 # 6. Service Layer Direct Call Defense-in-Depth
 # ---------------------------------------------------------------------------
