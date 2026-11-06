@@ -95,7 +95,7 @@ def _launcher():
         elif action == "verify":
             vmsg = verify_after_init(db_path)
             if vmsg:
-                print("Database verification failed. Please try again.")
+                print(recovery_message(root))
                 logger.info("db_verify_failed msg=%s", vmsg)
                 release_mutex(mutex)
                 return 1

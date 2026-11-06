@@ -366,3 +366,243 @@ def test_recovery_message_is_plain_and_non_destructive(tmp_path):
         assert forbidden not in lowered
     assert "do not delete" in lowered or "do not delete, rename" in lowered
     assert "do not edit the database" in lowered
+
+
+# ---- B-DB-02: one-snapshot read-only verification --------------------------
+# Every fixture below is a task-owned temporary directory; nothing opens a real
+# user database.
+
+def _dir_snapshot(directory):
+    return {p.name: (p.stat().st_size, hashlib.sha256(p.read_bytes()).hexdigest())
+            for p in sorted(directory.iterdir()) if p.is_file()}
+
+def _spy_connect(monkeypatch, calls):
+    real = dl._readonly_connect
+    def _spy(path):
+        calls.append(path)
+        return real(path)
+    monkeypatch.setattr(dl, "_readonly_connect", _spy)
+
+class _Recording:
+    """Proxy that records SQL, commits, rollbacks and closes for one handle."""
+    def __init__(self, con):
+        self._con, self.sql, self.commits, self.rollbacks, self.closed = con, [], 0, 0, False
+    def execute(self, sql, *args):
+        self.sql.append(sql)
+        return self._con.execute(sql, *args)
+    def commit(self):
+        self.commits += 1
+        return self._con.commit()
+    def rollback(self):
+        self.rollbacks += 1
+        return self._con.rollback()
+    def close(self):
+        self.closed = True
+        return self._con.close()
+    @property
+    def in_transaction(self):
+        return self._con.in_transaction
+
+def test_verify_missing_database_returns_failure(tmp_path):
+    db = tmp_path / "audit.db"
+    assert dl.verify_after_init(db) is not None
+    assert not db.exists()
+
+def test_verify_after_deletion_does_not_recreate_database(tmp_path):
+    db = tmp_path / "audit.db"
+    dl.init_fresh_database(db, _db_url(db))
+    db.unlink()
+    assert dl.verify_after_init(db) is not None
+    assert not db.exists()
+
+def test_verify_open_failure_never_falls_back_to_writable(tmp_path, monkeypatch):
+    db = tmp_path / "audit.db"
+    def _boom(path):
+        raise sqlite3.OperationalError("unable to open database file")
+    monkeypatch.setattr(dl, "_readonly_connect", _boom)
+    assert dl.verify_after_init(db) is not None
+    assert not db.exists()
+
+def test_verify_toctou_deletion_injected_at_open(tmp_path, monkeypatch):
+    db = tmp_path / "audit.db"
+    dl.init_fresh_database(db, _db_url(db))
+    real = dl._readonly_connect
+    def _delete_then_open(path):
+        path.unlink()
+        return real(path)
+    monkeypatch.setattr(dl, "_readonly_connect", _delete_then_open)
+    assert dl.verify_after_init(db) is not None
+    assert not db.exists()
+
+def test_verify_creates_no_files(tmp_path):
+    db = tmp_path / "audit.db"
+    dl.init_fresh_database(db, _db_url(db))
+    before = _dir_snapshot(tmp_path)
+    assert dl.verify_after_init(db) is None
+    assert _dir_snapshot(tmp_path) == before
+
+def test_verify_detects_foreign_key_violation(tmp_path):
+    db = tmp_path / "audit.db"
+    dl.init_fresh_database(db, _db_url(db))
+    con = sqlite3.connect(str(db))
+    con.execute("INSERT INTO violations (id, audit_id, rule_code, severity, message) "
+                "VALUES ('v-orphan','no-such-audit','CITATION_MISMATCH','MAJOR','m')")
+    con.commit(); con.close()
+    err = dl.verify_after_init(db)
+    assert err == dl._FK_FAILED
+
+def test_head_unavailable_verification_fails_closed(tmp_path, monkeypatch):
+    db = tmp_path / "audit.db"
+    dl.init_fresh_database(db, _db_url(db))
+    monkeypatch.setattr(dl, "_get_bundled_head", lambda: None)
+    assert dl.verify_after_init(db) == "Version verification failed."
+
+def test_verify_refuses_wal_without_shm_before_open(tmp_path, monkeypatch):
+    db = tmp_path / "audit.db"
+    dl.init_fresh_database(db, _db_url(db))
+    (tmp_path / "audit.db-wal").write_bytes(b"w")
+    calls = []
+    _spy_connect(monkeypatch, calls)
+    assert dl.verify_after_init(db) == dl._VERIFY_INCOMPLETE_SIDECARS
+    assert calls == []
+
+def test_verify_refuses_shm_without_wal_before_open(tmp_path, monkeypatch):
+    db = tmp_path / "audit.db"
+    dl.init_fresh_database(db, _db_url(db))
+    (tmp_path / "audit.db-shm").write_bytes(b"s")
+    calls = []
+    _spy_connect(monkeypatch, calls)
+    assert dl.verify_after_init(db) == dl._VERIFY_INCOMPLETE_SIDECARS
+    assert calls == []
+
+def test_verify_refuses_journal_before_open(tmp_path, monkeypatch):
+    db = tmp_path / "audit.db"
+    dl.init_fresh_database(db, _db_url(db))
+    (tmp_path / "audit.db-journal").write_bytes(b"j")
+    calls = []
+    _spy_connect(monkeypatch, calls)
+    assert dl.verify_after_init(db) == dl._VERIFY_INTERRUPTED_JOURNAL
+    assert calls == []
+
+def test_verify_refusals_create_no_files_and_preserve_existing(tmp_path):
+    for name, suffix, expected in (("wal", "-wal", dl._VERIFY_INCOMPLETE_SIDECARS),
+                                   ("shm", "-shm", dl._VERIFY_INCOMPLETE_SIDECARS),
+                                   ("journal", "-journal", dl._VERIFY_INTERRUPTED_JOURNAL)):
+        case = tmp_path / name
+        case.mkdir()
+        db = case / "audit.db"
+        dl.init_fresh_database(db, _db_url(db))
+        (case / ("audit.db" + suffix)).write_bytes(b"payload")
+        before = _dir_snapshot(case)
+        assert dl.verify_after_init(db) == expected
+        assert _dir_snapshot(case) == before
+
+def test_verify_succeeds_with_wal_and_shm_present(tmp_path):
+    db = tmp_path / "audit.db"
+    dl.init_fresh_database(db, _db_url(db))
+    con = sqlite3.connect(str(db))
+    try:
+        con.execute("PRAGMA journal_mode=WAL;")
+        con.execute("INSERT INTO audit_records (id, filename, file_size, deploy_mode, status) "
+                    "VALUES ('a1','f.docx',100,'LOCAL','completed')")
+        con.commit()
+        assert (tmp_path / "audit.db-wal").exists()
+        assert (tmp_path / "audit.db-shm").exists()
+        assert dl.verify_after_init(db) is None
+    finally:
+        con.close()
+
+def test_verify_uses_single_read_only_connection(tmp_path, monkeypatch):
+    db = tmp_path / "audit.db"
+    dl.init_fresh_database(db, _db_url(db))
+    calls = []
+    _spy_connect(monkeypatch, calls)
+    assert dl.verify_after_init(db) is None
+    assert len(calls) == 1
+
+def test_verify_never_opens_a_writable_connection(tmp_path, monkeypatch):
+    db = tmp_path / "audit.db"
+    dl.init_fresh_database(db, _db_url(db))
+    calls = []
+    real = sqlite3.connect
+    def _spy(database, *args, **kwargs):
+        calls.append((database, kwargs.get("uri")))
+        return real(database, *args, **kwargs)
+    monkeypatch.setattr(dl.sqlite3, "connect", _spy)
+    assert dl.verify_after_init(db) is None
+    assert len(calls) == 1
+    assert calls[0][1] is True
+    assert "mode=ro" in calls[0][0]
+
+def test_verify_begins_exactly_one_read_transaction(tmp_path, monkeypatch):
+    db = tmp_path / "audit.db"
+    dl.init_fresh_database(db, _db_url(db))
+    rec = {}
+    real = dl._readonly_connect
+    def _wrap(path):
+        rec["c"] = _Recording(real(path))
+        return rec["c"]
+    monkeypatch.setattr(dl, "_readonly_connect", _wrap)
+    assert dl.verify_after_init(db) is None
+    con = rec["c"]
+    assert con.sql[0] == "BEGIN;"
+    assert sum(1 for s in con.sql if s.strip().upper().startswith("BEGIN")) == 1
+    assert any("integrity_check" in s for s in con.sql)
+    assert any("alembic_version" in s for s in con.sql)
+    assert any("sqlite_master" in s for s in con.sql)
+    assert any("foreign_key_check" in s for s in con.sql)
+    assert con.commits == 0
+    assert con.rollbacks == 1
+    assert con.closed
+
+def test_verify_failure_path_rolls_back_and_closes(tmp_path, monkeypatch):
+    db = tmp_path / "audit.db"
+    dl.init_fresh_database(db, _db_url(db))
+    con = sqlite3.connect(str(db))
+    con.execute("INSERT INTO violations (id, audit_id, rule_code, severity, message) "
+                "VALUES ('v-orphan','no-such-audit','CITATION_MISMATCH','MAJOR','m')")
+    con.commit(); con.close()
+    rec = {}
+    real = dl._readonly_connect
+    def _wrap(path):
+        rec["c"] = _Recording(real(path))
+        return rec["c"]
+    monkeypatch.setattr(dl, "_readonly_connect", _wrap)
+    assert dl.verify_after_init(db) == dl._FK_FAILED
+    assert rec["c"].commits == 0
+    assert rec["c"].rollbacks == 1
+    assert rec["c"].closed
+
+def test_verify_reads_one_snapshot_despite_concurrent_commit(tmp_path, monkeypatch):
+    db = tmp_path / "audit.db"
+    dl.init_fresh_database(db, _db_url(db))
+    holder = sqlite3.connect(str(db))
+    try:
+        assert holder.execute("PRAGMA journal_mode=WAL;").fetchone()[0].lower() == "wal"
+        holder.execute("INSERT INTO audit_records (id, filename, file_size, deploy_mode, status) "
+                       "VALUES ('a1','f.docx',100,'LOCAL','completed')")
+        holder.commit()
+        assert (tmp_path / "audit.db-wal").exists() and (tmp_path / "audit.db-shm").exists()
+        real, rec = dl._readonly_connect, {}
+        def _wrap(path):
+            con = _Recording(real(path))
+            rec["c"] = con
+            def _after_begin(sql, *args):
+                result = con._con.execute(sql, *args)
+                if "integrity_check" in sql and not rec.get("injected"):
+                    rec["injected"] = True
+                    w = sqlite3.connect(str(db))
+                    try:
+                        w.execute("INSERT INTO violations (id, audit_id, rule_code, severity, message) "
+                                  "VALUES ('v-orphan','no-such-audit','CITATION_MISMATCH','MAJOR','m')")
+                        w.commit()
+                    finally:
+                        w.close()
+                return result
+            con.execute = _after_begin
+            return con
+        monkeypatch.setattr(dl, "_readonly_connect", _wrap)
+        assert dl.verify_after_init(db) is None      # every gate saw the pre-commit snapshot
+    finally:
+        holder.close()
+    assert dl.verify_after_init(db) == dl._FK_FAILED  # the next verification sees the orphan row

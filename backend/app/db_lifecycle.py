@@ -229,55 +229,95 @@ def inspect_state(db_path: Path) -> str:
     return "corrupt"
 
 
-def verify_after_init(db_path: Path) -> str | None:
-    """Verify fresh DB after upgrade. Returns None if OK, else error string."""
+_VERIFY_INCOMPLETE_SIDECARS = "Database verification failed: incomplete sidecar set."
+_VERIFY_INTERRUPTED_JOURNAL = "Database verification failed: interrupted journal present."
+_FK_FAILED = "Foreign key check failed."
+
+
+def _verification_gate(db_path: Path) -> str | None:
+    """Refuse verification when the sidecar set cannot be read without writing.
+
+    Runs before any connection. A rollback journal would be rolled back by a
+    write-mode open, and a WAL-mode database missing its -shm (or holding an
+    -shm with no -wal) can only be read by creating the missing shared-memory
+    file, which verification must never do.
+    """
+    wal_path, shm_path, journal_path = _sidecar_paths(db_path)
+    if journal_path.exists():
+        return _VERIFY_INTERRUPTED_JOURNAL
+    if wal_path.exists() != shm_path.exists():
+        return _VERIFY_INCOMPLETE_SIDECARS
+    return None
+
+
+def _readonly_connect(db_path: Path):
+    """Open an existing SQLite file read-only. Never creates a database file."""
+    uri = db_path.resolve().as_uri()
+    sep = "&" if "?" in uri else "?"
+    return sqlite3.connect(f"{uri}{sep}mode=ro", uri=True, timeout=5.0)
+
+
+def _verify_existing_database(db_path: Path) -> str | None:
+    """Verify an existing database inside one read-only snapshot.
+
+    Returns None when every gate passes, else a bounded error string. The gate
+    runs immediately before the single open; ``BEGIN`` is deferred, so it stays
+    read-only on a mode=ro connection, and every gate then reads the same
+    snapshot until the explicit rollback.
+    """
+    gate = _verification_gate(db_path)
+    if gate:
+        return gate
     try:
-        con = sqlite3.connect(str(db_path))
+        con = _readonly_connect(db_path)
+    except Exception as e:
+        return f"Database verification failed: {type(e).__name__}"
+    try:
         try:
-            cur = con.execute("PRAGMA integrity_check;")
-            if cur.fetchone()[0] != "ok":
+            con.execute("BEGIN;")
+            if con.execute("PRAGMA integrity_check;").fetchone()[0] != "ok":
                 return "Integrity check failed."
-        finally:
-            con.close()
-    except Exception as e:
-        return f"Integrity check failed: {type(e).__name__}"
+        except Exception as e:
+            return f"Integrity check failed: {type(e).__name__}"
 
-    # Exactly one version matching head
-    try:
-        con = sqlite3.connect(str(db_path))
         try:
-            cur = con.execute("SELECT version_num FROM alembic_version;")
-            rows = cur.fetchall()
-            if len(rows) != 1:
-                return "Version verification failed."
+            rows = list(con.execute("SELECT version_num FROM alembic_version;"))
             head = _get_bundled_head()
-            if head and rows[0][0] != head:
+            if len(rows) != 1 or not head or rows[0][0] != head:
                 return "Version verification failed."
-        finally:
-            con.close()
-    except Exception as e:
-        return f"Version verification failed: {type(e).__name__}"
+        except Exception as e:
+            return f"Version verification failed: {type(e).__name__}"
 
-    # Required tables/columns
-    try:
-        con = sqlite3.connect(str(db_path))
         try:
-            cur = con.execute("SELECT name FROM sqlite_master WHERE type='table';")
-            tables = {r[0] for r in cur.fetchall()}
+            tables = {r[0] for r in con.execute(
+                "SELECT name FROM sqlite_master WHERE type='table';")}
             for t in ("audit_records", "violations", "citation_issues", "alembic_version"):
                 if t not in tables:
                     return f"Required table {t} missing."
-            cur = con.execute("PRAGMA table_info(audit_records);")
-            cols = {r[1] for r in cur.fetchall()}
+            cols = {r[1] for r in con.execute("PRAGMA table_info(audit_records);")}
             for c in ("interrupted_at", "interruption_reason"):
                 if c not in cols:
                     return f"Required column {c} missing."
+        except Exception as e:
+            return f"Schema verification failed: {type(e).__name__}"
+
+        try:
+            if list(con.execute("PRAGMA foreign_key_check;")):
+                return _FK_FAILED
+        except Exception as e:
+            return f"Foreign key check failed: {type(e).__name__}"
+    finally:
+        try:
+            if con.in_transaction:
+                con.rollback()
         finally:
             con.close()
-    except Exception as e:
-        return f"Schema verification failed: {type(e).__name__}"
-
     return None
+
+
+def verify_after_init(db_path: Path) -> str | None:
+    """Verify an existing database read-only. Returns None if OK, else error string."""
+    return _verify_existing_database(db_path)
 
 
 def init_fresh_database(db_path: Path, db_url: str, logger=None) -> str | None:
@@ -618,25 +658,14 @@ def upgrade_existing_database(db_path: Path, db_url: str, user_root: Path, logge
         except Exception:
             pass
 
-    # Post-verification
+    # Post-verification: the same complete gate set the startup path repeats.
     err = verify_after_init(db_path)
     if err:
         if logger:
-            logger.info("post_upgrade_verify_failed category=%s", err)
-        return "The database upgrade did not complete. Your backup was preserved. ACA cannot start until the database is recovered."
-
-    # Also foreign_key_check
-    try:
-        import sqlite3
-        con = sqlite3.connect(str(db_path))
-        try:
-            if list(con.execute("PRAGMA foreign_key_check;")):
-                if logger:
-                    logger.info("post_upgrade_fk_failed")
-                return "The database upgrade did not complete. Your backup was preserved. ACA cannot start until the database is recovered."
-        finally:
-            con.close()
-    except Exception:
+            if err == _FK_FAILED:
+                logger.info("post_upgrade_fk_failed")
+            else:
+                logger.info("post_upgrade_verify_failed category=%s", err)
         return "The database upgrade did not complete. Your backup was preserved. ACA cannot start until the database is recovered."
 
     # Retention only after all success

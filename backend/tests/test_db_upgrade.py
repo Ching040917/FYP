@@ -1,5 +1,5 @@
 """Phase 3B upgrade tests — temp DB only."""
-import sqlite3, pathlib, os, tempfile
+import sqlite3, pathlib, os, tempfile, hashlib
 import pytest
 from pathlib import Path
 import app.db_lifecycle as dl
@@ -177,3 +177,48 @@ def test_no_bundle_writes_upgrade():
     # Writes go to user_root/backups, not bundle dir
     assert "_MEIPASS" in t or "alembic" in t
     assert "audit.db" in t or "backups" in t
+
+
+# ---- B-DB-02: post-upgrade gate persistence --------------------------------
+# Task-owned temporary databases only. The revision below is the single parent
+# of the bundled head, so the upgrade is eligible and a backup is produced.
+
+_OLD_REV = "90fc17718e11"
+
+def _file_snapshot(directory):
+    return {p.name: (p.stat().st_size, hashlib.sha256(p.read_bytes()).hexdigest())
+            for p in sorted(directory.iterdir()) if p.is_file()}
+
+def test_post_upgrade_fk_failure_persists_across_restart(tmp_path, user_root, monkeypatch):
+    db, url = _make_old_db(tmp_path, _OLD_REV)
+    import alembic.command as alembic_command
+    real = alembic_command.upgrade
+    def _upgrade_then_break_fk(cfg, rev):
+        real(cfg, rev)
+        con = sqlite3.connect(str(db))
+        try:
+            con.execute("INSERT INTO violations (id, audit_id, rule_code, severity, message) "
+                        "VALUES ('v-orphan','no-such-audit','CITATION_MISMATCH','MAJOR','m')")
+            con.commit()
+        finally:
+            con.close()
+    monkeypatch.setattr("alembic.command.upgrade", _upgrade_then_break_fk)
+    err = dl.upgrade_existing_database(db, url, user_root)
+    assert err is not None
+    # the head stamp survived the failed gate
+    assert dl.inspect_state(db) == "at_head"
+    assert dl.startup_action("at_head") == "verify"
+    # the restart gate now repeats the foreign-key check and refuses
+    assert dl.verify_after_init(db) == dl._FK_FAILED
+    # and the verified backup is retained
+    assert len(list((user_root / "backups").glob("*.bak"))) == 1
+
+def test_healthy_upgrade_passes_complete_gate_set_without_new_files(tmp_path, user_root):
+    db, url = _make_old_db(tmp_path, _OLD_REV)
+    assert dl.upgrade_existing_database(db, url, user_root) is None
+    assert dl.inspect_state(db) == "at_head"
+    before = _file_snapshot(tmp_path)
+    assert dl.verify_after_init(db) is None
+    after = _file_snapshot(tmp_path)
+    assert after == before
+    assert len(list((user_root / "backups").glob("*.bak"))) == 1

@@ -21,6 +21,8 @@ The application did not start, or it closed immediately after launch.
 
 ACA stopped startup because it found incomplete or unsafe database recovery files in your application data folder. This protects the data you already have: ACA did **not** create a replacement empty database, and it did not change or remove anything.
 
+ACA also shows this message when a completed database upgrade could not be verified; the database and the automatic backup in `backups\` stay in place and startup stops until the problem is resolved.
+
 ### What to do
 
 1. Close the ACA window if it is still open.
