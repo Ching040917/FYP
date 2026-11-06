@@ -50,7 +50,7 @@ export function AppFooter() {
         </div>
         <div className="pt-md border-t border-outline-variant flex flex-col md:flex-row items-center justify-between gap-sm text-xs text-on-surface-variant">
           <p className="font-mono">
-            © {new Date().getFullYear()} Academic Compliance Systems. All rights reserved.
+            © 2026 Ching Qing Yang. All rights reserved.
           </p>
           <p className="font-mono">Local-first processing · read-only document review</p>
         </div>

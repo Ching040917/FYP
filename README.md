@@ -4,23 +4,21 @@ Academic Compliance Auditor (ACA) is a Windows application that reviews academic
 
 ## Download
 
-Academic Compliance Auditor is currently distributed privately for evaluation.
+Academic Compliance Auditor is a school Final Year Project (FYP) project. Its source repository is publicly viewable, and ACA remains proprietary software with all rights reserved.
 
 Installer: `AcademicComplianceAuditor-Setup-1.0.0.exe`
 
-Obtain it from:
-
-- the project owner, or
-- the approved university submission or evaluation channel
+Official installers are published through an authorized release channel.
 
 Please note:
 
-- A public download page is not currently available.
-- The installer is unsigned, so Windows may display an *Unknown publisher* or SmartScreen warning. See [Troubleshooting](docs/TROUBLESHOOTING.md).
+- Every official installer release is published with its SHA-256 checksum. Verify the checksum before running the installer, and do not run an installer whose checksum you cannot verify.
+- The installer is unsigned, so Windows may display an *Unknown publisher* or Microsoft Defender SmartScreen warning. This is expected. See [Troubleshooting](docs/TROUBLESHOOTING.md).
+- ACA proprietary terms are in [LICENSE](LICENSE); third-party notices are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## Quick Start
 
-1. Obtain the Windows installer from the project owner or your approved evaluation channel.
+1. Obtain the installer only from an authorized release channel, and verify its published SHA-256 before running it.
 2. Double-click the Setup EXE.
 3. Complete the installation — per-user, no administrator rights needed.
 4. Open ACA from the Windows Start Menu.
@@ -276,4 +274,8 @@ Core deterministic audits — document checks, formatting findings, extracted-te
 
 ## License Status
 
-No project software license has been selected. ACA remains All rights reserved.
+ACA is proprietary software. Copyright is held by the ACA copyright holder and all rights are reserved.
+
+The source repository is publicly viewable. Aside from the limited rights granted by GitHub's Terms of Service and applicable law, public availability grants no permission to modify, redistribute or republish ACA. You may download, install and use unmodified official installer releases; modification, redistribution, repackaging, sublicensing and commercial resale are not permitted.
+
+Operative terms: [LICENSE](LICENSE). Third-party licenses: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Complete third-party notice delivery inside the package remains pending B-LIC-03 and B-LIC-04.

@@ -8,8 +8,9 @@ Complete every section before publishing a packaged Windows release. Each checkb
 - [ ] Local `main` equals `origin/main`.
 - [ ] No secrets, `.env`, databases (`*.db`), logs, backups, or generated bundles are tracked.
 - [ ] README and documentation internal links are valid.
-- [ ] ACA license decision is recorded (see README License status).
-- [ ] THIRD_PARTY_NOTICES.md completed before public distribution.
+- [ ] Root `LICENSE` exists and records the ACA proprietary distribution terms.
+- [ ] README and THIRD_PARTY_NOTICES.md are consistent with `LICENSE`.
+- [ ] THIRD_PARTY_NOTICES.md records third-party rights only; complete per-component notice coverage and in-package delivery remain separately required (B-LIC-03, B-LIC-04).
 - [ ] Sample-document provenance confirmed (project-created synthetic DOCX; see git history for `frontend/public/samples/sample-thesis.docx`).
 
 ## Validation
@@ -75,9 +76,9 @@ Complete every section before publishing a packaged Windows release. Each checkb
 
 - [ ] Version recorded (expected: 1.0.0).
 - [ ] Installer name follows convention (`AcademicComplianceAuditor-Setup-1.0.0.exe`).
-- [ ] SHA-256 checksum computed and distributed with the installer (never hard-coded in documentation; every rebuild produces a new checksum). Distribution remains private for evaluation — no public publication.
+- [ ] SHA-256 checksum computed and published with every official installer (never hard-coded in documentation; the checksum is regenerated for every rebuild).
 - [ ] Clean Windows VM validation performed (no dev tools installed).
-- [ ] Unsigned-executable SmartScreen warning documented.
+- [ ] Unsigned-installer disclosure present in README, INSTALLATION and `LICENSE`, and stated factually.
 - [ ] User-data location `%LOCALAPPDATA%\AcademicComplianceAuditor\` documented.
 - [ ] Verified backup location `backups\` documented with retention rule (three newest).
 - [ ] Rollback behavior documented (no automatic restore; preserve backups for diagnosis).
@@ -102,6 +103,6 @@ Complete every section before publishing a packaged Windows release. Each checkb
 
 - Code signing.
 - Automatic updater.
-- Public download URL.
+- A published download URL or GitHub Release (none exists at this baseline).
 - Multi-user or LAN deployment.
 - Mobile execution.

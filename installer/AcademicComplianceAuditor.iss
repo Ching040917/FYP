@@ -9,7 +9,8 @@
 ;   Version      : 1.0.0  (authoritative source: backend/app/main.py FastAPI
 ;                          version + frontend/package.json version)
 ;   Publisher    : none documented in the repository - intentionally omitted.
-;   License      : all rights reserved (no project license selected).
+;   License      : proprietary, all rights reserved (terms: LICENSE in the
+;                  repository root).
 ;   Code signing : not applied - no signing certificate is supplied.
 ;
 ; Install model:

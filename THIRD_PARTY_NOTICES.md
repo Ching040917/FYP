@@ -21,11 +21,12 @@ Packages from the older Python 3.13 global environment (for example pandas, scip
 
 ## 2. ACA license status
 
-**No project software license has been selected. ACA remains all rights reserved.**
+**ACA is proprietary software. All rights reserved. Its distribution terms are recorded in [LICENSE](LICENSE).**
 
 - This document records third-party rights only.
-- It does not grant a license to ACA source code.
-- Public redistribution remains blocked pending the owner's license decision.
+- It does not grant any license to ACA source code or to ACA installer releases.
+- Official unmodified ACA installer releases may be downloaded, installed and used under the terms in [LICENSE](LICENSE).
+- Complete per-component license coverage and in-package delivery of the applicable notices and license texts remain pending B-LIC-03 and B-LIC-04.
 
 ## 3. Bundled Backend dependencies
 
@@ -170,7 +171,7 @@ ACA never bundles the qwen3.5:4b model, LibreOffice, or Ollama. No cloud AI prov
 
 ## 10. Unresolved or release-blocking items
 
-- **ACA project license is not selected** — public redistribution of the ACA source and package is blocked pending an owner decision. This document does not resolve that.
+- **Third-party notice coverage is still being finalised** — complete per-component license coverage and in-package delivery of the applicable notices and license texts are tracked in B-LIC-03 and B-LIC-04 and are not resolved by this document.
 - Some transitive license identifiers are derived from `dist-info` `License` fields and classifier metadata shipped with the installed packages; full text files were verified for the items where a local file exists. Where a license field was empty, the SPDX identifier was confirmed from the shipped `LICENSE`/`COPYING` file or the package's official metadata.
 
 ## 11. Evidence and update policy

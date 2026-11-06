@@ -268,7 +268,7 @@ export function Landing() {
         </div>
         <div className="border-t border-border/60 px-4 py-3 md:px-6">
           <p className="mx-auto max-w-4xl text-[11px] text-muted-foreground">
-            © 2024 Academic Compliance Systems. Audit records are stored locally; the original
+            © 2026 Ching Qing Yang. All rights reserved. Audit records are stored locally; the original
             document is never modified.
           </p>
         </div>

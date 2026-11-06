@@ -12,18 +12,13 @@ This guide is for ordinary Windows users installing the packaged ACA application
 
 ## 2. Get the Installer
 
-ACA is currently **distributed privately for evaluation**. There is no public download page.
+Official ACA installers are published through an authorized release channel. Obtain ACA only through an authorized release channel, and verify its published SHA-256 before running it.
 
-You receive the installer from:
+The file is named `AcademicComplianceAuditor-Setup-1.0.0.exe`. Do not run an installer obtained from anywhere else.
 
-- the project owner, or
-- the approved university submission or evaluation channel.
+## 3. Verify the Published SHA-256 Checksum
 
-The file is named `AcademicComplianceAuditor-Setup-1.0.0.exe`. Do not download ACA from any other website — no official public download exists.
-
-## 3. Verify a Supplied SHA-256 Checksum
-
-If the person who gave you the installer also supplied a SHA-256 checksum, you can verify your copy matches. Every rebuild of the installer produces a new checksum, so only trust a checksum given to you together with the installer.
+Every official installer release is published with its SHA-256 checksum. Verify your copy before running it. Every rebuild produces a new checksum, so only trust a checksum published together with that exact installer.
 
 1. Press **Start**, type `powershell`, and open **Windows PowerShell**.
 2. Run (adjust the path to where you saved the installer):
@@ -32,9 +27,9 @@ If the person who gave you the installer also supplied a SHA-256 checksum, you c
    Get-FileHash "C:\Users\Public\Downloads\AcademicComplianceAuditor-Setup-1.0.0.exe" -Algorithm SHA256
    ```
 
-3. Compare the `SHA256` value shown with the checksum you were given. If they match (ignoring upper/lower case), the file is intact. If they differ, do not run the installer — ask the provider for a fresh copy.
+3. Compare the `SHA256` value shown with the published checksum for that installer. If they match (ignoring upper/lower case), your copy matches the published artifact. If they differ, do not run the installer — obtain a fresh copy through the authorized release channel.
 
-If no checksum was supplied, you may skip this step.
+A matching checksum shows your copy is the build that was published. It is not a security guarantee on its own, and the installer is unsigned.
 
 ## 4. Install ACA
 
@@ -95,4 +90,4 @@ To permanently remove all local data, delete this folder **after** uninstalling.
 - What ACA does and does not support: [Known Limitations](KNOWN_LIMITATIONS.md)
 - Day-to-day usage: [User Guide](USER_GUIDE.md)
 
-For anything else, contact the project owner through your evaluation channel.
+For anything else, contact the project owner through the authorized release channel.

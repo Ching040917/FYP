@@ -36,8 +36,8 @@ The ACA installer is not digitally signed, so Windows SmartScreen may show *Unkn
 
 ### What to do
 
-1. Confirm you obtained the installer from the project owner or your approved evaluation channel (see [Installation](INSTALLATION.md)).
-2. If you verified a supplied SHA-256 checksum, the file is intact.
+1. Obtain ACA only through an authorized release channel. Every official installer release is published with its SHA-256 checksum; verify it before running the installer (see [Installation](INSTALLATION.md)).
+2. Do not run an installer whose checksum you cannot verify. A matching checksum shows your copy is the published build; it is not a security guarantee on its own.
 3. On the SmartScreen dialog, choose **More info**, then **Run anyway**.
 4. Antivirus software may also ask about the file the first time. If you trust the source, allow it.
 

@@ -1,0 +1,60 @@
+Academic Compliance Auditor (ACA)
+Copyright (c) 2026 Ching Qing Yang. All rights reserved.
+
+This file records the proprietary distribution terms for ACA. It is not an
+open-source license. It grants only the permissions stated here.
+
+1. Ownership
+
+ACA source code, documentation, branding and official installer releases are
+controlled by the copyright holder named above, subject to identified
+third-party rights. All rights are reserved.
+
+2. Public source visibility
+
+The ACA source repository is publicly viewable. Except for the limited rights
+granted by GitHub's Terms of Service and applicable law, public availability
+does not grant permission to modify, redistribute, sublicense or create
+independent derivative distributions of ACA.
+
+3. Permission for official installer releases
+
+You may download, install and use an unmodified official ACA Windows installer
+distributed by the copyright holder through an authorized release channel.
+This permission covers use only. It does not permit redistribution of the
+installer by anyone other than the copyright holder.
+
+4. Restrictions
+
+Unless separately authorized in writing by the copyright holder, you may not:
+
+a. modify ACA or create derivative distributions of it;
+b. redistribute or republish ACA source code or installer releases, except for
+   limited platform functionality permitted by GitHub's Terms of Service;
+c. repackage, bundle or embed ACA in another product or distribution;
+d. remove or alter copyright, license or attribution notices;
+e. present a modified or unofficial copy as official ACA;
+f. sublicense, rent, lease or commercially resell ACA.
+
+5. Third-party components
+
+ACA includes third-party components that remain subject to their own terms.
+Those components are identified in THIRD_PARTY_NOTICES.md. Delivery of the
+complete applicable notices and license texts with the official installer is
+handled and verified separately. These proprietary terms do not alter
+third-party rights.
+
+6. Official artifacts
+
+Only installers distributed by the copyright holder through an authorized
+release channel are official. Official installer releases are published with
+their SHA-256 checksum. The installer is unsigned, so Windows may display an
+Unknown publisher or Microsoft Defender SmartScreen warning.
+
+7. Warranty and liability
+
+ACA is provided "AS IS", without warranty of any kind, express or implied,
+including warranties of merchantability, fitness for a particular purpose and
+non-infringement. To the maximum extent permitted by applicable law, the
+copyright holder is not liable for any claim, damage or other liability
+arising from ACA or its use.

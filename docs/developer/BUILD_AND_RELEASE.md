@@ -68,9 +68,10 @@ Get-FileHash release-output/AcademicComplianceAuditor-Setup-1.0.0.exe -Algorithm
 
 ## release-output policy
 
-- `release-output/` is **gitignored**. The Setup EXE is never committed and never published from this repository.
-- Distribution is currently private for evaluation (via the project owner or the approved university channel). There is no automatic publication, no GitHub Release, and no public download page.
-- **Code signing is not applied.** The installer is unsigned; expect SmartScreen warnings on user machines. State this honestly in every release communication.
+- `release-output/` is **gitignored**. The Setup EXE is never committed to the repository.
+- Official installer artifacts may be published through an authorized release channel. Public distribution of the unsigned installer is Owner-authorized.
+- Every published artifact requires a SHA-256 checksum, published alongside that exact build.
+- **Code signing is not applied.** The installer is unsigned; Windows may display an *Unknown publisher* or Microsoft Defender SmartScreen warning on user machines. State this honestly in every release communication.
 
 ## Pre-release gate
 

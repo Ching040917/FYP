@@ -24,11 +24,48 @@ Write-Host "=== Product identity ==="
 Assert ($iss.Contains("AppName=Academic Compliance Auditor")) "Product name is 'Academic Compliance Auditor'"
 Assert ($iss.Contains("DefaultDirName={localappdata}\Programs\AcademicComplianceAuditor")) "Per-user install path is %LOCALAPPDATA%\Programs\AcademicComplianceAuditor"
 
-Write-Host "=== No invented publisher / no invented version / no license claim ==="
+Write-Host "=== No invented publisher / no invented version / no installer license page ==="
 $pubLine = ($iss -split "`r?`n" | Where-Object { $_ -match '^AppPublisher=' } | Select-Object -First 1)
 Assert ($pubLine -match '^AppPublisher=\s*$') "AppPublisher is explicitly empty (no invented publisher)"
 Assert ($iss.Contains('#define AppVersion "1.0.0"')) "Version 1.0.0 from authoritative source (backend/app/main.py + frontend/package.json)"
-Assert (-not $iss.Contains("LicenseFile")) "No LICENSE file is added (project has no selected license)"
+Assert (-not $iss.Contains("LicenseFile")) "License page delivery is deferred to B-LIC-03"
+
+Write-Host "=== Proprietary distribution terms ==="
+$licensePath = Join-Path $RepoRoot "LICENSE"
+Assert (Test-Path $licensePath) "Root LICENSE exists"
+$lic = Get-Content $licensePath -Raw
+Assert ($lic.Contains("All rights reserved")) "LICENSE states all rights reserved"
+Assert ($lic.Contains("not an") -and $lic.Contains("open-source license")) "LICENSE states it is not an open-source license"
+Assert ($lic.Contains("GitHub's Terms of Service")) "LICENSE preserves the GitHub Terms of Service carve-out"
+Assert ($lic.Contains("THIRD_PARTY_NOTICES.md")) "LICENSE references THIRD_PARTY_NOTICES.md"
+Assert ($lic.Contains('"AS IS"')) "LICENSE carries AS IS wording"
+Assert (-not ($lic -match 'SPDX-License-Identifier')) "LICENSE contains no SPDX identifier"
+Assert (-not ($lic -match '(?i)\b(MIT|Apache|GNU General Public|GPL|BSD|MPL|Mozilla Public)\b')) "LICENSE contains no OSI license identifier"
+$readme = Get-Content (Join-Path $RepoRoot "README.md") -Raw
+Assert (-not $readme.Contains("No project software license has been selected")) "README no longer says no license was selected"
+Assert (-not $readme.Contains("distributed privately for evaluation")) "README no longer says distribution is private-only"
+Assert ($readme.Contains("authorized release channel")) "README names the authorized release channel"
+$notices = Get-Content (Join-Path $RepoRoot "THIRD_PARTY_NOTICES.md") -Raw
+Assert ($notices.Contains("proprietary")) "THIRD_PARTY_NOTICES describes ACA as proprietary"
+Assert (-not $notices.Contains("Public redistribution remains blocked")) "THIRD_PARTY_NOTICES no longer blocks public distribution pending a decision"
+Assert (-not $notices.Contains("already delivered")) "No claim that third-party notices are already delivered in-package"
+$buildDoc = Get-Content (Join-Path $RepoRoot "docs\developer\BUILD_AND_RELEASE.md") -Raw
+Assert ($buildDoc.Contains("authorized release channel")) "BUILD_AND_RELEASE refers to an authorized release channel"
+$installDoc = Get-Content (Join-Path $RepoRoot "docs\INSTALLATION.md") -Raw
+Assert (-not $installDoc.Contains("If no checksum was supplied")) "INSTALLATION does not allow skipping checksum verification"
+Assert ($installDoc.Contains("authorized release channel")) "INSTALLATION refers to an authorized release channel"
+
+Write-Host "=== Copyright holder consistency ==="
+$footerSrc = Get-Content (Join-Path $RepoRoot "frontend\src\components\layout\AppFooter.tsx") -Raw -Encoding UTF8
+Assert (-not $footerSrc.Contains("Academic Compliance Systems")) "Footer does not name an unverified copyright holder"
+Assert (([regex]::Matches($footerSrc, 'Ching Qing Yang\. All rights reserved\.')).Count -eq 1) "Footer renders the approved copyright line exactly once"
+$landingSrc = Get-Content (Join-Path $RepoRoot "frontend\src\pages\Landing.tsx") -Raw -Encoding UTF8
+Assert (-not $landingSrc.Contains("Academic Compliance Systems")) "Landing does not name an unverified copyright holder"
+Assert (([regex]::Matches($landingSrc, 'Ching Qing Yang\. All rights reserved\.')).Count -eq 1) "Landing renders the approved copyright line exactly once"
+$troubleSrc = Get-Content (Join-Path $RepoRoot "docs\TROUBLESHOOTING.md") -Raw -Encoding UTF8
+Assert (-not $troubleSrc.Contains("approved evaluation channel")) "TROUBLESHOOTING no longer names an evaluation channel"
+Assert (-not $troubleSrc.Contains("If you verified a supplied SHA-256 checksum")) "TROUBLESHOOTING no longer treats checksum verification as optional"
+Assert ($troubleSrc.Contains("authorized release channel")) "TROUBLESHOOTING names the authorized release channel"
 
 Write-Host "=== Privileges and architecture ==="
 Assert ($iss.Contains("PrivilegesRequired=lowest")) "No administrator rights required (PrivilegesRequired=lowest)"
