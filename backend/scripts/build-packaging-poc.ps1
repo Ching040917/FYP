@@ -232,6 +232,10 @@ try {
     if ($fails.Count -gt 0) { Fail "Smoke failures: $($fails -join '; ')" }
     Write-Host "Smoke OK"
 
+    Write-Host "=== 7b. Verify license coverage ==="
+    & $VenvPython $pyChecks "verify-licenses" $RepoRoot
+    if ($LASTEXITCODE -ne 0) { Fail "License verification failed (exit $LASTEXITCODE)." }
+
     Write-Host "=== 8. Release input manifest ==="
     $manifestPath = Join-Path (Join-Path $RepoRoot "release-output") "input-manifest.json"
     New-Item -ItemType Directory -Force -Path (Split-Path $manifestPath) | Out-Null

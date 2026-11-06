@@ -1218,3 +1218,311 @@ def test_verify_inventory_safe_path_with_bad_fields_is_33(tmp_path):
     path = _written(tmp_path, "bad-size.json", _resign(inventory))
     code, _ = packaging_checks.verify_inventory(bundle, path)
     assert code == packaging_checks.EXIT_INVENTORY
+
+
+# ---------------------------------------------------------------------------
+# B-LIC-03 Third-party license and notice coverage tests
+# ---------------------------------------------------------------------------
+
+
+def test_verify_licenses_on_real_repo():
+    repo = BACKEND_DIR.parent
+    code, messages = packaging_checks.verify_licenses(repo)
+    assert code == packaging_checks.EXIT_LICENSES_OK
+    assert "LICENSES_OK" in messages[0]
+
+
+def test_licenses_exit_codes_preserved_and_isolated():
+    codes = [
+        packaging_checks.EXIT_PARITY,
+        2, 3,
+        packaging_checks.EXIT_MANIFEST_MISSING, packaging_checks.EXIT_SCHEMA,
+        packaging_checks.EXIT_MALFORMED, packaging_checks.EXIT_TAMPERED,
+        packaging_checks.EXIT_CHANGED, packaging_checks.EXIT_MISSING_INPUT,
+        packaging_checks.EXIT_ADDED_INPUT, packaging_checks.EXIT_TOOLCHAIN,
+        packaging_checks.EXIT_RUNTIME, packaging_checks.EXIT_UNSAFE_PATH,
+        packaging_checks.EXIT_UNSTABLE, packaging_checks.EXIT_UNSAFE_MANIFEST,
+        packaging_checks.EXIT_HYGIENE, packaging_checks.EXIT_INVENTORY,
+        packaging_checks.EXIT_INVENTORY_STALE, packaging_checks.EXIT_HYGIENE_UNSTABLE,
+        packaging_checks.EXIT_LICENSES_MISSING, packaging_checks.EXIT_LICENSES_MALFORMED,
+        packaging_checks.EXIT_LICENSES_HASH_MISMATCH, packaging_checks.EXIT_LICENSES_COVERAGE_GAP,
+        packaging_checks.EXIT_LICENSES_UNSAFE_PATH,
+    ]
+    assert len(codes) == len(set(codes)) == 24
+    assert packaging_checks.EXIT_LICENSES_MISSING == 40
+    assert packaging_checks.EXIT_LICENSES_MALFORMED == 41
+    assert packaging_checks.EXIT_LICENSES_HASH_MISMATCH == 42
+    assert packaging_checks.EXIT_LICENSES_COVERAGE_GAP == 43
+    assert packaging_checks.EXIT_LICENSES_UNSAFE_PATH == 44
+
+
+def _create_minimal_valid_license_repo(tmp_path: Path) -> Path:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "LICENSE").write_text("ACA Proprietary Terms\n", encoding="utf-8")
+    (repo / "THIRD_PARTY_NOTICES.md").write_text("# Notices\n", encoding="utf-8")
+
+    iss_dir = repo / "installer"
+    iss_dir.mkdir()
+    iss_content = (
+        "[Setup]\nLicenseFile=..\\LICENSE\n"
+        "[Files]\nSource: \"..\\backend\\dist\\run-frozen\\*\"; DestDir: \"{app}\"\n"
+        "Source: \"..\\LICENSE\"; DestDir: \"{app}\"\n"
+        "Source: \"..\\THIRD_PARTY_NOTICES.md\"; DestDir: \"{app}\"\n"
+        "Source: \"..\\licenses\\packages\\*\"; DestDir: \"{app}\\licenses\\packages\"\n"
+    )
+    (iss_dir / "AcademicComplianceAuditor.iss").write_text(iss_content, encoding="utf-8")
+
+    pkgs_dir = repo / "licenses" / "packages"
+    pkgs_dir.mkdir(parents=True)
+
+    manifest_packages = []
+    for pkg, ver in packaging_checks.REQUIRED_PYTHON_DIRECT_PACKAGES.items():
+        pkg_dir = pkgs_dir / pkg
+        pkg_dir.mkdir(exist_ok=True)
+        lic = pkg_dir / "LICENSE"
+        lic.write_text(f"License for {pkg}\n", encoding="utf-8")
+        sha = hashlib.sha256(lic.read_bytes()).hexdigest()
+        manifest_packages.append({
+            "package": pkg,
+            "version": ver,
+            "license": "MIT",
+            "classification": "DIRECT RUNTIME",
+            "delivered": True,
+            "source": "python-dist-info",
+            "files": [{"path": f"licenses/packages/{pkg}/LICENSE", "sha256": sha, "bytes": lic.stat().st_size}]
+        })
+    for pkg, ver in packaging_checks.REQUIRED_PYTHON_TRANSITIVE_PACKAGES.items():
+        pkg_dir = pkgs_dir / pkg
+        pkg_dir.mkdir(exist_ok=True)
+        lic = pkg_dir / "LICENSE"
+        lic.write_text(f"License for {pkg}\n", encoding="utf-8")
+        sha = hashlib.sha256(lic.read_bytes()).hexdigest()
+        manifest_packages.append({
+            "package": pkg,
+            "version": ver,
+            "license": "MIT",
+            "classification": "TRANSITIVE RUNTIME",
+            "delivered": True,
+            "source": "python-dist-info",
+            "files": [{"path": f"licenses/packages/{pkg}/LICENSE", "sha256": sha, "bytes": lic.stat().st_size}]
+        })
+    for pkg, ver in packaging_checks.REQUIRED_FRONTEND_DIRECT_PACKAGES.items():
+        norm_name = pkg.replace("@", "").replace("/", "-")
+        pkg_dir = pkgs_dir / norm_name
+        pkg_dir.mkdir(exist_ok=True)
+        lic = pkg_dir / "LICENSE"
+        lic.write_text(f"Frontend direct license for {pkg}\n", encoding="utf-8")
+        sha = hashlib.sha256(lic.read_bytes()).hexdigest()
+        manifest_packages.append({
+            "package": pkg,
+            "version": ver,
+            "license": "MIT",
+            "classification": "DIRECT RUNTIME",
+            "delivered": True,
+            "source": "npm-package-lock",
+            "files": [{"path": f"licenses/packages/{norm_name}/LICENSE", "sha256": sha, "bytes": lic.stat().st_size}]
+        })
+    for pkg, ver in packaging_checks.REQUIRED_FRONTEND_TRANSITIVE_PACKAGES.items():
+        norm_name = pkg.replace("@", "").replace("/", "-")
+        pkg_dir = pkgs_dir / norm_name
+        pkg_dir.mkdir(exist_ok=True)
+        lic = pkg_dir / "LICENSE"
+        lic.write_text(f"Frontend transitive license for {pkg}\n", encoding="utf-8")
+        sha = hashlib.sha256(lic.read_bytes()).hexdigest()
+        manifest_packages.append({
+            "package": pkg,
+            "version": ver,
+            "license": "MIT",
+            "classification": "TRANSITIVE RUNTIME",
+            "delivered": True,
+            "source": "npm-package-lock",
+            "files": [{"path": f"licenses/packages/{norm_name}/LICENSE", "sha256": sha, "bytes": lic.stat().st_size}]
+        })
+    for pkg, ver in packaging_checks.REQUIRED_PACKAGING_COMPONENTS.items():
+        pkg_dir = pkgs_dir / pkg
+        pkg_dir.mkdir(exist_ok=True)
+        lic = pkg_dir / "COPYING.txt"
+        lic.write_text(f"Packaging license for {pkg}\n", encoding="utf-8")
+        sha = hashlib.sha256(lic.read_bytes()).hexdigest()
+        manifest_packages.append({
+            "package": pkg,
+            "version": ver,
+            "license": "GPL-2.0-or-later with Bootloader Exception",
+            "classification": "DELIVERED RUNTIME COMPONENT",
+            "delivered": True,
+            "source": "repository-canonical-text",
+            "files": [{"path": f"licenses/packages/{pkg}/COPYING.txt", "sha256": sha, "bytes": lic.stat().st_size}]
+        })
+
+    manifest_doc = {
+        "manifest_version": "1.0.0",
+        "packages": sorted(manifest_packages, key=lambda x: x["package"])
+    }
+    (pkgs_dir / "MANIFEST.json").write_text(json.dumps(manifest_doc, indent=2) + "\n", encoding="utf-8")
+    return repo
+
+
+def test_verify_licenses_valid_mock_repo(tmp_path):
+    repo = _create_minimal_valid_license_repo(tmp_path)
+    code, messages = packaging_checks.verify_licenses(repo)
+    assert code == packaging_checks.EXIT_LICENSES_OK
+    assert "LICENSES_OK" in messages[0]
+    assert "packages=92" in messages[0]
+
+
+def test_verify_licenses_detects_missing_license(tmp_path):
+    repo = _create_minimal_valid_license_repo(tmp_path)
+    (repo / "LICENSE").unlink()
+    code, _ = packaging_checks.verify_licenses(repo)
+    assert code == packaging_checks.EXIT_LICENSES_MISSING
+
+
+def test_verify_licenses_detects_empty_license(tmp_path):
+    repo = _create_minimal_valid_license_repo(tmp_path)
+    (repo / "LICENSE").write_text("", encoding="utf-8")
+    code, _ = packaging_checks.verify_licenses(repo)
+    assert code == packaging_checks.EXIT_LICENSES_MISSING
+
+
+def test_verify_licenses_detects_missing_notices(tmp_path):
+    repo = _create_minimal_valid_license_repo(tmp_path)
+    (repo / "THIRD_PARTY_NOTICES.md").unlink()
+    code, _ = packaging_checks.verify_licenses(repo)
+    assert code == packaging_checks.EXIT_LICENSES_MISSING
+
+
+def test_verify_licenses_detects_missing_manifest(tmp_path):
+    repo = _create_minimal_valid_license_repo(tmp_path)
+    (repo / "licenses" / "packages" / "MANIFEST.json").unlink()
+    code, _ = packaging_checks.verify_licenses(repo)
+    assert code == packaging_checks.EXIT_LICENSES_MISSING
+
+
+def test_verify_licenses_detects_malformed_manifest_json(tmp_path):
+    repo = _create_minimal_valid_license_repo(tmp_path)
+    (repo / "licenses" / "packages" / "MANIFEST.json").write_text("{not valid json", encoding="utf-8")
+    code, _ = packaging_checks.verify_licenses(repo)
+    assert code == packaging_checks.EXIT_LICENSES_MALFORMED
+
+
+def test_verify_licenses_detects_unsupported_manifest_version(tmp_path):
+    repo = _create_minimal_valid_license_repo(tmp_path)
+    mf = repo / "licenses" / "packages" / "MANIFEST.json"
+    doc = json.loads(mf.read_text(encoding="utf-8"))
+    doc["manifest_version"] = "2.0.0"
+    mf.write_text(json.dumps(doc), encoding="utf-8")
+    code, _ = packaging_checks.verify_licenses(repo)
+    assert code == packaging_checks.EXIT_LICENSES_MALFORMED
+
+
+def test_verify_licenses_detects_hash_mismatch(tmp_path):
+    repo = _create_minimal_valid_license_repo(tmp_path)
+    pkg_lic = repo / "licenses" / "packages" / "alembic" / "LICENSE"
+    pkg_lic.write_text("tampered text", encoding="utf-8")
+    code, _ = packaging_checks.verify_licenses(repo)
+    assert code == packaging_checks.EXIT_LICENSES_HASH_MISMATCH
+
+
+def test_verify_licenses_detects_unsafe_path_traversal(tmp_path):
+    repo = _create_minimal_valid_license_repo(tmp_path)
+    mf = repo / "licenses" / "packages" / "MANIFEST.json"
+    doc = json.loads(mf.read_text(encoding="utf-8"))
+    doc["packages"][0]["files"][0]["path"] = "licenses/packages/../escaped.txt"
+    mf.write_text(json.dumps(doc), encoding="utf-8")
+    code, _ = packaging_checks.verify_licenses(repo)
+    assert code == packaging_checks.EXIT_LICENSES_UNSAFE_PATH
+
+
+def test_verify_licenses_detects_coverage_gap_missing_package(tmp_path):
+    repo = _create_minimal_valid_license_repo(tmp_path)
+    mf = repo / "licenses" / "packages" / "MANIFEST.json"
+    doc = json.loads(mf.read_text(encoding="utf-8"))
+    doc["packages"] = [p for p in doc["packages"] if p["package"] != "@floating-ui/core"]
+    mf.write_text(json.dumps(doc), encoding="utf-8")
+    code, _ = packaging_checks.verify_licenses(repo)
+    assert code == packaging_checks.EXIT_LICENSES_COVERAGE_GAP
+
+
+def test_verify_licenses_detects_version_mismatch(tmp_path):
+    repo = _create_minimal_valid_license_repo(tmp_path)
+    mf = repo / "licenses" / "packages" / "MANIFEST.json"
+    doc = json.loads(mf.read_text(encoding="utf-8"))
+    for p in doc["packages"]:
+        if p["package"] == "@floating-ui/core":
+            p["version"] = "9.9.9"
+    mf.write_text(json.dumps(doc), encoding="utf-8")
+    code, _ = packaging_checks.verify_licenses(repo)
+    assert code == packaging_checks.EXIT_LICENSES_COVERAGE_GAP
+
+
+def test_verify_licenses_detects_classification_mismatch(tmp_path):
+    repo = _create_minimal_valid_license_repo(tmp_path)
+    mf = repo / "licenses" / "packages" / "MANIFEST.json"
+    doc = json.loads(mf.read_text(encoding="utf-8"))
+    for p in doc["packages"]:
+        if p["package"] == "@floating-ui/core":
+            p["classification"] = "DIRECT RUNTIME"
+    mf.write_text(json.dumps(doc), encoding="utf-8")
+    code, _ = packaging_checks.verify_licenses(repo)
+    assert code == packaging_checks.EXIT_LICENSES_COVERAGE_GAP
+
+
+def test_verify_licenses_detects_extra_delivered_package(tmp_path):
+    repo = _create_minimal_valid_license_repo(tmp_path)
+    mf = repo / "licenses" / "packages" / "MANIFEST.json"
+    doc = json.loads(mf.read_text(encoding="utf-8"))
+    alembic_entry = [p for p in doc["packages"] if p["package"] == "alembic"][0]
+    doc["packages"].append({
+        "package": "unapproved-library",
+        "version": "1.0.0",
+        "license": "MIT",
+        "classification": "DIRECT RUNTIME",
+        "delivered": True,
+        "source": "npm-package-lock",
+        "files": [alembic_entry["files"][0]],
+    })
+    mf.write_text(json.dumps(doc), encoding="utf-8")
+    code, _ = packaging_checks.verify_licenses(repo)
+    assert code == packaging_checks.EXIT_LICENSES_COVERAGE_GAP
+
+
+def test_verify_licenses_detects_build_tool_marked_delivered(tmp_path):
+    repo = _create_minimal_valid_license_repo(tmp_path)
+    mf = repo / "licenses" / "packages" / "MANIFEST.json"
+    doc = json.loads(mf.read_text(encoding="utf-8"))
+    alembic_entry = [p for p in doc["packages"] if p["package"] == "alembic"][0]
+    doc["packages"].append({
+        "package": "pytest",
+        "version": "9.1.1",
+        "license": "MIT",
+        "classification": "DEVELOPMENT OR TEST ONLY",
+        "delivered": True,
+        "source": "python-dist-info",
+        "files": [alembic_entry["files"][0]],
+    })
+    mf.write_text(json.dumps(doc), encoding="utf-8")
+    code, _ = packaging_checks.verify_licenses(repo)
+    assert code == packaging_checks.EXIT_LICENSES_COVERAGE_GAP
+
+
+def test_verify_licenses_detects_duplicate_package_entry(tmp_path):
+    repo = _create_minimal_valid_license_repo(tmp_path)
+    mf = repo / "licenses" / "packages" / "MANIFEST.json"
+    doc = json.loads(mf.read_text(encoding="utf-8"))
+    doc["packages"].append(doc["packages"][0])
+    mf.write_text(json.dumps(doc), encoding="utf-8")
+    code, _ = packaging_checks.verify_licenses(repo)
+    assert code == packaging_checks.EXIT_LICENSES_MALFORMED
+
+
+def test_verify_licenses_detects_missing_installer_license_directive(tmp_path):
+    repo = _create_minimal_valid_license_repo(tmp_path)
+    iss = repo / "installer" / "AcademicComplianceAuditor.iss"
+    iss.write_text("[Setup]\nAppName=ACA\n[Files]\n", encoding="utf-8")
+    code, _ = packaging_checks.verify_licenses(repo)
+    assert code == packaging_checks.EXIT_LICENSES_MISSING
+
+
+def test_licenses_cli_fails_closed_when_repo_root_missing():
+    assert packaging_checks._licenses_cli(["verify-licenses"]) == packaging_checks.EXIT_LICENSES_MISSING

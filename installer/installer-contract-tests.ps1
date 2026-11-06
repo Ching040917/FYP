@@ -24,11 +24,11 @@ Write-Host "=== Product identity ==="
 Assert ($iss.Contains("AppName=Academic Compliance Auditor")) "Product name is 'Academic Compliance Auditor'"
 Assert ($iss.Contains("DefaultDirName={localappdata}\Programs\AcademicComplianceAuditor")) "Per-user install path is %LOCALAPPDATA%\Programs\AcademicComplianceAuditor"
 
-Write-Host "=== No invented publisher / no invented version / no installer license page ==="
+Write-Host "=== No invented publisher / no invented version / installer license page ==="
 $pubLine = ($iss -split "`r?`n" | Where-Object { $_ -match '^AppPublisher=' } | Select-Object -First 1)
 Assert ($pubLine -match '^AppPublisher=\s*$') "AppPublisher is explicitly empty (no invented publisher)"
 Assert ($iss.Contains('#define AppVersion "1.0.0"')) "Version 1.0.0 from authoritative source (backend/app/main.py + frontend/package.json)"
-Assert (-not $iss.Contains("LicenseFile")) "License page delivery is deferred to B-LIC-03"
+Assert ($iss.Contains("LicenseFile=..\LICENSE")) "License page displays root LICENSE"
 
 Write-Host "=== Proprietary distribution terms ==="
 $licensePath = Join-Path $RepoRoot "LICENSE"
@@ -66,6 +66,23 @@ $troubleSrc = Get-Content (Join-Path $RepoRoot "docs\TROUBLESHOOTING.md") -Raw -
 Assert (-not $troubleSrc.Contains("approved evaluation channel")) "TROUBLESHOOTING no longer names an evaluation channel"
 Assert (-not $troubleSrc.Contains("If you verified a supplied SHA-256 checksum")) "TROUBLESHOOTING no longer treats checksum verification as optional"
 Assert ($troubleSrc.Contains("authorized release channel")) "TROUBLESHOOTING names the authorized release channel"
+
+Write-Host "=== Third-party license and notice delivery contract ==="
+Assert ($iss.Contains('Source: "..\LICENSE"; DestDir: "{app}"')) "Installer copies LICENSE to {app}"
+Assert ($iss.Contains('Source: "..\THIRD_PARTY_NOTICES.md"; DestDir: "{app}"')) "Installer copies THIRD_PARTY_NOTICES.md to {app}"
+Assert ($iss.Contains('Source: "..\licenses\packages\*"; DestDir: "{app}\licenses\packages"')) "Installer copies canonical license tree to {app}\licenses\packages"
+$manifestPath = Join-Path $RepoRoot "licenses\packages\MANIFEST.json"
+Assert (Test-Path $manifestPath) "Canonical MANIFEST.json exists"
+$manifestRaw = Get-Content $manifestPath -Raw -Encoding UTF8
+$manifestJson = $manifestRaw | ConvertFrom-Json
+Assert ($manifestJson.manifest_version -eq "1.0.0") "Manifest version is 1.0.0"
+Assert ($manifestJson.packages.Count -ge 49) "Manifest covers all runtime packages"
+$firstPkg = $manifestJson.packages[0]
+Assert ($null -ne $firstPkg.package -and $null -ne $firstPkg.files) "Manifest packages have required structure"
+$buildInstallerScriptContent = Get-Content $BuildScript -Raw
+Assert ($buildInstallerScriptContent.Contains("verify-licenses")) "build-installer.ps1 invokes verify-licenses"
+$pocScript = Get-Content (Join-Path $RepoRoot "backend\scripts\build-packaging-poc.ps1") -Raw
+Assert ($pocScript.Contains("verify-licenses")) "build-packaging-poc.ps1 invokes verify-licenses"
 
 Write-Host "=== Privileges and architecture ==="
 Assert ($iss.Contains("PrivilegesRequired=lowest")) "No administrator rights required (PrivilegesRequired=lowest)"

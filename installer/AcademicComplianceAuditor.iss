@@ -32,6 +32,7 @@ AppName=Academic Compliance Auditor
 AppVersion={#AppVersion}
 AppVerName=Academic Compliance Auditor {#AppVersion}
 AppPublisher=
+LicenseFile=..\LICENSE
 DefaultDirName={localappdata}\Programs\AcademicComplianceAuditor
 DefaultGroupName=Academic Compliance Auditor
 DisableProgramGroupPage=yes
@@ -75,6 +76,9 @@ Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription
 ; intentionally NOT excluded (the certifi CA bundle is required for TLS).
 [Files]
 Source: "..\backend\dist\run-frozen\*"; DestDir: "{app}"; Flags: recursesubdirs ignoreversion createallsubdirs; Excludes: ".env,.env.*,*.db,*.sqlite,*.sqlite3,*.log,*.map,*.pyc,*.pyo,__pycache__\*,*__pycache__\*,*.pytest_cache\*,test-results\*,playwright-report\*,evidence\*,*.key,*.p12,*.pfx,.git\*"
+Source: "..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\THIRD_PARTY_NOTICES.md"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\licenses\packages\*"; DestDir: "{app}\licenses\packages"; Flags: recursesubdirs ignoreversion createallsubdirs
 
 [Icons]
 Name: "{autoprograms}\Academic Compliance Auditor"; Filename: "{app}\run-frozen.exe"; WorkingDir: "{app}"; IconFilename: "{app}\run-frozen.exe"; Comment: "Launch Academic Compliance Auditor"

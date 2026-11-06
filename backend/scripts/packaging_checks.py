@@ -165,6 +165,136 @@ EXIT_INVENTORY = 33          # inventory missing, malformed or failing its own s
 EXIT_INVENTORY_STALE = 34    # inventory does not match the current runtime tree
 EXIT_HYGIENE_UNSTABLE = 35   # a file changed while the walk hashed it
 
+# Third-party license coverage (B-LIC-03).
+# These codes extend, and never reuse, legacy (2, 3), B-PACK-01 (20-31), or B-HYGIENE-01 (32-35).
+LICENSES_SCHEMA_VERSION = "1.0.0"
+EXIT_LICENSES_OK = 0
+EXIT_LICENSES_MISSING = 40
+EXIT_LICENSES_MALFORMED = 41
+EXIT_LICENSES_HASH_MISMATCH = 42
+EXIT_LICENSES_COVERAGE_GAP = 43
+EXIT_LICENSES_UNSAFE_PATH = 44
+
+REQUIRED_PYTHON_DIRECT_PACKAGES = {
+    "alembic": "1.11.1",
+    "fastapi": "0.110.1",
+    "httpx": "0.27.2",
+    "pydantic": "2.7.1",
+    "pydantic-settings": "2.3.3",
+    "pypdf": "6.16.1",
+    "python-docx": "1.1.0",
+    "python-dotenv": "1.0.1",
+    "python-multipart": "0.0.6",
+    "reportlab": "4.0.7",
+    "sqlalchemy": "2.0.23",
+    "uvicorn": "0.29.0",
+}
+
+REQUIRED_PYTHON_TRANSITIVE_PACKAGES = {
+    "annotated-types": "0.8.0",
+    "anyio": "4.15.1",
+    "certifi": "2026.7.22",
+    "click": "8.5.0",
+    "colorama": "0.4.6",
+    "greenlet": "3.5.6",
+    "h11": "0.16.0",
+    "httpcore": "1.0.9",
+    "httptools": "0.9.0",
+    "idna": "3.20",
+    "lxml": "6.1.3",
+    "mako": "1.4.3",
+    "markupsafe": "3.0.4",
+    "pillow": "12.3.0",
+    "pydantic-core": "2.18.2",
+    "pygments": "2.21.0",
+    "pyyaml": "6.0.3",
+    "sniffio": "1.3.1",
+    "starlette": "0.37.2",
+    "typing-extensions": "4.16.0",
+    "watchfiles": "1.3.0",
+    "websockets": "17.2",
+}
+
+REQUIRED_FRONTEND_DIRECT_PACKAGES = {
+    "@radix-ui/react-label": "2.1.10",
+    "@radix-ui/react-scroll-area": "1.2.12",
+    "@radix-ui/react-select": "2.3.1",
+    "@radix-ui/react-slot": "1.3.0",
+    "@radix-ui/react-switch": "1.3.1",
+    "class-variance-authority": "0.7.1",
+    "clsx": "2.1.1",
+    "lucide-react": "0.303.0",
+    "pdfjs-dist": "5.7.284",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "react-router-dom": "6.30.4",
+    "tailwind-merge": "3.6.0",
+    "tailwindcss-animate": "1.0.7",
+}
+
+REQUIRED_FRONTEND_TRANSITIVE_PACKAGES = {
+    "@floating-ui/core": "1.7.5",
+    "@floating-ui/dom": "1.7.6",
+    "@floating-ui/react-dom": "2.1.8",
+    "@floating-ui/utils": "0.2.11",
+    "@radix-ui/number": "1.1.2",
+    "@radix-ui/primitive": "1.1.4",
+    "@radix-ui/react-arrow": "1.1.10",
+    "@radix-ui/react-collection": "1.1.10",
+    "@radix-ui/react-compose-refs": "1.1.3",
+    "@radix-ui/react-context": "1.1.4",
+    "@radix-ui/react-direction": "1.1.2",
+    "@radix-ui/react-dismissable-layer": "1.1.13",
+    "@radix-ui/react-focus-guards": "1.1.4",
+    "@radix-ui/react-focus-scope": "1.1.10",
+    "@radix-ui/react-id": "1.1.2",
+    "@radix-ui/react-popper": "1.3.1",
+    "@radix-ui/react-portal": "1.1.12",
+    "@radix-ui/react-presence": "1.1.6",
+    "@radix-ui/react-primitive": "2.1.6",
+    "@radix-ui/react-use-callback-ref": "1.1.2",
+    "@radix-ui/react-use-controllable-state": "1.2.3",
+    "@radix-ui/react-use-effect-event": "0.0.3",
+    "@radix-ui/react-use-escape-keydown": "1.1.2",
+    "@radix-ui/react-use-layout-effect": "1.1.2",
+    "@radix-ui/react-use-previous": "1.1.2",
+    "@radix-ui/react-use-rect": "1.1.2",
+    "@radix-ui/react-use-size": "1.1.2",
+    "@radix-ui/react-visually-hidden": "1.2.6",
+    "@radix-ui/rect": "1.1.2",
+    "@remix-run/router": "1.23.3",
+    "aria-hidden": "1.2.6",
+    "detect-node-es": "1.1.0",
+    "get-nonce": "1.0.1",
+    "js-tokens": "4.0.0",
+    "loose-envify": "1.4.0",
+    "react-remove-scroll": "2.7.2",
+    "react-remove-scroll-bar": "2.3.8",
+    "react-router": "6.30.4",
+    "react-style-singleton": "2.2.3",
+    "scheduler": "0.23.2",
+    "tslib": "2.8.1",
+    "use-callback-ref": "1.3.3",
+    "use-sidecar": "1.1.3",
+}
+
+REQUIRED_PACKAGING_COMPONENTS = {
+    "pyinstaller-bootloader": "6.22.2",
+}
+
+TOTAL_DELIVERED_COMPONENTS = (
+    len(REQUIRED_PYTHON_DIRECT_PACKAGES)
+    + len(REQUIRED_PYTHON_TRANSITIVE_PACKAGES)
+    + len(REQUIRED_FRONTEND_DIRECT_PACKAGES)
+    + len(REQUIRED_FRONTEND_TRANSITIVE_PACKAGES)
+    + len(REQUIRED_PACKAGING_COMPONENTS)
+)
+EXCLUDED_BUILD_PACKAGES = (
+    "altgraph", "iniconfig", "packaging", "pefile", "pip", "pluggy",
+    "pyinstaller", "pyinstaller-hooks-contrib", "pytest", "pytest-asyncio",
+    "pywin32-ctypes", "setuptools", "vite", "typescript",
+)
+
 # Exact bundle-relative paths that are required product content and must never
 # be rejected by a name rule. certifi's CA bundle is the only certificate the
 # runtime needs; a broad *.pem allowlist would defeat the point of the rule.
@@ -1157,6 +1287,212 @@ def _manifest_cli(argv) -> int:
         return exc.code
 
 
+def verify_licenses(repo_root: Path) -> tuple[int, list[str]]:
+    """Verify that root LICENSE, THIRD_PARTY_NOTICES.md, and licenses/packages/ exist,
+
+    conform to schema, have matching hashes, cover all runtime packages, and are
+    referenced by the Inno Setup installer script.
+    """
+    messages: list[str] = []
+    repo = Path(repo_root).resolve()
+
+    # 1. Root LICENSE check
+    lic_file = repo / "LICENSE"
+    if not lic_file.is_file():
+        return (EXIT_LICENSES_MISSING, [f"MISSING {lic_file.name}"])
+    if lic_file.stat().st_size == 0:
+        return (EXIT_LICENSES_MISSING, [f"EMPTY {lic_file.name}"])
+
+    # 2. THIRD_PARTY_NOTICES.md check
+    notices_file = repo / "THIRD_PARTY_NOTICES.md"
+    if not notices_file.is_file():
+        return (EXIT_LICENSES_MISSING, [f"MISSING {notices_file.name}"])
+    if notices_file.stat().st_size == 0:
+        return (EXIT_LICENSES_MISSING, [f"EMPTY {notices_file.name}"])
+
+    # 3. Canonical MANIFEST.json check
+    manifest_path = repo / "licenses" / "packages" / "MANIFEST.json"
+    if not manifest_path.is_file():
+        return (EXIT_LICENSES_MISSING, ["MISSING licenses/packages/MANIFEST.json"])
+
+    try:
+        data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return (EXIT_LICENSES_MALFORMED, [f"MALFORMED JSON in {manifest_path.name}: {exc}"])
+
+    if not isinstance(data, dict):
+        return (EXIT_LICENSES_MALFORMED, ["MALFORMED MANIFEST.json: root must be an object"])
+    if data.get("manifest_version") != LICENSES_SCHEMA_VERSION:
+        return (EXIT_LICENSES_MALFORMED, [f"UNSUPPORTED manifest_version: {data.get('manifest_version')}"])
+    if "packages" not in data or not isinstance(data["packages"], list):
+        return (EXIT_LICENSES_MALFORMED, ["MALFORMED MANIFEST.json: 'packages' must be a list"])
+
+    seen_packages: set[str] = set()
+    manifest_files: set[str] = set()
+
+    for pkg_entry in data["packages"]:
+        if not isinstance(pkg_entry, dict):
+            return (EXIT_LICENSES_MALFORMED, ["MALFORMED package entry: must be an object"])
+        for req_field in ("package", "version", "license", "classification", "delivered", "source", "files"):
+            if req_field not in pkg_entry:
+                return (EXIT_LICENSES_MALFORMED, [f"MALFORMED package entry missing '{req_field}'"])
+
+        pkg_name = pkg_entry["package"]
+        if pkg_name in seen_packages:
+            return (EXIT_LICENSES_MALFORMED, [f"DUPLICATE package entry: {pkg_name}"])
+        seen_packages.add(pkg_name)
+
+        if not isinstance(pkg_entry["files"], list) or not pkg_entry["files"]:
+            return (EXIT_LICENSES_MALFORMED, [f"MALFORMED files list for package {pkg_name}"])
+
+        for f_entry in pkg_entry["files"]:
+            if not isinstance(f_entry, dict):
+                return (EXIT_LICENSES_MALFORMED, [f"MALFORMED file entry in package {pkg_name}"])
+            for f_field in ("path", "sha256", "bytes"):
+                if f_field not in f_entry:
+                    return (EXIT_LICENSES_MALFORMED, [f"MALFORMED file entry missing '{f_field}' in package {pkg_name}"])
+
+            rel_path = f_entry["path"].replace("\\", "/")
+            if not rel_path.startswith("licenses/packages/"):
+                return (EXIT_LICENSES_UNSAFE_PATH, [f"UNSAFE path does not start with licenses/packages/: {rel_path}"])
+            if ".." in rel_path or ":" in rel_path or rel_path.startswith("/"):
+                return (EXIT_LICENSES_UNSAFE_PATH, [f"UNSAFE path traversal: {rel_path}"])
+
+            target_file = repo / rel_path
+            if target_file.is_symlink():
+                return (EXIT_LICENSES_UNSAFE_PATH, [f"UNSAFE symlink in licenses: {rel_path}"])
+            if not target_file.is_file():
+                return (EXIT_LICENSES_MISSING, [f"MISSING declared license file: {rel_path}"])
+            if target_file.stat().st_size == 0:
+                return (EXIT_LICENSES_MISSING, [f"EMPTY declared license file: {rel_path}"])
+
+            actual_size = target_file.stat().st_size
+            if actual_size != f_entry["bytes"]:
+                return (EXIT_LICENSES_HASH_MISMATCH, [f"SIZE mismatch for {rel_path}: expected {f_entry['bytes']}, got {actual_size}"])
+
+            actual_sha = hashlib.sha256(target_file.read_bytes()).hexdigest()
+            if actual_sha != f_entry["sha256"].lower():
+                return (EXIT_LICENSES_HASH_MISMATCH, [f"SHA256 mismatch for {rel_path}: expected {f_entry['sha256']}, got {actual_sha}"])
+
+            manifest_files.add(rel_path)
+
+    # 4. Check unlisted files beneath licenses/packages
+    pkgs_dir = repo / "licenses" / "packages"
+    if pkgs_dir.is_dir():
+        for root, _, files in os.walk(pkgs_dir):
+            for file in files:
+                p = Path(root) / file
+                rel = str(p.relative_to(repo)).replace("\\", "/")
+                if rel == "licenses/packages/MANIFEST.json":
+                    continue
+                if rel not in manifest_files:
+                    return (EXIT_LICENSES_COVERAGE_GAP, [f"UNLISTED file beneath licenses/packages: {rel}"])
+
+    # 5. Check exact-set coverage against required runtime components
+    delivered_map = {}
+    for pkg_entry in data["packages"]:
+        if pkg_entry.get("delivered", False):
+            delivered_map[pkg_entry["package"]] = (pkg_entry.get("version"), pkg_entry.get("classification"))
+
+    for p_name, p_ver in REQUIRED_PYTHON_DIRECT_PACKAGES.items():
+        if p_name not in delivered_map:
+            return (EXIT_LICENSES_COVERAGE_GAP, [f"MISSING delivered Python direct component: {p_name}"])
+        if delivered_map[p_name][0] != p_ver:
+            return (EXIT_LICENSES_COVERAGE_GAP, [f"VERSION MISMATCH for {p_name}: expected {p_ver}, got {delivered_map[p_name][0]}"])
+        if delivered_map[p_name][1] != "DIRECT RUNTIME":
+            return (EXIT_LICENSES_COVERAGE_GAP, [f"CLASSIFICATION MISMATCH for {p_name}: expected DIRECT RUNTIME, got {delivered_map[p_name][1]}"])
+
+    for p_name, p_ver in REQUIRED_PYTHON_TRANSITIVE_PACKAGES.items():
+        if p_name not in delivered_map:
+            return (EXIT_LICENSES_COVERAGE_GAP, [f"MISSING delivered Python transitive component: {p_name}"])
+        if delivered_map[p_name][0] != p_ver:
+            return (EXIT_LICENSES_COVERAGE_GAP, [f"VERSION MISMATCH for {p_name}: expected {p_ver}, got {delivered_map[p_name][0]}"])
+        if delivered_map[p_name][1] != "TRANSITIVE RUNTIME":
+            return (EXIT_LICENSES_COVERAGE_GAP, [f"CLASSIFICATION MISMATCH for {p_name}: expected TRANSITIVE RUNTIME, got {delivered_map[p_name][1]}"])
+
+    for p_name, p_ver in REQUIRED_FRONTEND_DIRECT_PACKAGES.items():
+        if p_name not in delivered_map:
+            return (EXIT_LICENSES_COVERAGE_GAP, [f"MISSING delivered Frontend direct component: {p_name}"])
+        if delivered_map[p_name][0] != p_ver:
+            return (EXIT_LICENSES_COVERAGE_GAP, [f"VERSION MISMATCH for {p_name}: expected {p_ver}, got {delivered_map[p_name][0]}"])
+        if delivered_map[p_name][1] != "DIRECT RUNTIME":
+            return (EXIT_LICENSES_COVERAGE_GAP, [f"CLASSIFICATION MISMATCH for {p_name}: expected DIRECT RUNTIME, got {delivered_map[p_name][1]}"])
+
+    for p_name, p_ver in REQUIRED_FRONTEND_TRANSITIVE_PACKAGES.items():
+        if p_name not in delivered_map:
+            return (EXIT_LICENSES_COVERAGE_GAP, [f"MISSING delivered Frontend transitive component: {p_name}"])
+        if delivered_map[p_name][0] != p_ver:
+            return (EXIT_LICENSES_COVERAGE_GAP, [f"VERSION MISMATCH for {p_name}: expected {p_ver}, got {delivered_map[p_name][0]}"])
+        if delivered_map[p_name][1] != "TRANSITIVE RUNTIME":
+            return (EXIT_LICENSES_COVERAGE_GAP, [f"CLASSIFICATION MISMATCH for {p_name}: expected TRANSITIVE RUNTIME, got {delivered_map[p_name][1]}"])
+
+    for p_name, p_ver in REQUIRED_PACKAGING_COMPONENTS.items():
+        if p_name not in delivered_map:
+            return (EXIT_LICENSES_COVERAGE_GAP, [f"MISSING delivered Packaging component: {p_name}"])
+        if delivered_map[p_name][0] != p_ver:
+            return (EXIT_LICENSES_COVERAGE_GAP, [f"VERSION MISMATCH for {p_name}: expected {p_ver}, got {delivered_map[p_name][0]}"])
+        if delivered_map[p_name][1] != "DELIVERED RUNTIME COMPONENT":
+            return (EXIT_LICENSES_COVERAGE_GAP, [f"CLASSIFICATION MISMATCH for {p_name}: expected DELIVERED RUNTIME COMPONENT, got {delivered_map[p_name][1]}"])
+
+    all_expected = (
+        set(REQUIRED_PYTHON_DIRECT_PACKAGES.keys())
+        | set(REQUIRED_PYTHON_TRANSITIVE_PACKAGES.keys())
+        | set(REQUIRED_FRONTEND_DIRECT_PACKAGES.keys())
+        | set(REQUIRED_FRONTEND_TRANSITIVE_PACKAGES.keys())
+        | set(REQUIRED_PACKAGING_COMPONENTS.keys())
+    )
+    for p_delivered in delivered_map.keys():
+        if p_delivered not in all_expected:
+            return (EXIT_LICENSES_COVERAGE_GAP, [f"UNEXPECTED delivered package in manifest: {p_delivered}"])
+
+    if len(delivered_map) != TOTAL_DELIVERED_COMPONENTS:
+        return (EXIT_LICENSES_COVERAGE_GAP, [f"DELIVERED COUNT MISMATCH: expected {TOTAL_DELIVERED_COMPONENTS}, got {len(delivered_map)}"])
+
+    for pkg_entry in data["packages"]:
+        p_name = pkg_entry["package"]
+        if p_name in EXCLUDED_BUILD_PACKAGES and pkg_entry.get("delivered", False):
+            return (EXIT_LICENSES_COVERAGE_GAP, [f"BUILD TOOL falsely marked delivered: {p_name}"])
+
+    # 6. Check Inno Setup installer delivery contract
+    iss_file = repo / "installer" / "AcademicComplianceAuditor.iss"
+    if not iss_file.is_file():
+        return (EXIT_LICENSES_MISSING, [f"MISSING {iss_file.name}"])
+
+    iss_text = iss_file.read_text(encoding="utf-8")
+    if "LicenseFile=..\\LICENSE" not in iss_text and "LicenseFile=../LICENSE" not in iss_text:
+        return (EXIT_LICENSES_MISSING, ["MISSING LicenseFile=..\\LICENSE directive in installer script"])
+    if 'Source: "..\\LICENSE"' not in iss_text and 'Source: "../LICENSE"' not in iss_text:
+        return (EXIT_LICENSES_MISSING, ["MISSING Source: ..\\LICENSE in installer script [Files]"])
+    if 'Source: "..\\THIRD_PARTY_NOTICES.md"' not in iss_text and 'Source: "../THIRD_PARTY_NOTICES.md"' not in iss_text:
+        return (EXIT_LICENSES_MISSING, ["MISSING Source: ..\\THIRD_PARTY_NOTICES.md in installer script [Files]"])
+    if 'Source: "..\\licenses\\packages\\*"' not in iss_text and 'Source: "../licenses/packages/*"' not in iss_text:
+        return (EXIT_LICENSES_MISSING, ["MISSING Source: ..\\licenses\\packages\\* in installer script [Files]"])
+
+    py_cnt = len(REQUIRED_PYTHON_DIRECT_PACKAGES) + len(REQUIRED_PYTHON_TRANSITIVE_PACKAGES)
+    fe_dir_cnt = len(REQUIRED_FRONTEND_DIRECT_PACKAGES)
+    fe_trans_cnt = len(REQUIRED_FRONTEND_TRANSITIVE_PACKAGES)
+    pkg_cnt = len(REQUIRED_PACKAGING_COMPONENTS)
+    messages.append(
+        f"LICENSES_OK packages={len(delivered_map)} python={py_cnt} frontend_direct={fe_dir_cnt} frontend_transitive={fe_trans_cnt} packaging={pkg_cnt}"
+    )
+    return (EXIT_LICENSES_OK, messages)
+
+
+def _licenses_cli(argv) -> int:
+    if len(argv) < 2:
+        print("FAIL: verify-licenses requires <repo_root>")
+        return EXIT_LICENSES_MISSING
+    repo_root = Path(argv[1]).resolve()
+    code, messages = verify_licenses(repo_root)
+    for m in messages:
+        print(m)
+    if code == EXIT_LICENSES_OK:
+        print("LICENSES_OK")
+    else:
+        print(f"LICENSES_FAIL code={code}")
+    return code
+
+
 def _legacy_main(argv) -> int:
     """Original positional CLI: <bundle_root> [toc_path ...]."""
     root = Path(argv[0]).resolve()
@@ -1191,4 +1527,6 @@ if __name__ == "__main__":
         sys.exit(_manifest_cli(cli_args))
     if cli_args and cli_args[0] in ("hygiene", "inventory", "verify-inventory"):
         sys.exit(_inventory_cli(cli_args))
+    if cli_args and cli_args[0] in ("verify-licenses",):
+        sys.exit(_licenses_cli(cli_args))
     sys.exit(_legacy_main(cli_args))

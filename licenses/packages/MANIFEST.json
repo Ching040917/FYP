@@ -1,0 +1,1395 @@
+{
+  "manifest_version": "1.0.0",
+  "packages": [
+    {
+      "package": "@floating-ui/core",
+      "version": "1.7.5",
+      "license": "MIT",
+      "classification": "TRANSITIVE RUNTIME",
+      "delivered": true,
+      "source": "npm-package-lock",
+      "files": [
+        {
+          "path": "licenses/packages/floating-ui/LICENSE",
+          "sha256": "0e4c9a9b6c71019cbbea3bdc20b01223110a9035700f9c960c8fcbf78c2325ce",
+          "bytes": 1089
+        }
+      ]
+    },
+    {
+      "package": "@floating-ui/dom",
+      "version": "1.7.6",
+      "license": "MIT",
+      "classification": "TRANSITIVE RUNTIME",
+      "delivered": true,
+      "source": "npm-package-lock",
+      "files": [
+        {
+          "path": "licenses/packages/floating-ui/LICENSE",
+          "sha256": "0e4c9a9b6c71019cbbea3bdc20b01223110a9035700f9c960c8fcbf78c2325ce",
+          "bytes": 1089
+        }
+      ]
+    },
+    {
+      "package": "@floating-ui/react-dom",
+      "version": "2.1.8",
+      "license": "MIT",
+      "classification": "TRANSITIVE RUNTIME",
+      "delivered": true,
+      "source": "npm-package-lock",
+      "files": [
+        {
+          "path": "licenses/packages/floating-ui/LICENSE",
+          "sha256": "0e4c9a9b6c71019cbbea3bdc20b01223110a9035700f9c960c8fcbf78c2325ce",
+          "bytes": 1089
+        }
+      ]
+    },
+    {
+      "package": "@floating-ui/utils",
+      "version": "0.2.11",
+      "license": "MIT",
+      "classification": "TRANSITIVE RUNTIME",
+      "delivered": true,
+      "source": "npm-package-lock",
+      "files": [
+        {
+          "path": "licenses/packages/floating-ui/LICENSE",
+          "sha256": "0e4c9a9b6c71019cbbea3bdc20b01223110a9035700f9c960c8fcbf78c2325ce",
+          "bytes": 1089
+        }
+      ]
+    },
+    {
+      "package": "@radix-ui/number",
+      "version": "1.1.2",
+      "license": "MIT",
+      "classification": "TRANSITIVE RUNTIME",
+      "delivered": true,
+      "source": "npm-package-lock",
+      "files": [
+        {
+          "path": "licenses/packages/radix-ui/LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138",
+          "bytes": 1063
+        }
+      ]
+    },
+    {
+      "package": "@radix-ui/primitive",
+      "version": "1.1.4",
+      "license": "MIT",
+      "classification": "TRANSITIVE RUNTIME",
+      "delivered": true,
+      "source": "npm-package-lock",
+      "files": [
+        {
+          "path": "licenses/packages/radix-ui/LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138",
+          "bytes": 1063
+        }
+      ]
+    },
+    {
+      "package": "@radix-ui/react-arrow",
+      "version": "1.1.10",
+      "license": "MIT",
+      "classification": "TRANSITIVE RUNTIME",
+      "delivered": true,
+      "source": "npm-package-lock",
+      "files": [
+        {
+          "path": "licenses/packages/radix-ui/LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138",
+          "bytes": 1063
+        }
+      ]
+    },
+    {
+      "package": "@radix-ui/react-collection",
+      "version": "1.1.10",
+      "license": "MIT",
+      "classification": "TRANSITIVE RUNTIME",
+      "delivered": true,
+      "source": "npm-package-lock",
+      "files": [
+        {
+          "path": "licenses/packages/radix-ui/LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138",
+          "bytes": 1063
+        }
+      ]
+    },
+    {
+      "package": "@radix-ui/react-compose-refs",
+      "version": "1.1.3",
+      "license": "MIT",
+      "classification": "TRANSITIVE RUNTIME",
+      "delivered": true,
+      "source": "npm-package-lock",
+      "files": [
+        {
+          "path": "licenses/packages/radix-ui/LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138",
+          "bytes": 1063
+        }
+      ]
+    },
+    {
+      "package": "@radix-ui/react-context",
+      "version": "1.1.4",
+      "license": "MIT",
+      "classification": "TRANSITIVE RUNTIME",
+      "delivered": true,
+      "source": "npm-package-lock",
+      "files": [
+        {
+          "path": "licenses/packages/radix-ui/LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138",
+          "bytes": 1063
+        }
+      ]
+    },
+    {
+      "package": "@radix-ui/react-direction",
+      "version": "1.1.2",
+      "license": "MIT",
+      "classification": "TRANSITIVE RUNTIME",
+      "delivered": true,
+      "source": "npm-package-lock",
+      "files": [
+        {
+          "path": "licenses/packages/radix-ui/LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138",
+          "bytes": 1063
+        }
+      ]
+    },
+    {
+      "package": "@radix-ui/react-dismissable-layer",
+      "version": "1.1.13",
+      "license": "MIT",
+      "classification": "TRANSITIVE RUNTIME",
+      "delivered": true,
+      "source": "npm-package-lock",
+      "files": [
+        {
+          "path": "licenses/packages/radix-ui/LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138",
+          "bytes": 1063
+        }
+      ]
+    },
+    {
+      "package": "@radix-ui/react-focus-guards",
+      "version": "1.1.4",
+      "license": "MIT",
+      "classification": "TRANSITIVE RUNTIME",
+      "delivered": true,
+      "source": "npm-package-lock",
+      "files": [
+        {
+          "path": "licenses/packages/radix-ui/LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138",
+          "bytes": 1063
+        }
+      ]
+    },
+    {
+      "package": "@radix-ui/react-focus-scope",
+      "version": "1.1.10",
+      "license": "MIT",
+      "classification": "TRANSITIVE RUNTIME",
+      "delivered": true,
+      "source": "npm-package-lock",
+      "files": [
+        {
+          "path": "licenses/packages/radix-ui/LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138",
+          "bytes": 1063
+        }
+      ]
+    },
+    {
+      "package": "@radix-ui/react-id",
+      "version": "1.1.2",
+      "license": "MIT",
+      "classification": "TRANSITIVE RUNTIME",
+      "delivered": true,
+      "source": "npm-package-lock",
+      "files": [
+        {
+          "path": "licenses/packages/radix-ui/LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138",
+          "bytes": 1063
+        }
+      ]
+    },
+    {
+      "package": "@radix-ui/react-label",
+      "version": "2.1.10",
+      "license": "MIT",
+      "classification": "DIRECT RUNTIME",
+      "delivered": true,
+      "source": "npm-package-lock",
+      "files": [
+        {
+          "path": "licenses/packages/radix-ui/LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138",
+          "bytes": 1063
+        }
+      ]
+    },
+    {
+      "package": "@radix-ui/react-popper",
+      "version": "1.3.1",
+      "license": "MIT",
+      "classification": "TRANSITIVE RUNTIME",
+      "delivered": true,
+      "source": "npm-package-lock",
+      "files": [
+        {
+          "path": "licenses/packages/radix-ui/LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138",
+          "bytes": 1063
+        }
+      ]
+    },
+    {
+      "package": "@radix-ui/react-portal",
+      "version": "1.1.12",
+      "license": "MIT",
+      "classification": "TRANSITIVE RUNTIME",
+      "delivered": true,
+      "source": "npm-package-lock",
+      "files": [
+        {
+          "path": "licenses/packages/radix-ui/LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138",
+          "bytes": 1063
+        }
+      ]
+    },
+    {
+      "package": "@radix-ui/react-presence",
+      "version": "1.1.6",
+      "license": "MIT",
+      "classification": "TRANSITIVE RUNTIME",
+      "delivered": true,
+      "source": "npm-package-lock",
+      "files": [
+        {
+          "path": "licenses/packages/radix-ui/LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138",
+          "bytes": 1063
+        }
+      ]
+    },
+    {
+      "package": "@radix-ui/react-primitive",
+      "version": "2.1.6",
+      "license": "MIT",
+      "classification": "TRANSITIVE RUNTIME",
+      "delivered": true,
+      "source": "npm-package-lock",
+      "files": [
+        {
+          "path": "licenses/packages/radix-ui/LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138",
+          "bytes": 1063
+        }
+      ]
+    },
+    {
+      "package": "@radix-ui/react-scroll-area",
+      "version": "1.2.12",
+      "license": "MIT",
+      "classification": "DIRECT RUNTIME",
+      "delivered": true,
+      "source": "npm-package-lock",
+      "files": [
+        {
+          "path": "licenses/packages/radix-ui/LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138",
+          "bytes": 1063
+        }
+      ]
+    },
+    {
+      "package": "@radix-ui/react-select",
+      "version": "2.3.1",
+      "license": "MIT",
+      "classification": "DIRECT RUNTIME",
+      "delivered": true,
+      "source": "npm-package-lock",
+      "files": [
+        {
+          "path": "licenses/packages/radix-ui/LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138",
+          "bytes": 1063
+        }
+      ]
+    },
+    {
+      "package": "@radix-ui/react-slot",
+      "version": "1.3.0",
+      "license": "MIT",
+      "classification": "DIRECT RUNTIME",
+      "delivered": true,
+      "source": "npm-package-lock",
+      "files": [
+        {
+          "path": "licenses/packages/radix-ui/LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138",
+          "bytes": 1063
+        }
+      ]
+    },
+    {
+      "package": "@radix-ui/react-switch",
+      "version": "1.3.1",
+      "license": "MIT",
+      "classification": "DIRECT RUNTIME",
+      "delivered": true,
+      "source": "npm-package-lock",
+      "files": [
+        {
+          "path": "licenses/packages/radix-ui/LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138",
+          "bytes": 1063
+        }
+      ]
+    },
+    {
+      "package": "@radix-ui/react-use-callback-ref",
+      "version": "1.1.2",
+      "license": "MIT",
+      "classification": "TRANSITIVE RUNTIME",
+      "delivered": true,
+      "source": "npm-package-lock",
+      "files": [
+        {
+          "path": "licenses/packages/radix-ui/LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138",
+          "bytes": 1063
+        }
+      ]
+    },
+    {
+      "package": "@radix-ui/react-use-controllable-state",
+      "version": "1.2.3",
+      "license": "MIT",
+      "classification": "TRANSITIVE RUNTIME",
+      "delivered": true,
+      "source": "npm-package-lock",
+      "files": [
+        {
+          "path": "licenses/packages/radix-ui/LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138",
+          "bytes": 1063
+        }
+      ]
+    },
+    {
+      "package": "@radix-ui/react-use-effect-event",
+      "version": "0.0.3",
+      "license": "MIT",
+      "classification": "TRANSITIVE RUNTIME",
+      "delivered": true,
+      "source": "npm-package-lock",
+      "files": [
+        {
+          "path": "licenses/packages/radix-ui/LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138",
+          "bytes": 1063
+        }
+      ]
+    },
+    {
+      "package": "@radix-ui/react-use-escape-keydown",
+      "version": "1.1.2",
+      "license": "MIT",
+      "classification": "TRANSITIVE RUNTIME",
+      "delivered": true,
+      "source": "npm-package-lock",
+      "files": [
+        {
+          "path": "licenses/packages/radix-ui/LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138",
+          "bytes": 1063
+        }
+      ]
+    },
+    {
+      "package": "@radix-ui/react-use-layout-effect",
+      "version": "1.1.2",
+      "license": "MIT",
+      "classification": "TRANSITIVE RUNTIME",
+      "delivered": true,
+      "source": "npm-package-lock",
+      "files": [
+        {
+          "path": "licenses/packages/radix-ui/LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138",
+          "bytes": 1063
+        }
+      ]
+    },
+    {
+      "package": "@radix-ui/react-use-previous",
+      "version": "1.1.2",
+      "license": "MIT",
+      "classification": "TRANSITIVE RUNTIME",
+      "delivered": true,
+      "source": "npm-package-lock",
+      "files": [
+        {
+          "path": "licenses/packages/radix-ui/LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138",
+          "bytes": 1063
+        }
+      ]
+    },
+    {
+      "package": "@radix-ui/react-use-rect",
+      "version": "1.1.2",
+      "license": "MIT",
+      "classification": "TRANSITIVE RUNTIME",
+      "delivered": true,
+      "source": "npm-package-lock",
+      "files": [
+        {
+          "path": "licenses/packages/radix-ui/LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138",
+          "bytes": 1063
+        }
+      ]
+    },
+    {
+      "package": "@radix-ui/react-use-size",
+      "version": "1.1.2",
+      "license": "MIT",
+      "classification": "TRANSITIVE RUNTIME",
+      "delivered": true,
+      "source": "npm-package-lock",
+      "files": [
+        {
+          "path": "licenses/packages/radix-ui/LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138",
+          "bytes": 1063
+        }
+      ]
+    },
+    {
+      "package": "@radix-ui/react-visually-hidden",
+      "version": "1.2.6",
+      "license": "MIT",
+      "classification": "TRANSITIVE RUNTIME",
+      "delivered": true,
+      "source": "npm-package-lock",
+      "files": [
+        {
+          "path": "licenses/packages/radix-ui/LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138",
+          "bytes": 1063
+        }
+      ]
+    },
+    {
+      "package": "@radix-ui/rect",
+      "version": "1.1.2",
+      "license": "MIT",
+      "classification": "TRANSITIVE RUNTIME",
+      "delivered": true,
+      "source": "npm-package-lock",
+      "files": [
+        {
+          "path": "licenses/packages/radix-ui/LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138",
+          "bytes": 1063
+        }
+      ]
+    },
+    {
+      "package": "@remix-run/router",
+      "version": "1.23.3",
+      "license": "MIT",
+      "classification": "TRANSITIVE RUNTIME",
+      "delivered": true,
+      "source": "npm-package-lock",
+      "files": [
+        {
+          "path": "licenses/packages/react-router/LICENSE.md",
+          "sha256": "77c9ee6a9c5d5782fb0c50b50d101189116314c14f7df0a1b0d385fc96a7ba49",
+          "bytes": 1161
+        }
+      ]
+    },
+    {
+      "package": "alembic",
+      "version": "1.11.1",
+      "license": "MIT",
+      "classification": "DIRECT RUNTIME",
+      "delivered": true,
+      "source": "python-dist-info",
+      "files": [
+        {
+          "path": "licenses/packages/alembic/LICENSE",
+          "sha256": "b285268a86f4416eaf4d05b2ae3880c156f7c59a8f935a402bc056eafb33af08",
+          "bytes": 1058
+        }
+      ]
+    },
+    {
+      "package": "annotated-types",
+      "version": "0.8.0",
+      "license": "MIT",
+      "classification": "TRANSITIVE RUNTIME",
+      "delivered": true,
+      "source": "python-dist-info",
+      "files": [
+        {
+          "path": "licenses/packages/annotated-types/LICENSE",
+          "sha256": "fe1049884b1a0d9342901e88e07f32925d24b3121d9972b6a6805fb9824b095d",
+          "bytes": 1083
+        }
+      ]
+    },
+    {
+      "package": "anyio",
+      "version": "4.15.1",
+      "license": "MIT",
+      "classification": "TRANSITIVE RUNTIME",
+      "delivered": true,
+      "source": "python-dist-info",
+      "files": [
+        {
+          "path": "licenses/packages/anyio/LICENSE",
+          "sha256": "5361ac9dc58f2ef5fd2e9b09c68297c17f04950909bbc8023bdb82eacf22c2b0",
+          "bytes": 1081
+        }
+      ]
+    },
+    {
+      "package": "aria-hidden",
+      "version": "1.2.6",
+      "license": "MIT",
+      "classification": "TRANSITIVE RUNTIME",
+      "delivered": true,
+      "source": "npm-package-lock",
+      "files": [
+        {
+          "path": "licenses/packages/thekashey/LICENSE",
+          "sha256": "30f0cfddf483d1128e3610205020f2041a6c5e837aa999e0aa82e5576187d4a9",
+          "bytes": 1071
+        }
+      ]
+    },
+    {
+      "package": "certifi",
+      "version": "2026.7.22",
+      "license": "MPL-2.0",
+      "classification": "TRANSITIVE RUNTIME",
+      "delivered": true,
+      "source": "python-dist-info",
+      "files": [
+        {
+          "path": "licenses/packages/certifi/LICENSE",
+          "sha256": "e93716da6b9c0d5a4a1df60fe695b370f0695603d21f6f83f053e42cfc10caf7",
+          "bytes": 989
+        }
+      ]
+    },
+    {
+      "package": "class-variance-authority",
+      "version": "0.7.1",
+      "license": "Apache-2.0",
+      "classification": "DIRECT RUNTIME",
+      "delivered": true,
+      "source": "npm-package-lock",
+      "files": [
+        {
+          "path": "licenses/packages/class-variance-authority/LICENSE",
+          "sha256": "0ccbf956cffc8dcf515809433cb5242ee67c94513d46e48c261d68d0880de406",
+          "bytes": 10753
+        }
+      ]
+    },
+    {
+      "package": "click",
+      "version": "8.5.0",
+      "license": "BSD-3-Clause",
+      "classification": "TRANSITIVE RUNTIME",
+      "delivered": true,
+      "source": "python-dist-info",
+      "files": [
+        {
+          "path": "licenses/packages/click/LICENSE.txt",
+          "sha256": "9a8ad106a394e853bfe21f42f4e72d592819a22805d991b5f3275029292b658d",
+          "bytes": 1475
+        }
+      ]
+    },
+    {
+      "package": "clsx",
+      "version": "2.1.1",
+      "license": "MIT",
+      "classification": "DIRECT RUNTIME",
+      "delivered": true,
+      "source": "npm-package-lock",
+      "files": [
+        {
+          "path": "licenses/packages/clsx/license",
+          "sha256": "9a9edad7baae52622bddf3c15b2ef8a33d2c89f2d25408ad13e8a7481c6b0c97",
+          "bytes": 1104
+        }
+      ]
+    },
+    {
+      "package": "colorama",
+      "version": "0.4.6",
+      "license": "BSD-3-Clause",
+      "classification": "TRANSITIVE RUNTIME",
+      "delivered": true,
+      "source": "python-dist-info",
+      "files": [
+        {
+          "path": "licenses/packages/colorama/LICENSE.txt",
+          "sha256": "cac35c02686e5d04a5a7140bfb3b36e73aed496656e891102e428886d7930318",
+          "bytes": 1491
+        }
+      ]
+    },
+    {
+      "package": "detect-node-es",
+      "version": "1.1.0",
+      "license": "MIT",
+      "classification": "TRANSITIVE RUNTIME",
+      "delivered": true,
+      "source": "npm-package-lock",
+      "files": [
+        {
+          "path": "licenses/packages/detect-node-es/LICENSE",
+          "sha256": "54b32293ea560d22cd9b62af9b2cda1a030d910a48c6601d227c5ff2338d95f8",
+          "bytes": 1068
+        }
+      ]
+    },
+    {
+      "package": "fastapi",
+      "version": "0.110.1",
+      "license": "MIT",
+      "classification": "DIRECT RUNTIME",
+      "delivered": true,
+      "source": "python-dist-info",
+      "files": [
+        {
+          "path": "licenses/packages/fastapi/LICENSE",
+          "sha256": "4ec89ffc81485b97fec584b2d4a961032eeffe834453894fd9c1274906cc744e",
+          "bytes": 1086
+        }
+      ]
+    },
+    {
+      "package": "get-nonce",
+      "version": "1.0.1",
+      "license": "MIT",
+      "classification": "TRANSITIVE RUNTIME",
+      "delivered": true,
+      "source": "npm-package-lock",
+      "files": [
+        {
+          "path": "licenses/packages/get-nonce/LICENSE",
+          "sha256": "acf3b087b348d2f2e731b9d4131af185aad694c1204ce14a46909483fd42da05",
+          "bytes": 1071
+        }
+      ]
+    },
+    {
+      "package": "greenlet",
+      "version": "3.5.6",
+      "license": "MIT / PSF-2.0",
+      "classification": "TRANSITIVE RUNTIME",
+      "delivered": true,
+      "source": "python-dist-info",
+      "files": [
+        {
+          "path": "licenses/packages/greenlet/LICENSE",
+          "sha256": "ab977b654605670319509481ece49198f405a129372ac38c96f51cd96c2f452e",
+          "bytes": 1464
+        },
+        {
+          "path": "licenses/packages/greenlet/LICENSE.PSF",
+          "sha256": "69efa689cc7aec7736236d3039c1d665e4b0c734a5bfea5abf633023abb2fff4",
+          "bytes": 2471
+        }
+      ]
+    },
+    {
+      "package": "h11",
+      "version": "0.16.0",
+      "license": "MIT",
+      "classification": "TRANSITIVE RUNTIME",
+      "delivered": true,
+      "source": "python-dist-info",
+      "files": [
+        {
+          "path": "licenses/packages/h11/LICENSE.txt",
+          "sha256": "37db5bb85926db28a427a25867f10b1232003aea1be69ccb851138adb8e6f361",
+          "bytes": 1124
+        }
+      ]
+    },
+    {
+      "package": "httpcore",
+      "version": "1.0.9",
+      "license": "BSD-3-Clause",
+      "classification": "TRANSITIVE RUNTIME",
+      "delivered": true,
+      "source": "python-dist-info",
+      "files": [
+        {
+          "path": "licenses/packages/httpcore/LICENSE.md",
+          "sha256": "fdcb59154c74cbaba16a11242f7740bea9f23d6feb5547917d8c5f94a80392a5",
+          "bytes": 1518
+        }
+      ]
+    },
+    {
+      "package": "httptools",
+      "version": "0.9.0",
+      "license": "MIT",
+      "classification": "TRANSITIVE RUNTIME",
+      "delivered": true,
+      "source": "python-dist-info",
+      "files": [
+        {
+          "path": "licenses/packages/httptools/LICENSE",
+          "sha256": "1c028b059d7a58e14ccda38cabced698c591fe614ffbe4f721430446e86c8d69",
+          "bytes": 1114
+        }
+      ]
+    },
+    {
+      "package": "httpx",
+      "version": "0.27.2",
+      "license": "BSD-3-Clause",
+      "classification": "DIRECT RUNTIME",
+      "delivered": true,
+      "source": "python-dist-info",
+      "files": [
+        {
+          "path": "licenses/packages/httpx/LICENSE.md",
+          "sha256": "4ec59d544f12b5f539a3a716fd321ac58ccd8030b465221f2c880200cdf28d8d",
+          "bytes": 1508
+        }
+      ]
+    },
+    {
+      "package": "idna",
+      "version": "3.20",
+      "license": "BSD-3-Clause",
+      "classification": "TRANSITIVE RUNTIME",
+      "delivered": true,
+      "source": "python-dist-info",
+      "files": [
+        {
+          "path": "licenses/packages/idna/LICENSE.md",
+          "sha256": "1a9a4f0e3d479a27240ddd59a9137a66ab4a0f9dfdc8ca6188cc0bfd85187f04",
+          "bytes": 1541
+        }
+      ]
+    },
+    {
+      "package": "js-tokens",
+      "version": "4.0.0",
+      "license": "MIT",
+      "classification": "TRANSITIVE RUNTIME",
+      "delivered": true,
+      "source": "npm-package-lock",
+      "files": [
+        {
+          "path": "licenses/packages/js-tokens/LICENSE",
+          "sha256": "2213d91c606205c71eb051a199478cdc2adde945893404d7f1421436dd6d5cc1",
+          "bytes": 1103
+        }
+      ]
+    },
+    {
+      "package": "loose-envify",
+      "version": "1.4.0",
+      "license": "MIT",
+      "classification": "TRANSITIVE RUNTIME",
+      "delivered": true,
+      "source": "npm-package-lock",
+      "files": [
+        {
+          "path": "licenses/packages/loose-envify/LICENSE",
+          "sha256": "4eb7543b08d955a6d23fcc224601d43ff566e775be918805e26210d7f6eb4893",
+          "bytes": 1100
+        }
+      ]
+    },
+    {
+      "package": "lucide-react",
+      "version": "0.303.0",
+      "license": "ISC",
+      "classification": "DIRECT RUNTIME",
+      "delivered": true,
+      "source": "npm-package-lock",
+      "files": [
+        {
+          "path": "licenses/packages/lucide-react/LICENSE",
+          "sha256": "1e7290b35280a048667bbf0ebabac1c7fd52a75300e8b2946ac165715997f2bc",
+          "bytes": 880
+        }
+      ]
+    },
+    {
+      "package": "lxml",
+      "version": "6.1.3",
+      "license": "BSD-3-Clause",
+      "classification": "TRANSITIVE RUNTIME",
+      "delivered": true,
+      "source": "python-dist-info",
+      "files": [
+        {
+          "path": "licenses/packages/lxml/LICENSE.txt",
+          "sha256": "e7c3ce8d76331b0101cc46790ab43958ea90a364bcf962ed8763d5a818340e69",
+          "bytes": 1538
+        },
+        {
+          "path": "licenses/packages/lxml/LICENSES.txt",
+          "sha256": "df682c668de65321677b5e4861dca4128a8bad8067f230956e9da3f985b3d398",
+          "bytes": 6348
+        }
+      ]
+    },
+    {
+      "package": "mako",
+      "version": "1.4.3",
+      "license": "MIT",
+      "classification": "TRANSITIVE RUNTIME",
+      "delivered": true,
+      "source": "python-dist-info",
+      "files": [
+        {
+          "path": "licenses/packages/mako/LICENSE",
+          "sha256": "8c1d171bc5d341ad9cd33d5e2c39b96a82c7bd49b3ae89a470c37e5822232054",
+          "bytes": 1098
+        }
+      ]
+    },
+    {
+      "package": "markupsafe",
+      "version": "3.0.4",
+      "license": "BSD-3-Clause",
+      "classification": "TRANSITIVE RUNTIME",
+      "delivered": true,
+      "source": "python-dist-info",
+      "files": [
+        {
+          "path": "licenses/packages/markupsafe/LICENSE.txt",
+          "sha256": "4631ec0db5fd90a547e336817264c6798214338146f8ac94b4a57f96ee8c9ec4",
+          "bytes": 1503
+        }
+      ]
+    },
+    {
+      "package": "pdfjs-dist",
+      "version": "5.7.284",
+      "license": "Apache-2.0",
+      "classification": "DIRECT RUNTIME",
+      "delivered": true,
+      "source": "npm-package-lock",
+      "files": [
+        {
+          "path": "licenses/packages/pdfjs-dist/LICENSE",
+          "sha256": "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594",
+          "bytes": 10174
+        }
+      ]
+    },
+    {
+      "package": "pillow",
+      "version": "12.3.0",
+      "license": "HPND",
+      "classification": "TRANSITIVE RUNTIME",
+      "delivered": true,
+      "source": "python-dist-info",
+      "files": [
+        {
+          "path": "licenses/packages/pillow/LICENSE",
+          "sha256": "4f7866a74802c6326f81faff59a56546b6aec2b10b91973e0e9308de95e79857",
+          "bytes": 78016
+        }
+      ]
+    },
+    {
+      "package": "pydantic",
+      "version": "2.7.1",
+      "license": "MIT",
+      "classification": "DIRECT RUNTIME",
+      "delivered": true,
+      "source": "python-dist-info",
+      "files": [
+        {
+          "path": "licenses/packages/pydantic/LICENSE",
+          "sha256": "a9e186f3ca16b5eef84318e7a701721351a00cb7b8ae3a4394b67b49e3529ef3",
+          "bytes": 1129
+        }
+      ]
+    },
+    {
+      "package": "pydantic-core",
+      "version": "2.18.2",
+      "license": "MIT",
+      "classification": "TRANSITIVE RUNTIME",
+      "delivered": true,
+      "source": "python-dist-info",
+      "files": [
+        {
+          "path": "licenses/packages/pydantic-core/LICENSE",
+          "sha256": "fbe7f615f18d135c07000e5a86325db27f42c7729699ef166ac1f7a3f4586bf4",
+          "bytes": 1101
+        }
+      ]
+    },
+    {
+      "package": "pydantic-settings",
+      "version": "2.3.3",
+      "license": "MIT",
+      "classification": "DIRECT RUNTIME",
+      "delivered": true,
+      "source": "python-dist-info",
+      "files": [
+        {
+          "path": "licenses/packages/pydantic-settings/LICENSE",
+          "sha256": "eb355a753e020346d33d83bf9769135b89fc610568ac531a01c295bcee7fd998",
+          "bytes": 1103
+        }
+      ]
+    },
+    {
+      "package": "pygments",
+      "version": "2.21.0",
+      "license": "BSD-2-Clause",
+      "classification": "TRANSITIVE RUNTIME",
+      "delivered": true,
+      "source": "python-dist-info",
+      "files": [
+        {
+          "path": "licenses/packages/pygments/LICENSE",
+          "sha256": "a9d66f1d526df02e29dce73436d34e56e8632f46c275bbdffc70569e882f9f17",
+          "bytes": 1331
+        }
+      ]
+    },
+    {
+      "package": "pyinstaller-bootloader",
+      "version": "6.22.2",
+      "license": "GPL-2.0-or-later with Bootloader Exception",
+      "classification": "DELIVERED RUNTIME COMPONENT",
+      "delivered": true,
+      "source": "repository-canonical-text",
+      "files": [
+        {
+          "path": "licenses/packages/pyinstaller/COPYING.txt",
+          "sha256": "0272fb1ecee668bf0cc359ef4cd5d5ca1551b686be0abc27a660f68a3cb85ae5",
+          "bytes": 32774
+        }
+      ]
+    },
+    {
+      "package": "pypdf",
+      "version": "6.16.1",
+      "license": "BSD-3-Clause",
+      "classification": "DIRECT RUNTIME",
+      "delivered": true,
+      "source": "python-dist-info",
+      "files": [
+        {
+          "path": "licenses/packages/pypdf/LICENSE",
+          "sha256": "a97ac230e5f33ef10a5367a850eb01f91f1a0b064e34742c7794d2294557f524",
+          "bytes": 1605
+        }
+      ]
+    },
+    {
+      "package": "python-docx",
+      "version": "1.1.0",
+      "license": "MIT",
+      "classification": "DIRECT RUNTIME",
+      "delivered": true,
+      "source": "python-dist-info",
+      "files": [
+        {
+          "path": "licenses/packages/python-docx/LICENSE",
+          "sha256": "7652f271e46d0d533e9dc463f3b5fcbdcacf4d6a9c8d6b554d15efd0f37f6132",
+          "bytes": 1104
+        }
+      ]
+    },
+    {
+      "package": "python-dotenv",
+      "version": "1.0.1",
+      "license": "BSD-3-Clause",
+      "classification": "DIRECT RUNTIME",
+      "delivered": true,
+      "source": "python-dist-info",
+      "files": [
+        {
+          "path": "licenses/packages/python-dotenv/LICENSE",
+          "sha256": "80619b7049f08c81683ad0e01f08f257a840652dd71ee83146d36658c7d2c2b9",
+          "bytes": 1556
+        }
+      ]
+    },
+    {
+      "package": "python-multipart",
+      "version": "0.0.6",
+      "license": "Apache-2.0",
+      "classification": "DIRECT RUNTIME",
+      "delivered": true,
+      "source": "python-dist-info",
+      "files": [
+        {
+          "path": "licenses/packages/python-multipart/LICENSE.txt",
+          "sha256": "a8e833176cd617daf00b9d6d39fa15ca8edebc6d1643079cd2f4893c0c289be2",
+          "bytes": 556
+        }
+      ]
+    },
+    {
+      "package": "pyyaml",
+      "version": "6.0.3",
+      "license": "MIT",
+      "classification": "TRANSITIVE RUNTIME",
+      "delivered": true,
+      "source": "python-dist-info",
+      "files": [
+        {
+          "path": "licenses/packages/pyyaml/LICENSE",
+          "sha256": "8d3928f9dc4490fd635707cb88eb26bd764102a7282954307d3e5167a577e8a4",
+          "bytes": 1101
+        }
+      ]
+    },
+    {
+      "package": "react",
+      "version": "18.3.1",
+      "license": "MIT",
+      "classification": "DIRECT RUNTIME",
+      "delivered": true,
+      "source": "npm-package-lock",
+      "files": [
+        {
+          "path": "licenses/packages/react/LICENSE",
+          "sha256": "52412d7bc7ce4157ea628bbaacb8829e0a9cb3c58f57f99176126bc8cf2bfc85",
+          "bytes": 1086
+        }
+      ]
+    },
+    {
+      "package": "react-dom",
+      "version": "18.3.1",
+      "license": "MIT",
+      "classification": "DIRECT RUNTIME",
+      "delivered": true,
+      "source": "npm-package-lock",
+      "files": [
+        {
+          "path": "licenses/packages/react/LICENSE",
+          "sha256": "52412d7bc7ce4157ea628bbaacb8829e0a9cb3c58f57f99176126bc8cf2bfc85",
+          "bytes": 1086
+        }
+      ]
+    },
+    {
+      "package": "react-remove-scroll",
+      "version": "2.7.2",
+      "license": "MIT",
+      "classification": "TRANSITIVE RUNTIME",
+      "delivered": true,
+      "source": "npm-package-lock",
+      "files": [
+        {
+          "path": "licenses/packages/thekashey/LICENSE",
+          "sha256": "30f0cfddf483d1128e3610205020f2041a6c5e837aa999e0aa82e5576187d4a9",
+          "bytes": 1071
+        }
+      ]
+    },
+    {
+      "package": "react-remove-scroll-bar",
+      "version": "2.3.8",
+      "license": "MIT",
+      "classification": "TRANSITIVE RUNTIME",
+      "delivered": true,
+      "source": "npm-package-lock",
+      "files": [
+        {
+          "path": "licenses/packages/thekashey/LICENSE",
+          "sha256": "30f0cfddf483d1128e3610205020f2041a6c5e837aa999e0aa82e5576187d4a9",
+          "bytes": 1071
+        }
+      ]
+    },
+    {
+      "package": "react-router",
+      "version": "6.30.4",
+      "license": "MIT",
+      "classification": "TRANSITIVE RUNTIME",
+      "delivered": true,
+      "source": "npm-package-lock",
+      "files": [
+        {
+          "path": "licenses/packages/react-router/LICENSE.md",
+          "sha256": "77c9ee6a9c5d5782fb0c50b50d101189116314c14f7df0a1b0d385fc96a7ba49",
+          "bytes": 1161
+        }
+      ]
+    },
+    {
+      "package": "react-router-dom",
+      "version": "6.30.4",
+      "license": "MIT",
+      "classification": "DIRECT RUNTIME",
+      "delivered": true,
+      "source": "npm-package-lock",
+      "files": [
+        {
+          "path": "licenses/packages/react-router/LICENSE.md",
+          "sha256": "77c9ee6a9c5d5782fb0c50b50d101189116314c14f7df0a1b0d385fc96a7ba49",
+          "bytes": 1161
+        }
+      ]
+    },
+    {
+      "package": "react-style-singleton",
+      "version": "2.2.3",
+      "license": "MIT",
+      "classification": "TRANSITIVE RUNTIME",
+      "delivered": true,
+      "source": "npm-package-lock",
+      "files": [
+        {
+          "path": "licenses/packages/thekashey/LICENSE",
+          "sha256": "30f0cfddf483d1128e3610205020f2041a6c5e837aa999e0aa82e5576187d4a9",
+          "bytes": 1071
+        }
+      ]
+    },
+    {
+      "package": "reportlab",
+      "version": "4.0.7",
+      "license": "BSD",
+      "classification": "DIRECT RUNTIME",
+      "delivered": true,
+      "source": "python-dist-info",
+      "files": [
+        {
+          "path": "licenses/packages/reportlab/LICENSE",
+          "sha256": "a02a6aeb5dde4c4194494bc0b10d5ed62a32628ccd2882c363fdb9a7874ab2b8",
+          "bytes": 1707
+        }
+      ]
+    },
+    {
+      "package": "scheduler",
+      "version": "0.23.2",
+      "license": "MIT",
+      "classification": "TRANSITIVE RUNTIME",
+      "delivered": true,
+      "source": "npm-package-lock",
+      "files": [
+        {
+          "path": "licenses/packages/react/LICENSE",
+          "sha256": "52412d7bc7ce4157ea628bbaacb8829e0a9cb3c58f57f99176126bc8cf2bfc85",
+          "bytes": 1086
+        }
+      ]
+    },
+    {
+      "package": "sniffio",
+      "version": "1.3.1",
+      "license": "MIT / Apache-2.0",
+      "classification": "TRANSITIVE RUNTIME",
+      "delivered": true,
+      "source": "python-dist-info",
+      "files": [
+        {
+          "path": "licenses/packages/sniffio/LICENSE",
+          "sha256": "652c878488d1456361e08c3f8607fd7ba59892a14103d15cce4ff93c85b5cc8b",
+          "bytes": 185
+        }
+      ]
+    },
+    {
+      "package": "sqlalchemy",
+      "version": "2.0.23",
+      "license": "MIT",
+      "classification": "DIRECT RUNTIME",
+      "delivered": true,
+      "source": "python-dist-info",
+      "files": [
+        {
+          "path": "licenses/packages/sqlalchemy/LICENSE",
+          "sha256": "65b71019936da682f2f188ef1fe9f2a286d374ec2d120b57a293d5cf1cbaa42a",
+          "bytes": 1119
+        }
+      ]
+    },
+    {
+      "package": "starlette",
+      "version": "0.37.2",
+      "license": "BSD-3-Clause",
+      "classification": "TRANSITIVE RUNTIME",
+      "delivered": true,
+      "source": "python-dist-info",
+      "files": [
+        {
+          "path": "licenses/packages/starlette/LICENSE.md",
+          "sha256": "dcb95677a02240243187e964f941847d19b17821cf99e5afae684fab328c19bf",
+          "bytes": 1518
+        }
+      ]
+    },
+    {
+      "package": "tailwind-merge",
+      "version": "3.6.0",
+      "license": "MIT",
+      "classification": "DIRECT RUNTIME",
+      "delivered": true,
+      "source": "npm-package-lock",
+      "files": [
+        {
+          "path": "licenses/packages/tailwind-merge/LICENSE.md",
+          "sha256": "d4c70c7ce38cea8778f0aed3fc0bef0a9dbd27f13bd8b6773cbd6d37941971e5",
+          "bytes": 1070
+        }
+      ]
+    },
+    {
+      "package": "tailwindcss-animate",
+      "version": "1.0.7",
+      "license": "MIT",
+      "classification": "DIRECT RUNTIME",
+      "delivered": true,
+      "source": "npm-package-lock",
+      "files": [
+        {
+          "path": "licenses/packages/tailwindcss-animate/LICENSE",
+          "sha256": "d06945a5d85f4f6062393af30ad07d8afd1efa190c46cea6819b85c11764c7cd",
+          "bytes": 1067
+        }
+      ]
+    },
+    {
+      "package": "tslib",
+      "version": "2.8.1",
+      "license": "0BSD",
+      "classification": "TRANSITIVE RUNTIME",
+      "delivered": true,
+      "source": "npm-package-lock",
+      "files": [
+        {
+          "path": "licenses/packages/tslib/LICENSE.txt",
+          "sha256": "210b19e543130388c68654b7497e967119ce17145f66ab7d85688fbd70f08751",
+          "bytes": 655
+        }
+      ]
+    },
+    {
+      "package": "typing-extensions",
+      "version": "4.16.0",
+      "license": "PSF",
+      "classification": "TRANSITIVE RUNTIME",
+      "delivered": true,
+      "source": "python-dist-info",
+      "files": [
+        {
+          "path": "licenses/packages/typing-extensions/LICENSE",
+          "sha256": "3b2f81fe21d181c499c59a256c8e1968455d6689d269aa85373bfb6af41da3bf",
+          "bytes": 13936
+        }
+      ]
+    },
+    {
+      "package": "use-callback-ref",
+      "version": "1.3.3",
+      "license": "MIT",
+      "classification": "TRANSITIVE RUNTIME",
+      "delivered": true,
+      "source": "npm-package-lock",
+      "files": [
+        {
+          "path": "licenses/packages/thekashey/LICENSE",
+          "sha256": "30f0cfddf483d1128e3610205020f2041a6c5e837aa999e0aa82e5576187d4a9",
+          "bytes": 1071
+        }
+      ]
+    },
+    {
+      "package": "use-sidecar",
+      "version": "1.1.3",
+      "license": "MIT",
+      "classification": "TRANSITIVE RUNTIME",
+      "delivered": true,
+      "source": "npm-package-lock",
+      "files": [
+        {
+          "path": "licenses/packages/thekashey/LICENSE",
+          "sha256": "30f0cfddf483d1128e3610205020f2041a6c5e837aa999e0aa82e5576187d4a9",
+          "bytes": 1071
+        }
+      ]
+    },
+    {
+      "package": "uvicorn",
+      "version": "0.29.0",
+      "license": "BSD-3-Clause",
+      "classification": "DIRECT RUNTIME",
+      "delivered": true,
+      "source": "python-dist-info",
+      "files": [
+        {
+          "path": "licenses/packages/uvicorn/LICENSE.md",
+          "sha256": "efe1acf3e62fb99c288b0ec73e5a773b7268ef4320fe757ea994214e4b63c371",
+          "bytes": 1526
+        }
+      ]
+    },
+    {
+      "package": "watchfiles",
+      "version": "1.3.0",
+      "license": "MIT",
+      "classification": "TRANSITIVE RUNTIME",
+      "delivered": true,
+      "source": "python-dist-info",
+      "files": [
+        {
+          "path": "licenses/packages/watchfiles/LICENSE",
+          "sha256": "2d40a03346bded8daa4bd22d23825a6f2568a0820fbef76ac05bae534421e189",
+          "bytes": 1112
+        }
+      ]
+    },
+    {
+      "package": "websockets",
+      "version": "17.2",
+      "license": "BSD-3-Clause",
+      "classification": "TRANSITIVE RUNTIME",
+      "delivered": true,
+      "source": "python-dist-info",
+      "files": [
+        {
+          "path": "licenses/packages/websockets/LICENSE",
+          "sha256": "0f44514998aca209d3482d10204a8adf2aa4296ff157a36a5c0922f2280632d3",
+          "bytes": 1538
+        }
+      ]
+    }
+  ]
+}

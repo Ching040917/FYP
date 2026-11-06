@@ -164,6 +164,10 @@ try {
     & $VenvPython $ChecksScript "verify-inventory" $BundleRoot "--inventory" $InventoryPath
     if ($LASTEXITCODE -ne 0) { Fail "Inventory no longer matches the runtime (exit $LASTEXITCODE)." }
 
+    Write-Host "=== 2c. Third-party license and notice verification ==="
+    & $VenvPython $ChecksScript "verify-licenses" $RepoRoot
+    if ($LASTEXITCODE -ne 0) { Fail "License and notice verification failed before compilation (exit $LASTEXITCODE)." }
+
     Write-Host "=== 3. Compile installer ==="
     New-Item -ItemType Directory -Force -Path $ReleaseDir | Out-Null
     Push-Location $InstallerDir
@@ -199,6 +203,8 @@ try {
     if ($LASTEXITCODE -ne 0) { Fail "Bundle hygiene failed after compilation (exit $LASTEXITCODE)." }
     & $VenvPython $ChecksScript "verify-inventory" $BundleRoot "--inventory" $InventoryPath
     if ($LASTEXITCODE -ne 0) { Fail "Inventory no longer matches the runtime after compilation (exit $LASTEXITCODE)." }
+    & $VenvPython $ChecksScript "verify-licenses" $RepoRoot
+    if ($LASTEXITCODE -ne 0) { Fail "License and notice verification failed after compilation (exit $LASTEXITCODE)." }
 
     $sha = (Get-FileHash $exeOut -Algorithm SHA256).Hash
     Write-Host "SIZE_BYTES=$size"

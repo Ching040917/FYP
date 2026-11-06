@@ -26,7 +26,7 @@ Packages from the older Python 3.13 global environment (for example pandas, scip
 - This document records third-party rights only.
 - It does not grant any license to ACA source code or to ACA installer releases.
 - Official unmodified ACA installer releases may be downloaded, installed and used under the terms in [LICENSE](LICENSE).
-- Complete per-component license coverage and in-package delivery of the applicable notices and license texts remain pending B-LIC-03 and B-LIC-04.
+- Canonical per-package license texts are maintained under [licenses/packages](licenses/packages/MANIFEST.json) and delivered to `{app}\licenses\packages` by the installer; complete per-component license coverage and certifi MPL-2.0 text alignment remain pending B-LIC-04.
 
 ## 3. Bundled Backend dependencies
 
@@ -58,20 +58,18 @@ The following transitive runtime dependencies are collected in the clean frozen 
 | Package | Version | License | Bundled evidence |
 |---|---|---|---|
 | annotated-types | 0.8.0 | MIT | PYZ |
-| anyio | 4.14.2 | MIT | PYZ |
-| certifi | 2026.07.22 | MPL-2.0 | PYZ + `_internal/certifi` |
-| cffi | 2.1.1 | MIT | `_internal/_cffi_backend.pyd` |
-| click | 8.4.2 | BSD-3-Clause | `_internal/click-8.4.2.dist-info` |
+| anyio | 4.15.1 | MIT | PYZ |
+| certifi | 2026.7.22 | MPL-2.0 | PYZ + `_internal/certifi` |
+| click | 8.5.0 | BSD-3-Clause | `_internal/click-8.5.0.dist-info` |
 | colorama | 0.4.6 | BSD-3-Clause | PYZ |
-| cryptography | 50.0.0 | Apache-2.0 / BSD | `_internal/cryptography-50.0.0.dist-info` |
-| greenlet | 3.5.5 | MIT | `_internal/greenlet` |
+| greenlet | 3.5.6 | MIT | `_internal/greenlet` |
 | h11 | 0.16.0 | MIT | PYZ |
 | httpcore | 1.0.9 | BSD-3-Clause | PYZ |
-| httptools | 0.8.0 | MIT | `_internal/httptools` |
-| idna | 3.19 | BSD-3-Clause | PYZ |
-| lxml | 6.1.2 | BSD-3-Clause | `_internal/lxml` |
-| Mako | 1.4.1 | MIT | PYZ |
-| MarkupSafe | 3.0.3 | BSD-3-Clause | `_internal/markupsafe-3.0.3.dist-info` |
+| httptools | 0.9.0 | MIT | `_internal/httptools` |
+| idna | 3.20 | BSD-3-Clause | PYZ |
+| lxml | 6.1.3 | BSD-3-Clause | `_internal/lxml` |
+| Mako | 1.4.3 | MIT | PYZ |
+| MarkupSafe | 3.0.4 | BSD-3-Clause | `_internal/markupsafe-3.0.4.dist-info` |
 | Pillow | 12.3.0 | HPND / PIL | `_internal/PIL` |
 | pydantic-core | 2.18.2 | MIT | `_internal/pydantic_core` |
 | Pygments | 2.21.0 | BSD-2-Clause | PYZ |
@@ -79,8 +77,8 @@ The following transitive runtime dependencies are collected in the clean frozen 
 | sniffio | 1.3.1 | MIT + Apache-2.0 | PYZ |
 | starlette | 0.37.2 | BSD-3-Clause | PYZ |
 | typing_extensions | 4.16.0 | PSF | PYZ |
-| watchfiles | 1.2.0 | MIT | `_internal/watchfiles` |
-| websockets | 17.0.1 | BSD-3-Clause | `_internal/websockets-17.0.1.dist-info` |
+| watchfiles | 1.3.0 | MIT | `_internal/watchfiles` |
+| websockets | 17.2 | BSD-3-Clause | `_internal/websockets-17.2.dist-info` |
 
 Not bundled in the clean build (verified absent): pandas, scipy, pyarrow, matplotlib, numpy, tzdata.
 
@@ -171,7 +169,7 @@ ACA never bundles the qwen3.5:4b model, LibreOffice, or Ollama. No cloud AI prov
 
 ## 10. Unresolved or release-blocking items
 
-- **Third-party notice coverage is still being finalised** — complete per-component license coverage and in-package delivery of the applicable notices and license texts are tracked in B-LIC-03 and B-LIC-04 and are not resolved by this document.
+- **Third-party notice coverage is implemented under B-LIC-03; certifi MPL-2.0 alignment remains tracked in B-LIC-04 and is not resolved by this document.**
 - Some transitive license identifiers are derived from `dist-info` `License` fields and classifier metadata shipped with the installed packages; full text files were verified for the items where a local file exists. Where a license field was empty, the SPDX identifier was confirmed from the shipped `LICENSE`/`COPYING` file or the package's official metadata.
 
 ## 11. Evidence and update policy
