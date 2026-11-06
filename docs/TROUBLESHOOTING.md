@@ -15,6 +15,23 @@ The application did not start, or it closed immediately after launch.
 3. Restart the computer if the problem persists, then try again.
 4. If ACA still will not open, contact the project owner. No information you need to fix this is stored outside your machine.
 
+## ACA found an unsafe database state
+
+### What it means
+
+ACA stopped startup because it found incomplete or unsafe database recovery files in your application data folder. This protects the data you already have: ACA did **not** create a replacement empty database, and it did not change or remove anything.
+
+### What to do
+
+1. Close the ACA window if it is still open.
+2. Open your application data folder — the location is printed in the ACA window and recorded in the launcher log.
+3. Keep the whole folder as it is. Do not delete, rename or separate `audit.db`, `audit.db-wal`, `audit.db-shm` or `audit.db-journal`, and do not edit any of them by hand.
+4. Make a copy of the complete folder somewhere safe before you try any recovery step.
+5. Keep the `logs` folder for support or project-owner review.
+6. Follow only the documented recovery procedure from the project owner. Do not use unlisted SQLite commands.
+
+Diagnostic information for support is in the `logs` folder inside the same application data folder.
+
 ## Browser does not open
 
 ### What it means

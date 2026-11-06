@@ -80,8 +80,11 @@ def _launcher():
         db_path = None
 
     if db_path is not None:
+        from app.db_lifecycle import startup_action, recovery_message
+
         state = inspect_state(db_path)
-        if state in ("missing", "zero_byte"):
+        action = startup_action(state)
+        if action == "fresh":
             msg = init_fresh_database(db_path, db_url, logger)
             if msg:
                 print(msg)
@@ -89,7 +92,7 @@ def _launcher():
                 release_mutex(mutex)
                 return 1
             logger.info("db_fresh_initialized")
-        elif state == "at_head":
+        elif action == "verify":
             vmsg = verify_after_init(db_path)
             if vmsg:
                 print("Database verification failed. Please try again.")
@@ -97,7 +100,7 @@ def _launcher():
                 release_mutex(mutex)
                 return 1
             logger.info("db_at_head_verified")
-        elif state == "old_head":
+        elif action == "upgrade":
             from app.db_lifecycle import upgrade_existing_database
             msg = upgrade_existing_database(db_path, db_url, root, logger)
             if msg:
@@ -107,19 +110,11 @@ def _launcher():
                 return 1
             logger.info("db_upgraded")
             # Re-verify after upgrade already done inside upgrade_existing_database
-        elif state == "unstamped":
-            print("This database is not supported. Please contact support.")
-            logger.info("db_unstamped_refused")
-            release_mutex(mutex)
-            return 1
-        elif state in ("future_head", "unknown_head"):
-            print("This database is from a newer version and cannot be used.")
-            logger.info("db_future_unknown_refused state=%s", state)
-            release_mutex(mutex)
-            return 1
-        elif state == "corrupt":
-            print("Database file is corrupt. Please contact support.")
-            logger.info("db_corrupt_refused")
+        else:
+            # Fail closed before any database write: no fresh initialization,
+            # no Alembic upgrade, no sidecar cleanup.
+            print(recovery_message(root))
+            logger.info("db_startup_refused state=%s", state)
             release_mutex(mutex)
             return 1
 

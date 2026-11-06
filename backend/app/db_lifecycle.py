@@ -78,16 +78,93 @@ def _db_path_from_url(db_url: str) -> Path | None:
     return Path(raw).resolve()
 
 
+_SIDECAR_SUFFIXES = ("-wal", "-shm", "-journal")
+
+# States where startup must refuse before any database write. Kept as one
+# frozenset so the launcher and the tests share a single source of truth.
+REFUSE_STATES = frozenset({
+    "unstamped",
+    "future_head",
+    "unknown_head",
+    "corrupt",
+    "orphan_sidecars",
+    "inconsistent_sidecars",
+    "interrupted_journal",
+})
+
+# States that may legitimately reach a fresh initialization. Anything not in
+# STARTUP_ACTIONS is treated as a refusal by the launcher.
+STARTUP_ACTIONS = {
+    "missing": "fresh",
+    "zero_byte": "fresh",
+    "at_head": "verify",
+    "old_head": "upgrade",
+}
+
+
+def _sidecar_paths(db_path: Path) -> tuple[Path, Path, Path]:
+    """Return the -wal, -shm and -journal siblings of db_path."""
+    parent = db_path.parent
+    name = db_path.name
+    return tuple(parent / (name + suffix) for suffix in _SIDECAR_SUFFIXES)  # type: ignore[return-value]
+
+
+def startup_action(state: str) -> str:
+    """Map an inspect_state result to a startup action token.
+
+    ``fresh`` initializes a new database, ``verify`` re-verifies an up-to-date
+    database, ``upgrade`` runs the eligible upgrade path, and ``refuse`` stops
+    startup before any write.
+    """
+    if state in REFUSE_STATES:
+        return "refuse"
+    return STARTUP_ACTIONS.get(state, "refuse")
+
+
+def recovery_message(root: Path | None = None) -> str:
+    """Plain-language recovery message — no deletion, no SQLite commands."""
+    location = str(root) if root is not None else "the application data folder"
+    return (
+        "ACA found an incomplete or unsafe database state.\n"
+        "Startup was stopped to protect your existing data. ACA did not create a new "
+        "replacement database.\n"
+        f"Application data that needs review: {location}\n"
+        "Keep this whole folder as it is, including audit.db, audit.db-wal, audit.db-shm, "
+        "audit.db-journal and the backups folder. Do not delete, rename or separate those "
+        "files, and do not edit the database by hand.\n"
+        "Back up the complete folder, then follow the recovery guidance in "
+        "docs/TROUBLESHOOTING.md (section: ACA found an unsafe database state).\n"
+        "Diagnostic information is in the logs folder inside the same data folder."
+    )
+
+
 def inspect_state(db_path: Path) -> str:
     """Return state string for db_path."""
+    wal_path, shm_path, journal_path = _sidecar_paths(db_path)
+    has_wal = wal_path.exists()
+    has_shm = shm_path.exists()
+    has_journal = journal_path.exists()
+
     if not db_path.exists():
+        # Orphaned recovery evidence must never be treated as a fresh install.
+        if has_journal:
+            return "interrupted_journal"
+        if has_wal or has_shm:
+            return "orphan_sidecars"
         return "missing"
+
+    # A rollback journal means a transaction was interrupted; opening in write
+    # mode would roll it back, so refuse before any connection is made.
+    if has_journal:
+        return "interrupted_journal"
+
+    # -shm without -wal is a sidecar set SQLite cannot reconstruct.
+    if has_shm and not has_wal:
+        return "inconsistent_sidecars"
+
     if db_path.stat().st_size == 0:
-        # Treat 0-byte as fresh if no sidecars/tables
-        # Check sidecars
-        if (db_path.parent / (db_path.name + "-wal")).exists():
-            return "corrupt"
-        if (db_path.parent / (db_path.name + "-shm")).exists():
+        # Treat 0-byte as fresh only when no sidecars are present.
+        if has_wal or has_shm:
             return "corrupt"
         return "zero_byte"
     # Try integrity

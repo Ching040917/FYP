@@ -179,3 +179,190 @@ def test_no_bundle_writes():
     assert "_MEIPASS" in text  # reads from bundle, not writes
     # Ensure no direct writes to bundle dir
     assert "audit.db" in text or "launcher-poc" in text or "alembic_version" in text
+
+
+# ---- B-DB-01: orphaned sidecar safety -------------------------------------
+# Every fixture below is a task-owned temporary directory; nothing opens a real
+# user database.
+
+import hashlib  # noqa: E402
+
+
+def _snapshot(directory):
+    """Return {name: (size, sha256)} for every file in directory."""
+    out = {}
+    for p in sorted(directory.iterdir()):
+        if p.is_file():
+            data = p.read_bytes()
+            out[p.name] = (len(data), hashlib.sha256(data).hexdigest())
+    return out
+
+
+def _sidecars(db_path, wal=None, shm=None, journal=None):
+    for suffix, payload in (("-wal", wal), ("-shm", shm), ("-journal", journal)):
+        if payload is not None:
+            (db_path.parent / (db_path.name + suffix)).write_bytes(payload)
+
+
+def _simulate_launcher(db_path):
+    """Mirror of frozen_main's dispatch: only a 'fresh' action may write."""
+    state = dl.inspect_state(db_path)
+    action = dl.startup_action(state)
+    if action == "fresh":
+        dl.init_fresh_database(db_path, f"sqlite:///{db_path.as_posix()}")
+    return state, action
+
+
+def test_clean_first_launch_still_allowed(tmp_path):
+    db = tmp_path / "audit.db"
+    state, action = _simulate_launcher(db)
+    assert state == "missing"
+    assert action == "fresh"
+    assert db.exists()
+
+
+def test_wal_only_without_main_fails_closed(tmp_path):
+    db = tmp_path / "audit.db"
+    _sidecars(db, wal=b"wal-only")
+    before = _snapshot(tmp_path)
+    state, action = _simulate_launcher(db)
+    assert state == "orphan_sidecars" and action == "refuse"
+    assert not db.exists()
+    assert _snapshot(tmp_path) == before
+
+
+def test_shm_only_without_main_fails_closed(tmp_path):
+    db = tmp_path / "audit.db"
+    _sidecars(db, shm=b"shm-only")
+    before = _snapshot(tmp_path)
+    state, action = _simulate_launcher(db)
+    assert state == "orphan_sidecars" and action == "refuse"
+    assert not db.exists()
+    assert _snapshot(tmp_path) == before
+
+
+def test_wal_and_shm_without_main_fails_closed(tmp_path):
+    db = tmp_path / "audit.db"
+    _sidecars(db, wal=b"wal", shm=b"shm")
+    before = _snapshot(tmp_path)
+    state, action = _simulate_launcher(db)
+    assert state == "orphan_sidecars" and action == "refuse"
+    assert not db.exists()
+    assert _snapshot(tmp_path) == before
+
+
+def test_journal_without_main_fails_closed(tmp_path):
+    db = tmp_path / "audit.db"
+    _sidecars(db, journal=b"journal")
+    before = _snapshot(tmp_path)
+    state, action = _simulate_launcher(db)
+    assert state == "interrupted_journal" and action == "refuse"
+    assert not db.exists()
+    assert _snapshot(tmp_path) == before
+
+
+def test_zero_byte_with_each_sidecar_fails_closed(tmp_path):
+    for suffix, payload in (("-wal", b"w"), ("-shm", b"s"), ("-journal", b"j")):
+        d = tmp_path / suffix.strip("-")
+        d.mkdir()
+        db = d / "audit.db"
+        db.write_bytes(b"")
+        _sidecars(db, **{suffix.strip("-"): payload})
+        before = _snapshot(d)
+        state, action = _simulate_launcher(db)
+        assert action == "refuse", suffix
+        assert state in ("corrupt", "inconsistent_sidecars", "interrupted_journal"), state
+        assert db.stat().st_size == 0
+        assert _snapshot(d) == before
+
+
+def test_healthy_database_with_matching_wal_and_shm_is_not_rejected(tmp_path):
+    db = tmp_path / "audit.db"
+    dl.init_fresh_database(db, f"sqlite:///{db.as_posix()}")
+    _sidecars(db, wal=b"wal", shm=b"shm")
+    state, action = _simulate_launcher(db)
+    assert state == "at_head"
+    assert action == "verify"
+
+
+def test_healthy_database_with_shm_only_is_inconsistent(tmp_path):
+    db = tmp_path / "audit.db"
+    dl.init_fresh_database(db, f"sqlite:///{db.as_posix()}")
+    _sidecars(db, shm=b"shm")
+    before = _snapshot(tmp_path)
+    state, action = _simulate_launcher(db)
+    assert state == "inconsistent_sidecars" and action == "refuse"
+    assert _snapshot(tmp_path) == before
+
+
+def test_healthy_database_with_rollback_journal_fails_closed(tmp_path):
+    db = tmp_path / "audit.db"
+    dl.init_fresh_database(db, f"sqlite:///{db.as_posix()}")
+    _sidecars(db, journal=b"journal")
+    before = _snapshot(tmp_path)
+    state, action = _simulate_launcher(db)
+    assert state == "interrupted_journal" and action == "refuse"
+    assert _snapshot(tmp_path) == before
+
+
+def test_unsafe_states_never_call_fresh_init(tmp_path, monkeypatch):
+    calls = {"fresh": 0}
+
+    def _boom(*a, **k):
+        calls["fresh"] += 1
+        raise AssertionError("init_fresh_database must not run for unsafe states")
+
+    monkeypatch.setattr(dl, "init_fresh_database", _boom)
+
+    fixtures = [(b"w", None, None), (None, b"s", None), (b"w", b"s", None), (None, None, b"j")]
+    for idx, (wal, shm, journal) in enumerate(fixtures):
+        d = tmp_path / f"case{idx}"
+        d.mkdir()
+        db = d / "audit.db"
+        _sidecars(db, wal=wal, shm=shm, journal=journal)
+        state, action = _simulate_launcher(db)
+        assert action == "refuse", state
+        assert not db.exists()
+
+    assert calls["fresh"] == 0
+
+
+def test_unsafe_states_never_report_ready_or_success(tmp_path):
+    db = tmp_path / "audit.db"
+    _sidecars(db, wal=b"w")
+    state = dl.inspect_state(db)
+    assert state in dl.REFUSE_STATES
+    assert state not in ("at_head", "missing", "zero_byte", "old_head")
+
+
+def test_startup_action_mapping_is_complete():
+    for state in (
+        "orphan_sidecars",
+        "inconsistent_sidecars",
+        "interrupted_journal",
+        "corrupt",
+        "unstamped",
+        "future_head",
+        "unknown_head",
+    ):
+        assert dl.startup_action(state) == "refuse"
+    for state in ("missing", "zero_byte"):
+        assert dl.startup_action(state) == "fresh"
+    assert dl.startup_action("at_head") == "verify"
+    assert dl.startup_action("old_head") == "upgrade"
+
+
+def test_recovery_message_is_plain_and_non_destructive(tmp_path):
+    text = dl.recovery_message(tmp_path)
+    assert "incomplete or unsafe database state" in text
+    assert "stopped to protect your existing data" in text
+    assert "did not create a new replacement database" in text
+    assert str(tmp_path) in text
+    assert "audit.db-wal" in text and "audit.db-shm" in text and "audit.db-journal" in text
+    assert "docs/TROUBLESHOOTING.md" in text
+    lowered = text.lower()
+    for forbidden in ("delete wal", "delete the wal", "sqlite3 ", "disable protection",
+                      "copy the wal", "copy the -wal"):
+        assert forbidden not in lowered
+    assert "do not delete" in lowered or "do not delete, rename" in lowered
+    assert "do not edit the database" in lowered
