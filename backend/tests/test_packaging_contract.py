@@ -1613,3 +1613,74 @@ def test_verify_licenses_fails_if_stale_b_lic_04_wording_in_notices(tmp_path):
     code, msgs = packaging_checks.verify_licenses(repo)
     assert code == packaging_checks.EXIT_LICENSES_MALFORMED
     assert any("STALE B-LIC-04 pending wording" in m for m in msgs)
+
+
+# --- B-LIC-04 residual correction: flat license retirement -------------------
+
+_REPO_ROOT = BACKEND_DIR.parent
+_SUPERSEDED_FLAT_FILES = (
+    "licenses/apache-2.0.txt",
+    "licenses/certifi-MPL-2.0.txt",
+    "licenses/lucide-react-ISC.txt",
+    "licenses/mit.txt",
+)
+
+
+def _notices_text() -> str:
+    return (_REPO_ROOT / "THIRD_PARTY_NOTICES.md").read_text(encoding="utf-8")
+
+
+def test_superseded_flat_license_files_are_absent():
+    for rel in _SUPERSEDED_FLAT_FILES:
+        assert not (_REPO_ROOT / rel).exists(), f"superseded flat file still present: {rel}"
+
+
+def test_notices_reference_no_superseded_flat_file():
+    notices = _notices_text()
+    for rel in _SUPERSEDED_FLAT_FILES:
+        assert rel not in notices, f"dangling reference to retired flat file: {rel}"
+
+
+def test_pyinstaller_copying_and_manifest_remain_present():
+    assert (_REPO_ROOT / "licenses/pyinstaller-COPYING.txt").is_file()
+    assert (_REPO_ROOT / "licenses/packages/MANIFEST.json").is_file()
+
+
+def test_notices_distinguish_certifi_notice_from_complete_mpl_text():
+    notices = _notices_text()
+    assert "licenses/packages/certifi/MPL-2.0.txt" in notices
+    assert "Mozilla Public License 2.0 (complete text)" in notices
+    assert "licenses/packages/certifi/LICENSE" in notices
+    assert "CA-bundle provenance and MPL-2.0 notice" in notices
+    assert "Full unmodified license texts" not in notices
+
+
+def test_notices_canonical_links_resolve():
+    notices = _notices_text()
+    for rel in (
+        "licenses/packages/lucide-react/LICENSE",
+        "licenses/packages/pdfjs-dist/LICENSE",
+        "licenses/packages/certifi/MPL-2.0.txt",
+        "licenses/packages/certifi/LICENSE",
+        "licenses/pyinstaller-COPYING.txt",
+    ):
+        assert rel in notices, f"notices missing canonical reference: {rel}"
+        assert (_REPO_ROOT / rel).is_file(), f"canonical reference does not resolve: {rel}"
+
+
+def test_mit_coverage_maps_through_manifest_not_flat_file():
+    notices = _notices_text()
+    assert "per-package MIT notices" in notices
+    assert "licenses/packages/MANIFEST.json" in notices
+    doc = json.loads((_REPO_ROOT / "licenses/packages/MANIFEST.json").read_text(encoding="utf-8"))
+    mit_packages = [p for p in doc["packages"] if p["license"] == "MIT" and p["delivered"]]
+    assert mit_packages
+    for pkg in mit_packages:
+        assert all(f["path"].startswith("licenses/packages/") for f in pkg["files"])
+
+
+def test_reintroduced_flat_reference_is_detected():
+    notices = _notices_text()
+    sample = notices + "\n- see `licenses/mit.txt`\n"
+    reintroduced = [rel for rel in _SUPERSEDED_FLAT_FILES if rel in sample]
+    assert reintroduced == ["licenses/mit.txt"]

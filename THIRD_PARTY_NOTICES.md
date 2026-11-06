@@ -124,7 +124,7 @@ For transparency only. These are not redistributed inside the package.
 - `pdfjs-dist` **5.7.284**, Apache-2.0.
 - Bundled worker asset: `frontend-dist/assets/pdf.worker.min-iDqQPrd3.mjs` (verified present, 1,232,303 bytes).
 - The bundled worker file preserves the embedded Apache License 2.0 header and Mozilla Foundation copyright (verified in the packaged asset).
-- Full Apache-2.0 text: see `licenses/apache-2.0.txt`.
+- Apache License 2.0 text as shipped by pdfjs-dist: see `licenses/packages/pdfjs-dist/LICENSE`.
 
 ## 6. Icons and derived assets
 
@@ -132,7 +132,7 @@ Lucide icons are redistributed inside the bundled JavaScript as SVG components.
 
 - **Lucide** (lucide-react 0.303.0): **ISC License**.
 - **Feather-derived icon portions**: MIT License, copyright held by Cole Bemis 2013–2022.
-- Both notices must be preserved in redistributed copies. Exact notice text is reproduced in `licenses/lucide-react-ISC.txt` and `licenses/mit.txt`.
+- Both notices must be preserved in redistributed copies. The exact notice text, including the Feather MIT attribution, is reproduced in `licenses/packages/lucide-react/LICENSE`; per-package MIT notices for the bundled dependencies are recorded in `licenses/packages/MANIFEST.json`.
 
 Lucide is **not** classified as IPL. The verified installed license file is the source of truth.
 
@@ -181,12 +181,13 @@ ACA never bundles the qwen3.5:4b model, LibreOffice, or Ollama. No cloud AI prov
 
 ## License texts
 
-Full unmodified license texts are preserved in the `licenses/` directory:
+Canonical license texts are delivered from `licenses/packages/`, one directory per package, with the complete package-to-text mapping in `licenses/packages/MANIFEST.json`:
 
 | File | License | Source |
 |---|---|---|
-| `licenses/lucide-react-ISC.txt` | ISC (with Feather MIT attribution note) | installed `lucide-react/LICENSE` |
-| `licenses/mit.txt` | MIT | installed `sniffio` dist-info `LICENSE.MIT` |
-| `licenses/apache-2.0.txt` | Apache License 2.0 | installed `sniffio` dist-info `LICENSE.APACHE2` |
-| `licenses/certifi-MPL-2.0.txt` | Mozilla Public License 2.0 | installed `certifi` dist-info `licenses/LICENSE` |
+| `licenses/packages/lucide-react/LICENSE` | ISC (with Feather MIT attribution note) | installed `lucide-react` `LICENSE` |
+| `licenses/packages/<package>/LICENSE` (per MIT package) | MIT | installed per-package `dist-info` license files, listed in `licenses/packages/MANIFEST.json` |
+| `licenses/packages/pdfjs-dist/LICENSE` | Apache License 2.0 | installed `pdfjs-dist` `LICENSE` |
+| `licenses/packages/certifi/MPL-2.0.txt` | Mozilla Public License 2.0 (complete text) | controlled local MPL-2.0 source approved by the Owner; delivered with the certifi package entry |
+| `licenses/packages/certifi/LICENSE` | certifi / CA-bundle provenance and MPL-2.0 notice | installed `certifi` dist-info `licenses/LICENSE` |
 | `licenses/pyinstaller-COPYING.txt` | GPL-2.0-or-later with Bootloader Exception | installed `PyInstaller` `licenses/COPYING.txt` |
