@@ -1298,14 +1298,33 @@ def _create_minimal_valid_license_repo(tmp_path: Path) -> Path:
         lic = pkg_dir / "LICENSE"
         lic.write_text(f"License for {pkg}\n", encoding="utf-8")
         sha = hashlib.sha256(lic.read_bytes()).hexdigest()
+        files = [{"path": f"licenses/packages/{pkg}/LICENSE", "sha256": sha, "bytes": lic.stat().st_size}]
+        if pkg == "certifi":
+            mpl = pkg_dir / "MPL-2.0.txt"
+            mpl_content = (
+                "Mozilla Public License, version 2.0\n"
+                "1. Definitions\n"
+                "2. License Grants and Conditions\n"
+                "3. Responsibilities\n"
+                "10. Versions of the License\n"
+                "Exhibit A\n"
+                "Exhibit B\n"
+            )
+            mpl.write_text(mpl_content, encoding="utf-8")
+            mpl_sha = hashlib.sha256(mpl.read_bytes()).hexdigest()
+            files.append({
+                "path": f"licenses/packages/{pkg}/MPL-2.0.txt",
+                "sha256": mpl_sha,
+                "bytes": mpl.stat().st_size,
+            })
         manifest_packages.append({
             "package": pkg,
             "version": ver,
-            "license": "MIT",
+            "license": "MPL-2.0" if pkg == "certifi" else "MIT",
             "classification": "TRANSITIVE RUNTIME",
             "delivered": True,
             "source": "python-dist-info",
-            "files": [{"path": f"licenses/packages/{pkg}/LICENSE", "sha256": sha, "bytes": lic.stat().st_size}]
+            "files": files,
         })
     for pkg, ver in packaging_checks.REQUIRED_FRONTEND_DIRECT_PACKAGES.items():
         norm_name = pkg.replace("@", "").replace("/", "-")
@@ -1526,3 +1545,71 @@ def test_verify_licenses_detects_missing_installer_license_directive(tmp_path):
 
 def test_licenses_cli_fails_closed_when_repo_root_missing():
     assert packaging_checks._licenses_cli(["verify-licenses"]) == packaging_checks.EXIT_LICENSES_MISSING
+
+
+def test_certifi_manifest_has_both_license_and_mpl_text():
+    doc = json.loads(Path("licenses/packages/MANIFEST.json").read_text(encoding="utf-8"))
+    certifi_entry = next((p for p in doc["packages"] if p["package"] == "certifi"), None)
+    assert certifi_entry is not None
+    assert certifi_entry["version"] == "2026.7.22"
+    assert certifi_entry["license"] == "MPL-2.0"
+    assert len(certifi_entry["files"]) == 2
+    paths = [f["path"] for f in certifi_entry["files"]]
+    assert paths == [
+        "licenses/packages/certifi/LICENSE",
+        "licenses/packages/certifi/MPL-2.0.txt",
+    ]
+    for f in certifi_entry["files"]:
+        p = Path(f["path"])
+        assert p.is_file()
+        data = p.read_bytes()
+        assert len(data) == f["bytes"]
+        assert hashlib.sha256(data).hexdigest() == f["sha256"]
+
+
+def test_verify_licenses_fails_if_certifi_mpl_text_missing(tmp_path):
+    repo = _create_minimal_valid_license_repo(tmp_path)
+    (repo / "licenses" / "packages" / "certifi" / "MPL-2.0.txt").unlink()
+    code, msgs = packaging_checks.verify_licenses(repo)
+    assert code == packaging_checks.EXIT_LICENSES_MISSING
+
+
+def test_verify_licenses_fails_if_certifi_mpl_text_truncated(tmp_path):
+    repo = _create_minimal_valid_license_repo(tmp_path)
+    mpl = repo / "licenses" / "packages" / "certifi" / "MPL-2.0.txt"
+    mpl.write_text("Mozilla Public License, version 2.0\n1. Definitions\n", encoding="utf-8")
+    mf = repo / "licenses" / "packages" / "MANIFEST.json"
+    doc = json.loads(mf.read_text(encoding="utf-8"))
+    for p in doc["packages"]:
+        if p["package"] == "certifi":
+            p["files"][1]["sha256"] = hashlib.sha256(mpl.read_bytes()).hexdigest()
+            p["files"][1]["bytes"] = mpl.stat().st_size
+    mf.write_text(json.dumps(doc), encoding="utf-8")
+    code, msgs = packaging_checks.verify_licenses(repo)
+    assert code == packaging_checks.EXIT_LICENSES_MALFORMED
+    assert any("missing structural marker" in m for m in msgs)
+
+
+def test_verify_licenses_fails_if_certifi_files_identical(tmp_path):
+    repo = _create_minimal_valid_license_repo(tmp_path)
+    lic = repo / "licenses" / "packages" / "certifi" / "LICENSE"
+    mpl = repo / "licenses" / "packages" / "certifi" / "MPL-2.0.txt"
+    mpl.write_text(lic.read_text(encoding="utf-8"), encoding="utf-8")
+    mf = repo / "licenses" / "packages" / "MANIFEST.json"
+    doc = json.loads(mf.read_text(encoding="utf-8"))
+    for p in doc["packages"]:
+        if p["package"] == "certifi":
+            p["files"][1]["sha256"] = hashlib.sha256(mpl.read_bytes()).hexdigest()
+            p["files"][1]["bytes"] = mpl.stat().st_size
+    mf.write_text(json.dumps(doc), encoding="utf-8")
+    code, msgs = packaging_checks.verify_licenses(repo)
+    assert code == packaging_checks.EXIT_LICENSES_MALFORMED
+    assert any("cannot be identical" in m for m in msgs)
+
+
+def test_verify_licenses_fails_if_stale_b_lic_04_wording_in_notices(tmp_path):
+    repo = _create_minimal_valid_license_repo(tmp_path)
+    (repo / "THIRD_PARTY_NOTICES.md").write_text("# Notices\nremain pending B-LIC-04\n", encoding="utf-8")
+    code, msgs = packaging_checks.verify_licenses(repo)
+    assert code == packaging_checks.EXIT_LICENSES_MALFORMED
+    assert any("STALE B-LIC-04 pending wording" in m for m in msgs)

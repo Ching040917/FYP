@@ -49,6 +49,7 @@ $notices = Get-Content (Join-Path $RepoRoot "THIRD_PARTY_NOTICES.md") -Raw
 Assert ($notices.Contains("proprietary")) "THIRD_PARTY_NOTICES describes ACA as proprietary"
 Assert (-not $notices.Contains("Public redistribution remains blocked")) "THIRD_PARTY_NOTICES no longer blocks public distribution pending a decision"
 Assert (-not $notices.Contains("already delivered")) "No claim that third-party notices are already delivered in-package"
+Assert (-not $notices.Contains("remain pending B-LIC-04")) "THIRD_PARTY_NOTICES no longer marks B-LIC-04 pending"
 $buildDoc = Get-Content (Join-Path $RepoRoot "docs\developer\BUILD_AND_RELEASE.md") -Raw
 Assert ($buildDoc.Contains("authorized release channel")) "BUILD_AND_RELEASE refers to an authorized release channel"
 $installDoc = Get-Content (Join-Path $RepoRoot "docs\INSTALLATION.md") -Raw
@@ -79,6 +80,10 @@ Assert ($manifestJson.manifest_version -eq "1.0.0") "Manifest version is 1.0.0"
 Assert ($manifestJson.packages.Count -ge 49) "Manifest covers all runtime packages"
 $firstPkg = $manifestJson.packages[0]
 Assert ($null -ne $firstPkg.package -and $null -ne $firstPkg.files) "Manifest packages have required structure"
+$certifiPkg = $manifestJson.packages | Where-Object { $_.package -eq "certifi" }
+Assert ($null -ne $certifiPkg) "certifi package is registered in manifest"
+Assert ($certifiPkg.files.Count -eq 2) "certifi declares both LICENSE and MPL-2.0.txt"
+Assert (Test-Path (Join-Path $RepoRoot "licenses\packages\certifi\MPL-2.0.txt")) "certifi MPL-2.0.txt exists on disk"
 $buildInstallerScriptContent = Get-Content $BuildScript -Raw
 Assert ($buildInstallerScriptContent.Contains("verify-licenses")) "build-installer.ps1 invokes verify-licenses"
 $pocScript = Get-Content (Join-Path $RepoRoot "backend\scripts\build-packaging-poc.ps1") -Raw

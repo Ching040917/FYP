@@ -26,7 +26,7 @@ Packages from the older Python 3.13 global environment (for example pandas, scip
 - This document records third-party rights only.
 - It does not grant any license to ACA source code or to ACA installer releases.
 - Official unmodified ACA installer releases may be downloaded, installed and used under the terms in [LICENSE](LICENSE).
-- Canonical per-package license texts are maintained under [licenses/packages](licenses/packages/MANIFEST.json) and delivered to `{app}\licenses\packages` by the installer; complete per-component license coverage and certifi MPL-2.0 text alignment remain pending B-LIC-04.
+- Canonical per-package license texts are maintained under [licenses/packages](licenses/packages/MANIFEST.json) and delivered to `{app}\licenses\packages` by the installer; source-side per-component license coverage and certifi MPL-2.0 text alignment are complete (installed-tree delivery proof remains pending Wave 6 release candidate inspection).
 
 ## 3. Bundled Backend dependencies
 
@@ -169,7 +169,7 @@ ACA never bundles the qwen3.5:4b model, LibreOffice, or Ollama. No cloud AI prov
 
 ## 10. Unresolved or release-blocking items
 
-- **Third-party notice coverage is implemented under B-LIC-03; certifi MPL-2.0 alignment remains tracked in B-LIC-04 and is not resolved by this document.**
+- **Third-party notice coverage is implemented under B-LIC-03; certifi MPL-2.0 text alignment is implemented under B-LIC-04 (installed-tree verification remains pending Wave 6).**
 - Some transitive license identifiers are derived from `dist-info` `License` fields and classifier metadata shipped with the installed packages; full text files were verified for the items where a local file exists. Where a license field was empty, the SPDX identifier was confirmed from the shipped `LICENSE`/`COPYING` file or the package's official metadata.
 
 ## 11. Evidence and update policy

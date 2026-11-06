@@ -598,6 +598,11 @@
           "path": "licenses/packages/certifi/LICENSE",
           "sha256": "e93716da6b9c0d5a4a1df60fe695b370f0695603d21f6f83f053e42cfc10caf7",
           "bytes": 989
+        },
+        {
+          "path": "licenses/packages/certifi/MPL-2.0.txt",
+          "sha256": "af175b9d96ee93c21a036152e1b905b0b95304d4ae8c2c921c7609100ba8df7e",
+          "bytes": 15921
         }
       ]
     },

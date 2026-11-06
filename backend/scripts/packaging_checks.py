@@ -1453,6 +1453,59 @@ def verify_licenses(repo_root: Path) -> tuple[int, list[str]]:
         if p_name in EXCLUDED_BUILD_PACKAGES and pkg_entry.get("delivered", False):
             return (EXIT_LICENSES_COVERAGE_GAP, [f"BUILD TOOL falsely marked delivered: {p_name}"])
 
+    # 5b. Certifi two-file contract and structural verification (B-LIC-04)
+    certifi_pkg = next((p for p in data["packages"] if p.get("package") == "certifi"), None)
+    if certifi_pkg is None:
+        return (EXIT_LICENSES_COVERAGE_GAP, ["MISSING certifi package in manifest"])
+    if certifi_pkg.get("version") != REQUIRED_PYTHON_TRANSITIVE_PACKAGES.get("certifi"):
+        return (EXIT_LICENSES_COVERAGE_GAP, [f"VERSION MISMATCH for certifi: expected {REQUIRED_PYTHON_TRANSITIVE_PACKAGES.get('certifi')}"])
+
+    certifi_files = [f.get("path", "").replace("\\", "/") for f in certifi_pkg.get("files", [])]
+    expected_certifi_files = [
+        "licenses/packages/certifi/LICENSE",
+        "licenses/packages/certifi/MPL-2.0.txt",
+    ]
+    if certifi_files != expected_certifi_files:
+        return (
+            EXIT_LICENSES_COVERAGE_GAP,
+            [f"CERTIFI FILES MISMATCH: expected {expected_certifi_files}, got {certifi_files}"],
+        )
+
+    cert_lic_file = repo / "licenses/packages/certifi/LICENSE"
+    cert_mpl_file = repo / "licenses/packages/certifi/MPL-2.0.txt"
+    if not cert_lic_file.is_file() or not cert_mpl_file.is_file():
+        return (EXIT_LICENSES_MISSING, ["MISSING required certifi license or MPL text file"])
+    if cert_lic_file.stat().st_size == 0 or cert_mpl_file.stat().st_size == 0:
+        return (EXIT_LICENSES_MISSING, ["EMPTY certifi license or MPL text file"])
+
+    lic_bytes = cert_lic_file.read_bytes()
+    mpl_bytes = cert_mpl_file.read_bytes()
+    if lic_bytes == mpl_bytes:
+        return (EXIT_LICENSES_MALFORMED, ["MALFORMED certifi license files: LICENSE and MPL-2.0.txt cannot be identical"])
+
+    mpl_text = cert_mpl_file.read_text(encoding="utf-8", errors="replace")
+    required_mpl_markers = [
+        "Mozilla Public License",
+        "1. Definitions",
+        "2. License Grants and Conditions",
+        "3. Responsibilities",
+        "10. Versions of the License",
+        "Exhibit A",
+        "Exhibit B",
+    ]
+    for marker in required_mpl_markers:
+        if marker not in mpl_text:
+            return (EXIT_LICENSES_MALFORMED, [f"MALFORMED certifi MPL-2.0.txt: missing structural marker '{marker}'"])
+
+    notices_text = (repo / "THIRD_PARTY_NOTICES.md").read_text(encoding="utf-8", errors="replace")
+    stale_b_lic_04_markers = [
+        "remain pending B-LIC-04",
+        "remains tracked in B-LIC-04 and is not resolved",
+    ]
+    for stale in stale_b_lic_04_markers:
+        if stale in notices_text:
+            return (EXIT_LICENSES_MALFORMED, [f"STALE B-LIC-04 pending wording in THIRD_PARTY_NOTICES.md: '{stale}'"])
+
     # 6. Check Inno Setup installer delivery contract
     iss_file = repo / "installer" / "AcademicComplianceAuditor.iss"
     if not iss_file.is_file():
