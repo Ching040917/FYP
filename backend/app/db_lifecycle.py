@@ -459,106 +459,182 @@ def _is_eligible_old_head(db_path: Path) -> bool:
         return False
 
 
-def _check_disk_space(db_path: Path) -> str | None:
+def _check_disk_space(db_path: Path, bdir: Path | None = None) -> str | None:
     import shutil
+    import os
     try:
         db_size = db_path.stat().st_size if db_path.exists() else 0
-        # Need: backup (db_size) + migration growth (~db_size) + temp (db_size)
-        need = db_size * 3 + 10 * 1024 * 1024  # +10MB buffer
-        free = shutil.disk_usage(str(db_path.parent)).free
-        if free < need:
+        need = db_size * 3 + 10 * 1024 * 1024  # Approach A conservative threshold
+
+        src_dir = db_path.parent
+        free_src = shutil.disk_usage(str(src_dir)).free
+        if free_src < need:
             return "Insufficient disk space for safe upgrade. Please free some space and try again."
+
+        if bdir is not None:
+            src_vol = os.path.splitdrive(os.path.abspath(src_dir))[0].upper()
+            dst_vol = os.path.splitdrive(os.path.abspath(bdir))[0].upper()
+            if src_vol != dst_vol:
+                free_dst = shutil.disk_usage(str(bdir)).free
+                if free_dst < need:
+                    return "Insufficient disk space for safe upgrade. Please free some space and try again."
     except Exception:
-        pass
+        return "Could not verify available disk space for safe upgrade. Please check your storage and try again."
     return None
 
 
 def create_verified_backup(db_path: Path, user_root: Path, logger=None) -> tuple[Path | None, str | None]:
-    """Create backup via sqlite3 backup API and verify. Returns (backup_path, error_msg)."""
-    # Disk check first
-    msg = _check_disk_space(db_path)
+    """Create backup via sqlite3 backup API, verify, and publish atomically without overwrite.
+
+    Returns (final_backup_path, error_msg).
+    """
+    if not user_root or not isinstance(user_root, Path):
+        return None, "Backup failed: invalid user data root."
+
+    bdir = _backup_dir(user_root)
+    try:
+        bdir.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        if logger:
+            logger.info("backup_dir_create_failed category=%s", type(e).__name__)
+        return None, "Backup failed: could not create backup directory."
+
+    # Capacity check after bdir exists (Approach A)
+    msg = _check_disk_space(db_path, bdir)
     if msg:
         if logger:
             logger.info("backup_space_check_failed")
         return None, msg
 
-    # Read source revision before backup
-    try:
-        con = sqlite3.connect(str(db_path))
-        src_ver = list(con.execute("SELECT version_num FROM alembic_version"))[0][0]
-        con.close()
-    except Exception:
-        return None, "Backup failed. Your data is preserved."
-
-    bdir = _backup_dir(user_root)
-    bdir.mkdir(parents=True, exist_ok=True)
-    head = _get_bundled_head() or "unknown"
-    import datetime, random, string
-    ts = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-    rand = "".join(random.choices(string.ascii_lowercase + string.digits, k=6))
-    name = f"audit.db.r{src_ver}_to_{head}.{ts}-{rand}.bak"
-    bpath = bdir / name
-
-    # Backup API — no manual WAL/SHM copy
+    # Read source revision before backup using read-only connection
     src_con = None
-    dst_con = None
     try:
-        src_con = sqlite3.connect(str(db_path))
-        dst_con = sqlite3.connect(str(bpath))
-        src_con.backup(dst_con)
+        src_con = _readonly_connect(db_path)
+        rows = list(src_con.execute("SELECT version_num FROM alembic_version;"))
+        if len(rows) != 1:
+            return None, "Backup failed: source database has ambiguous or missing revision."
+        src_ver = rows[0][0]
     except Exception as e:
         if logger:
-            logger.info("backup_failed category=%s", type(e).__name__)
-        try:
-            if bpath.exists():
-                bpath.unlink()
-        except Exception:
-            pass
+            logger.info("backup_source_read_failed category=%s", type(e).__name__)
         return None, "Backup failed. Your data is preserved."
     finally:
-        try:
-            if src_con:
+        if src_con:
+            try:
                 src_con.close()
-        except Exception:
-            pass
-        try:
-            if dst_con:
-                dst_con.close()
-        except Exception:
-            pass
+            except Exception:
+                pass
 
-    # Verify backup: non-empty, integrity, foreign_key, revision
+    head = _get_bundled_head() or "unknown"
+    import datetime, random, string, os
+    ts = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    rand = "".join(random.choices(string.ascii_lowercase + string.digits, k=6))
+    staging_name = f"audit.db.r{src_ver}_to_{head}.{ts}-{rand}.pending"
+    final_name = f"audit.db.r{src_ver}_to_{head}.{ts}-{rand}.bak"
+    staging_path = bdir / staging_name
+    final_bpath = bdir / final_name
+
+    # Ensure final destination does not already exist
+    if final_bpath.exists():
+        return None, "Backup failed: destination backup file already exists."
+
+    # Backup API from read-only source to destination staging path
+    src_con = None
+    dst_con = None
+    copy_error = None
     try:
-        if bpath.stat().st_size == 0:
-            bpath.unlink(missing_ok=True)
-            return None, "Backup verification failed. Your data is preserved."
-        con = sqlite3.connect(str(bpath))
+        src_con = _readonly_connect(db_path)
+        dst_con = sqlite3.connect(str(staging_path))
+        src_con.backup(dst_con)
+    except Exception as e:
+        copy_error = type(e).__name__
+        if logger:
+            logger.info("backup_failed category=%s", copy_error)
+    finally:
+        if dst_con:
+            try:
+                dst_con.close()
+            except Exception:
+                pass
+        if src_con:
+            try:
+                src_con.close()
+            except Exception:
+                pass
+
+    if copy_error is not None:
         try:
-            if con.execute("PRAGMA integrity_check;").fetchone()[0] != "ok":
+            if staging_path.exists():
+                staging_path.unlink()
+        except Exception as cleanup_err:
+            if logger:
+                logger.warning("backup_staging_cleanup_failed path=%s", staging_path.name)
+        return None, "Backup failed. Your data is preserved."
+
+    # Verify staging backup read-only: non-empty, integrity, foreign_key, revision
+    verify_error = None
+    try:
+        if not staging_path.exists() or staging_path.stat().st_size == 0:
+            verify_error = "Backup verification failed: empty or missing staging file."
+        else:
+            con = _readonly_connect(staging_path)
+            try:
+                if con.execute("PRAGMA integrity_check;").fetchone()[0] != "ok":
+                    verify_error = "Backup verification failed. Your data is preserved."
+                elif list(con.execute("PRAGMA foreign_key_check;")):
+                    verify_error = "Backup verification failed. Your data is preserved."
+                else:
+                    v_rows = list(con.execute("SELECT version_num FROM alembic_version;"))
+                    if len(v_rows) != 1 or v_rows[0][0] != src_ver:
+                        verify_error = "Backup verification failed. Your data is preserved."
+            finally:
                 con.close()
-                bpath.unlink(missing_ok=True)
-                return None, "Backup verification failed. Your data is preserved."
-            if list(con.execute("PRAGMA foreign_key_check;")):
-                con.close()
-                bpath.unlink(missing_ok=True)
-                return None, "Backup verification failed. Your data is preserved."
-            rows = list(con.execute("SELECT version_num FROM alembic_version"))
-            if len(rows) != 1 or rows[0][0] != src_ver:
-                con.close()
-                bpath.unlink(missing_ok=True)
-                return None, "Backup verification failed. Your data is preserved."
-        finally:
-            con.close()
     except Exception:
+        verify_error = "Backup verification failed. Your data is preserved."
+
+    if verify_error is not None:
+        if logger:
+            logger.info("backup_verification_failed")
         try:
-            bpath.unlink(missing_ok=True)
+            if staging_path.exists():
+                staging_path.unlink()
+        except Exception as cleanup_err:
+            if logger:
+                logger.warning("backup_staging_cleanup_failed path=%s", staging_path.name)
+        return None, verify_error
+
+    # Atomic no-overwrite publication via os.link
+    try:
+        os.link(staging_path, final_bpath)
+    except FileExistsError:
+        if logger:
+            logger.info("backup_publication_collision path=%s", final_bpath.name)
+        try:
+            if staging_path.exists():
+                staging_path.unlink()
         except Exception:
             pass
-        return None, "Backup verification failed. Your data is preserved."
+        return None, "Backup failed: destination backup file already exists."
+    except OSError as e:
+        if logger:
+            logger.info("backup_publication_failed category=%s", type(e).__name__)
+        try:
+            if staging_path.exists():
+                staging_path.unlink()
+        except Exception:
+            pass
+        return None, f"Backup failed: publication error ({type(e).__name__})."
+
+    # Partial-success handling: remove staging link
+    try:
+        staging_path.unlink()
+    except Exception as cleanup_err:
+        if logger:
+            logger.warning("backup_staging_cleanup_failed path=%s", staging_path.name)
 
     if logger:
         logger.info("backup_verified revision=%s", src_ver)
-    return bpath, None
+    return final_bpath, None
 
 
 def prune_backups(user_root: Path, keep: int = 3, logger=None):
@@ -591,9 +667,17 @@ def upgrade_existing_database(db_path: Path, db_url: str, user_root: Path, logge
         return "This database cannot be upgraded automatically."
 
     # Backup
-    bpath, err = create_verified_backup(db_path, user_root, logger)
+    try:
+        bpath, err = create_verified_backup(db_path, user_root, logger)
+    except Exception as e:
+        if logger:
+            logger.info("backup_unhandled_exception category=%s", type(e).__name__)
+        return f"Backup failed: {type(e).__name__}. Your data is preserved."
+
     if err:
         return err
+    if not bpath or not bpath.exists():
+        return "Backup failed: verified backup file missing. Your data is preserved."
 
     # Snapshot state for restore on failure
     import os
