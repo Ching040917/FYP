@@ -4,9 +4,12 @@ Resolves Alembic resources in source and frozen mode, creates a fresh
 production database via ``alembic upgrade head``, and verifies
 integrity + schema + head. No upgrade of existing stamped databases.
 """
+import datetime
+import os
+import re
 import sqlite3
-from pathlib import Path
 import sys
+from pathlib import Path
 
 
 def _get_bundled_head() -> str | None:
@@ -637,23 +640,369 @@ def create_verified_backup(db_path: Path, user_root: Path, logger=None) -> tuple
     return final_bpath, None
 
 
-def prune_backups(user_root: Path, keep: int = 3, logger=None):
-    """Keep 3 newest verified backups, delete older. Ignore unrelated files."""
+_BACKUP_FILENAME_RE = re.compile(
+    r"^audit\.db\.r(?P<source_rev>[A-Za-z0-9]+)_to_(?P<target_rev>[A-Za-z0-9]+)\.(?P<timestamp>\d{8}-\d{6})-(?P<random>[a-z0-9]{6})\.bak$"
+)
+
+
+class _IdentitySortKey:
+    __slots__ = ("ts", "mtime_ns", "name", "ident")
+
+    def __init__(self, ts: datetime.datetime, mtime_ns: int, name: str, ident: tuple[int, int]):
+        self.ts = ts
+        self.mtime_ns = mtime_ns
+        self.name = name
+        self.ident = ident
+
+    def __lt__(self, other: "_IdentitySortKey") -> bool:
+        if self.ts != other.ts:
+            return self.ts > other.ts
+        if self.mtime_ns != other.mtime_ns:
+            return self.mtime_ns > other.mtime_ns
+        if self.name != other.name:
+            return self.name < other.name
+        return self.ident < other.ident
+
+
+def prune_backups(
+    user_root: Path,
+    keep: int = 3,
+    protected_backup: Path | None = None,
+    logger=None,
+) -> dict:
+    """Retain up to `keep` verified backup identities, including protected_backup.
+
+    Distinguishes path counts from identity counts, excludes symlinks and unverified
+    candidates from retention accounting without deleting them, and aborts before
+    destructive action on any operational ambiguity or multi-path deletion candidate.
+    """
+    result = {
+        "verified_identity_count_before": 0,
+        "planned_identity_deletion_count": 0,
+        "deleted_identity_count": 0,
+        "deleted_path_count": 0,
+        "retained_identity_count": 0,
+        "alias_ambiguity_count": 0,
+        "warnings": [],
+        "protected_override": False,
+        "invariant_satisfied": True,
+    }
+
+    # 1. Validate keep argument
+    if not isinstance(keep, int) or isinstance(keep, bool) or keep < 1:
+        result["invariant_satisfied"] = False
+        result["warnings"].append("Invalid keep argument: must be integer >= 1.")
+        if logger:
+            logger.warning("backup_prune_invalid_keep keep=%s", keep)
+        return result
+
+    # 2. Validate user_root and directory
+    if not user_root or not isinstance(user_root, Path):
+        result["invariant_satisfied"] = False
+        result["warnings"].append("Invalid user_root: Path required.")
+        return result
+
     bdir = _backup_dir(user_root)
     if not bdir.is_dir():
-        return
-    # Only our naming pattern: audit.db.r*_to_*.bak
-    cands = [p for p in bdir.glob("audit.db.r*_to_*.bak") if p.is_file()]
-    if len(cands) <= keep:
-        return
-    cands.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-    for old in cands[keep:]:
+        return result
+
+    # 3. Discover candidates and collect lstat metadata
+    try:
+        entries = list(bdir.iterdir())
+    except OSError as e:
+        result["invariant_satisfied"] = False
+        result["warnings"].append(f"Directory discovery failed: {type(e).__name__}")
+        if logger:
+            logger.warning("backup_prune_discovery_failed category=%s", type(e).__name__)
+        return result
+
+    verified_candidates = []
+    for p in entries:
+        m = _BACKUP_FILENAME_RE.match(p.name)
+        if not m:
+            continue
+
         try:
-            old.unlink()
+            st = os.lstat(p)
+        except OSError as e:
+            result["invariant_satisfied"] = False
+            result["warnings"].append(f"Stat failure on candidate: {type(e).__name__}")
             if logger:
-                logger.info("backup_pruned")
+                logger.warning("backup_prune_stat_failed category=%s", type(e).__name__)
+            return result
+
+        if p.is_symlink() or not p.is_file() or st.st_size == 0:
+            continue
+
+        cid = (st.st_dev, st.st_ino)
+        if cid[0] == 0 or cid[1] == 0:
+            result["invariant_satisfied"] = False
+            result["warnings"].append("Stable file identity unavailable on filesystem.")
+            return result
+
+        src_rev = m.group("source_rev")
+        tgt_rev = m.group("target_rev")
+        ts_str = m.group("timestamp")
+        try:
+            parsed_ts = datetime.datetime.strptime(ts_str, "%Y%m%d-%H%M%S")
+        except ValueError:
+            continue
+
+        # Verify SQLite read-only: integrity, foreign keys, version == SOURCE_REV
+        is_verified = False
+        try:
+            con = _readonly_connect(p)
+            try:
+                integ = con.execute("PRAGMA integrity_check;").fetchone()
+                if integ and integ[0] == "ok":
+                    fk = list(con.execute("PRAGMA foreign_key_check;"))
+                    if not fk:
+                        v_rows = list(con.execute("SELECT version_num FROM alembic_version;"))
+                        if len(v_rows) == 1 and v_rows[0][0] == src_rev:
+                            is_verified = True
+            finally:
+                con.close()
+        except sqlite3.DatabaseError:
+            pass
+        except OSError as e:
+            result["invariant_satisfied"] = False
+            result["warnings"].append(f"Access error verifying candidate: {type(e).__name__}")
+            return result
         except Exception:
             pass
+
+        if not is_verified:
+            continue
+
+        verified_candidates.append({
+            "path": p,
+            "name": p.name,
+            "identity": cid,
+            "parsed_ts": parsed_ts,
+            "mtime_ns": st.st_mtime_ns,
+            "src_rev": src_rev,
+            "tgt_rev": tgt_rev,
+        })
+
+    # 4. Validate protected_backup if supplied
+    protected_identity = None
+    if protected_backup is not None:
+        if not isinstance(protected_backup, Path):
+            result["invariant_satisfied"] = False
+            result["warnings"].append("Invalid protected_backup argument type.")
+            return result
+        try:
+            resolved_pb = protected_backup.resolve()
+            resolved_bdir = bdir.resolve()
+            if resolved_pb.parent != resolved_bdir:
+                result["invariant_satisfied"] = False
+                result["warnings"].append("protected_backup outside expected backups directory.")
+                return result
+        except Exception as e:
+            result["invariant_satisfied"] = False
+            result["warnings"].append(f"Cannot resolve protected_backup: {type(e).__name__}")
+            return result
+
+        if protected_backup.is_symlink() or not protected_backup.is_file():
+            result["invariant_satisfied"] = False
+            result["warnings"].append("protected_backup is missing, not a regular file, or a symlink.")
+            return result
+
+        try:
+            pb_st = os.lstat(protected_backup)
+            protected_identity = (pb_st.st_dev, pb_st.st_ino)
+            if protected_identity[0] == 0 or protected_identity[1] == 0:
+                result["invariant_satisfied"] = False
+                result["warnings"].append("protected_backup identity unavailable.")
+                return result
+        except OSError as e:
+            result["invariant_satisfied"] = False
+            result["warnings"].append(f"Stat failure on protected_backup: {type(e).__name__}")
+            return result
+
+        pb_m = _BACKUP_FILENAME_RE.match(protected_backup.name)
+        if not pb_m:
+            result["invariant_satisfied"] = False
+            result["warnings"].append("protected_backup does not match filename grammar.")
+            return result
+
+        bundled_head = _get_bundled_head()
+        if bundled_head and pb_m.group("target_rev") != bundled_head:
+            result["invariant_satisfied"] = False
+            result["warnings"].append("protected_backup TARGET_REV does not match bundled head.")
+            return result
+
+        # Verify SQLite on protected_backup
+        try:
+            con = _readonly_connect(protected_backup)
+            try:
+                integ = con.execute("PRAGMA integrity_check;").fetchone()
+                fk = list(con.execute("PRAGMA foreign_key_check;"))
+                v_rows = list(con.execute("SELECT version_num FROM alembic_version;"))
+                if not integ or integ[0] != "ok" or fk or len(v_rows) != 1 or v_rows[0][0] != pb_m.group("source_rev"):
+                    result["invariant_satisfied"] = False
+                    result["warnings"].append("protected_backup failed SQLite verification.")
+                    return result
+            finally:
+                con.close()
+        except Exception as e:
+            result["invariant_satisfied"] = False
+            result["warnings"].append(f"Verification failure on protected_backup: {type(e).__name__}")
+            return result
+
+    # 5. Group candidates by stable file identity
+    identities = {}
+    for c in verified_candidates:
+        cid = c["identity"]
+        if cid not in identities:
+            identities[cid] = {"candidates": [], "paths": []}
+        identities[cid]["candidates"].append(c)
+        identities[cid]["paths"].append(c["path"])
+
+    for cid, data in identities.items():
+        cands = data["candidates"]
+        best_ts = max(c["parsed_ts"] for c in cands)
+        best_mtime_ns = max(c["mtime_ns"] for c in cands)
+        best_name = min(c["name"] for c in cands)
+        data["sort_key"] = _IdentitySortKey(best_ts, best_mtime_ns, best_name, cid)
+
+    verified_count = len(identities)
+    result["verified_identity_count_before"] = verified_count
+
+    if protected_identity is not None and protected_identity not in identities:
+        result["invariant_satisfied"] = False
+        result["warnings"].append("protected_backup identity not found in verified identities.")
+        return result
+
+    if verified_count <= keep:
+        result["retained_identity_count"] = verified_count
+        return result
+
+    # 6. Sort verified identities deterministically (newest first)
+    sorted_identities = sorted(identities.keys(), key=lambda cid: identities[cid]["sort_key"])
+
+    # 7. Compute retained identities set
+    retained_identities = set()
+    if protected_identity is not None:
+        retained_identities.add(protected_identity)
+        if protected_identity not in sorted_identities[:keep]:
+            result["protected_override"] = True
+
+    for cid in sorted_identities:
+        if len(retained_identities) >= min(keep, verified_count):
+            break
+        retained_identities.add(cid)
+
+    result["retained_identity_count"] = len(retained_identities)
+
+    # 8. Compute planned deletions and check for multi-path ambiguities
+    deletion_identities = [cid for cid in sorted_identities if cid not in retained_identities]
+    result["planned_identity_deletion_count"] = len(deletion_identities)
+
+    for cid in deletion_identities:
+        if len(identities[cid]["paths"]) > 1:
+            result["alias_ambiguity_count"] += 1
+
+    if result["alias_ambiguity_count"] > 0:
+        result["invariant_satisfied"] = False
+        result["warnings"].append(
+            f"Deletion candidate has {result['alias_ambiguity_count']} multiple-alias identities; aborting retention."
+        )
+        if logger:
+            logger.warning("backup_prune_alias_ambiguity count=%d", result["alias_ambiguity_count"])
+        return result
+
+    # 9. Execute single-path deletions with pre-unlink revalidation & post-unlink confirmation
+    for cid in deletion_identities:
+        cand_path = identities[cid]["paths"][0]
+
+        # Pre-unlink revalidation
+        try:
+            re_st = os.lstat(cand_path)
+        except OSError as e:
+            result["invariant_satisfied"] = False
+            result["warnings"].append(f"Pre-unlink stat failed: {type(e).__name__}")
+            return result
+
+        if cand_path.is_symlink() or not cand_path.is_file():
+            result["invariant_satisfied"] = False
+            result["warnings"].append("Pre-unlink check failed: path changed to symlink or non-regular.")
+            return result
+
+        curr_id = (re_st.st_dev, re_st.st_ino)
+        if curr_id != cid:
+            result["invariant_satisfied"] = False
+            result["warnings"].append("Pre-unlink check failed: identity mismatch.")
+            return result
+
+        if protected_identity is not None and curr_id == protected_identity:
+            result["invariant_satisfied"] = False
+            result["warnings"].append("Pre-unlink check failed: path is protected backup identity.")
+            return result
+
+        try:
+            if cand_path.parent.resolve() != bdir.resolve():
+                result["invariant_satisfied"] = False
+                result["warnings"].append("Pre-unlink check failed: directory mismatch.")
+                return result
+        except Exception:
+            result["invariant_satisfied"] = False
+            result["warnings"].append("Pre-unlink check failed: parent resolution error.")
+            return result
+
+        if not _BACKUP_FILENAME_RE.match(cand_path.name):
+            result["invariant_satisfied"] = False
+            result["warnings"].append("Pre-unlink check failed: filename grammar mismatch.")
+            return result
+
+        # Unlink single path
+        try:
+            cand_path.unlink()
+            result["deleted_path_count"] += 1
+            if logger:
+                logger.info("backup_pruned")
+        except Exception as e:
+            result["invariant_satisfied"] = False
+            result["warnings"].append(f"Unlink failed: {type(e).__name__}")
+            if logger:
+                logger.warning("backup_prune_unlink_failed category=%s", type(e).__name__)
+            return result
+
+        # Post-unlink confirmation: confirm path absence
+        if cand_path.exists():
+            result["invariant_satisfied"] = False
+            result["warnings"].append("Post-unlink confirmation failed: path still exists.")
+            return result
+
+        # Rescan directory to prove no alias remains for this identity
+        lingering_alias = False
+        try:
+            for other_p in bdir.iterdir():
+                if other_p.name == cand_path.name:
+                    continue
+                if _BACKUP_FILENAME_RE.match(other_p.name):
+                    try:
+                        ost = os.lstat(other_p)
+                        if (ost.st_dev, ost.st_ino) == cid:
+                            lingering_alias = True
+                            break
+                    except OSError:
+                        pass
+        except Exception as e:
+            result["invariant_satisfied"] = False
+            result["warnings"].append(f"Post-unlink alias scan failed: {type(e).__name__}")
+            return result
+
+        if lingering_alias:
+            result["invariant_satisfied"] = False
+            result["warnings"].append("Post-unlink confirmation failed: lingering alias discovered.")
+            if logger:
+                logger.warning("backup_prune_lingering_alias_discovered")
+            return result
+
+        result["deleted_identity_count"] += 1
+
+    return result
 
 
 def upgrade_existing_database(db_path: Path, db_url: str, user_root: Path, logger=None) -> str | None:
@@ -753,5 +1102,16 @@ def upgrade_existing_database(db_path: Path, db_url: str, user_root: Path, logge
         return "The database upgrade did not complete. Your backup was preserved. ACA cannot start until the database is recovered."
 
     # Retention only after all success
-    prune_backups(user_root, keep=3, logger=logger)
+    retention_result = prune_backups(
+        user_root,
+        keep=3,
+        protected_backup=bpath,
+        logger=logger,
+    )
+    if not retention_result.get("invariant_satisfied", True):
+        if logger:
+            logger.warning(
+                "backup_retention_debt warnings=%s",
+                ";".join(retention_result.get("warnings", [])) or "unspecified",
+            )
     return None

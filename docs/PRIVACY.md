@@ -24,7 +24,7 @@ Everything is stored under your Windows user profile:
 %LOCALAPPDATA%\AcademicComplianceAuditor\
 ```
 
-Inside: `audit.db` (audit history database), `backups\` (verified backups, three newest retained), `rendered-previews\` (generated page previews), `logs\` (diagnostic logs), and temporary files while running. See [Installation](INSTALLATION.md) for details.
+Inside: `audit.db` (audit history database), `backups\` (verified backups, up to three backup identities retained, including the current upgrade backup and the newest remaining verified backups), `rendered-previews\` (generated page previews), `logs\` (diagnostic logs), and temporary files while running. See [Installation](INSTALLATION.md) for details.
 
 ## Does ACA send information to the internet?
 

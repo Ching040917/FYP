@@ -135,21 +135,21 @@ def test_backup_verification(tmp_path, user_root):
     assert bpath.stat().st_size > 0
 
 def test_retention_three(tmp_path, user_root):
-    # Create 5 backups, prune should keep 3 newest
+    # Create 5 verified backups, prune should keep 3 newest
     bdir = user_root / "backups"
     bdir.mkdir(parents=True, exist_ok=True)
-    import time
     for i in range(5):
-        p = bdir / f"audit.db.rf17a86596071_to_f6a8d19e2b3f2.2025010{i}-abc.bak"
-        p.write_bytes(b"x"*100)
-        # mtime order
+        p = _make_verified_backup_file(bdir, src_rev="f17a86596071", ts=f"2026110{i+1}-120000", rand=f"rand0{i}")
         import os
         os.utime(p, (1000000+i, 1000000+i))
-    dl.prune_backups(user_root, keep=3)
+    res = dl.prune_backups(user_root, keep=3)
+    assert res["invariant_satisfied"] is True
+    assert res["retained_identity_count"] == 3
     assert len(list(bdir.glob("*.bak"))) == 3
     # unrelated files not pruned
     (bdir / "readme.txt").write_text("hi")
-    dl.prune_backups(user_root, keep=3)
+    res2 = dl.prune_backups(user_root, keep=3)
+    assert res2["invariant_satisfied"] is True
     assert (bdir / "readme.txt").exists()
 
 def test_failed_migration_preserves_backups(tmp_path, user_root, monkeypatch):
@@ -566,3 +566,486 @@ def test_exactly_one_valid_final_backup_exists_before_migration(tmp_path, user_r
     assert err is None
     assert migration_started
     assert len(list(bdir.glob("*.bak"))) == 1
+# ===========================================================================
+# B-DB-04 Retention Safety, Verification, and Identity Tests
+# ===========================================================================
+
+def _make_verified_backup_file(
+    bdir: Path,
+    src_rev: str = "f17a86596071",
+    tgt_rev: str = "f6a8d19e2b3f",
+    ts: str = "20261107-120000",
+    rand: str = "abcdef",
+    corrupt: bool = False,
+    bad_rev: bool = False,
+    zero_byte: bool = False,
+    fk_fail: bool = False,
+) -> Path:
+    fname = f"audit.db.r{src_rev}_to_{tgt_rev}.{ts}-{rand}.bak"
+    p = bdir / fname
+    if zero_byte:
+        p.touch()
+        return p
+    if corrupt:
+        p.write_bytes(b"corrupt SQLite data")
+        return p
+    con = sqlite3.connect(str(p))
+    con.execute("CREATE TABLE alembic_version (version_num VARCHAR(32) NOT NULL);")
+    rev_to_insert = "mismatched" if bad_rev else src_rev
+    con.execute("INSERT INTO alembic_version (version_num) VALUES (?);", (rev_to_insert,))
+    if fk_fail:
+        con.execute("CREATE TABLE parent (id INT PRIMARY KEY);")
+        con.execute("CREATE TABLE child (id INT, pid INT, FOREIGN KEY (pid) REFERENCES parent(id));")
+        con.execute("INSERT INTO child VALUES (1, 999);")
+    con.commit()
+    con.close()
+    return p
+
+
+def test_b_db_04_stable_ntfs_identity_validation(tmp_path):
+    f1 = tmp_path / "f1.txt"
+    f1.write_text("test1")
+    f2 = tmp_path / "f2.txt"
+    os.link(f1, f2)
+    s1 = os.lstat(f1)
+    s2 = os.lstat(f2)
+    assert (s1.st_dev, s1.st_ino) == (s2.st_dev, s2.st_ino)
+    assert s1.st_dev != 0 and s1.st_ino != 0
+    f3 = tmp_path / "f3.txt"
+    f3.write_text("test3")
+    s3 = os.lstat(f3)
+    assert (s1.st_dev, s1.st_ino) != (s3.st_dev, s3.st_ino)
+
+
+def test_b_db_04_exact_filename_grammar():
+    valid = "audit.db.rf17a86596071_to_f6a8d19e2b3f.20261107-120000-abcdef.bak"
+    m = dl._BACKUP_FILENAME_RE.match(valid)
+    assert m is not None
+    assert m.group("source_rev") == "f17a86596071"
+    assert m.group("target_rev") == "f6a8d19e2b3f"
+    assert m.group("timestamp") == "20261107-120000"
+    assert m.group("random") == "abcdef"
+
+    invalid_names = [
+        "audit.db.bak",
+        "audit.db.r_to_f6a8d19e2b3f.20261107-120000-abcdef.bak",
+        "audit.db.rf17a86596071_to_.20261107-120000-abcdef.bak",
+        "audit.db.rf17a86596071_to_f6a8d19e2b3f.2026110-120000-abcdef.bak",
+        "audit.db.rf17a86596071_to_f6a8d19e2b3f.20261107-120000-abc.bak",
+        "audit.db.rf17a86596071_to_f6a8d19e2b3f.20261107-120000-abcdef.pending",
+        "prefix_audit.db.rf17a86596071_to_f6a8d19e2b3f.20261107-120000-abcdef.bak",
+    ]
+    for inv in invalid_names:
+        assert dl._BACKUP_FILENAME_RE.match(inv) is None
+
+
+def test_b_db_04_stored_revision_equals_source_rev(user_root):
+    bdir = user_root / "backups"
+    b1 = _make_verified_backup_file(bdir, src_rev="f17a86596071", ts="20261107-120000")
+    res = dl.prune_backups(user_root, keep=3)
+    assert res["verified_identity_count_before"] == 1
+    assert res["retained_identity_count"] == 1
+
+
+def test_b_db_04_stored_revision_may_differ_from_target_rev(user_root):
+    bdir = user_root / "backups"
+    b1 = _make_verified_backup_file(bdir, src_rev="f17a86596071", tgt_rev="diffhead01", ts="20261107-120000")
+    res = dl.prune_backups(user_root, keep=3)
+    assert res["verified_identity_count_before"] == 1
+    assert res["retained_identity_count"] == 1
+
+
+def test_b_db_04_expected_invalid_candidates_not_deleted(user_root):
+    bdir = user_root / "backups"
+    p_mal = bdir / "malformed.bak"
+    p_mal.write_bytes(b"bad")
+    p_zero = _make_verified_backup_file(bdir, ts="20261107-100000", rand="zero01", zero_byte=True)
+    p_corr = _make_verified_backup_file(bdir, ts="20261107-100001", rand="corr01", corrupt=True)
+    p_badrev = _make_verified_backup_file(bdir, ts="20261107-100002", rand="brev01", bad_rev=True)
+    p_fk = _make_verified_backup_file(bdir, ts="20261107-100003", rand="fk0001", fk_fail=True)
+    p_valid = _make_verified_backup_file(bdir, ts="20261107-100004", rand="val001")
+
+    res = dl.prune_backups(user_root, keep=3)
+    assert res["verified_identity_count_before"] == 1
+    assert res["invariant_satisfied"] is True
+    assert p_mal.exists() and p_zero.exists() and p_corr.exists() and p_badrev.exists() and p_fk.exists() and p_valid.exists()
+
+
+def test_b_db_04_operational_ambiguity_causes_zero_deletions(user_root, monkeypatch):
+    bdir = user_root / "backups"
+    p1 = _make_verified_backup_file(bdir, ts="20261107-100000", rand="aaaaaa")
+    p2 = _make_verified_backup_file(bdir, ts="20261107-110000", rand="bbbbbb")
+    p3 = _make_verified_backup_file(bdir, ts="20261107-120000", rand="cccccc")
+    p4 = _make_verified_backup_file(bdir, ts="20261107-130000", rand="dddddd")
+
+    # Simulate discovery stat failure
+    real_lstat = os.lstat
+    def _fake_lstat(path, *args, **kwargs):
+        if Path(path).name == p1.name:
+            raise OSError("Simulated discovery stat failure")
+        return real_lstat(path, *args, **kwargs)
+    monkeypatch.setattr(os, "lstat", _fake_lstat)
+
+    res = dl.prune_backups(user_root, keep=3)
+    assert res["invariant_satisfied"] is False
+    assert res["deleted_identity_count"] == 0
+    assert p1.exists() and p2.exists() and p3.exists() and p4.exists()
+
+
+def test_b_db_04_retention_counts_zero_one_three_four(user_root):
+    bdir = user_root / "backups"
+    # Zero
+    r0 = dl.prune_backups(user_root, keep=3)
+    assert r0["verified_identity_count_before"] == 0
+    assert r0["retained_identity_count"] == 0
+
+    # One
+    b1 = _make_verified_backup_file(bdir, ts="20261107-100000", rand="aaaaaa")
+    r1 = dl.prune_backups(user_root, keep=3)
+    assert r1["verified_identity_count_before"] == 1
+    assert r1["retained_identity_count"] == 1
+
+    # Exactly three
+    b2 = _make_verified_backup_file(bdir, ts="20261107-110000", rand="bbbbbb")
+    b3 = _make_verified_backup_file(bdir, ts="20261107-120000", rand="cccccc")
+    r3 = dl.prune_backups(user_root, keep=3)
+    assert r3["verified_identity_count_before"] == 3
+    assert r3["retained_identity_count"] == 3
+
+    # Four: oldest pruned
+    b4 = _make_verified_backup_file(bdir, ts="20261107-130000", rand="dddddd")
+    r4 = dl.prune_backups(user_root, keep=3)
+    assert r4["verified_identity_count_before"] == 4
+    assert r4["retained_identity_count"] == 3
+    assert not b1.exists()
+    assert b2.exists() and b3.exists() and b4.exists()
+
+
+def test_b_db_04_protected_sorting_first_boundary_outside_top_three(user_root):
+    bdir = user_root / "backups"
+    b_head = dl._get_bundled_head() or "f6a8d19e2b3f"
+    
+    # Protected sorting first (newest)
+    p_newest = _make_verified_backup_file(bdir, tgt_rev=b_head, ts="20261107-140000", rand="pnew01")
+    b1 = _make_verified_backup_file(bdir, ts="20261107-110000", rand="old001")
+    b2 = _make_verified_backup_file(bdir, ts="20261107-120000", rand="old002")
+    b3 = _make_verified_backup_file(bdir, ts="20261107-130000", rand="old003")
+    r_first = dl.prune_backups(user_root, keep=3, protected_backup=p_newest)
+    assert r_first["protected_override"] is False
+    assert p_newest.exists()
+
+    # Protected sorting at boundary (3rd of 4)
+    # Clear bdir
+    for f in bdir.glob("*.bak"): f.unlink()
+    p_mid = _make_verified_backup_file(bdir, tgt_rev=b_head, ts="20261107-120000", rand="pmid01")
+    b_older = _make_verified_backup_file(bdir, ts="20261107-110000", rand="bold01")
+    b_newer1 = _make_verified_backup_file(bdir, ts="20261107-130000", rand="bnew01")
+    b_newer2 = _make_verified_backup_file(bdir, ts="20261107-140000", rand="bnew02")
+    r_mid = dl.prune_backups(user_root, keep=3, protected_backup=p_mid)
+    assert r_mid["protected_override"] is False
+    assert p_mid.exists()
+    assert not b_older.exists()
+
+    # Protected sorting outside top three (oldest of 4 due to clock skew)
+    for f in bdir.glob("*.bak"): f.unlink()
+    p_oldest = _make_verified_backup_file(bdir, tgt_rev=b_head, ts="20261107-090000", rand="pold01")
+    f1 = _make_verified_backup_file(bdir, ts="20261107-110000", rand="f00001")
+    f2 = _make_verified_backup_file(bdir, ts="20261107-120000", rand="f00002")
+    f3 = _make_verified_backup_file(bdir, ts="20261107-130000", rand="f00003")
+    r_outside = dl.prune_backups(user_root, keep=3, protected_backup=p_oldest)
+    assert r_outside["protected_override"] is True
+    assert p_oldest.exists()
+    assert not f1.exists()  # oldest non-protected pruned
+    assert f2.exists() and f3.exists()
+
+
+def test_b_db_04_protected_aliases_count_once_and_retained(user_root):
+    bdir = user_root / "backups"
+    b_head = dl._get_bundled_head() or "f6a8d19e2b3f"
+    pb = _make_verified_backup_file(bdir, tgt_rev=b_head, ts="20261107-120000", rand="prot01")
+    pb_alias = bdir / f"audit.db.rf17a86596071_to_{b_head}.20261107-120000-alias1.bak"
+    os.link(pb, pb_alias)
+
+    b1 = _make_verified_backup_file(bdir, ts="20261107-100000", rand="other1")
+    b2 = _make_verified_backup_file(bdir, ts="20261107-110000", rand="other2")
+
+    res = dl.prune_backups(user_root, keep=3, protected_backup=pb)
+    assert res["verified_identity_count_before"] == 3
+    assert res["retained_identity_count"] == 3
+    assert pb.exists() and pb_alias.exists()
+
+
+def test_b_db_04_retained_non_protected_aliases_count_once(user_root):
+    bdir = user_root / "backups"
+    b1 = _make_verified_backup_file(bdir, ts="20261107-120000", rand="base01")
+    b1_alias = bdir / "audit.db.rf17a86596071_to_f6a8d19e2b3f.20261107-120000-alias2.bak"
+    os.link(b1, b1_alias)
+
+    b2 = _make_verified_backup_file(bdir, ts="20261107-110000", rand="base02")
+
+    res = dl.prune_backups(user_root, keep=3)
+    assert res["verified_identity_count_before"] == 2
+    assert res["retained_identity_count"] == 2
+    assert b1.exists() and b1_alias.exists() and b2.exists()
+
+
+def test_b_db_04_multipath_deletion_candidate_aborts(user_root):
+    bdir = user_root / "backups"
+    # Create 3 newer files and 1 oldest file with 2 aliases (deletion candidate)
+    b_del = _make_verified_backup_file(bdir, ts="20261107-090000", rand="del001")
+    b_del_alias = bdir / "audit.db.rf17a86596071_to_f6a8d19e2b3f.20261107-090000-del002.bak"
+    os.link(b_del, b_del_alias)
+
+    b1 = _make_verified_backup_file(bdir, ts="20261107-110000", rand="new001")
+    b2 = _make_verified_backup_file(bdir, ts="20261107-120000", rand="new002")
+    b3 = _make_verified_backup_file(bdir, ts="20261107-130000", rand="new003")
+
+    res = dl.prune_backups(user_root, keep=3)
+    assert res["alias_ambiguity_count"] == 1
+    assert res["invariant_satisfied"] is False
+    assert res["deleted_identity_count"] == 0
+    assert res["deleted_path_count"] == 0
+    # Verifies neither alias was arbitrarily deleted, and no all-alias deletion
+    assert b_del.exists() and b_del_alias.exists()
+
+
+def test_b_db_04_candidate_replacement_before_unlink_stops(user_root, monkeypatch):
+    bdir = user_root / "backups"
+    b_del = _make_verified_backup_file(bdir, ts="20261107-090000", rand="delrep")
+    b1 = _make_verified_backup_file(bdir, ts="20261107-110000", rand="keep01")
+    b2 = _make_verified_backup_file(bdir, ts="20261107-120000", rand="keep02")
+    b3 = _make_verified_backup_file(bdir, ts="20261107-130000", rand="keep03")
+
+    # Tamper with file identity immediately before unlink
+    real_lstat = os.lstat
+    calls = 0
+    def _fake_lstat(path, *args, **kwargs):
+        nonlocal calls
+        st = real_lstat(path, *args, **kwargs)
+        if Path(path).name == b_del.name:
+            calls += 1
+            if calls > 1:
+                class FakeStat:
+                    st_dev = st.st_dev
+                    st_ino = st.st_ino + 9999
+                    st_size = st.st_size
+                    st_mtime_ns = st.st_mtime_ns
+                    st_mode = st.st_mode
+                return FakeStat()
+        return st
+    monkeypatch.setattr(os, "lstat", _fake_lstat)
+
+    res = dl.prune_backups(user_root, keep=3)
+    assert res["invariant_satisfied"] is False
+    assert res["deleted_identity_count"] == 0
+    assert b_del.exists()
+
+
+def test_b_db_04_candidate_changed_to_symlink_stops(user_root, monkeypatch):
+    bdir = user_root / "backups"
+    b_del = _make_verified_backup_file(bdir, ts="20261107-090000", rand="delsym")
+    b1 = _make_verified_backup_file(bdir, ts="20261107-110000", rand="keep01")
+    b2 = _make_verified_backup_file(bdir, ts="20261107-120000", rand="keep02")
+    b3 = _make_verified_backup_file(bdir, ts="20261107-130000", rand="keep03")
+
+    calls_sym = 0
+    def _fake_symlink(self):
+        nonlocal calls_sym
+        if self.name == b_del.name:
+            calls_sym += 1
+            return calls_sym > 1
+        return False
+    monkeypatch.setattr(Path, "is_symlink", _fake_symlink)
+    res = dl.prune_backups(user_root, keep=3)
+    assert res["invariant_satisfied"] is False
+    assert res["deleted_identity_count"] == 0
+    assert b_del.exists()
+
+
+def test_b_db_04_preunlink_lstat_failure_stops(user_root, monkeypatch):
+    bdir = user_root / "backups"
+    b_del = _make_verified_backup_file(bdir, ts="20261107-090000", rand="delsta")
+    b1 = _make_verified_backup_file(bdir, ts="20261107-110000", rand="keep01")
+    b2 = _make_verified_backup_file(bdir, ts="20261107-120000", rand="keep02")
+    b3 = _make_verified_backup_file(bdir, ts="20261107-130000", rand="keep03")
+
+    real_lstat = os.lstat
+    calls = 0
+    def _faulty_lstat(path, *args, **kwargs):
+        nonlocal calls
+        if Path(path).name == b_del.name:
+            calls += 1
+            if calls > 1:
+                raise OSError("Pre-unlink lstat permission error")
+        return real_lstat(path, *args, **kwargs)
+    monkeypatch.setattr(os, "lstat", _faulty_lstat)
+
+    res = dl.prune_backups(user_root, keep=3)
+    assert res["invariant_satisfied"] is False
+    assert res["deleted_identity_count"] == 0
+    assert b_del.exists()
+
+
+def test_b_db_04_unlink_failure_sets_invariant_false(user_root, monkeypatch):
+    bdir = user_root / "backups"
+    b_del = _make_verified_backup_file(bdir, ts="20261107-090000", rand="delfa1")
+    b1 = _make_verified_backup_file(bdir, ts="20261107-110000", rand="keep01")
+    b2 = _make_verified_backup_file(bdir, ts="20261107-120000", rand="keep02")
+    b3 = _make_verified_backup_file(bdir, ts="20261107-130000", rand="keep03")
+
+    monkeypatch.setattr(Path, "unlink", lambda self: (_ for _ in ()).throw(PermissionError("Locked")))
+
+    res = dl.prune_backups(user_root, keep=3)
+    assert res["invariant_satisfied"] is False
+    assert res["deleted_path_count"] == 0
+    assert res["deleted_identity_count"] == 0
+    assert b_del.exists()
+
+
+def test_b_db_04_postunlink_alias_discovery_stops(user_root, monkeypatch):
+    bdir = user_root / "backups"
+    b_del = _make_verified_backup_file(bdir, ts="20261107-090000", rand="delpos")
+    b1 = _make_verified_backup_file(bdir, ts="20261107-110000", rand="keep01")
+    b2 = _make_verified_backup_file(bdir, ts="20261107-120000", rand="keep02")
+    b3 = _make_verified_backup_file(bdir, ts="20261107-130000", rand="keep03")
+
+    # Simulate discovery of a lingering alias post-unlink
+    target_id = (os.lstat(b_del).st_dev, os.lstat(b_del).st_ino)
+    real_iterdir = Path.iterdir
+    def _fake_iterdir(self):
+        entries = list(real_iterdir(self))
+        if self == bdir:
+            # create fake alias entry
+            fake = bdir / "audit.db.rf17a86596071_to_f6a8d19e2b3f.20261107-090000-ghost1.bak"
+            fake.touch()
+            entries.append(fake)
+        return entries
+    
+    real_lstat = os.lstat
+    def _fake_lstat(path, *args, **kwargs):
+        if Path(path).name.endswith("ghost1.bak"):
+            class GhostStat:
+                st_dev = target_id[0]
+                st_ino = target_id[1]
+            return GhostStat()
+        return real_lstat(path, *args, **kwargs)
+
+    # Apply only after unlink
+    real_unlink = Path.unlink
+    def _hooked_unlink(self):
+        real_unlink(self)
+        monkeypatch.setattr(Path, "iterdir", _fake_iterdir)
+        monkeypatch.setattr(os, "lstat", _fake_lstat)
+    monkeypatch.setattr(Path, "unlink", _hooked_unlink)
+
+    res = dl.prune_backups(user_root, keep=3)
+    assert res["deleted_path_count"] == 1
+    assert res["deleted_identity_count"] == 0
+    assert res["invariant_satisfied"] is False
+
+
+def test_b_db_04_partial_deletion_accounting(user_root, monkeypatch):
+    bdir = user_root / "backups"
+    b_del1 = _make_verified_backup_file(bdir, ts="20261107-080000", rand="del001")
+    b_del2 = _make_verified_backup_file(bdir, ts="20261107-090000", rand="del002")
+    b1 = _make_verified_backup_file(bdir, ts="20261107-110000", rand="keep01")
+    b2 = _make_verified_backup_file(bdir, ts="20261107-120000", rand="keep02")
+    b3 = _make_verified_backup_file(bdir, ts="20261107-130000", rand="keep03")
+
+    real_unlink = Path.unlink
+    unlinked = 0
+    def _one_then_fail_unlink(self):
+        nonlocal unlinked
+        if unlinked == 0:
+            unlinked += 1
+            real_unlink(self)
+        else:
+            raise OSError("Second unlink failed")
+    monkeypatch.setattr(Path, "unlink", _one_then_fail_unlink)
+
+    res = dl.prune_backups(user_root, keep=3)
+    assert res["deleted_path_count"] == 1
+    assert res["deleted_identity_count"] == 1
+    assert res["invariant_satisfied"] is False
+    assert not b_del2.exists()
+    assert b_del1.exists()
+
+
+def test_b_db_04_deterministic_equal_timestamp_ordering(user_root):
+    bdir = user_root / "backups"
+    # Same timestamp, different filenames
+    b_a = _make_verified_backup_file(bdir, ts="20261107-100000", rand="aaaaaa")
+    b_b = _make_verified_backup_file(bdir, ts="20261107-100000", rand="bbbbbb")
+    import os
+    os.utime(b_a, (2000, 2000))
+    os.utime(b_b, (2000, 2000))
+    b1 = _make_verified_backup_file(bdir, ts="20261107-110000", rand="keep01")
+    b2 = _make_verified_backup_file(bdir, ts="20261107-120000", rand="keep02")
+
+    # b_a sorts before b_b alphabetically, so with keep=3, b_b is oldest and unlinked
+    res = dl.prune_backups(user_root, keep=3)
+    assert res["invariant_satisfied"] is True
+    assert b_a.exists()
+    assert not b_b.exists()
+
+
+def test_b_db_04_invalid_keep_causes_zero_deletion(user_root):
+    bdir = user_root / "backups"
+    b1 = _make_verified_backup_file(bdir, ts="20261107-100000", rand="aaaaaa")
+    for inv in [0, -1, "3", True, 2.5]:
+        res = dl.prune_backups(user_root, keep=inv)
+        assert res["invariant_satisfied"] is False
+        assert res["deleted_identity_count"] == 0
+        assert b1.exists()
+
+
+def test_b_db_04_safe_idempotent_retry(user_root):
+    bdir = user_root / "backups"
+    b1 = _make_verified_backup_file(bdir, ts="20261107-100000", rand="aaaaaa")
+    b2 = _make_verified_backup_file(bdir, ts="20261107-110000", rand="bbbbbb")
+    b3 = _make_verified_backup_file(bdir, ts="20261107-120000", rand="cccccc")
+    b4 = _make_verified_backup_file(bdir, ts="20261107-130000", rand="dddddd")
+
+    r1 = dl.prune_backups(user_root, keep=3)
+    assert r1["deleted_identity_count"] == 1
+    assert r1["retained_identity_count"] == 3
+
+    r2 = dl.prune_backups(user_root, keep=3)
+    assert r2["deleted_identity_count"] == 0
+    assert r2["retained_identity_count"] == 3
+    assert r2["invariant_satisfied"] is True
+
+
+def test_b_db_04_caller_logs_debt_without_failing_migration(tmp_path, user_root, monkeypatch):
+    db, url = _make_old_db(tmp_path, _OLD_REV)
+    bdir = user_root / "backups"
+
+    # Plant a multi-path deletion candidate in bdir so retention encounters alias ambiguity
+    b_del = _make_verified_backup_file(bdir, ts="20261107-080000", rand="del001")
+    b_del_alias = bdir / "audit.db.rf17a86596071_to_f6a8d19e2b3f.20261107-080000-del002.bak"
+    os.link(b_del, b_del_alias)
+    _make_verified_backup_file(bdir, ts="20261107-090000", rand="del003")
+    _make_verified_backup_file(bdir, ts="20261107-100000", rand="del004")
+
+    logged_warnings = []
+    class MockLogger:
+        def info(self, *a, **k): pass
+        def warning(self, msg, *a, **k):
+            logged_warnings.append(msg % a if a else msg)
+
+    err = dl.upgrade_existing_database(db, url, user_root, logger=MockLogger())
+    assert err is None  # Migration itself succeeded!
+    assert any("backup_retention_debt" in w for w in logged_warnings)
+
+
+def test_b_db_04_documentation_wording():
+    doc_path = Path(__file__).resolve().parents[2] / "docs" / "PRIVACY.md"
+    assert doc_path.exists()
+    content = doc_path.read_text(encoding="utf-8")
+    expected = "verified backups, up to three backup identities retained, including the current upgrade backup and the newest remaining verified backups"
+    assert expected in content
+
+
+def test_b_db_04_b_db_05_boundary_preserved(user_root):
+    bdir = dl._backup_dir(user_root)
+    assert bdir == user_root / "backups"
