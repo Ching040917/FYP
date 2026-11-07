@@ -33,6 +33,18 @@ ACA also shows this message when a completed database upgrade could not be verif
 6. Follow only the documented recovery procedure from the project owner. Do not use unlisted SQLite commands.
 
 Diagnostic information for support is in the `logs` folder inside the same application data folder.
+## ACA cannot safely access its data folder
+
+### What it means
+
+ACA could not access or create its local application data folder (under `%LOCALAPPDATA%\AcademicComplianceAuditor`). Startup stopped to protect your data rather than creating temporary replacement data in an ephemeral location, and existing data is not silently replaced.
+
+### What to do
+
+1. Ensure that your Windows user profile folder is accessible and that you have normal read and write permissions to `%LOCALAPPDATA%`.
+2. Check that `%LOCALAPPDATA%\AcademicComplianceAuditor` is not locked by another program and has not been replaced by a regular file or link.
+3. Restart your computer and start ACA again from the Start Menu.
+4. If startup continues to fail, contact support or your project evaluator.
 
 ## Browser does not open
 

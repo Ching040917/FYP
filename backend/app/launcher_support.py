@@ -5,6 +5,7 @@ import json
 import logging
 import logging.handlers
 import os
+import sys
 import tempfile
 import time
 import urllib.request
@@ -22,42 +23,152 @@ LOG_BACKUP_COUNT = 5
 _kernel32 = ctypes.windll.kernel32 if os.name == "nt" else None
 
 
-def get_user_data_root():
-    local = os.environ.get("LOCALAPPDATA")
-    if local:
-        cand = Path(local) / APP_NAME
+class RootResolutionError(RuntimeError):
+    """Raised when canonical user data root cannot be safely resolved or validated."""
+
+    def __init__(self, code: str, message: str):
+        super().__init__(message)
+        self.code = code
+        self.message = message
+
+
+class ApprovedRoot:
+    __slots__ = ("path", "dev", "ino")
+
+    def __init__(self, path: Path, dev: int, ino: int):
+        self.path = path
+        self.dev = dev
+        self.ino = ino
+
+    def __iter__(self):
+        return iter((self.path, self.dev, self.ino))
+
+
+def get_user_data_root(candidate: Path | str | None = None) -> ApprovedRoot:
+    """Resolve and validate the canonical user data root.
+
+    Creates only the canonical product root on valid first run. Eliminates
+    all temporary, HOME, and CWD fallbacks, and fails closed when the durable
+    root cannot be safely verified.
+    """
+    if candidate is None:
+        override_env = os.environ.get("ACA_USER_DATA_DIR")
+        if override_env and override_env.strip():
+            candidate = override_env.strip()
+        else:
+            local = os.environ.get("LOCALAPPDATA")
+            if not local or not local.strip():
+                raise RootResolutionError("missing_localappdata", "LOCALAPPDATA environment variable is missing or empty.")
+            cand_local = Path(local.strip())
+            if not cand_local.is_absolute():
+                raise RootResolutionError("relative_localappdata", "LOCALAPPDATA must be an absolute path.")
+            candidate = cand_local / APP_NAME
+
+    p = Path(candidate)
+    if not p.is_absolute():
+        raise RootResolutionError("relative_candidate_root", "User data root must be an absolute path.")
+
+    norm_path = p.resolve()
+    parent = norm_path.parent
+    if not parent.exists():
+        raise RootResolutionError("missing_parent_directory", "Parent directory for user data root does not exist.")
+    if not parent.is_dir() or parent.is_symlink():
+        raise RootResolutionError("invalid_parent_directory", "Parent directory is not a real directory or is a symlink.")
+
+    if norm_path.exists():
+        if norm_path.is_file():
+            raise RootResolutionError("root_is_a_file", "User data root path is an existing regular file.")
+        if norm_path.is_symlink() or not norm_path.is_dir():
+            raise RootResolutionError("root_not_a_dir", "User data root path is a symlink, reparse point, or not a directory.")
+    else:
         try:
-            cand.mkdir(parents=True, exist_ok=True)
-            probe = cand / ".writable_probe"
-            probe.write_text("ok", encoding="utf-8")
-            probe.unlink(missing_ok=True)
-            for sub in ("poc", "rendered-previews", "logs", "tmp"):
-                (cand / sub).mkdir(parents=True, exist_ok=True)
-            return cand, False, None
-        except Exception:
-            pass
+            norm_path.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            raise RootResolutionError("root_creation_failed", f"Could not create canonical user data root: {type(e).__name__}")
+
+    probe = norm_path / ".writable_probe"
     try:
-        sess = Path(tempfile.mkdtemp(prefix=f"{APP_NAME}_"))
-        for sub in ("poc", "rendered-previews", "logs", "tmp"):
-            (sess / sub).mkdir(parents=True, exist_ok=True)
-        return sess, True, "Using a temporary data location for this session."
-    except Exception:
-        fb = Path(tempfile.gettempdir()) / f"{APP_NAME}_fallback"
-        fb.mkdir(parents=True, exist_ok=True)
-        for sub in ("poc", "rendered-previews", "logs", "tmp"):
-            (fb / sub).mkdir(parents=True, exist_ok=True)
-        return fb, True, "Using a temporary data location for this session."
+        probe.write_text("ok", encoding="utf-8")
+        probe.unlink(missing_ok=True)
+    except Exception as e:
+        raise RootResolutionError("root_unwritable", f"Canonical user data root is not writable: {type(e).__name__}")
+
+    try:
+        st = os.lstat(norm_path)
+    except OSError as e:
+        raise RootResolutionError("root_stat_failed", f"Failed to stat canonical user data root: {type(e).__name__}")
+
+    if norm_path.is_symlink() or not norm_path.is_dir():
+        raise RootResolutionError("root_symlink_or_non_dir", "Canonical user data root is a symlink or non-directory.")
+
+    dev = st.st_dev
+    ino = st.st_ino
+    if dev == 0 or ino == 0:
+        raise RootResolutionError("root_identity_zero", "Canonical user data root returned zero identity.")
+
+    return ApprovedRoot(norm_path, dev, ino)
 
 
 def _sqlite_url(db_path: Path) -> str:
     return f"sqlite:///{db_path.as_posix()}"
 
 
-def configure_launcher_environment(root: Path):
-    db_path = root / "audit.db"
-    os.environ["DATABASE_URL"] = _sqlite_url(db_path)
-    os.environ["PREVIEW_STORAGE_DIR"] = str(root / "rendered-previews")
+def configure_launcher_environment(approved_root: ApprovedRoot | Path):
+    if isinstance(approved_root, ApprovedRoot):
+        root_path = approved_root.path
+        dev = approved_root.dev
+        ino = approved_root.ino
+    else:
+        root_path = Path(approved_root).resolve()
+        st = os.lstat(root_path)
+        dev = st.st_dev
+        ino = st.st_ino
 
+    db_path = root_path / "audit.db"
+    os.environ["DATABASE_URL"] = _sqlite_url(db_path)
+    os.environ["PREVIEW_STORAGE_DIR"] = str(root_path / "rendered-previews")
+    os.environ["ACA_APPROVED_DATA_ROOT"] = str(root_path)
+    os.environ["ACA_APPROVED_DATA_ROOT_DEV"] = str(dev)
+    os.environ["ACA_APPROVED_DATA_ROOT_INO"] = str(ino)
+
+
+def revalidate_child_approved_root() -> ApprovedRoot:
+    root_str = os.environ.get("ACA_APPROVED_DATA_ROOT")
+    dev_str = os.environ.get("ACA_APPROVED_DATA_ROOT_DEV")
+    ino_str = os.environ.get("ACA_APPROVED_DATA_ROOT_INO")
+
+    is_frozen = getattr(sys, "frozen", False)
+    if not root_str or not dev_str or not ino_str:
+        if is_frozen:
+            raise RootResolutionError("missing_approval_fields", "Packaged backend child missing required approval environment.")
+        return get_user_data_root()
+
+    try:
+        dev = int(dev_str)
+        ino = int(ino_str)
+    except (ValueError, TypeError):
+        raise RootResolutionError("malformed_approval_identity", "Backend child received malformed approval identity.")
+
+    if dev <= 0 or ino <= 0:
+        raise RootResolutionError("zero_approval_identity", "Backend child received zero or negative approval identity.")
+
+    p = Path(root_str)
+    if not p.is_absolute():
+        raise RootResolutionError("relative_approval_path", "Approved root must be an absolute path.")
+
+    norm_path = p.resolve()
+    try:
+        st = os.lstat(norm_path)
+    except OSError as e:
+        raise RootResolutionError("child_lstat_failed", f"Child failed to stat approved root: {type(e).__name__}")
+
+    if norm_path.is_symlink() or not norm_path.is_dir():
+        raise RootResolutionError("child_root_not_dir", "Approved root is not a real directory or is a symlink.")
+
+    if st.st_dev != dev or st.st_ino != ino:
+        raise RootResolutionError("identity_mismatch", "Child observed root identity does not match launcher approval.")
+
+    return ApprovedRoot(norm_path, dev, ino)
 
 def get_log_dir(root: Path) -> Path:
     return root / "logs"

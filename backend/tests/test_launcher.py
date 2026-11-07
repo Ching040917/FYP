@@ -13,12 +13,13 @@ import app.launcher_support as ls
 
 def test_user_data_layout(tmp_path, monkeypatch):
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
-    root, fallback, warn = ls.get_user_data_root()
-    assert (root / "poc").is_dir()
-    assert (root / "rendered-previews").is_dir()
-    assert (root / "logs").is_dir()
-    assert fallback is False
-    assert warn is None
+    approved = ls.get_user_data_root()
+    root = approved.path
+    assert root.is_dir()
+    assert not (root / "poc").exists()
+    assert not (root / "rendered-previews").exists()
+    assert not (root / "logs").exists()
+    assert approved.dev != 0 and approved.ino != 0
 
 
 def test_env_set_before_import(tmp_path, monkeypatch):
@@ -31,10 +32,8 @@ def test_env_set_before_import(tmp_path, monkeypatch):
 
 def test_localappdata_fallback(monkeypatch, tmp_path):
     monkeypatch.delenv("LOCALAPPDATA", raising=False)
-    # create unreadable dir would be complex; just verify fallback doesn't crash
-    root, fallback, warn = ls.get_user_data_root()
-    # either fallback True or uses tmp
-    assert root.exists()
+    with pytest.raises(ls.RootResolutionError):
+        ls.get_user_data_root()
 
 
 def test_loopback_only_binding():
@@ -352,3 +351,228 @@ def test_browser_open_after_health():
     # health_ok gates write_instance and open_browser
     assert "if health_ok:" in text
     assert text.find("check_health") < text.find("open_browser")
+# ===========================================================================
+# B-DB-05 Root Safety, Canonical Resolution, and Propagation Tests
+# ===========================================================================
+
+def test_b_db_05_valid_first_run_creates_only_product_root(tmp_path, monkeypatch):
+    localappdata = tmp_path / "localappdata"
+    localappdata.mkdir()
+    monkeypatch.setenv("LOCALAPPDATA", str(localappdata))
+    approved = ls.get_user_data_root()
+    root = approved.path
+    assert root.is_dir()
+    assert root.parent == localappdata.resolve()
+    # No unrelated child subdirectories created by root resolution
+    assert not (root / "poc").exists()
+    assert not (root / "rendered-previews").exists()
+    assert not (root / "logs").exists()
+    assert not (root / "tmp").exists()
+    assert not (root / "backups").exists()
+    assert not (root / ".writable_probe").exists()
+
+
+def test_b_db_05_existing_canonical_root_reused(tmp_path, monkeypatch):
+    localappdata = tmp_path / "localappdata"
+    localappdata.mkdir()
+    prod_root = localappdata / ls.APP_NAME
+    prod_root.mkdir()
+    monkeypatch.setenv("LOCALAPPDATA", str(localappdata))
+    approved = ls.get_user_data_root()
+    assert approved.path == prod_root.resolve()
+
+
+def test_b_db_05_missing_empty_relative_localappdata_fail_closed(monkeypatch):
+    monkeypatch.delenv("LOCALAPPDATA", raising=False)
+    with pytest.raises(ls.RootResolutionError) as exc_info:
+        ls.get_user_data_root()
+    assert exc_info.value.code == "missing_localappdata"
+
+    monkeypatch.setenv("LOCALAPPDATA", "   ")
+    with pytest.raises(ls.RootResolutionError) as exc_info:
+        ls.get_user_data_root()
+    assert exc_info.value.code == "missing_localappdata"
+
+    monkeypatch.setenv("LOCALAPPDATA", "relative/path")
+    with pytest.raises(ls.RootResolutionError) as exc_info:
+        ls.get_user_data_root()
+    assert exc_info.value.code == "relative_localappdata"
+
+
+def test_b_db_05_unwritable_parent_fails_closed(tmp_path, monkeypatch):
+    parent = tmp_path / "missing_parent" / "sub"
+    # parent does not exist
+    monkeypatch.setenv("LOCALAPPDATA", str(parent))
+    with pytest.raises(ls.RootResolutionError) as exc_info:
+        ls.get_user_data_root()
+    assert exc_info.value.code == "missing_parent_directory"
+
+
+def test_b_db_05_product_root_is_a_file_fails_closed(tmp_path, monkeypatch):
+    localappdata = tmp_path / "localappdata"
+    localappdata.mkdir()
+    prod_file = localappdata / ls.APP_NAME
+    prod_file.write_text("not a directory")
+    monkeypatch.setenv("LOCALAPPDATA", str(localappdata))
+    with pytest.raises(ls.RootResolutionError) as exc_info:
+        ls.get_user_data_root()
+    assert exc_info.value.code == "root_is_a_file"
+
+
+def test_b_db_05_symlink_root_fails_closed(tmp_path, monkeypatch):
+    localappdata = tmp_path / "localappdata"
+    localappdata.mkdir()
+    monkeypatch.setenv("LOCALAPPDATA", str(localappdata))
+    monkeypatch.setattr(pathlib.Path, "is_symlink", lambda self: self.name == ls.APP_NAME)
+    with pytest.raises(ls.RootResolutionError) as exc_info:
+        ls.get_user_data_root()
+    assert exc_info.value.code in ("root_not_a_dir", "root_symlink_or_non_dir")
+
+
+def test_b_db_05_no_tempfile_home_or_cwd_fallback(monkeypatch, tmp_path):
+    monkeypatch.delenv("LOCALAPPDATA", raising=False)
+    monkeypatch.delenv("ACA_USER_DATA_DIR", raising=False)
+    with pytest.raises(ls.RootResolutionError):
+        ls.get_user_data_root()
+
+
+def test_b_db_05_path_dev_ino_propagation(tmp_path, monkeypatch):
+    localappdata = tmp_path / "localappdata"
+    localappdata.mkdir()
+    monkeypatch.setenv("LOCALAPPDATA", str(localappdata))
+    approved = ls.get_user_data_root()
+    ls.configure_launcher_environment(approved)
+    assert os.environ["ACA_APPROVED_DATA_ROOT"] == str(approved.path)
+    assert os.environ["ACA_APPROVED_DATA_ROOT_DEV"] == str(approved.dev)
+    assert os.environ["ACA_APPROVED_DATA_ROOT_INO"] == str(approved.ino)
+
+
+def test_b_db_05_child_accepts_matching_path_and_identity(tmp_path, monkeypatch):
+    localappdata = tmp_path / "localappdata"
+    localappdata.mkdir()
+    monkeypatch.setenv("LOCALAPPDATA", str(localappdata))
+    approved = ls.get_user_data_root()
+    ls.configure_launcher_environment(approved)
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    child_approved = ls.revalidate_child_approved_root()
+    assert child_approved.path == approved.path
+    assert child_approved.dev == approved.dev
+    assert child_approved.ino == approved.ino
+
+
+def test_b_db_05_path_equal_identity_mismatch_rejected_before_db_access(tmp_path, monkeypatch):
+    localappdata = tmp_path / "localappdata"
+    localappdata.mkdir()
+    monkeypatch.setenv("LOCALAPPDATA", str(localappdata))
+    approved = ls.get_user_data_root()
+    ls.configure_launcher_environment(approved)
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setenv("ACA_APPROVED_DATA_ROOT_INO", str(approved.ino + 8888))
+    with pytest.raises(ls.RootResolutionError) as exc_info:
+        ls.revalidate_child_approved_root()
+    assert exc_info.value.code == "identity_mismatch"
+
+
+def test_b_db_05_missing_dev_or_ino_rejected(tmp_path, monkeypatch):
+    localappdata = tmp_path / "localappdata"
+    localappdata.mkdir()
+    monkeypatch.setenv("LOCALAPPDATA", str(localappdata))
+    approved = ls.get_user_data_root()
+    ls.configure_launcher_environment(approved)
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.delenv("ACA_APPROVED_DATA_ROOT_DEV")
+    with pytest.raises(ls.RootResolutionError) as exc_info:
+        ls.revalidate_child_approved_root()
+    assert exc_info.value.code == "missing_approval_fields"
+
+
+def test_b_db_05_malformed_zero_or_negative_identity_rejected(tmp_path, monkeypatch):
+    localappdata = tmp_path / "localappdata"
+    localappdata.mkdir()
+    monkeypatch.setenv("LOCALAPPDATA", str(localappdata))
+    approved = ls.get_user_data_root()
+    ls.configure_launcher_environment(approved)
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+
+    monkeypatch.setenv("ACA_APPROVED_DATA_ROOT_DEV", "0")
+    with pytest.raises(ls.RootResolutionError) as exc_info:
+        ls.revalidate_child_approved_root()
+    assert exc_info.value.code == "zero_approval_identity"
+
+    monkeypatch.setenv("ACA_APPROVED_DATA_ROOT_DEV", "not_a_number")
+    with pytest.raises(ls.RootResolutionError) as exc_info:
+        ls.revalidate_child_approved_root()
+    assert exc_info.value.code == "malformed_approval_identity"
+
+
+def test_b_db_05_missing_approval_provenance_rejected_in_packaged_mode(monkeypatch):
+    monkeypatch.delenv("ACA_APPROVED_DATA_ROOT", raising=False)
+    monkeypatch.delenv("ACA_APPROVED_DATA_ROOT_DEV", raising=False)
+    monkeypatch.delenv("ACA_APPROVED_DATA_ROOT_INO", raising=False)
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    with pytest.raises(ls.RootResolutionError) as exc_info:
+        ls.revalidate_child_approved_root()
+    assert exc_info.value.code == "missing_approval_fields"
+
+
+def test_b_db_05_child_never_calls_root_selection():
+    text = pathlib.Path("frozen_main.py").read_text(encoding="utf-8")
+    backend_idx = text.find("def _backend():")
+    assert backend_idx != -1
+    backend_body = text[backend_idx:]
+    assert "revalidate_child_approved_root" in backend_body
+    assert "get_user_data_root" not in backend_body
+
+
+def test_b_db_05_root_replaced_by_symlink_rejected(tmp_path, monkeypatch):
+    localappdata = tmp_path / "localappdata"
+    localappdata.mkdir()
+    monkeypatch.setenv("LOCALAPPDATA", str(localappdata))
+    approved = ls.get_user_data_root()
+    ls.configure_launcher_environment(approved)
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(pathlib.Path, "is_symlink", lambda self: True)
+    with pytest.raises(ls.RootResolutionError) as exc_info:
+        ls.revalidate_child_approved_root()
+    assert exc_info.value.code == "child_root_not_dir"
+
+
+def test_b_db_05_guided_fix_never_falls_back_to_home(monkeypatch):
+    import app.services.guided_fix_storage as gfs
+    monkeypatch.delenv("ACA_APPROVED_DATA_ROOT", raising=False)
+    monkeypatch.delenv("LOCALAPPDATA", raising=False)
+    monkeypatch.delenv("ACA_USER_DATA_DIR", raising=False)
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    with pytest.raises(OSError):
+        gfs.storage_root()
+
+
+def test_b_db_05_cwd_independence(tmp_path, monkeypatch):
+    localappdata = tmp_path / "localappdata"
+    localappdata.mkdir()
+    monkeypatch.setenv("LOCALAPPDATA", str(localappdata))
+    approved1 = ls.get_user_data_root()
+    # Change working directory
+    sub = tmp_path / "other_dir"
+    sub.mkdir()
+    monkeypatch.chdir(sub)
+    approved2 = ls.get_user_data_root()
+    assert approved1.path == approved2.path
+    assert approved1.dev == approved2.dev and approved1.ino == approved2.ino
+
+
+def test_b_db_05_mutex_released_on_launcher_root_failure(monkeypatch):
+    import frozen_main
+    monkeypatch.delenv("LOCALAPPDATA", raising=False)
+    monkeypatch.delenv("ACA_USER_DATA_DIR", raising=False)
+    # _launcher returns 1 and releases mutex cleanly without leak
+    rc = frozen_main._launcher()
+    assert rc == 1
+
+
+def test_b_db_05_documentation_wording():
+    doc_path = pathlib.Path(__file__).resolve().parents[2] / "docs" / "TROUBLESHOOTING.md"
+    assert doc_path.exists()
+    content = doc_path.read_text(encoding="utf-8")
+    assert "ACA cannot safely access its data folder" in content
+    assert "Startup stopped to protect your data rather than creating temporary replacement data" in content

@@ -8,6 +8,7 @@ import hashlib
 import os
 import secrets
 import stat
+import sys
 import threading
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -43,11 +44,31 @@ class DownloadWrongAuditError(PermissionError):
 def storage_root() -> Path:
     configured = (settings.GUIDED_FIX_STORAGE_DIR or "").strip()
     if configured:
-        return Path(configured)
+        p = Path(configured)
+        if not p.is_absolute():
+            raise OSError("GUIDED_FIX_STORAGE_DIR must be an absolute path")
+        return p.resolve()
+    approved = os.environ.get("ACA_APPROVED_DATA_ROOT")
+    if approved and approved.strip():
+        appr_p = Path(approved.strip())
+        if not appr_p.is_absolute():
+            raise OSError("ACA_APPROVED_DATA_ROOT must be an absolute path")
+        return appr_p.resolve() / _SUBDIR
+    if getattr(sys, "frozen", False):
+        raise OSError("Approved user data root provenance is missing in packaged mode")
     base = os.environ.get("LOCALAPPDATA")
-    if base:
-        return Path(base) / "AcademicComplianceAuditor" / _SUBDIR
-    return Path.home() / ".academic-compliance-auditor" / _SUBDIR
+    if base and base.strip():
+        b_p = Path(base.strip())
+        if not b_p.is_absolute():
+            raise OSError("LOCALAPPDATA must be an absolute path")
+        return b_p.resolve() / "AcademicComplianceAuditor" / _SUBDIR
+    dev_root = os.environ.get("ACA_USER_DATA_DIR")
+    if dev_root and dev_root.strip():
+        dr_p = Path(dev_root.strip())
+        if not dr_p.is_absolute():
+            raise OSError("ACA_USER_DATA_DIR must be an absolute path")
+        return dr_p.resolve() / _SUBDIR
+    raise OSError("Canonical user data root is unavailable for guided fix storage")
 
 
 def _root() -> Path:

@@ -4,6 +4,7 @@ import sys
 import time
 import subprocess
 import signal
+import logging
 from pathlib import Path
 
 
@@ -14,18 +15,25 @@ def _launcher():
         is_mutex_held, read_instance, write_instance, remove_instance_if_owned,
         is_pid_running, is_executable_match, check_health,
         open_browser, create_job_object, assign_process_to_job,
+        RootResolutionError, revalidate_child_approved_root,
         PORTS, SHUTDOWN_TIMEOUT,
     )
 
-    root, used_fallback, warning = get_user_data_root()
+    try:
+        approved_root = get_user_data_root()
+    except RootResolutionError as e:
+        logger = logging.getLogger("launcher")
+        logger.setLevel(logging.INFO)
+        logger.info("root_resolution_failed category=%s", e.code)
+        print("Academic Compliance Auditor cannot safely access its application data folder.")
+        print("Startup was stopped to protect your data rather than creating temporary replacement data.")
+        print("Please check that your Windows user profile folder is accessible and has normal permissions.")
+        return 1
+
+    root = approved_root.path
     log_dir = get_log_dir(root)
     logger = setup_launcher_logging(log_dir)
     inst_path = get_instance_path(root)
-
-    if used_fallback and warning:
-        logger.info("user_data_fallback")
-        print(warning)
-
     mutex = acquire_mutex()
     if mutex is None:
         data = read_instance(inst_path)
@@ -62,7 +70,7 @@ def _launcher():
             release_mutex(mutex)
             return 1
 
-    configure_launcher_environment(root)
+    configure_launcher_environment(approved_root)
 
     # --- Phase 3A: database preflight before backend import ---
     from pathlib import Path as _P
@@ -292,14 +300,13 @@ def _launcher():
 
 
 def _backend():
-    from app.launcher_support import get_user_data_root, configure_launcher_environment
-    root, _, _ = get_user_data_root()
-    configure_launcher_environment(root)
+    from app.launcher_support import revalidate_child_approved_root, configure_launcher_environment
+    approved_root = revalidate_child_approved_root()
+    configure_launcher_environment(approved_root)
     from app.main import app as fastapi_app
     import uvicorn
     port = int(os.environ.get("ACA_POC_PORT", "8010"))
     uvicorn.run(fastapi_app, host="127.0.0.1", port=port, log_level="info")
-
 
 if __name__ == "__main__":
     if "--backend" in sys.argv:
