@@ -12,7 +12,7 @@ This guide is for ordinary Windows users installing the packaged ACA application
 
 ## 2. Get the Installer
 
-Official ACA installers are published through an authorized release channel. Obtain ACA only through an authorized release channel, and verify its published SHA-256 before running it.
+Official ACA installers are provided through an authorized release channel for controlled evaluation and release-candidate validation. An unsigned build is not a public release and must not be distributed publicly; a signed build is required before any public distribution. Obtain ACA only through an authorized release channel, and verify its published SHA-256 before running it.
 
 The file is named `AcademicComplianceAuditor-Setup-1.0.0.exe`. Do not run an installer obtained from anywhere else.
 
@@ -52,16 +52,22 @@ A matching checksum shows your copy is the build that was published. It is not a
 
 Two optional components add features but are never required. Deterministic audits work fully without them, and ACA never installs third-party software: you stay in control.
 
-- **LibreOffice** — enables rendered-page previews and original-document page locations. When it is missing, the Dashboard's **System Readiness** card offers **Download LibreOffice**, which opens the official LibreOffice website. Install it yourself, then click **Check again**.
-- **Ollama** — enables optional **Local AI Citation Guidance** (APA 7 in-text citation formatting suggestions only), and is not required for deterministic document auditing, formatting findings, rendered-page preview, Guided Fixes, PDF report export, or Audit History. When Ollama is missing, the card offers **Download Ollama**. When Ollama is installed but its model is missing, the card offers **Download optional model**, which asks your own Ollama service to fetch that model — only after you confirm in a dialog. The download needs an internet connection, several gigabytes of storage, and may take time. **Copy installation command** remains available if you prefer to run `ollama pull` yourself.
+- **LibreOffice** — in ACA v1.0.0, fresh rendered-page previews and physical page location mapping are disabled so that uploaded DOCX bytes never reach disk; extracted-text preview and paragraph-level evidence linking remain available for every audit. When LibreOffice is missing, the Dashboard's **System Readiness** card offers **Download LibreOffice**, which opens the official LibreOffice website. Install it yourself, then click **Check again**.
+- **Ollama** — enables optional **Local AI Citation Guidance** (APA 7 in-text citation formatting suggestions only), and is not required for deterministic document auditing, formatting findings, extracted-text preview, Guided Fixes, PDF report export, or Audit History. When Ollama is missing, the card offers **Download Ollama**. When Ollama is installed but its model is missing, the card offers **Download optional model**, which asks your own Ollama service to fetch that model — only after you confirm in a dialog. The download needs an internet connection, several gigabytes of storage, and may take time. **Copy installation command** remains available if you prefer to run `ollama pull` yourself.
 
 ACA cannot reliably stop an Ollama model download once it has started, so there is no Cancel button; closing the progress view may leave Ollama downloading in the background.
+
+### Removing the model
+
+ACA v1.0.0 has no in-app model-delete control, and it never stops, uninstalls or otherwise controls the Ollama service. Remove the model yourself with Ollama — for example `ollama rm <model>` in your own terminal, or through Ollama's own interface. Ollama model storage may be shared with other applications and other Windows users on this computer, and removing a model can affect anything else that relies on it, so check what else uses the model before deleting it. ACA never deletes models automatically or in the background.
 
 After installing anything, use **Check again** in the System Readiness card — no restart needed. See the [User Guide](USER_GUIDE.md) for details.
 
 ## 7. Update ACA
 
-There is **no automatic updater**. When the project owner provides a newer installer, simply run it the same way — it updates the application in place and keeps your audit history.
+There is **no automatic updater** for the application itself. When the project owner provides a newer installer, run it the same way — it updates the application in place and keeps your audit history.
+
+The **audit database** is different: the packaged launcher upgrades an existing, eligible audit database automatically when ACA starts. It publishes a verified backup first, and when the state is unsafe or ambiguous it refuses to start rather than creating a replacement database, so your existing data is preserved.
 
 ## 8. Uninstall ACA
 

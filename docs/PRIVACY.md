@@ -6,7 +6,7 @@ ACA is a local-first application: your documents and audit results stay on your 
 
 **No.** Your original DOCX file is processed in memory and is never saved to disk as a document file. The file is read once for the audit (formatting checks and section extraction), then discarded. To audit the same document again, you upload it again.
 
-ACA does keep *derived* information from the audit: findings, locations, expected and actual values, paragraph text used as evidence, section metadata, your formatting profile snapshot, citation suggestions, and document statistics. In ACA v1.0.0, page-rendered preview via LibreOffice conversion is disabled to ensure zero temporary document copies are written to disk; extracted-text preview is the active preview mode. Generated PDF audit reports and explicitly downloaded corrected DOCX copies are separate, user-requested outputs.
+ACA does keep *derived* information from the audit: findings, locations, expected and actual values, paragraph text used as evidence, section metadata, your formatting profile snapshot, citation suggestions, and document statistics. In ACA v1.0.0, page-rendered preview via LibreOffice conversion is disabled to ensure zero temporary document copies are written to disk; extracted-text preview is the active preview mode. Generated PDF audit reports and explicitly downloaded corrected DOCX copies are separate, user-requested outputs. A corrected DOCX copy is written to temporary local storage before download and deleted on a best-effort basis when you download it or after its 15-minute one-use link expires; cleanup is opportunistic, so a copy may remain briefly until the next cleanup run.
 
 ## What information is stored locally?
 

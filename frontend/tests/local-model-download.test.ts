@@ -77,7 +77,7 @@ test('core features are named as available without Local AI', () => {
   const copy = LOCAL_MODEL_COPY.confirmReassurance
   for (const feature of [
     'deterministic audits',
-    'rendered-page previews',
+    'extracted-text previews',
     'Guided Fixes',
     'PDF report export',
     'Audit History',

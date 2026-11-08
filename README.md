@@ -8,7 +8,7 @@ Academic Compliance Auditor is a school Final Year Project (FYP) project. Its so
 
 Installer: `AcademicComplianceAuditor-Setup-1.0.0.exe`
 
-Official installers are published through an authorized release channel.
+Official installers are provided through an authorized release channel. Unsigned builds are limited to controlled release-candidate validation and are not public releases; a signed build is required before any public distribution.
 
 Please note:
 

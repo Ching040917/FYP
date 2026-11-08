@@ -28,6 +28,7 @@ import type { LocalModelDownloadStatus } from '../../types/api'
 import {
   DOWNLOAD_POLL_INTERVAL_MS,
   LOCAL_MODEL_COPY,
+  NO_CANCEL_NOTICE,
   adaptDownloadStatus,
   isDownloadActive,
 } from '../../lib/local-model-download'
@@ -389,6 +390,7 @@ export function ReadinessCard({
             <>
               <p>{LOCAL_MODEL_COPY.confirmCost}</p>
               <p>{LOCAL_MODEL_COPY.confirmHardware}</p>
+              <p>{NO_CANCEL_NOTICE}</p>
               <p>{LOCAL_MODEL_COPY.confirmReassurance}</p>
             </>
           }

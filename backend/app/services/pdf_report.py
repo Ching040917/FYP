@@ -329,7 +329,7 @@ _RULE_NAME = {
     "REFERENCE_DUPLICATE": "Duplicate Reference List entry",
     "REFERENCE_ORDER": "Reference List is not in alphabetical order",
     "REFERENCE_HEADING_TEXT": "Reference List heading does not match",
-    "REFERENCE_HEADING_BOLD": "Reference List heading should be bold",
+    "REFERENCE_HEADING_BOLD": "Reference List heading bold setting does not match the profile",
     "REFERENCE_HEADING_ALIGNMENT": "Reference List heading alignment does not match",
     "REFERENCE_SECTION_NEW_PAGE": "Reference List should start on a new page",
     "REFERENCE_HANGING_INDENT": "Reference entry hanging indent does not match",
@@ -1974,7 +1974,9 @@ def generate_audit_pdf(audit, violations, citation_issues, profile_snapshot=None
         ("Audit scope", "Generated locally from persisted audit data. Enabled deterministic formatting and "
          "citation checks use the immutable saved Profile; this report is not a new audit. "
          f"Saved deployment mode: {getattr(audit, 'deploy_mode', None) or 'Not recorded'}. "
-         "Optional cloud-assisted guidance requires explicit opt-in."),
+         "No cloud AI provider is included and there is no cloud opt-in; optional Local AI citation "
+         "guidance uses only your own local Ollama service. The saved deployment mode is a historical "
+         "record of how this audit was stored, not an active provider."),
         ("Manual review", "Manual-review findings are unscored. Disabled requirements are not evaluated."),
         ("Structural evidence", "Checks stored Normal-pages definitions in every document section when enabled. "
          "First-page and even-page definitions are not checked. Structural page mapping does not establish "

@@ -1341,7 +1341,7 @@ def test_current_snapshot_carries_every_reference_key_and_legacy_ones_do_not():
 def test_every_new_rule_code_has_a_plain_language_title():
     expected = {
         "REFERENCE_HEADING_TEXT": "Reference List heading does not match",
-        "REFERENCE_HEADING_BOLD": "Reference List heading should be bold",
+        "REFERENCE_HEADING_BOLD": "Reference List heading bold setting does not match the profile",
         "REFERENCE_HEADING_ALIGNMENT": "Reference List heading alignment does not match",
         "REFERENCE_SECTION_NEW_PAGE": "Reference List should start on a new page",
         "REFERENCE_HANGING_INDENT": "Reference entry hanging indent does not match",

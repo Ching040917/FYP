@@ -69,7 +69,7 @@ const FRIENDLY_RULE_TITLES: Record<string, string> = {
   REFERENCE_DUPLICATE: 'Duplicate Reference List entry',
   // Reference List formatting rules — the heading and the entry layout.
   REFERENCE_HEADING_TEXT: 'Reference List heading does not match',
-  REFERENCE_HEADING_BOLD: 'Reference List heading should be bold',
+  REFERENCE_HEADING_BOLD: 'Reference List heading bold setting does not match the profile',
   REFERENCE_HEADING_ALIGNMENT: 'Reference List heading alignment does not match',
   REFERENCE_SECTION_NEW_PAGE: 'Reference List should start on a new page',
   REFERENCE_HANGING_INDENT: 'Reference entry hanging indent does not match',

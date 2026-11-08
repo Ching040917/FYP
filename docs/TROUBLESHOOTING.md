@@ -127,7 +127,7 @@ The file did not meet ACA's upload requirements.
 
 ### What it means
 
-The optional LibreOffice integration is not installed, so rendered-page previews and original-document page locations are not available. Extracted-text evidence still works, and audits are unaffected.
+The optional LibreOffice integration is not installed. In ACA v1.0.0 fresh rendered-page previews and physical page location mapping are disabled regardless, so extracted-text preview is the active preview mode. Extracted-text evidence works, and audits are unaffected.
 
 ### What to do
 
@@ -139,12 +139,12 @@ The optional LibreOffice integration is not installed, so rendered-page previews
 
 ### What it means
 
-A page preview could not be generated for this audit — for example, LibreOffice was missing at audit time, or the conversion failed.
+In ACA v1.0.0, fresh rendered-page previews and physical page location mapping are disabled so that uploaded DOCX bytes are never written to disk. Only audits that already contain rendered data from an earlier version can display it.
 
 ### What to do
 
-1. Findings still link to the exact paragraph in the extracted text view — use that evidence instead.
-2. Install LibreOffice (see above), then run a new audit — new audits gain page previews automatically.
+1. Findings link to the exact paragraph in the extracted-text view — use that evidence.
+2. Nothing needs installing: installing LibreOffice does not enable fresh rendered previews in v1.0.0.
 
 ## Ollama is unavailable
 
@@ -178,6 +178,22 @@ Ollama is installed and running, but the Citation Guidance Model ACA uses for op
 ### About stopping a download
 
 There is no Cancel button. **ACA cannot reliably stop an Ollama model download once it has started** — Ollama has no cancel endpoint, and it keeps downloading even if ACA closes the connection. You may close the progress view, but Ollama may continue downloading in the background. ACA never stops the Ollama service to interrupt a download.
+
+## Removing the Local AI model
+
+### What it means
+
+The Citation Guidance Model is stored and managed by Ollama on your computer, not by ACA. ACA v1.0.0 provides no in-app model-delete control.
+
+### What to do
+
+1. Remove the model yourself through Ollama — for example `ollama rm <model>` in your own terminal, or through Ollama's own interface. ACA does not run that command for you.
+2. Check first whether other applications or other Windows users on this computer rely on the same model: Ollama model storage may be shared, and deleting a model can affect them.
+3. ACA never stops, uninstalls or otherwise controls the Ollama service, and it never deletes models automatically or in the background.
+
+## Where else your data lives
+
+The application data folder is not the only place ACA-related data can exist. Browser storage (saved custom profiles, the current profile selection, an unsaved editor draft, and the first-run guidance dismissal) stays in your browser until you clear that site's data. Any PDF report or corrected DOCX you exported is a separate file wherever you chose to save it. If you installed LibreOffice or Ollama, those programs keep and manage their own data — Ollama model files can be shared with other applications and other Windows users. Deleting the ACA data folder does not remove any of these, and ACA does not delete them for you.
 
 ## PDF export is unavailable
 

@@ -1,8 +1,10 @@
-"""Production database lifecycle — Phase 3A fresh-only.
+"""Production database lifecycle — automatic eligible upgrade with fail-closed refusal.
 
 Resolves Alembic resources in source and frozen mode, creates a fresh
-production database via ``alembic upgrade head``, and verifies
-integrity + schema + head. No upgrade of existing stamped databases.
+production database when none exists, upgrades an existing eligible database
+after publishing a verified backup, and verifies integrity + schema + head.
+Any unsafe or ambiguous state refuses to start rather than creating a
+replacement database or discarding existing data.
 """
 import datetime
 import os

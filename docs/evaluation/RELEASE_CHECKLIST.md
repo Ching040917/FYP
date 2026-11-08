@@ -1,6 +1,6 @@
 # Release Checklist — Academic Compliance Auditor
 
-Complete every section before publishing a packaged Windows release. Each checkbox must be verified against the current source, tests, or a frozen build — never assumed.
+Complete every section before publishing a packaged Windows release. An unsigned build is for controlled release-candidate validation only and must never be published publicly: code signing is required before any public distribution. Each checkbox must be verified against the current source, tests, or a frozen build — never assumed.
 
 ## Repository
 
@@ -101,7 +101,7 @@ Complete every section before publishing a packaged Windows release. Each checkb
 
 ## Not implemented (do not claim)
 
-- Code signing.
+- Code signing in the current build — an unsigned build is for controlled RC validation only, and a signed build is required before any public distribution.
 - Automatic updater.
 - A published download URL or GitHub Release (none exists at this baseline).
 - Multi-user or LAN deployment.

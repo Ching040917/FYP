@@ -8,7 +8,7 @@ This guide is for developers and evaluators running ACA from source. It is **not
 |---|---|---|
 | Git | any recent | `git --version` |
 | Python | 3.11 or 3.12 (3.12 verified for release builds) | `python --version` |
-| Node.js | 18 LTS+ (24.x verified) | `node --version` |
+| Node.js | 22.13+ or 24.x (required by the locked `pdfjs-dist` 5.7.284; 24.x verified) | `node --version` |
 | npm | ships with Node | `npm --version` |
 
 Python 3.13 is currently unsupported: the pinned dependency set lacks required Windows wheels for a clean install.

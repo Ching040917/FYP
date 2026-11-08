@@ -86,7 +86,7 @@ export const LOCAL_MODEL_COPY = {
   confirmHardware:
     'Local AI performance depends on the computer\u2019s memory and processor. Computers with limited memory may run slowly or may be unable to load the model.',
   confirmReassurance:
-    'You can skip this feature. Core deterministic audits, rendered-page previews, Guided Fixes, PDF report export, and Audit History remain available without Local AI.',
+    'You can skip this feature. Core deterministic audits, extracted-text previews, Guided Fixes, PDF report export, and Audit History remain available without Local AI.',
   confirmCancel: 'Not now',
   confirmStart: 'Start download',
   retryAction: 'Try again',

@@ -202,10 +202,13 @@ The preview is a locally generated copy of your document; the original Word file
 ### Guided Fixes: verified formatting copies
 
 In a completed Audit Workspace, select candidate font family, font size,
-paragraph alignment, line spacing, paragraph spacing, or Reference heading
-alignment findings. Reference heading alignment is eligible only when the
-saved profile enables that check and the document has one unambiguous,
-supported heading; other Reference List findings remain manual. Re-upload
+paragraph alignment, line spacing, paragraph spacing, Reference heading bold,
+or Reference heading alignment findings. A Reference heading check is eligible
+only when the saved profile enables that exact check and the document has one
+unambiguous, supported heading; for bold, the heading's formatting must also be
+definitively resolved. The saved profile may require the heading to be bold or
+not bold, and a heading that inherits bold from its style counts as bold, while
+mixed runs produce no finding. Other Reference List findings remain manual. Re-upload
 the **exact original DOCX** used for that audit. ACA checks every selected
 location and shows the confirmed current and required values before you
 approve a change. If a location or requirement cannot be verified safely,
@@ -227,7 +230,7 @@ and re-audit unlocks **Download corrected document**. Download the copy within
 15 minutes; the link works once. Review its appearance in Microsoft Word
 before submission: even a verified formatting change can alter page layout.
 Neither the original DOCX nor its saved Audit History row is changed.
-The temporary corrected copy is removed when downloaded or expired. Uploading
+The temporary corrected copy is deleted on a best-effort basis when you download it, or after its 15-minute one-use link expires. Cleanup is opportunistic rather than immediate, so a copy can remain on disk briefly until the next cleanup run. Uploading
 it as a new audit creates an independent Audit ID, not a linked History entry.
 
 ## 8. Export a PDF Report
@@ -272,14 +275,14 @@ Delete an audit from History or the Audit Workspace. **Deletion is permanent** �
 
 Optional components extend ACA but are never required — core audits work without them.
 
-**LibreOffice** (page previews and original-document page locations):
+**LibreOffice** (historically rendered page data only — fresh rendered previews are disabled in ACA v1.0.0):
 
 - When LibreOffice is missing, the System readiness card shows **Download LibreOffice**, which opens the official LibreOffice website (`https://www.libreoffice.org/download/`) in your browser. LibreOffice is third-party software with its own terms and privacy policies.
 - Install it yourself, then click **Check again** — no restart needed.
 
 **Ollama and its model** (optional **Local AI Citation Guidance**):
 
-Local AI Citation Guidance is an optional feature. It provides suggestions for **APA 7 in-text citation formatting only**. It is not a full academic review, does not rewrite or correct your DOCX, does not verify citation sources or complete reference lists, and does not check grammar or plagiarism. Suggestions may be incomplete or inaccurate — review every suggestion before using it. It is not required for deterministic document auditing, formatting findings, rendered-page preview, Guided Fixes, PDF report export, or Audit History.
+Local AI Citation Guidance is an optional feature. It provides suggestions for **APA 7 in-text citation formatting only**. It is not a full academic review, does not rewrite or correct your DOCX, does not verify citation sources or complete reference lists, and does not check grammar or plagiarism. Suggestions may be incomplete or inaccurate — review every suggestion before using it. It is not required for deterministic document auditing, formatting findings, extracted-text preview, Guided Fixes, PDF report export, or Audit History.
 
 - When Ollama is missing, the card shows **Download Ollama**, which opens the official Ollama website (`https://ollama.com/download/windows`). Install and start it yourself.
 - When Ollama is running but its Citation Guidance Model is missing, the card shows the exact model needed with a **Download optional model** button. That opens a confirmation dialog — the download starts only if you choose **Start download**. ACA then asks your own Ollama service to fetch the model and shows progress, storage guidance, and the model name in the card. A model that is already installed is confirmed and marked ready without downloading anything again.
@@ -287,6 +290,7 @@ Local AI Citation Guidance is an optional feature. It provides suggestions for *
 - The download needs an internet connection, several gigabytes of storage, and may take time. **ACA cannot reliably stop an Ollama model download once it has started**, so there is no Cancel button: closing the progress view may leave Ollama downloading in the background. ACA never stops Ollama to interrupt a download.
 - Local AI performance depends on your computer's memory and processor. On a low-memory computer you can simply continue without local AI — deterministic checks are unaffected.
 - When the download finishes, ACA confirms the model through Ollama itself and the card updates to **Ready**. **Check again** re-checks at any time.
+- **Removing the model:** ACA v1.0.0 offers no in-app model-delete control and never stops, uninstalls or otherwise controls Ollama. Remove the model through Ollama yourself — for example `ollama rm <model>` in your own terminal, or through Ollama's own interface. Ollama model storage may be shared with other applications and other Windows users on this computer, so deleting a model can affect anything else that uses it. ACA never deletes models automatically or in the background.
 
 **ACA never installs third-party software and never runs a local command for you.** The only download it can start is the optional Citation Guidance Model, from your own Ollama service, and only after you confirm it.
 

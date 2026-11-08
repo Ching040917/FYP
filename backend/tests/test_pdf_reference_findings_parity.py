@@ -336,7 +336,7 @@ def test_owner_fixture_phase3_titles_are_present(client, owner_audit):
     titles = _register_titles(_pdf_text(client.get(f"/api/audit/{owner_audit}/export-pdf").content))
     assert "Reference List should start on a new page" not in titles
     for expected in (
-        "Reference List heading should be bold",
+        "Reference List heading bold setting does not match the profile",
         "Reference entry hanging indent does not match",
         "Reference entry font size does not match",
     ):

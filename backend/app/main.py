@@ -51,8 +51,9 @@ logger = logging.getLogger(__name__)
 async def startup():
     # 1. Capture process start (naive UTC) BEFORE any reconciliation.
     process_started_at = datetime.utcnow()
-    # 2. Initialize the database schema (create_all only — Alembic migrations
-    #    are applied manually by existing installations).
+    # 2. Initialize the database schema (create_all only). Existing databases are
+    #    upgraded automatically by the packaged launcher preflight before this
+    #    backend starts, so no manual Alembic step is required.
     init_db()
     cleanup_guided_outputs()
     # 3. Run startup reconciliation for abandoned `processing` rows from an
@@ -69,8 +70,9 @@ async def startup():
             # stack traces, or document content.
             logger.error("stale audit reconciliation failed at startup")
             raise RuntimeError(
-                "Database schema is not ready for the current application. "
-                "Run: python -m alembic upgrade head"
+                "ACA could not safely verify the existing data. Your data has not been "
+                "replaced. Close ACA and review the data-folder recovery steps in the "
+                "troubleshooting guide before trying again."
             )
         finally:
             db.close()

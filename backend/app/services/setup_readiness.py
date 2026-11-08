@@ -220,7 +220,8 @@ async def compute_readiness(probes: ReadinessProbes) -> dict:
             lo_ready = True
             components.append(_component(
                 "libreoffice", "ready", False,
-                "Rendered-page conversion support was found.",
+                "LibreOffice was found. Fresh rendered-page previews are disabled in ACA v1.0.0; "
+                "extracted-text evidence is the active preview mode.",
             ))
         else:
             components.append(_component(
@@ -243,8 +244,8 @@ async def compute_readiness(probes: ReadinessProbes) -> dict:
             del root_configured
             components.append(_component(
                 "rendered_preview", "ready", False,
-                "Rendered-page preview appears available. Availability is "
-                "confirmed during an audit.",
+                "Previously rendered page data can be displayed. Fresh rendered-page "
+                "previews are disabled in ACA v1.0.0; extracted-text evidence remains available.",
             ))
         except Exception:
             components.append(_component(

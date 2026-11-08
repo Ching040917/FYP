@@ -288,9 +288,14 @@ async def test_startup_reconciliation_failure_emits_no_traceback_or_sentinels(ma
         with pytest.raises(RuntimeError) as exc_info:
             await startup()
 
-    # 1. Startup continuation behavior remains unchanged (raises RuntimeError with alembic upgrade hint)
-    assert "Database schema is not ready for the current application." in str(exc_info.value)
-    assert "Run: python -m alembic upgrade head" in str(exc_info.value)
+    # 1. Startup continuation behavior remains unchanged (raises RuntimeError)
+    message = str(exc_info.value)
+    assert "python -m alembic upgrade head" not in message
+    assert "ACA could not safely verify the existing data." in message
+    assert "Your data has not been replaced." in message
+    assert "data-folder recovery steps" in message
+    assert "troubleshooting guide" in message
+    assert SENTINELS["win_path"] not in message
 
     # 2. Log record verification
     error_records = [r for r in main_log_capture.records if r.levelno >= logging.ERROR]
