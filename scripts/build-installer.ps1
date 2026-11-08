@@ -42,7 +42,11 @@ $InventoryRebuildExits = @(33, 34)
 
 $RequiredISCCVersion = "6.7.3"
 $RequiredPythonMajorMinor = "3.12"
+$RequiredPythonExact = "3.12.10"
+$RequiredPipVersion = "25.0.1"
 $RequiredPyInstallerVersion = "6.22.2"
+$RuntimeLockFile = Join-Path $BackendDir "requirements-lock.txt"
+$DevLockFile = Join-Path $BackendDir "requirements-dev.txt"
 $AppVersion = "1.0.0"
 
 function Fail($msg) { Write-Host "FAIL: $msg" -ForegroundColor Red; exit 1 }
@@ -134,12 +138,26 @@ try {
     }
 
     Write-Host "=== 1. Controlled clean runtime ==="
+    if (-not (Test-Path $RuntimeLockFile)) {
+        Fail "Missing runtime lockfile: $RuntimeLockFile. Fallback to unlocked requirements is strictly prohibited."
+    }
+    if (-not (Test-Path $DevLockFile)) {
+        Fail "Missing dev/build lockfile: $DevLockFile."
+    }
     if (-not (Test-Path $VenvPython)) {
-        Fail "The controlled packaging interpreter is missing: $VenvPython. Create it from the repository root: python -m venv backend/.venv; backend\.venv\Scripts\Activate.ps1; pip install -r backend\requirements.txt; pip install -r backend\requirements-dev.txt."
+        Fail "The controlled packaging interpreter is missing: $VenvPython. Create it from the repository root: python -m venv backend/.venv; backend\.venv\Scripts\Activate.ps1; pip install --require-hashes --only-binary=:all: -r backend\requirements-lock.txt; pip install --require-hashes --only-binary=:all: -r backend\requirements-dev.txt."
     }
     $pyVer = & $VenvPython -c "import sys; print('%s.%s' % (sys.version_info.major, sys.version_info.minor))" 2>&1
     if ($pyVer -ne $RequiredPythonMajorMinor) {
         Fail "Packaging requires Python $RequiredPythonMajorMinor.x, but backend/.venv reports '$($pyVer.Trim())'."
+    }
+    $pyExact = & $VenvPython -c "import sys; print('%d.%d.%d' % sys.version_info[:3])" 2>&1
+    if ($pyExact.Trim() -ne $RequiredPythonExact) {
+        Fail "Packaging requires exact CPython $RequiredPythonExact, but backend/.venv reports '$($pyExact.Trim())'."
+    }
+    $pipCheck = & $VenvPython -m pip check 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Fail "Virtual environment dependency check failed:`n$pipCheck"
     }
     $piVer = & $VenvPython -m PyInstaller --version 2>&1 | Select-Object -First 1
     $piVer = $piVer.Trim()

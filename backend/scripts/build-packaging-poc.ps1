@@ -16,9 +16,13 @@ $VenvDir = Join-Path $BackendDir ".venv"
 $VenvPython = Join-Path $VenvDir "Scripts\python.exe"
 $pyChecks = Join-Path $BackendDir "scripts\packaging_checks.py"
 
-# Repository-owned exact PyInstaller pin (must match requirements-dev.txt).
+# Repository-owned exact toolchain and lockfile pins (Wave 5 B-REPRO-01/02).
 $RequiredPythonMajorMinor = "3.12"
+$RequiredPythonExact = "3.12.10"
+$RequiredPipVersion = "25.0.1"
 $RequiredPyInstallerVersion = "6.22.2"
+$RuntimeLockFile = Join-Path $BackendDir "requirements-lock.txt"
+$DevLockFile = Join-Path $BackendDir "requirements-dev.txt"
 
 # Prohibited packages must never be bundled, regardless of the build machine.
 $ProhibitedPackages = @("numpy", "pandas", "scipy", "matplotlib", "pyarrow", "ollama", "googleapiclient", "google_generativeai")
@@ -33,6 +37,14 @@ function Fail($msg) { Write-Host "FAIL: $msg" -ForegroundColor Red; exit 1 }
 function Log-Override($msg) { Write-Host "OVERRIDE: $msg" -ForegroundColor Yellow }
 
 function Test-Python312PackageEnv {
+    # 1. Enforce lockfile existence (no fallback to unlocked requirements.txt)
+    if (-not (Test-Path $RuntimeLockFile)) {
+        Fail "Missing runtime lockfile: $RuntimeLockFile. Fallback to unlocked requirements.txt is strictly prohibited."
+    }
+    if (-not (Test-Path $DevLockFile)) {
+        Fail "Missing dev/build lockfile: $DevLockFile."
+    }
+
     if (-not (Test-Path $VenvPython)) {
         Fail @"
 The controlled packaging interpreter is missing.
@@ -40,8 +52,8 @@ The controlled packaging interpreter is missing.
 To create it, run (from $BackendDir):
   python -m venv .venv
   .venv\Scripts\Activate.ps1
-  pip install -r requirements.txt
-  pip install -r requirements-dev.txt
+  pip install --require-hashes --only-binary=:all: -r requirements-lock.txt
+  pip install --require-hashes --only-binary=:all: -r requirements-dev.txt
 "@
     }
 
@@ -52,10 +64,22 @@ To create it, run (from $BackendDir):
 Packaging requires Python $RequiredPythonMajorMinor.x, but the controlled
 interpreter reports '$($pyVer.Trim())'.
   Interpreter: $VenvPython
-Recreate the environment with a Python $RequiredPythonMajorMinor interpreter, then:
-  pip install -r requirements.txt
-  pip install -r requirements-dev.txt
+Recreate the environment with a CPython $RequiredPythonExact interpreter, then:
+  pip install --require-hashes --only-binary=:all: -r requirements-lock.txt
+  pip install --require-hashes --only-binary=:all: -r requirements-dev.txt
 "@
+    }
+
+    # Validate exact Python patch version
+    $pyExact = & $VenvPython -c "import sys; print('%d.%d.%d' % sys.version_info[:3])" 2>&1
+    if ($pyExact.Trim() -ne $RequiredPythonExact) {
+        Fail "Packaging requires exact CPython $RequiredPythonExact, but backend/.venv reports '$($pyExact.Trim())'."
+    }
+
+    # Validate virtual environment consistency via pip check
+    $pipCheck = & $VenvPython -m pip check 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Fail "Virtual environment dependency check failed:`n$pipCheck"
     }
 
     $piVer = & $VenvPython -m PyInstaller --version 2>&1
@@ -64,15 +88,16 @@ Recreate the environment with a Python $RequiredPythonMajorMinor interpreter, th
 PyInstaller is not installed in the controlled environment.
   Interpreter: $VenvPython
 Install the repository-owned dev dependencies:
-  $VenvPython -m pip install -r requirements-dev.txt
+  $VenvPython -m pip install --require-hashes --only-binary=:all: -r requirements-dev.txt
 "@
     }
     $piVer = ($piVer | Select-Object -First 1).Trim()
     if ($piVer -ne $RequiredPyInstallerVersion) {
         Fail "PyInstaller version $piVer does not match the repository pin $RequiredPyInstallerVersion. Install exactly PyInstaller==$RequiredPyInstallerVersion via requirements-dev.txt."
     }
-    Write-Host "Packaging interpreter OK: $($pyVer.Trim()) via backend/.venv (Python $RequiredPythonMajorMinor.x)"
+    Write-Host "Packaging interpreter OK: $($pyExact.Trim()) via backend/.venv (Python $RequiredPythonMajorMinor.x)"
     Write-Host "PyInstaller OK: $piVer"
+    Write-Host "Virtual environment consistency OK (pip check clean, hash-locked inputs enforced)."
 }
 
 function Test-BundleChecks {
