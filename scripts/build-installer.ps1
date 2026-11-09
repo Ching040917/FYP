@@ -28,6 +28,8 @@ $ChecksScript = Join-Path $BackendDir "scripts\packaging_checks.py"
 $ManifestPath = Join-Path $ReleaseDir "input-manifest.json"
 $InventoryPath = Join-Path $ReleaseDir "file-inventory.json"
 $PocScript = Join-Path $BackendDir "scripts\build-packaging-poc.ps1"
+$LicenseStageDir = Join-Path $ReleaseDir "license-stage"
+$LicenseStagingMeta = Join-Path $ReleaseDir "license-staging.json"
 
 # Verify-manifest exit codes that permit an automatic rebuild: the checked-out
 # inputs are valid and only the existing runtime is absent or stale. Every other
@@ -72,7 +74,7 @@ function Find-ISCC {
 
 # ---- Verify a runtime candidate against provenance, inventory and hygiene. ----
 function Test-RuntimeProven {
-    & $VenvPython $ChecksScript "verify-manifest" $RepoRoot $BundleRoot "--manifest" $ManifestPath 2>&1 | Out-Host
+    & $VenvPython $ChecksScript "verify-manifest" $RepoRoot $BundleRoot "--manifest" $ManifestPath "--license-root" $LicenseStageDir 2>&1 | Out-Host
     $manifestExit = $LASTEXITCODE
     if ($manifestExit -ne 0) { return $manifestExit }
     & $VenvPython $ChecksScript "verify-inventory" $BundleRoot "--inventory" $InventoryPath 2>&1 | Out-Host
@@ -183,7 +185,18 @@ try {
     if ($LASTEXITCODE -ne 0) { Fail "Inventory no longer matches the runtime (exit $LASTEXITCODE)." }
 
     Write-Host "=== 2c. Third-party license and notice verification ==="
-    & $VenvPython $ChecksScript "verify-licenses" $RepoRoot
+    if (-not (Test-Path $LicenseStageDir)) {
+        Fail "Canonical license stage is missing: $LicenseStageDir. Ordinary checkout license paths are strictly prohibited."
+    }
+    if (-not (Test-Path $LicenseStagingMeta)) {
+        Fail "License staging metadata is missing: $LicenseStagingMeta."
+    }
+    $buildHead = (& git rev-parse HEAD).Trim()
+    $stagedMetaJson = Get-Content $LicenseStagingMeta -Raw | ConvertFrom-Json
+    if ($stagedMetaJson.source_commit -ne $buildHead) {
+        Fail "License staging source commit ($($stagedMetaJson.source_commit)) does not match build HEAD ($buildHead)."
+    }
+    & $VenvPython $ChecksScript "verify-licenses" $RepoRoot "--license-root" $LicenseStageDir
     if ($LASTEXITCODE -ne 0) { Fail "License and notice verification failed before compilation (exit $LASTEXITCODE)." }
 
     Write-Host "=== 3. Compile installer ==="
@@ -215,13 +228,13 @@ try {
     if ($issText -notmatch 'run-frozen\\\*') { Fail ".iss does not package the full run-frozen tree" }
 
     Write-Host "=== 4b. Runtime/manifest parity after compile ==="
-    & $VenvPython $ChecksScript "verify-manifest" $RepoRoot $BundleRoot "--manifest" $ManifestPath
+    & $VenvPython $ChecksScript "verify-manifest" $RepoRoot $BundleRoot "--manifest" $ManifestPath "--license-root" $LicenseStageDir
     if ($LASTEXITCODE -ne 0) { Fail "Inputs or runtime changed during the installer build (verify-manifest exit $LASTEXITCODE)." }
     & $VenvPython $ChecksScript "hygiene" $BundleRoot
     if ($LASTEXITCODE -ne 0) { Fail "Bundle hygiene failed after compilation (exit $LASTEXITCODE)." }
     & $VenvPython $ChecksScript "verify-inventory" $BundleRoot "--inventory" $InventoryPath
     if ($LASTEXITCODE -ne 0) { Fail "Inventory no longer matches the runtime after compilation (exit $LASTEXITCODE)." }
-    & $VenvPython $ChecksScript "verify-licenses" $RepoRoot
+    & $VenvPython $ChecksScript "verify-licenses" $RepoRoot "--license-root" $LicenseStageDir
     if ($LASTEXITCODE -ne 0) { Fail "License and notice verification failed after compilation (exit $LASTEXITCODE)." }
 
     $sha = (Get-FileHash $exeOut -Algorithm SHA256).Hash

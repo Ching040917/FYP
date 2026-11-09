@@ -16,6 +16,9 @@ $VenvDir = Join-Path $BackendDir ".venv"
 $VenvPython = Join-Path $VenvDir "Scripts\python.exe"
 $pyChecks = Join-Path $BackendDir "scripts\packaging_checks.py"
 
+$ReleaseDir = Join-Path $RepoRoot "release-output"
+$LicenseStageDir = Join-Path $ReleaseDir "license-stage"
+$LicenseStagingMeta = Join-Path $ReleaseDir "license-staging.json"
 # Repository-owned exact toolchain and lockfile pins (Wave 5 B-REPRO-01/02).
 $RequiredPythonMajorMinor = "3.12"
 $RequiredPythonExact = "3.12.10"
@@ -125,6 +128,21 @@ function Test-BundleChecks {
 try {
     Write-Host "=== 0. Packaging environment (Python 3.12, backend/.venv only) ==="
     Test-Python312PackageEnv
+    Write-Host "=== 0b. Canonical license staging from Git blobs ==="
+    $sourceCommit = (& git rev-parse HEAD).Trim()
+    if ($LASTEXITCODE -ne 0 -or -not $sourceCommit) { Fail "Could not resolve source commit HEAD" }
+    if (Test-Path $LicenseStageDir) { Remove-Item $LicenseStageDir -Recurse -Force }
+    New-Item -ItemType Directory -Force -Path $LicenseStageDir | Out-Null
+    & $VenvPython $pyChecks "stage-licenses" $RepoRoot $sourceCommit $LicenseStageDir
+    if ($LASTEXITCODE -ne 0) { Fail "Canonical license staging failed (exit $LASTEXITCODE)." }
+    $stageMeta = @{
+        source_commit = $sourceCommit
+        staging_root = $LicenseStageDir
+        staged_at_utc = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+        status = "CANONICAL_GIT_BLOB_STAGED"
+    }
+    $stageMeta | ConvertTo-Json -Depth 4 | Set-Content $LicenseStagingMeta -Encoding UTF8
+    Write-Host "License stage ready: $LicenseStageDir"
 
     Write-Host "=== 1. npm ci ==="
     Push-Location $FrontendDir
@@ -258,7 +276,7 @@ try {
     Write-Host "Smoke OK"
 
     Write-Host "=== 7b. Verify license coverage ==="
-    & $VenvPython $pyChecks "verify-licenses" $RepoRoot
+    & $VenvPython $pyChecks "verify-licenses" $RepoRoot "--license-root" $LicenseStageDir
     if ($LASTEXITCODE -ne 0) { Fail "License verification failed (exit $LASTEXITCODE)." }
 
     Write-Host "=== 8. Release input manifest ==="
@@ -266,12 +284,12 @@ try {
     New-Item -ItemType Directory -Force -Path (Split-Path $manifestPath) | Out-Null
     $nodeVer = (& node --version 2>$null | Select-Object -First 1)
     $npmVer = (& npm --version 2>$null | Select-Object -First 1)
-    $manifestArgs = @("manifest", $RepoRoot, $BundleRoot, "--output", $manifestPath)
+    $manifestArgs = @("manifest", $RepoRoot, $BundleRoot, "--output", $manifestPath, "--license-root", $LicenseStageDir)
     if ($nodeVer) { $manifestArgs += @("--node-version", "$nodeVer") }
     if ($npmVer) { $manifestArgs += @("--npm-version", "$npmVer") }
     & $VenvPython $pyChecks @manifestArgs
     if ($LASTEXITCODE -ne 0) { Fail "Manifest generation failed (exit $LASTEXITCODE)." }
-    & $VenvPython $pyChecks "verify-manifest" $RepoRoot $BundleRoot "--manifest" $manifestPath
+    & $VenvPython $pyChecks "verify-manifest" $RepoRoot $BundleRoot "--manifest" $manifestPath "--license-root" $LicenseStageDir
     if ($LASTEXITCODE -ne 0) { Fail "Fresh manifest does not prove the built runtime (exit $LASTEXITCODE)." }
     Write-Host "Manifest OK: $manifestPath"
 

@@ -12,7 +12,13 @@
         {
           "path": "licenses/packages/floating-ui/LICENSE",
           "sha256": "0e4c9a9b6c71019cbbea3bdc20b01223110a9035700f9c960c8fcbf78c2325ce",
-          "bytes": 1089
+          "bytes": 1089,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "639cdc6c98cad0a67de011da403716f83550897f",
+          "staged_path": "packages/floating-ui/LICENSE",
+          "destination": "{app}\\licenses\\packages\\floating-ui\\LICENSE",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -27,7 +33,13 @@
         {
           "path": "licenses/packages/floating-ui/LICENSE",
           "sha256": "0e4c9a9b6c71019cbbea3bdc20b01223110a9035700f9c960c8fcbf78c2325ce",
-          "bytes": 1089
+          "bytes": 1089,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "639cdc6c98cad0a67de011da403716f83550897f",
+          "staged_path": "packages/floating-ui/LICENSE",
+          "destination": "{app}\\licenses\\packages\\floating-ui\\LICENSE",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -42,7 +54,13 @@
         {
           "path": "licenses/packages/floating-ui/LICENSE",
           "sha256": "0e4c9a9b6c71019cbbea3bdc20b01223110a9035700f9c960c8fcbf78c2325ce",
-          "bytes": 1089
+          "bytes": 1089,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "639cdc6c98cad0a67de011da403716f83550897f",
+          "staged_path": "packages/floating-ui/LICENSE",
+          "destination": "{app}\\licenses\\packages\\floating-ui\\LICENSE",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -57,7 +75,13 @@
         {
           "path": "licenses/packages/floating-ui/LICENSE",
           "sha256": "0e4c9a9b6c71019cbbea3bdc20b01223110a9035700f9c960c8fcbf78c2325ce",
-          "bytes": 1089
+          "bytes": 1089,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "639cdc6c98cad0a67de011da403716f83550897f",
+          "staged_path": "packages/floating-ui/LICENSE",
+          "destination": "{app}\\licenses\\packages\\floating-ui\\LICENSE",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -72,7 +96,13 @@
         {
           "path": "licenses/packages/radix-ui/LICENSE",
           "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138",
-          "bytes": 1063
+          "bytes": 1063,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "a18858fb7b014098cba85703e66609be66a26ef5",
+          "staged_path": "packages/radix-ui/LICENSE",
+          "destination": "{app}\\licenses\\packages\\radix-ui\\LICENSE",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -87,7 +117,13 @@
         {
           "path": "licenses/packages/radix-ui/LICENSE",
           "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138",
-          "bytes": 1063
+          "bytes": 1063,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "a18858fb7b014098cba85703e66609be66a26ef5",
+          "staged_path": "packages/radix-ui/LICENSE",
+          "destination": "{app}\\licenses\\packages\\radix-ui\\LICENSE",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -102,7 +138,13 @@
         {
           "path": "licenses/packages/radix-ui/LICENSE",
           "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138",
-          "bytes": 1063
+          "bytes": 1063,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "a18858fb7b014098cba85703e66609be66a26ef5",
+          "staged_path": "packages/radix-ui/LICENSE",
+          "destination": "{app}\\licenses\\packages\\radix-ui\\LICENSE",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -117,7 +159,13 @@
         {
           "path": "licenses/packages/radix-ui/LICENSE",
           "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138",
-          "bytes": 1063
+          "bytes": 1063,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "a18858fb7b014098cba85703e66609be66a26ef5",
+          "staged_path": "packages/radix-ui/LICENSE",
+          "destination": "{app}\\licenses\\packages\\radix-ui\\LICENSE",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -132,7 +180,13 @@
         {
           "path": "licenses/packages/radix-ui/LICENSE",
           "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138",
-          "bytes": 1063
+          "bytes": 1063,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "a18858fb7b014098cba85703e66609be66a26ef5",
+          "staged_path": "packages/radix-ui/LICENSE",
+          "destination": "{app}\\licenses\\packages\\radix-ui\\LICENSE",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -147,7 +201,13 @@
         {
           "path": "licenses/packages/radix-ui/LICENSE",
           "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138",
-          "bytes": 1063
+          "bytes": 1063,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "a18858fb7b014098cba85703e66609be66a26ef5",
+          "staged_path": "packages/radix-ui/LICENSE",
+          "destination": "{app}\\licenses\\packages\\radix-ui\\LICENSE",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -162,7 +222,13 @@
         {
           "path": "licenses/packages/radix-ui/LICENSE",
           "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138",
-          "bytes": 1063
+          "bytes": 1063,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "a18858fb7b014098cba85703e66609be66a26ef5",
+          "staged_path": "packages/radix-ui/LICENSE",
+          "destination": "{app}\\licenses\\packages\\radix-ui\\LICENSE",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -177,7 +243,13 @@
         {
           "path": "licenses/packages/radix-ui/LICENSE",
           "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138",
-          "bytes": 1063
+          "bytes": 1063,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "a18858fb7b014098cba85703e66609be66a26ef5",
+          "staged_path": "packages/radix-ui/LICENSE",
+          "destination": "{app}\\licenses\\packages\\radix-ui\\LICENSE",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -192,7 +264,13 @@
         {
           "path": "licenses/packages/radix-ui/LICENSE",
           "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138",
-          "bytes": 1063
+          "bytes": 1063,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "a18858fb7b014098cba85703e66609be66a26ef5",
+          "staged_path": "packages/radix-ui/LICENSE",
+          "destination": "{app}\\licenses\\packages\\radix-ui\\LICENSE",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -207,7 +285,13 @@
         {
           "path": "licenses/packages/radix-ui/LICENSE",
           "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138",
-          "bytes": 1063
+          "bytes": 1063,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "a18858fb7b014098cba85703e66609be66a26ef5",
+          "staged_path": "packages/radix-ui/LICENSE",
+          "destination": "{app}\\licenses\\packages\\radix-ui\\LICENSE",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -222,7 +306,13 @@
         {
           "path": "licenses/packages/radix-ui/LICENSE",
           "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138",
-          "bytes": 1063
+          "bytes": 1063,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "a18858fb7b014098cba85703e66609be66a26ef5",
+          "staged_path": "packages/radix-ui/LICENSE",
+          "destination": "{app}\\licenses\\packages\\radix-ui\\LICENSE",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -237,7 +327,13 @@
         {
           "path": "licenses/packages/radix-ui/LICENSE",
           "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138",
-          "bytes": 1063
+          "bytes": 1063,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "a18858fb7b014098cba85703e66609be66a26ef5",
+          "staged_path": "packages/radix-ui/LICENSE",
+          "destination": "{app}\\licenses\\packages\\radix-ui\\LICENSE",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -252,7 +348,13 @@
         {
           "path": "licenses/packages/radix-ui/LICENSE",
           "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138",
-          "bytes": 1063
+          "bytes": 1063,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "a18858fb7b014098cba85703e66609be66a26ef5",
+          "staged_path": "packages/radix-ui/LICENSE",
+          "destination": "{app}\\licenses\\packages\\radix-ui\\LICENSE",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -267,7 +369,13 @@
         {
           "path": "licenses/packages/radix-ui/LICENSE",
           "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138",
-          "bytes": 1063
+          "bytes": 1063,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "a18858fb7b014098cba85703e66609be66a26ef5",
+          "staged_path": "packages/radix-ui/LICENSE",
+          "destination": "{app}\\licenses\\packages\\radix-ui\\LICENSE",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -282,7 +390,13 @@
         {
           "path": "licenses/packages/radix-ui/LICENSE",
           "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138",
-          "bytes": 1063
+          "bytes": 1063,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "a18858fb7b014098cba85703e66609be66a26ef5",
+          "staged_path": "packages/radix-ui/LICENSE",
+          "destination": "{app}\\licenses\\packages\\radix-ui\\LICENSE",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -297,7 +411,13 @@
         {
           "path": "licenses/packages/radix-ui/LICENSE",
           "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138",
-          "bytes": 1063
+          "bytes": 1063,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "a18858fb7b014098cba85703e66609be66a26ef5",
+          "staged_path": "packages/radix-ui/LICENSE",
+          "destination": "{app}\\licenses\\packages\\radix-ui\\LICENSE",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -312,7 +432,13 @@
         {
           "path": "licenses/packages/radix-ui/LICENSE",
           "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138",
-          "bytes": 1063
+          "bytes": 1063,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "a18858fb7b014098cba85703e66609be66a26ef5",
+          "staged_path": "packages/radix-ui/LICENSE",
+          "destination": "{app}\\licenses\\packages\\radix-ui\\LICENSE",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -327,7 +453,13 @@
         {
           "path": "licenses/packages/radix-ui/LICENSE",
           "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138",
-          "bytes": 1063
+          "bytes": 1063,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "a18858fb7b014098cba85703e66609be66a26ef5",
+          "staged_path": "packages/radix-ui/LICENSE",
+          "destination": "{app}\\licenses\\packages\\radix-ui\\LICENSE",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -342,7 +474,13 @@
         {
           "path": "licenses/packages/radix-ui/LICENSE",
           "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138",
-          "bytes": 1063
+          "bytes": 1063,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "a18858fb7b014098cba85703e66609be66a26ef5",
+          "staged_path": "packages/radix-ui/LICENSE",
+          "destination": "{app}\\licenses\\packages\\radix-ui\\LICENSE",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -357,7 +495,13 @@
         {
           "path": "licenses/packages/radix-ui/LICENSE",
           "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138",
-          "bytes": 1063
+          "bytes": 1063,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "a18858fb7b014098cba85703e66609be66a26ef5",
+          "staged_path": "packages/radix-ui/LICENSE",
+          "destination": "{app}\\licenses\\packages\\radix-ui\\LICENSE",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -372,7 +516,13 @@
         {
           "path": "licenses/packages/radix-ui/LICENSE",
           "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138",
-          "bytes": 1063
+          "bytes": 1063,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "a18858fb7b014098cba85703e66609be66a26ef5",
+          "staged_path": "packages/radix-ui/LICENSE",
+          "destination": "{app}\\licenses\\packages\\radix-ui\\LICENSE",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -387,7 +537,13 @@
         {
           "path": "licenses/packages/radix-ui/LICENSE",
           "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138",
-          "bytes": 1063
+          "bytes": 1063,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "a18858fb7b014098cba85703e66609be66a26ef5",
+          "staged_path": "packages/radix-ui/LICENSE",
+          "destination": "{app}\\licenses\\packages\\radix-ui\\LICENSE",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -402,7 +558,13 @@
         {
           "path": "licenses/packages/radix-ui/LICENSE",
           "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138",
-          "bytes": 1063
+          "bytes": 1063,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "a18858fb7b014098cba85703e66609be66a26ef5",
+          "staged_path": "packages/radix-ui/LICENSE",
+          "destination": "{app}\\licenses\\packages\\radix-ui\\LICENSE",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -417,7 +579,13 @@
         {
           "path": "licenses/packages/radix-ui/LICENSE",
           "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138",
-          "bytes": 1063
+          "bytes": 1063,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "a18858fb7b014098cba85703e66609be66a26ef5",
+          "staged_path": "packages/radix-ui/LICENSE",
+          "destination": "{app}\\licenses\\packages\\radix-ui\\LICENSE",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -432,7 +600,13 @@
         {
           "path": "licenses/packages/radix-ui/LICENSE",
           "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138",
-          "bytes": 1063
+          "bytes": 1063,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "a18858fb7b014098cba85703e66609be66a26ef5",
+          "staged_path": "packages/radix-ui/LICENSE",
+          "destination": "{app}\\licenses\\packages\\radix-ui\\LICENSE",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -447,7 +621,13 @@
         {
           "path": "licenses/packages/radix-ui/LICENSE",
           "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138",
-          "bytes": 1063
+          "bytes": 1063,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "a18858fb7b014098cba85703e66609be66a26ef5",
+          "staged_path": "packages/radix-ui/LICENSE",
+          "destination": "{app}\\licenses\\packages\\radix-ui\\LICENSE",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -462,7 +642,13 @@
         {
           "path": "licenses/packages/radix-ui/LICENSE",
           "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138",
-          "bytes": 1063
+          "bytes": 1063,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "a18858fb7b014098cba85703e66609be66a26ef5",
+          "staged_path": "packages/radix-ui/LICENSE",
+          "destination": "{app}\\licenses\\packages\\radix-ui\\LICENSE",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -477,7 +663,13 @@
         {
           "path": "licenses/packages/radix-ui/LICENSE",
           "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138",
-          "bytes": 1063
+          "bytes": 1063,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "a18858fb7b014098cba85703e66609be66a26ef5",
+          "staged_path": "packages/radix-ui/LICENSE",
+          "destination": "{app}\\licenses\\packages\\radix-ui\\LICENSE",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -492,7 +684,13 @@
         {
           "path": "licenses/packages/radix-ui/LICENSE",
           "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138",
-          "bytes": 1063
+          "bytes": 1063,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "a18858fb7b014098cba85703e66609be66a26ef5",
+          "staged_path": "packages/radix-ui/LICENSE",
+          "destination": "{app}\\licenses\\packages\\radix-ui\\LICENSE",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -507,7 +705,13 @@
         {
           "path": "licenses/packages/radix-ui/LICENSE",
           "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138",
-          "bytes": 1063
+          "bytes": 1063,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "a18858fb7b014098cba85703e66609be66a26ef5",
+          "staged_path": "packages/radix-ui/LICENSE",
+          "destination": "{app}\\licenses\\packages\\radix-ui\\LICENSE",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -522,7 +726,13 @@
         {
           "path": "licenses/packages/react-router/LICENSE.md",
           "sha256": "77c9ee6a9c5d5782fb0c50b50d101189116314c14f7df0a1b0d385fc96a7ba49",
-          "bytes": 1161
+          "bytes": 1161,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "7d0a32c385b04289862dd6e927d69c9cd7c88bd2",
+          "staged_path": "packages/react-router/LICENSE.md",
+          "destination": "{app}\\licenses\\packages\\react-router\\LICENSE.md",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -537,7 +747,13 @@
         {
           "path": "licenses/packages/alembic/LICENSE",
           "sha256": "b285268a86f4416eaf4d05b2ae3880c156f7c59a8f935a402bc056eafb33af08",
-          "bytes": 1058
+          "bytes": 1058,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "74b9ce34299e78b1abd96c7128cd036332b6a511",
+          "staged_path": "packages/alembic/LICENSE",
+          "destination": "{app}\\licenses\\packages\\alembic\\LICENSE",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -552,7 +768,13 @@
         {
           "path": "licenses/packages/annotated-types/LICENSE",
           "sha256": "fe1049884b1a0d9342901e88e07f32925d24b3121d9972b6a6805fb9824b095d",
-          "bytes": 1083
+          "bytes": 1083,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "d99323a9965f146d5b0888c4ca1bf0727e12b04f",
+          "staged_path": "packages/annotated-types/LICENSE",
+          "destination": "{app}\\licenses\\packages\\annotated-types\\LICENSE",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -567,7 +789,13 @@
         {
           "path": "licenses/packages/anyio/LICENSE",
           "sha256": "5361ac9dc58f2ef5fd2e9b09c68297c17f04950909bbc8023bdb82eacf22c2b0",
-          "bytes": 1081
+          "bytes": 1081,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "104eebf5a3002fccdaceef3a4cb936173c1c2035",
+          "staged_path": "packages/anyio/LICENSE",
+          "destination": "{app}\\licenses\\packages\\anyio\\LICENSE",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -582,7 +810,13 @@
         {
           "path": "licenses/packages/thekashey/LICENSE",
           "sha256": "30f0cfddf483d1128e3610205020f2041a6c5e837aa999e0aa82e5576187d4a9",
-          "bytes": 1071
+          "bytes": 1071,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "a194c884de0a9fac7ef89094e4800282dda23f17",
+          "staged_path": "packages/thekashey/LICENSE",
+          "destination": "{app}\\licenses\\packages\\thekashey\\LICENSE",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -597,12 +831,24 @@
         {
           "path": "licenses/packages/certifi/LICENSE",
           "sha256": "e93716da6b9c0d5a4a1df60fe695b370f0695603d21f6f83f053e42cfc10caf7",
-          "bytes": 989
+          "bytes": 989,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "62b076cdee58ec8f34034141ba0befd9015b0c7e",
+          "staged_path": "packages/certifi/LICENSE",
+          "destination": "{app}\\licenses\\packages\\certifi\\LICENSE",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         },
         {
           "path": "licenses/packages/certifi/MPL-2.0.txt",
           "sha256": "af175b9d96ee93c21a036152e1b905b0b95304d4ae8c2c921c7609100ba8df7e",
-          "bytes": 15921
+          "bytes": 15921,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "be2cc4dfb609fb6c38f6365ec345bded3350dd63",
+          "staged_path": "packages/certifi/MPL-2.0.txt",
+          "destination": "{app}\\licenses\\packages\\certifi\\MPL-2.0.txt",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -617,7 +863,13 @@
         {
           "path": "licenses/packages/class-variance-authority/LICENSE",
           "sha256": "0ccbf956cffc8dcf515809433cb5242ee67c94513d46e48c261d68d0880de406",
-          "bytes": 10753
+          "bytes": 10753,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "380ac719506bc4a8e2dfb75349c8d4b448d4b5b1",
+          "staged_path": "packages/class-variance-authority/LICENSE",
+          "destination": "{app}\\licenses\\packages\\class-variance-authority\\LICENSE",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -632,7 +884,13 @@
         {
           "path": "licenses/packages/click/LICENSE.txt",
           "sha256": "9a8ad106a394e853bfe21f42f4e72d592819a22805d991b5f3275029292b658d",
-          "bytes": 1475
+          "bytes": 1475,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "d12a849186982399c537c5b9a8fd77bf2edd5eab",
+          "staged_path": "packages/click/LICENSE.txt",
+          "destination": "{app}\\licenses\\packages\\click\\LICENSE.txt",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -647,7 +905,13 @@
         {
           "path": "licenses/packages/clsx/license",
           "sha256": "9a9edad7baae52622bddf3c15b2ef8a33d2c89f2d25408ad13e8a7481c6b0c97",
-          "bytes": 1104
+          "bytes": 1104,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "fa6089faba3cf381229744c9f21ed3ae9ed5014a",
+          "staged_path": "packages/clsx/license",
+          "destination": "{app}\\licenses\\packages\\clsx\\license",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -662,7 +926,13 @@
         {
           "path": "licenses/packages/colorama/LICENSE.txt",
           "sha256": "cac35c02686e5d04a5a7140bfb3b36e73aed496656e891102e428886d7930318",
-          "bytes": 1491
+          "bytes": 1491,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "3105888ec149d10cad51c11d332779e94b548661",
+          "staged_path": "packages/colorama/LICENSE.txt",
+          "destination": "{app}\\licenses\\packages\\colorama\\LICENSE.txt",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -677,7 +947,13 @@
         {
           "path": "licenses/packages/detect-node-es/LICENSE",
           "sha256": "54b32293ea560d22cd9b62af9b2cda1a030d910a48c6601d227c5ff2338d95f8",
-          "bytes": 1068
+          "bytes": 1068,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "31133564faa539d06a66d467163a5b42931c2e1d",
+          "staged_path": "packages/detect-node-es/LICENSE",
+          "destination": "{app}\\licenses\\packages\\detect-node-es\\LICENSE",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -692,7 +968,13 @@
         {
           "path": "licenses/packages/fastapi/LICENSE",
           "sha256": "4ec89ffc81485b97fec584b2d4a961032eeffe834453894fd9c1274906cc744e",
-          "bytes": 1086
+          "bytes": 1086,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "3e92463e6bd522a2a21e5f0a80d8089d6c4be20d",
+          "staged_path": "packages/fastapi/LICENSE",
+          "destination": "{app}\\licenses\\packages\\fastapi\\LICENSE",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -707,7 +989,13 @@
         {
           "path": "licenses/packages/get-nonce/LICENSE",
           "sha256": "acf3b087b348d2f2e731b9d4131af185aad694c1204ce14a46909483fd42da05",
-          "bytes": 1071
+          "bytes": 1071,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "9455bf5c2e38efce322460afa46f7b73e25a425a",
+          "staged_path": "packages/get-nonce/LICENSE",
+          "destination": "{app}\\licenses\\packages\\get-nonce\\LICENSE",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -721,13 +1009,25 @@
       "files": [
         {
           "path": "licenses/packages/greenlet/LICENSE",
-          "sha256": "ab977b654605670319509481ece49198f405a129372ac38c96f51cd96c2f452e",
-          "bytes": 1464
+          "sha256": "769831d6e5dfaf2c20802faccff1fafb4c2025dd8f6253dfa47fcad59d4d0979",
+          "bytes": 1434,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "b73a4a10c6fa93a3a6fa47deb3796c590a9dee10",
+          "staged_path": "packages/greenlet/LICENSE",
+          "destination": "{app}\\licenses\\packages\\greenlet\\LICENSE",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         },
         {
           "path": "licenses/packages/greenlet/LICENSE.PSF",
-          "sha256": "69efa689cc7aec7736236d3039c1d665e4b0c734a5bfea5abf633023abb2fff4",
-          "bytes": 2471
+          "sha256": "e5ff3c23c110e494cd7d736c10fd96d462457bafeca310840db6527298c7d46b",
+          "bytes": 2424,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "d3b509a2b4119c47ad86af9fc1b400ce2eb09cf1",
+          "staged_path": "packages/greenlet/LICENSE.PSF",
+          "destination": "{app}\\licenses\\packages\\greenlet\\LICENSE.PSF",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -742,7 +1042,13 @@
         {
           "path": "licenses/packages/h11/LICENSE.txt",
           "sha256": "37db5bb85926db28a427a25867f10b1232003aea1be69ccb851138adb8e6f361",
-          "bytes": 1124
+          "bytes": 1124,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "8f080eae848f759c9173bfc0c79506357ebe5090",
+          "staged_path": "packages/h11/LICENSE.txt",
+          "destination": "{app}\\licenses\\packages\\h11\\LICENSE.txt",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -757,7 +1063,13 @@
         {
           "path": "licenses/packages/httpcore/LICENSE.md",
           "sha256": "fdcb59154c74cbaba16a11242f7740bea9f23d6feb5547917d8c5f94a80392a5",
-          "bytes": 1518
+          "bytes": 1518,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "311b2b56c53f678ab95fc0def708c675d521a807",
+          "staged_path": "packages/httpcore/LICENSE.md",
+          "destination": "{app}\\licenses\\packages\\httpcore\\LICENSE.md",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -771,8 +1083,14 @@
       "files": [
         {
           "path": "licenses/packages/httptools/LICENSE",
-          "sha256": "1c028b059d7a58e14ccda38cabced698c591fe614ffbe4f721430446e86c8d69",
-          "bytes": 1114
+          "sha256": "f4573e7cb7676745fb5b8d36fa548aa93e391cfb6872ddacd65130c45ea6a92d",
+          "bytes": 1093,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "79a03ca513a7c94562cb1f8d83aa8bfc736ba0c2",
+          "staged_path": "packages/httptools/LICENSE",
+          "destination": "{app}\\licenses\\packages\\httptools\\LICENSE",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -787,7 +1105,13 @@
         {
           "path": "licenses/packages/httpx/LICENSE.md",
           "sha256": "4ec59d544f12b5f539a3a716fd321ac58ccd8030b465221f2c880200cdf28d8d",
-          "bytes": 1508
+          "bytes": 1508,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "ab79d16a3f4c6c894c028d1f7431811e8711b42b",
+          "staged_path": "packages/httpx/LICENSE.md",
+          "destination": "{app}\\licenses\\packages\\httpx\\LICENSE.md",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -802,7 +1126,13 @@
         {
           "path": "licenses/packages/idna/LICENSE.md",
           "sha256": "1a9a4f0e3d479a27240ddd59a9137a66ab4a0f9dfdc8ca6188cc0bfd85187f04",
-          "bytes": 1541
+          "bytes": 1541,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "f706835ab3a5dd709a6e1f57aee0a94ae1415df6",
+          "staged_path": "packages/idna/LICENSE.md",
+          "destination": "{app}\\licenses\\packages\\idna\\LICENSE.md",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -817,7 +1147,13 @@
         {
           "path": "licenses/packages/js-tokens/LICENSE",
           "sha256": "2213d91c606205c71eb051a199478cdc2adde945893404d7f1421436dd6d5cc1",
-          "bytes": 1103
+          "bytes": 1103,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "54aef52f3a464e59316eca4068f24717a40b0ec0",
+          "staged_path": "packages/js-tokens/LICENSE",
+          "destination": "{app}\\licenses\\packages\\js-tokens\\LICENSE",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -832,7 +1168,13 @@
         {
           "path": "licenses/packages/loose-envify/LICENSE",
           "sha256": "4eb7543b08d955a6d23fcc224601d43ff566e775be918805e26210d7f6eb4893",
-          "bytes": 1100
+          "bytes": 1100,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "fbafb48758c78039fedb1dbce1ffa6de019870d1",
+          "staged_path": "packages/loose-envify/LICENSE",
+          "destination": "{app}\\licenses\\packages\\loose-envify\\LICENSE",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -847,7 +1189,13 @@
         {
           "path": "licenses/packages/lucide-react/LICENSE",
           "sha256": "1e7290b35280a048667bbf0ebabac1c7fd52a75300e8b2946ac165715997f2bc",
-          "bytes": 880
+          "bytes": 880,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "325e8ff0aae2dde3134c1ceed780a11d7bd8f544",
+          "staged_path": "packages/lucide-react/LICENSE",
+          "destination": "{app}\\licenses\\packages\\lucide-react\\LICENSE",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -861,13 +1209,25 @@
       "files": [
         {
           "path": "licenses/packages/lxml/LICENSE.txt",
-          "sha256": "e7c3ce8d76331b0101cc46790ab43958ea90a364bcf962ed8763d5a818340e69",
-          "bytes": 1538
+          "sha256": "8fc2b568133516e46845d2147917adeee1648e70ae9ab5ed6c5417afef4ce855",
+          "bytes": 1507,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "0bdf03913ffdfd09be5a524c9303bd54a132d450",
+          "staged_path": "packages/lxml/LICENSE.txt",
+          "destination": "{app}\\licenses\\packages\\lxml\\LICENSE.txt",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         },
         {
           "path": "licenses/packages/lxml/LICENSES.txt",
-          "sha256": "df682c668de65321677b5e4861dca4128a8bad8067f230956e9da3f985b3d398",
-          "bytes": 6348
+          "sha256": "388fa99f3bde4447cd5a4cbb114037be026854db6cfe89e112691c1d8abdcf3c",
+          "bytes": 6221,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "fa56d69c930f414ac6d01a4a65c4e20e2d8540ab",
+          "staged_path": "packages/lxml/LICENSES.txt",
+          "destination": "{app}\\licenses\\packages\\lxml\\LICENSES.txt",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -882,7 +1242,13 @@
         {
           "path": "licenses/packages/mako/LICENSE",
           "sha256": "8c1d171bc5d341ad9cd33d5e2c39b96a82c7bd49b3ae89a470c37e5822232054",
-          "bytes": 1098
+          "bytes": 1098,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "e5cf905a5e9ad5b7a5338bfc2723026b75e9e9ad",
+          "staged_path": "packages/mako/LICENSE",
+          "destination": "{app}\\licenses\\packages\\mako\\LICENSE",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -896,8 +1262,14 @@
       "files": [
         {
           "path": "licenses/packages/markupsafe/LICENSE.txt",
-          "sha256": "4631ec0db5fd90a547e336817264c6798214338146f8ac94b4a57f96ee8c9ec4",
-          "bytes": 1503
+          "sha256": "489a8e1108509ed98a37bb983e11e0f7e1d31f0bd8f99a79c8448e7ff37d07ea",
+          "bytes": 1475,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "9d227a0cc43c3268d15722b763bd94ad298645a1",
+          "staged_path": "packages/markupsafe/LICENSE.txt",
+          "destination": "{app}\\licenses\\packages\\markupsafe\\LICENSE.txt",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -912,7 +1284,13 @@
         {
           "path": "licenses/packages/pdfjs-dist/LICENSE",
           "sha256": "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594",
-          "bytes": 10174
+          "bytes": 10174,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "f433b1a53f5b830a205fd2df78e2b34974656c7b",
+          "staged_path": "packages/pdfjs-dist/LICENSE",
+          "destination": "{app}\\licenses\\packages\\pdfjs-dist\\LICENSE",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -926,8 +1304,14 @@
       "files": [
         {
           "path": "licenses/packages/pillow/LICENSE",
-          "sha256": "4f7866a74802c6326f81faff59a56546b6aec2b10b91973e0e9308de95e79857",
-          "bytes": 78016
+          "sha256": "51ed379cf673c9676b7fa7e1bedbfc5d4ad63caac4f6f99eeec5ccab50c3e0ef",
+          "bytes": 76435,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "98dbeaac60f8b777180357e2b4654500d5f7463c",
+          "staged_path": "packages/pillow/LICENSE",
+          "destination": "{app}\\licenses\\packages\\pillow\\LICENSE",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -942,7 +1326,13 @@
         {
           "path": "licenses/packages/pydantic/LICENSE",
           "sha256": "a9e186f3ca16b5eef84318e7a701721351a00cb7b8ae3a4394b67b49e3529ef3",
-          "bytes": 1129
+          "bytes": 1129,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "488c6260c10f2e88fa1fae58a63fccec8d600cd1",
+          "staged_path": "packages/pydantic/LICENSE",
+          "destination": "{app}\\licenses\\packages\\pydantic\\LICENSE",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -956,8 +1346,14 @@
       "files": [
         {
           "path": "licenses/packages/pydantic-core/LICENSE",
-          "sha256": "fbe7f615f18d135c07000e5a86325db27f42c7729699ef166ac1f7a3f4586bf4",
-          "bytes": 1101
+          "sha256": "2afdd30d54b4d62b6f488a6bcc1546e84ec5061f13f4209c03d012348783795a",
+          "bytes": 1080,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "0716871caabdbbb3e77a0371d49936cef1923ea1",
+          "staged_path": "packages/pydantic-core/LICENSE",
+          "destination": "{app}\\licenses\\packages\\pydantic-core\\LICENSE",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -972,7 +1368,13 @@
         {
           "path": "licenses/packages/pydantic-settings/LICENSE",
           "sha256": "eb355a753e020346d33d83bf9769135b89fc610568ac531a01c295bcee7fd998",
-          "bytes": 1103
+          "bytes": 1103,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "d90598f2a8740731fa4c637870bd1f8a1a23bfb4",
+          "staged_path": "packages/pydantic-settings/LICENSE",
+          "destination": "{app}\\licenses\\packages\\pydantic-settings\\LICENSE",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -987,7 +1389,13 @@
         {
           "path": "licenses/packages/pygments/LICENSE",
           "sha256": "a9d66f1d526df02e29dce73436d34e56e8632f46c275bbdffc70569e882f9f17",
-          "bytes": 1331
+          "bytes": 1331,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "446a1a805c8a949579fb8a9799f2bec7777349dc",
+          "staged_path": "packages/pygments/LICENSE",
+          "destination": "{app}\\licenses\\packages\\pygments\\LICENSE",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -1001,8 +1409,14 @@
       "files": [
         {
           "path": "licenses/packages/pyinstaller/COPYING.txt",
-          "sha256": "0272fb1ecee668bf0cc359ef4cd5d5ca1551b686be0abc27a660f68a3cb85ae5",
-          "bytes": 32774
+          "sha256": "dcf75fdb959db1e3b41c0f8505069d2ece781b5ec6b3d0a4d30975cfc6580245",
+          "bytes": 32138,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "51bf4bd138e68f0ccafce4fbf7723842dceaa1d1",
+          "staged_path": "packages/pyinstaller/COPYING.txt",
+          "destination": "{app}\\licenses\\packages\\pyinstaller\\COPYING.txt",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -1017,7 +1431,13 @@
         {
           "path": "licenses/packages/pypdf/LICENSE",
           "sha256": "a97ac230e5f33ef10a5367a850eb01f91f1a0b064e34742c7794d2294557f524",
-          "bytes": 1605
+          "bytes": 1605,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "ab327d0312875458ba74983867f1b2622b6de39d",
+          "staged_path": "packages/pypdf/LICENSE",
+          "destination": "{app}\\licenses\\packages\\pypdf\\LICENSE",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -1032,7 +1452,13 @@
         {
           "path": "licenses/packages/python-docx/LICENSE",
           "sha256": "7652f271e46d0d533e9dc463f3b5fcbdcacf4d6a9c8d6b554d15efd0f37f6132",
-          "bytes": 1104
+          "bytes": 1104,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "67ebe716ec4b2d64d6146b5e7cecd77ac7af9b79",
+          "staged_path": "packages/python-docx/LICENSE",
+          "destination": "{app}\\licenses\\packages\\python-docx\\LICENSE",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -1047,7 +1473,13 @@
         {
           "path": "licenses/packages/python-dotenv/LICENSE",
           "sha256": "80619b7049f08c81683ad0e01f08f257a840652dd71ee83146d36658c7d2c2b9",
-          "bytes": 1556
+          "bytes": 1556,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "3a97119010ac82e15e917a69b7b8f9f59b5a4601",
+          "staged_path": "packages/python-dotenv/LICENSE",
+          "destination": "{app}\\licenses\\packages\\python-dotenv\\LICENSE",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -1062,7 +1494,13 @@
         {
           "path": "licenses/packages/python-multipart/LICENSE.txt",
           "sha256": "a8e833176cd617daf00b9d6d39fa15ca8edebc6d1643079cd2f4893c0c289be2",
-          "bytes": 556
+          "bytes": 556,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "303a1bf5015ca5c7374a9bde74dee5e2b205fbe3",
+          "staged_path": "packages/python-multipart/LICENSE.txt",
+          "destination": "{app}\\licenses\\packages\\python-multipart\\LICENSE.txt",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -1077,7 +1515,13 @@
         {
           "path": "licenses/packages/pyyaml/LICENSE",
           "sha256": "8d3928f9dc4490fd635707cb88eb26bd764102a7282954307d3e5167a577e8a4",
-          "bytes": 1101
+          "bytes": 1101,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "2f1b8e15e5627d92f0521605c9870bc8e5505cb4",
+          "staged_path": "packages/pyyaml/LICENSE",
+          "destination": "{app}\\licenses\\packages\\pyyaml\\LICENSE",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -1092,7 +1536,13 @@
         {
           "path": "licenses/packages/react/LICENSE",
           "sha256": "52412d7bc7ce4157ea628bbaacb8829e0a9cb3c58f57f99176126bc8cf2bfc85",
-          "bytes": 1086
+          "bytes": 1086,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "b96dcb0480a0b0be0727976e5202a1e7b23edc3f",
+          "staged_path": "packages/react/LICENSE",
+          "destination": "{app}\\licenses\\packages\\react\\LICENSE",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -1107,7 +1557,13 @@
         {
           "path": "licenses/packages/react/LICENSE",
           "sha256": "52412d7bc7ce4157ea628bbaacb8829e0a9cb3c58f57f99176126bc8cf2bfc85",
-          "bytes": 1086
+          "bytes": 1086,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "b96dcb0480a0b0be0727976e5202a1e7b23edc3f",
+          "staged_path": "packages/react/LICENSE",
+          "destination": "{app}\\licenses\\packages\\react\\LICENSE",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -1122,7 +1578,13 @@
         {
           "path": "licenses/packages/thekashey/LICENSE",
           "sha256": "30f0cfddf483d1128e3610205020f2041a6c5e837aa999e0aa82e5576187d4a9",
-          "bytes": 1071
+          "bytes": 1071,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "a194c884de0a9fac7ef89094e4800282dda23f17",
+          "staged_path": "packages/thekashey/LICENSE",
+          "destination": "{app}\\licenses\\packages\\thekashey\\LICENSE",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -1137,7 +1599,13 @@
         {
           "path": "licenses/packages/thekashey/LICENSE",
           "sha256": "30f0cfddf483d1128e3610205020f2041a6c5e837aa999e0aa82e5576187d4a9",
-          "bytes": 1071
+          "bytes": 1071,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "a194c884de0a9fac7ef89094e4800282dda23f17",
+          "staged_path": "packages/thekashey/LICENSE",
+          "destination": "{app}\\licenses\\packages\\thekashey\\LICENSE",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -1152,7 +1620,13 @@
         {
           "path": "licenses/packages/react-router/LICENSE.md",
           "sha256": "77c9ee6a9c5d5782fb0c50b50d101189116314c14f7df0a1b0d385fc96a7ba49",
-          "bytes": 1161
+          "bytes": 1161,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "7d0a32c385b04289862dd6e927d69c9cd7c88bd2",
+          "staged_path": "packages/react-router/LICENSE.md",
+          "destination": "{app}\\licenses\\packages\\react-router\\LICENSE.md",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -1167,7 +1641,13 @@
         {
           "path": "licenses/packages/react-router/LICENSE.md",
           "sha256": "77c9ee6a9c5d5782fb0c50b50d101189116314c14f7df0a1b0d385fc96a7ba49",
-          "bytes": 1161
+          "bytes": 1161,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "7d0a32c385b04289862dd6e927d69c9cd7c88bd2",
+          "staged_path": "packages/react-router/LICENSE.md",
+          "destination": "{app}\\licenses\\packages\\react-router\\LICENSE.md",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -1182,7 +1662,13 @@
         {
           "path": "licenses/packages/thekashey/LICENSE",
           "sha256": "30f0cfddf483d1128e3610205020f2041a6c5e837aa999e0aa82e5576187d4a9",
-          "bytes": 1071
+          "bytes": 1071,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "a194c884de0a9fac7ef89094e4800282dda23f17",
+          "staged_path": "packages/thekashey/LICENSE",
+          "destination": "{app}\\licenses\\packages\\thekashey\\LICENSE",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -1197,7 +1683,13 @@
         {
           "path": "licenses/packages/reportlab/LICENSE",
           "sha256": "a02a6aeb5dde4c4194494bc0b10d5ed62a32628ccd2882c363fdb9a7874ab2b8",
-          "bytes": 1707
+          "bytes": 1707,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "9d74a0a1354ee06b77f7b57a1be48eb4a287ee85",
+          "staged_path": "packages/reportlab/LICENSE",
+          "destination": "{app}\\licenses\\packages\\reportlab\\LICENSE",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -1212,7 +1704,13 @@
         {
           "path": "licenses/packages/react/LICENSE",
           "sha256": "52412d7bc7ce4157ea628bbaacb8829e0a9cb3c58f57f99176126bc8cf2bfc85",
-          "bytes": 1086
+          "bytes": 1086,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "b96dcb0480a0b0be0727976e5202a1e7b23edc3f",
+          "staged_path": "packages/react/LICENSE",
+          "destination": "{app}\\licenses\\packages\\react\\LICENSE",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -1227,7 +1725,13 @@
         {
           "path": "licenses/packages/sniffio/LICENSE",
           "sha256": "652c878488d1456361e08c3f8607fd7ba59892a14103d15cce4ff93c85b5cc8b",
-          "bytes": 185
+          "bytes": 185,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "51f3442917839f8e0f0cccb52b3c10968ad0779e",
+          "staged_path": "packages/sniffio/LICENSE",
+          "destination": "{app}\\licenses\\packages\\sniffio\\LICENSE",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -1241,8 +1745,14 @@
       "files": [
         {
           "path": "licenses/packages/sqlalchemy/LICENSE",
-          "sha256": "65b71019936da682f2f188ef1fe9f2a286d374ec2d120b57a293d5cf1cbaa42a",
-          "bytes": 1119
+          "sha256": "da54937a5b93d5a0bee5e2573bcbe19337fddea092795fe61572ebbf7b4d7485",
+          "bytes": 1100,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "7bf9bbe9683e119ca3f7056479c942fa51da7487",
+          "staged_path": "packages/sqlalchemy/LICENSE",
+          "destination": "{app}\\licenses\\packages\\sqlalchemy\\LICENSE",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -1257,7 +1767,13 @@
         {
           "path": "licenses/packages/starlette/LICENSE.md",
           "sha256": "dcb95677a02240243187e964f941847d19b17821cf99e5afae684fab328c19bf",
-          "bytes": 1518
+          "bytes": 1518,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "d16a60ec5b9963ef86b35a52ac92227014618e6c",
+          "staged_path": "packages/starlette/LICENSE.md",
+          "destination": "{app}\\licenses\\packages\\starlette\\LICENSE.md",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -1272,7 +1788,13 @@
         {
           "path": "licenses/packages/tailwind-merge/LICENSE.md",
           "sha256": "d4c70c7ce38cea8778f0aed3fc0bef0a9dbd27f13bd8b6773cbd6d37941971e5",
-          "bytes": 1070
+          "bytes": 1070,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "0d2b96a2fd66a32613e70681efa4a5d8474f5946",
+          "staged_path": "packages/tailwind-merge/LICENSE.md",
+          "destination": "{app}\\licenses\\packages\\tailwind-merge\\LICENSE.md",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -1287,7 +1809,13 @@
         {
           "path": "licenses/packages/tailwindcss-animate/LICENSE",
           "sha256": "d06945a5d85f4f6062393af30ad07d8afd1efa190c46cea6819b85c11764c7cd",
-          "bytes": 1067
+          "bytes": 1067,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "eed95d6a433c97d2c0cb1e4992846b0b73f9f75a",
+          "staged_path": "packages/tailwindcss-animate/LICENSE",
+          "destination": "{app}\\licenses\\packages\\tailwindcss-animate\\LICENSE",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -1301,8 +1829,14 @@
       "files": [
         {
           "path": "licenses/packages/tslib/LICENSE.txt",
-          "sha256": "210b19e543130388c68654b7497e967119ce17145f66ab7d85688fbd70f08751",
-          "bytes": 655
+          "sha256": "0e8d2550baea17eb3072c4f919b36fbf9852bb49dba948549872e713863c0834",
+          "bytes": 644,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "fa7d1bdf94d541b1754132c52ec3868d1fe4cdaf",
+          "staged_path": "packages/tslib/LICENSE.txt",
+          "destination": "{app}\\licenses\\packages\\tslib\\LICENSE.txt",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -1317,7 +1851,13 @@
         {
           "path": "licenses/packages/typing-extensions/LICENSE",
           "sha256": "3b2f81fe21d181c499c59a256c8e1968455d6689d269aa85373bfb6af41da3bf",
-          "bytes": 13936
+          "bytes": 13936,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "f26bcf4d2de6eb136e31006ca3ab447d5e488adf",
+          "staged_path": "packages/typing-extensions/LICENSE",
+          "destination": "{app}\\licenses\\packages\\typing-extensions\\LICENSE",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -1332,7 +1872,13 @@
         {
           "path": "licenses/packages/thekashey/LICENSE",
           "sha256": "30f0cfddf483d1128e3610205020f2041a6c5e837aa999e0aa82e5576187d4a9",
-          "bytes": 1071
+          "bytes": 1071,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "a194c884de0a9fac7ef89094e4800282dda23f17",
+          "staged_path": "packages/thekashey/LICENSE",
+          "destination": "{app}\\licenses\\packages\\thekashey\\LICENSE",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -1347,7 +1893,13 @@
         {
           "path": "licenses/packages/thekashey/LICENSE",
           "sha256": "30f0cfddf483d1128e3610205020f2041a6c5e837aa999e0aa82e5576187d4a9",
-          "bytes": 1071
+          "bytes": 1071,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "a194c884de0a9fac7ef89094e4800282dda23f17",
+          "staged_path": "packages/thekashey/LICENSE",
+          "destination": "{app}\\licenses\\packages\\thekashey\\LICENSE",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -1362,7 +1914,13 @@
         {
           "path": "licenses/packages/uvicorn/LICENSE.md",
           "sha256": "efe1acf3e62fb99c288b0ec73e5a773b7268ef4320fe757ea994214e4b63c371",
-          "bytes": 1526
+          "bytes": 1526,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "a6bba14552c7673a7db57a5750ddb06508264273",
+          "staged_path": "packages/uvicorn/LICENSE.md",
+          "destination": "{app}\\licenses\\packages\\uvicorn\\LICENSE.md",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -1376,8 +1934,14 @@
       "files": [
         {
           "path": "licenses/packages/watchfiles/LICENSE",
-          "sha256": "2d40a03346bded8daa4bd22d23825a6f2568a0820fbef76ac05bae534421e189",
-          "bytes": 1112
+          "sha256": "4fd78355b67ce2677ede9fb6f63a250f377bb7e22088136a5f4699adb4bc069f",
+          "bytes": 1091,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "bdd9b15521a6e7860883f7d5fea2ed29e1c0422e",
+          "staged_path": "packages/watchfiles/LICENSE",
+          "destination": "{app}\\licenses\\packages\\watchfiles\\LICENSE",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     },
@@ -1391,8 +1955,14 @@
       "files": [
         {
           "path": "licenses/packages/websockets/LICENSE",
-          "sha256": "0f44514998aca209d3482d10204a8adf2aa4296ff157a36a5c0922f2280632d3",
-          "bytes": 1538
+          "sha256": "3d6a0c050d8bec52fabad502e45fb25bd02bcadbd70dea34d447b6a0ff4e6da8",
+          "bytes": 1514,
+          "source_commit": "1be833fd720dd367574a9c2c6a512da64eae7fb8",
+          "blob_id": "5d61ece22a75a759aed8e52af280eca28d35d6bf",
+          "staged_path": "packages/websockets/LICENSE",
+          "destination": "{app}\\licenses\\packages\\websockets\\LICENSE",
+          "normalization_policy": "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM",
+          "verification_status": "VERIFIED"
         }
       ]
     }

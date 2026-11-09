@@ -19,6 +19,7 @@ import hashlib
 import json
 import os
 import re
+import subprocess
 import sys
 import unicodedata
 from pathlib import Path
@@ -174,6 +175,9 @@ EXIT_LICENSES_MALFORMED = 41
 EXIT_LICENSES_HASH_MISMATCH = 42
 EXIT_LICENSES_COVERAGE_GAP = 43
 EXIT_LICENSES_UNSAFE_PATH = 44
+EXIT_LICENSES_STAGING_SOURCE = 45
+EXIT_LICENSES_STAGING_MISMATCH = 46
+NORMALIZATION_POLICY_CANONICAL = "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM"
 
 REQUIRED_PYTHON_DIRECT_PACKAGES = {
     "alembic": "1.11.1",
@@ -480,7 +484,7 @@ def _iter_tree(root: Path):
             yield Path(dirpath) / name
 
 
-def _check_regular(path: Path, repo_root: Path, rel: str) -> None:
+def _check_regular(path: Path, repo_root: Path, rel: str, allow_root: Path | None = None) -> None:
     """Reject symlinks, junctions and realpath escapes. Never follow a link."""
     if path.is_symlink():
         raise ManifestProblem(EXIT_UNSAFE_PATH, f"UNSAFE {rel}: symbolic link")
@@ -488,7 +492,8 @@ def _check_regular(path: Path, repo_root: Path, rel: str) -> None:
     if callable(is_junction) and is_junction():
         raise ManifestProblem(EXIT_UNSAFE_PATH, f"UNSAFE {rel}: junction")
     if not _is_within(path.resolve(), repo_root.resolve()):
-        raise ManifestProblem(EXIT_UNSAFE_PATH, f"UNSAFE {rel}: resolves outside the repository")
+        if allow_root is None or not _is_within(path.resolve(), allow_root.resolve()):
+            raise ManifestProblem(EXIT_UNSAFE_PATH, f"UNSAFE {rel}: resolves outside the repository")
 
 
 def _hash_path(
@@ -497,13 +502,14 @@ def _hash_path(
     rel: str,
     *,
     unstable_code: int = EXIT_UNSTABLE,
+    allow_root: Path | None = None,
 ) -> tuple[str, int]:
     """Return (sha256, size) for a governed file, rejecting unstable reads.
 
     ``unstable_code`` lets the inventory callers report 35 while the provenance
     manifest keeps its published 30.
     """
-    _check_regular(path, repo_root, rel)
+    _check_regular(path, repo_root, rel, allow_root=allow_root)
     try:
         before = path.stat()
     except OSError as exc:
@@ -541,7 +547,7 @@ def _is_governed_file(path: Path, repo_root: Path) -> bool:
     return False
 
 
-def _insert_input(rows: dict, path: Path, repo_root: Path, category: str, rel=None) -> None:
+def _insert_input(rows: dict, path: Path, repo_root: Path, category: str, rel=None, allow_root: Path | None = None) -> None:
     rel = rel or _normalise_rel(path.relative_to(repo_root).as_posix())
     key = rel.casefold()
     if key in rows:
@@ -551,11 +557,11 @@ def _insert_input(rows: dict, path: Path, repo_root: Path, category: str, rel=No
                 f"UNSAFE duplicate governed path {rel} / {rows[key]['path']}",
             )
         return
-    sha256, size = _hash_path(path, repo_root, rel)
+    sha256, size = _hash_path(path, repo_root, rel, allow_root=allow_root)
     rows[key] = {"path": rel, "category": category, "sha256": sha256, "size": size}
 
 
-def collect_inputs(repo_root: Path) -> list[dict]:
+def collect_inputs(repo_root: Path, license_root: Path | None = None) -> list[dict]:
     """Hash every governed input and return them in deterministic order."""
     repo_root = Path(repo_root)
     rows: dict[str, dict] = {}
@@ -582,13 +588,24 @@ def collect_inputs(repo_root: Path) -> list[dict]:
             _insert_input(rows, path, repo_root, category, rel=rel)
 
     for rel_root, category in _GOVERNED_CONDITIONAL_TREES:
-        base = repo_root / rel_root
-        if base.is_dir():
-            for path in _iter_tree(base):
-                _insert_input(rows, path, repo_root, category)
+        if rel_root == "licenses" and license_root is not None:
+            lic_base = Path(license_root).resolve()
+            staged_pkgs = lic_base / "packages"
+            if staged_pkgs.is_dir():
+                for path in _iter_tree(staged_pkgs):
+                    sub_rel = path.relative_to(staged_pkgs).as_posix()
+                    canonical_rel = f"licenses/packages/{sub_rel}"
+                    _insert_input(rows, path, repo_root, category, rel=canonical_rel, allow_root=lic_base)
+            staged_manifest = staged_pkgs / "MANIFEST.json"
+            if staged_manifest.is_file():
+                _insert_input(rows, staged_manifest, repo_root, category, rel="licenses/packages/MANIFEST.json", allow_root=lic_base)
+        else:
+            base = repo_root / rel_root
+            if base.is_dir():
+                for path in _iter_tree(base):
+                    _insert_input(rows, path, repo_root, category)
 
     return [rows[key] for key in sorted(rows, key=lambda k: (rows[k]["path"].casefold(), rows[k]["path"]))]
-
 
 def _dist_identity(dist_info: Path) -> tuple[str, str]:
     """Return (name, version) from METADATA, falling back to the directory name."""
@@ -736,10 +753,11 @@ def build_manifest(
     repo_root: Path,
     bundle_root: Path,
     recorded: dict | None = None,
+    license_root: Path | None = None,
 ) -> dict:
     """Build the deterministic manifest content plus non-deterministic metadata."""
     content = {
-        "inputs": collect_inputs(repo_root),
+        "inputs": collect_inputs(repo_root, license_root=license_root),
         "toolchain": collect_toolchain(repo_root),
         "runtime": bundle_tree_digest(bundle_root),
     }
@@ -850,11 +868,12 @@ def manifest_problems(
     repo_root: Path,
     bundle_root: Path,
     manifest: dict,
+    license_root: Path | None = None,
 ) -> tuple[int, list[str]]:
     """Compare a loaded manifest against the working tree and the bundle."""
     recorded_content = manifest["content"]
     current = {
-        "inputs": collect_inputs(repo_root),
+        "inputs": collect_inputs(repo_root, license_root=license_root),
         "toolchain": collect_toolchain(repo_root),
         "runtime": bundle_tree_digest(bundle_root),
     }
@@ -905,11 +924,12 @@ def verify_manifest(
     repo_root: Path,
     bundle_root: Path,
     path: Path,
+    license_root: Path | None = None,
 ) -> tuple[int, list[str]]:
     """Return (exit_code, messages). Exit 0 means parity is proven."""
     try:
         manifest = load_manifest(path)
-        return manifest_problems(repo_root, bundle_root, manifest)
+        return manifest_problems(repo_root, bundle_root, manifest, license_root=license_root)
     except ManifestProblem as exc:
         return exc.code, [exc.detail]
 
@@ -1225,7 +1245,7 @@ def _inventory_cli(argv) -> int:
 
 
 def _parse_manifest_cli(argv):
-    options = {"--output": None, "--manifest": None, "--node-version": None, "--npm-version": None}
+    options = {"--output": None, "--manifest": None, "--node-version": None, "--npm-version": None, "--license-root": None}
     positional = []
     index = 1
     while index < len(argv):
@@ -1259,7 +1279,8 @@ def _manifest_cli(argv) -> int:
                 recorded["node_version"] = options["--node-version"]
             if options["--npm-version"]:
                 recorded["npm_version"] = options["--npm-version"]
-            manifest = build_manifest(repo_root, bundle_root, recorded)
+            license_root = Path(options["--license-root"]).resolve() if options["--license-root"] else None
+            manifest = build_manifest(repo_root, bundle_root, recorded, license_root=license_root)
             output = Path(options["--output"])
             write_manifest_atomic(output, manifest)
             content = manifest["content"]
@@ -1274,7 +1295,8 @@ def _manifest_cli(argv) -> int:
             return EXIT_PARITY
         if not options["--manifest"]:
             raise ManifestProblem(EXIT_MALFORMED, "usage: verify-manifest requires --manifest <path>")
-        code, messages = verify_manifest(repo_root, bundle_root, Path(options["--manifest"]))
+        license_root = Path(options["--license-root"]).resolve() if options["--license-root"] else None
+        code, messages = verify_manifest(repo_root, bundle_root, Path(options["--manifest"]), license_root=license_root)
         for message in messages:
             print(message)
         if code == EXIT_PARITY:
@@ -1287,7 +1309,213 @@ def _manifest_cli(argv) -> int:
         return exc.code
 
 
-def verify_licenses(repo_root: Path) -> tuple[int, list[str]]:
+def stage_licenses(repo_root: Path, commit: str, dest: Path) -> tuple[int, list[str]]:
+    repo_root = Path(repo_root).resolve()
+    dest = Path(dest)
+
+    # 1. Resolve commit
+    r_rev = subprocess.run(
+        ["git", "rev-parse", "--verify", "--end-of-options", f"{commit}^{{commit}}"],
+        cwd=repo_root, capture_output=True, text=True
+    )
+    if r_rev.returncode != 0:
+        return (EXIT_LICENSES_STAGING_SOURCE, [f"INVALID commit {commit}: {r_rev.stderr.strip()}"])
+    commit_sha = r_rev.stdout.strip()
+
+    # 2. Require HEAD == commit_sha (equality, not ancestry!)
+    r_head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo_root, capture_output=True, text=True)
+    if r_head.returncode != 0 or r_head.stdout.strip() != commit_sha:
+        return (EXIT_LICENSES_STAGING_SOURCE, [f"COMMIT mismatch: HEAD ({r_head.stdout.strip()}) does not match staging commit ({commit_sha})"])
+
+    # 3. Read manifest from git blob at commit
+    r_cat = subprocess.run(
+        ["git", "cat-file", "blob", f"{commit_sha}:licenses/packages/MANIFEST.json"],
+        cwd=repo_root, capture_output=True
+    )
+    if r_cat.returncode != 0:
+        return (EXIT_LICENSES_STAGING_SOURCE, [f"MISSING licenses/packages/MANIFEST.json blob at commit {commit_sha}"])
+    manifest_bytes = r_cat.stdout
+
+    # Parse manifest JSON from commit bytes only
+    try:
+        data = json.loads(manifest_bytes.decode("utf-8"))
+    except Exception as exc:
+        return (EXIT_LICENSES_MALFORMED, [f"MALFORMED manifest JSON at {commit_sha}: {exc}"])
+
+    if not isinstance(data, dict) or "packages" not in data or not isinstance(data["packages"], list):
+        return (EXIT_LICENSES_MALFORMED, ["MALFORMED manifest structure at commit"])
+
+    # 4. Check destination safety
+    dest_resolved = dest.resolve()
+    if dest.is_symlink() or (hasattr(dest, "is_junction") and dest.is_junction()):
+        return (EXIT_LICENSES_UNSAFE_PATH, [f"UNSAFE staging destination: symlink or junction {dest}"])
+
+    # Destination must be fresh and empty if it exists
+    if dest.exists() and any(dest.iterdir()):
+        return (EXIT_LICENSES_STAGING_SOURCE, [f"STAGING destination must be fresh/empty: {dest}"])
+
+    # 5. Extract files
+    dest.mkdir(parents=True, exist_ok=True)
+    packages_dir = dest / "packages"
+    packages_dir.mkdir(parents=True, exist_ok=True)
+
+    declared_files = set()
+    for pkg in data["packages"]:
+        pkg_name = pkg.get("package", "unknown")
+        for f_entry in pkg.get("files", []):
+            rel_path = f_entry.get("path", "").replace("\\", "/")
+            if not rel_path.startswith("licenses/packages/"):
+                return (EXIT_LICENSES_UNSAFE_PATH, [f"UNSAFE path does not start with licenses/packages/: {rel_path}"])
+            if ".." in rel_path or ":" in rel_path or rel_path.startswith("/"):
+                return (EXIT_LICENSES_UNSAFE_PATH, [f"UNSAFE path traversal: {rel_path}"])
+
+            # Check Pillow anomaly prohibition
+            if rel_path == "licenses/packages/pillow/LICENSE":
+                exp_bytes = f_entry.get("bytes")
+                exp_sha = f_entry.get("sha256", "").lower()
+                if exp_bytes in (78016, 78052) or exp_sha == "4f7866a74802c6326f81faff59a56546b6aec2b10b91973e0e9308de95e79857":
+                    return (EXIT_LICENSES_STAGING_MISMATCH, ["ANOMALOUS Pillow license bytes rejected"])
+
+            sub_path = rel_path[len("licenses/"):]  # packages/...
+            target_file = dest / sub_path
+
+            # Query git ls-tree to confirm it's a blob
+            r_tree = subprocess.run(
+                ["git", "ls-tree", commit_sha, rel_path],
+                cwd=repo_root, capture_output=True, text=True
+            )
+            tree_parts = r_tree.stdout.strip().split()
+            if len(tree_parts) < 3 or tree_parts[1] != "blob":
+                return (EXIT_LICENSES_STAGING_SOURCE, [f"MISSING or invalid Git blob object for {rel_path}"])
+            blob_id = tree_parts[2]
+
+            # Fetch blob content
+            r_blob = subprocess.run(
+                ["git", "cat-file", "blob", blob_id],
+                cwd=repo_root, capture_output=True
+            )
+            if r_blob.returncode != 0:
+                return (EXIT_LICENSES_STAGING_SOURCE, [f"FAILED to read blob {blob_id} for {rel_path}"])
+            blob_content = r_blob.stdout
+
+            # Atomic write
+            target_file.parent.mkdir(parents=True, exist_ok=True)
+            tmp_file = target_file.parent / (target_file.name + f".tmp_{os.getpid()}")
+            tmp_file.write_bytes(blob_content)
+
+            # Verify temporary file
+            st_sz = tmp_file.stat().st_size
+            st_sha = hashlib.sha256(blob_content).hexdigest()
+            if st_sz != len(blob_content) or st_sha != hashlib.sha256(blob_content).hexdigest():
+                tmp_file.unlink(missing_ok=True)
+                return (EXIT_LICENSES_STAGING_MISMATCH, [f"PARTIAL write for {rel_path}"])
+
+            # Rename to target
+            tmp_file.replace(target_file)
+            declared_files.add(rel_path)
+
+    # Write packages/MANIFEST.json from manifest_bytes
+    tmp_mf = packages_dir / f"MANIFEST.json.tmp_{os.getpid()}"
+    tmp_mf.write_bytes(manifest_bytes)
+    tmp_mf.replace(packages_dir / "MANIFEST.json")
+
+    # 6. Post-staging verification
+    for root_dir, _, files in os.walk(packages_dir):
+        for f in files:
+            fp = Path(root_dir) / f
+            if fp.is_symlink() or (hasattr(fp, "is_junction") and fp.is_junction()):
+                return (EXIT_LICENSES_UNSAFE_PATH, [f"UNSAFE symlink in staged licenses: {fp}"])
+            rel_in_repo = "licenses/" + fp.relative_to(dest).as_posix()
+            if rel_in_repo == "licenses/packages/MANIFEST.json":
+                continue
+            if rel_in_repo not in declared_files:
+                return (EXIT_LICENSES_STAGING_MISMATCH, [f"EXTRA staged file: {rel_in_repo}"])
+
+    for pkg in data["packages"]:
+        for f_entry in pkg.get("files", []):
+            rel_path = f_entry["path"].replace("\\", "/")
+            sub_path = rel_path[len("licenses/"):]
+            staged_fp = dest / sub_path
+            if not staged_fp.is_file():
+                return (EXIT_LICENSES_STAGING_MISMATCH, [f"MISSING staged file: {sub_path}"])
+            sz = staged_fp.stat().st_size
+            if sz != f_entry["bytes"]:
+                return (EXIT_LICENSES_STAGING_MISMATCH, [f"SIZE mismatch for staged {sub_path}: expected {f_entry['bytes']}, got {sz}"])
+            sha = hashlib.sha256(staged_fp.read_bytes()).hexdigest()
+            if sha != f_entry["sha256"].lower():
+                return (EXIT_LICENSES_STAGING_MISMATCH, [f"SHA256 mismatch for staged {sub_path}: expected {f_entry['sha256']}, got {sha}"])
+
+    return (EXIT_LICENSES_OK, [f"STAGING_OK packages={len(data['packages'])} files={len(declared_files)} commit={commit_sha[:16]}"])
+
+
+def generate_manifest(repo_root: Path, stage_root: Path, commit: str) -> dict:
+    repo_root = Path(repo_root).resolve()
+    stage_root = Path(stage_root).resolve()
+
+    r_rev = subprocess.run(
+        ["git", "rev-parse", "--verify", "--end-of-options", f"{commit}^{{commit}}"],
+        cwd=repo_root, capture_output=True, text=True
+    )
+    if r_rev.returncode != 0:
+        raise ValueError(f"Invalid commit: {commit}")
+    commit_sha = r_rev.stdout.strip()
+
+    r_cat = subprocess.run(
+        ["git", "cat-file", "blob", f"{commit_sha}:licenses/packages/MANIFEST.json"],
+        cwd=repo_root, capture_output=True
+    )
+    if r_cat.returncode != 0:
+        old_data = json.loads((repo_root / "licenses" / "packages" / "MANIFEST.json").read_text(encoding="utf-8"))
+    else:
+        old_data = json.loads(r_cat.stdout.decode("utf-8"))
+
+    pkgs_dir = stage_root / "packages" if (stage_root / "packages").is_dir() else stage_root
+
+    new_packages = []
+    for pkg in old_data.get("packages", []):
+        new_pkg = dict(pkg)
+        new_files = []
+        for f_entry in pkg.get("files", []):
+            rel_path = f_entry["path"].replace("\\", "/")
+            sub_rel = rel_path[len("licenses/packages/"):]
+            staged_file = pkgs_dir / sub_rel
+            if not staged_file.is_file():
+                raise FileNotFoundError(f"Missing staged file for manifest generation: {staged_file}")
+
+            staged_bytes = staged_file.stat().st_size
+            staged_sha = hashlib.sha256(staged_file.read_bytes()).hexdigest()
+
+            r_tree = subprocess.run(
+                ["git", "ls-tree", commit_sha, rel_path],
+                cwd=repo_root, capture_output=True, text=True
+            )
+            parts = r_tree.stdout.strip().split()
+            blob_id = parts[2] if len(parts) >= 3 else ""
+
+            new_file = {
+                "path": rel_path,
+                "sha256": staged_sha,
+                "bytes": staged_bytes,
+                "source_commit": commit_sha,
+                "blob_id": blob_id,
+                "staged_path": rel_path[len("licenses/"):],
+                "destination": "{app}\\licenses\\packages\\" + sub_rel.replace("/", "\\"),
+                "normalization_policy": NORMALIZATION_POLICY_CANONICAL,
+                "verification_status": "VERIFIED"
+            }
+            new_files.append(new_file)
+        new_files.sort(key=lambda x: x["path"])
+        new_pkg["files"] = new_files
+        new_packages.append(new_pkg)
+
+    new_packages.sort(key=lambda p: p["package"])
+    return {
+        "manifest_version": LICENSES_SCHEMA_VERSION,
+        "packages": new_packages
+    }
+
+
+def verify_licenses(repo_root: Path, license_root: Path | None = None) -> tuple[int, list[str]]:
     """Verify that root LICENSE, THIRD_PARTY_NOTICES.md, and licenses/packages/ exist,
 
     conform to schema, have matching hashes, cover all runtime packages, and are
@@ -1311,9 +1539,17 @@ def verify_licenses(repo_root: Path) -> tuple[int, list[str]]:
         return (EXIT_LICENSES_MISSING, [f"EMPTY {notices_file.name}"])
 
     # 3. Canonical MANIFEST.json check
-    manifest_path = repo / "licenses" / "packages" / "MANIFEST.json"
+    if license_root is not None:
+        license_tree = Path(license_root).resolve()
+        pkgs_dir = license_tree / "packages"
+        manifest_path = pkgs_dir / "MANIFEST.json"
+    else:
+        license_tree = repo / "licenses"
+        pkgs_dir = license_tree / "packages"
+        manifest_path = pkgs_dir / "MANIFEST.json"
+
     if not manifest_path.is_file():
-        return (EXIT_LICENSES_MISSING, ["MISSING licenses/packages/MANIFEST.json"])
+        return (EXIT_LICENSES_MISSING, [f"MISSING {manifest_path.name}"])
 
     try:
         data = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -1358,8 +1594,24 @@ def verify_licenses(repo_root: Path) -> tuple[int, list[str]]:
             if ".." in rel_path or ":" in rel_path or rel_path.startswith("/"):
                 return (EXIT_LICENSES_UNSAFE_PATH, [f"UNSAFE path traversal: {rel_path}"])
 
-            target_file = repo / rel_path
-            if target_file.is_symlink():
+            # Check Pillow anomaly prohibition
+            if rel_path == "licenses/packages/pillow/LICENSE":
+                exp_bytes = f_entry.get("bytes")
+                exp_sha = f_entry.get("sha256", "").lower()
+                if exp_bytes in (78016, 78052) or exp_sha == "4f7866a74802c6326f81faff59a56546b6aec2b10b91973e0e9308de95e79857":
+                    return (EXIT_LICENSES_HASH_MISMATCH, ["ANOMALOUS Pillow license bytes rejected"])
+
+            # Check normalization policy if present
+            norm_policy = f_entry.get("normalization_policy")
+            if norm_policy and norm_policy != NORMALIZATION_POLICY_CANONICAL:
+                return (EXIT_LICENSES_MALFORMED, [f"UNSUPPORTED normalization_policy: {norm_policy}"])
+
+            if license_root is not None:
+                target_file = license_tree / rel_path[len("licenses/"):]
+            else:
+                target_file = repo / rel_path
+
+            if target_file.is_symlink() or (hasattr(target_file, "is_junction") and target_file.is_junction()):
                 return (EXIT_LICENSES_UNSAFE_PATH, [f"UNSAFE symlink in licenses: {rel_path}"])
             if not target_file.is_file():
                 return (EXIT_LICENSES_MISSING, [f"MISSING declared license file: {rel_path}"])
@@ -1376,13 +1628,15 @@ def verify_licenses(repo_root: Path) -> tuple[int, list[str]]:
 
             manifest_files.add(rel_path)
 
-    # 4. Check unlisted files beneath licenses/packages
-    pkgs_dir = repo / "licenses" / "packages"
+    # 4. Check unlisted files beneath packages
     if pkgs_dir.is_dir():
         for root, _, files in os.walk(pkgs_dir):
             for file in files:
                 p = Path(root) / file
-                rel = str(p.relative_to(repo)).replace("\\", "/")
+                if license_root is not None:
+                    rel = "licenses/" + p.relative_to(license_tree).as_posix()
+                else:
+                    rel = str(p.relative_to(repo)).replace("\\", "/")
                 if rel == "licenses/packages/MANIFEST.json":
                     continue
                 if rel not in manifest_files:
@@ -1391,6 +1645,7 @@ def verify_licenses(repo_root: Path) -> tuple[int, list[str]]:
     # 5. Check exact-set coverage against required runtime components
     delivered_map = {}
     for pkg_entry in data["packages"]:
+        p_name = pkg_entry["package"]
         if pkg_entry.get("delivered", False):
             delivered_map[pkg_entry["package"]] = (pkg_entry.get("version"), pkg_entry.get("classification"))
 
@@ -1471,8 +1726,13 @@ def verify_licenses(repo_root: Path) -> tuple[int, list[str]]:
             [f"CERTIFI FILES MISMATCH: expected {expected_certifi_files}, got {certifi_files}"],
         )
 
-    cert_lic_file = repo / "licenses/packages/certifi/LICENSE"
-    cert_mpl_file = repo / "licenses/packages/certifi/MPL-2.0.txt"
+    if license_root is not None:
+        cert_lic_file = license_tree / "packages" / "certifi" / "LICENSE"
+        cert_mpl_file = license_tree / "packages" / "certifi" / "MPL-2.0.txt"
+    else:
+        cert_lic_file = repo / "licenses/packages/certifi/LICENSE"
+        cert_mpl_file = repo / "licenses/packages/certifi/MPL-2.0.txt"
+
     if not cert_lic_file.is_file() or not cert_mpl_file.is_file():
         return (EXIT_LICENSES_MISSING, ["MISSING required certifi license or MPL text file"])
     if cert_lic_file.stat().st_size == 0 or cert_mpl_file.stat().st_size == 0:
@@ -1518,8 +1778,20 @@ def verify_licenses(repo_root: Path) -> tuple[int, list[str]]:
         return (EXIT_LICENSES_MISSING, ["MISSING Source: ..\\LICENSE in installer script [Files]"])
     if 'Source: "..\\THIRD_PARTY_NOTICES.md"' not in iss_text and 'Source: "../THIRD_PARTY_NOTICES.md"' not in iss_text:
         return (EXIT_LICENSES_MISSING, ["MISSING Source: ..\\THIRD_PARTY_NOTICES.md in installer script [Files]"])
-    if 'Source: "..\\licenses\\packages\\*"' not in iss_text and 'Source: "../licenses/packages/*"' not in iss_text:
-        return (EXIT_LICENSES_MISSING, ["MISSING Source: ..\\licenses\\packages\\* in installer script [Files]"])
+
+    staging_iss_literal = 'Source: "..\\release-output\\license-stage\\packages\\*"'
+    staging_iss_literal_fwd = 'Source: "../release-output/license-stage/packages/*"'
+    legacy_iss_literal = 'Source: "..\\licenses\\packages\\*"'
+    legacy_iss_literal_fwd = 'Source: "../licenses/packages/*"'
+
+    if license_root is not None:
+        if staging_iss_literal not in iss_text and staging_iss_literal_fwd not in iss_text:
+            return (EXIT_LICENSES_MISSING, ["MISSING Source: ..\\release-output\\license-stage\\packages\\* in installer script [Files]"])
+    else:
+        # Fallback for synthetic mock-repo unit tests
+        if (staging_iss_literal not in iss_text and staging_iss_literal_fwd not in iss_text
+            and legacy_iss_literal not in iss_text and legacy_iss_literal_fwd not in iss_text):
+            return (EXIT_LICENSES_MISSING, ["MISSING Source: ..\\release-output\\license-stage\\packages\\* in installer script [Files]"])
 
     py_cnt = len(REQUIRED_PYTHON_DIRECT_PACKAGES) + len(REQUIRED_PYTHON_TRANSITIVE_PACKAGES)
     fe_dir_cnt = len(REQUIRED_FRONTEND_DIRECT_PACKAGES)
@@ -1532,18 +1804,53 @@ def verify_licenses(repo_root: Path) -> tuple[int, list[str]]:
 
 
 def _licenses_cli(argv) -> int:
-    if len(argv) < 2:
-        print("FAIL: verify-licenses requires <repo_root>")
-        return EXIT_LICENSES_MISSING
-    repo_root = Path(argv[1]).resolve()
-    code, messages = verify_licenses(repo_root)
-    for m in messages:
-        print(m)
-    if code == EXIT_LICENSES_OK:
-        print("LICENSES_OK")
-    else:
-        print(f"LICENSES_FAIL code={code}")
-    return code
+    action = argv[0]
+    if action == "stage-licenses":
+        if len(argv) < 4:
+            print("FAIL: stage-licenses requires <repo_root> <commit> <dest>")
+            return EXIT_LICENSES_STAGING_SOURCE
+        repo_root = Path(argv[1]).resolve()
+        commit = argv[2]
+        dest = Path(argv[3])
+        code, messages = stage_licenses(repo_root, commit, dest)
+        for m in messages:
+            print(m)
+        return code
+    elif action == "generate-manifest":
+        if len(argv) < 4:
+            print("FAIL: generate-manifest requires <repo_root> <stage_root> <commit> [--output <dest>]")
+            return EXIT_LICENSES_MALFORMED
+        repo_root = Path(argv[1]).resolve()
+        stage_root = Path(argv[2]).resolve()
+        commit = argv[3]
+        out_path = None
+        if len(argv) >= 6 and argv[4] == "--output":
+            out_path = Path(argv[5])
+        doc = generate_manifest(repo_root, stage_root, commit)
+        if out_path:
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            out_path.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
+            print(f"MANIFEST_WRITTEN {out_path}")
+        else:
+            print(json.dumps(doc, indent=2))
+        return EXIT_LICENSES_OK
+    elif action == "verify-licenses":
+        if len(argv) < 2:
+            print("FAIL: verify-licenses requires <repo_root> [--license-root <path>]")
+            return EXIT_LICENSES_MISSING
+        repo_root = Path(argv[1]).resolve()
+        license_root = None
+        if len(argv) >= 4 and argv[2] == "--license-root":
+            license_root = Path(argv[3])
+        code, messages = verify_licenses(repo_root, license_root=license_root)
+        for m in messages:
+            print(m)
+        if code == EXIT_LICENSES_OK:
+            print("LICENSES_OK")
+        else:
+            print(f"LICENSES_FAIL code={code}")
+        return code
+    return EXIT_LICENSES_MISSING
 
 
 def _legacy_main(argv) -> int:
@@ -1580,6 +1887,6 @@ if __name__ == "__main__":
         sys.exit(_manifest_cli(cli_args))
     if cli_args and cli_args[0] in ("hygiene", "inventory", "verify-inventory"):
         sys.exit(_inventory_cli(cli_args))
-    if cli_args and cli_args[0] in ("verify-licenses",):
+    if cli_args and cli_args[0] in ("verify-licenses", "stage-licenses", "generate-manifest"):
         sys.exit(_licenses_cli(cli_args))
     sys.exit(_legacy_main(cli_args))

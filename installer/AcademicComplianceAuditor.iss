@@ -78,7 +78,7 @@ Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription
 Source: "..\backend\dist\run-frozen\*"; DestDir: "{app}"; Flags: recursesubdirs ignoreversion createallsubdirs; Excludes: ".env,.env.*,*.db,*.sqlite,*.sqlite3,*.log,*.map,*.pyc,*.pyo,__pycache__\*,*__pycache__\*,*.pytest_cache\*,test-results\*,playwright-report\*,evidence\*,*.key,*.p12,*.pfx,.git\*"
 Source: "..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\THIRD_PARTY_NOTICES.md"; DestDir: "{app}"; Flags: ignoreversion
-Source: "..\licenses\packages\*"; DestDir: "{app}\licenses\packages"; Flags: recursesubdirs ignoreversion createallsubdirs
+Source: "..\release-output\license-stage\packages\*"; DestDir: "{app}\licenses\packages"; Flags: recursesubdirs ignoreversion createallsubdirs
 
 [Icons]
 Name: "{autoprograms}\Academic Compliance Auditor"; Filename: "{app}\run-frozen.exe"; WorkingDir: "{app}"; IconFilename: "{app}\run-frozen.exe"; Comment: "Launch Academic Compliance Auditor"

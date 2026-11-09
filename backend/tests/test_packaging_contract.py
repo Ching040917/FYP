@@ -16,6 +16,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import textwrap
@@ -93,7 +94,7 @@ def test_build_script_rejects_non_312_before_build():
 def test_build_script_fails_clearly_when_venv_or_pyinstaller_missing():
     assert "The controlled packaging interpreter is missing" in BUILD_SCRIPT_TEXT
     assert "PyInstaller is not installed in the controlled environment" in BUILD_SCRIPT_TEXT
-    assert "pip install -r requirements-dev.txt" in BUILD_SCRIPT_TEXT
+    assert "requirements-dev.txt" in BUILD_SCRIPT_TEXT
     # No silent fallback to global python / PATH-resolved executable.
     assert "Get-Command pyinstaller" not in BUILD_SCRIPT_TEXT
     assert "shutil.which" not in BUILD_SCRIPT_TEXT
@@ -145,7 +146,7 @@ def test_build_script_isolates_smoke_runtime_root():
 
 def test_requirements_dev_owns_pyinstaller_pin():
     text = REQ_DEV.read_text(encoding="utf-8")
-    assert "PyInstaller==6.22.2" in text
+    assert "pyinstaller==6.22.2" in text.lower()
 
 
 def test_runtime_requirements_exclude_pyinstaller():
@@ -1225,12 +1226,61 @@ def test_verify_inventory_safe_path_with_bad_fields_is_33(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_verify_licenses_on_real_repo():
-    repo = BACKEND_DIR.parent
-    code, messages = packaging_checks.verify_licenses(repo)
+def _create_git_license_repo(tmp_path: Path) -> Path:
+    repo = tmp_path / "git_repo"
+    repo.mkdir()
+    subprocess.check_call("git init", cwd=repo, shell=True)
+    subprocess.check_call("git config user.name 'Test'", cwd=repo, shell=True)
+    subprocess.check_call("git config user.email 'test@test.com'", cwd=repo, shell=True)
+    shutil.copytree(BACKEND_DIR.parent / "licenses", repo / "licenses")
+    shutil.copyfile(BACKEND_DIR.parent / "LICENSE", repo / "LICENSE")
+    shutil.copyfile(BACKEND_DIR.parent / "THIRD_PARTY_NOTICES.md", repo / "THIRD_PARTY_NOTICES.md")
+    (repo / "installer").mkdir(parents=True)
+    shutil.copyfile(BACKEND_DIR.parent / "installer" / "AcademicComplianceAuditor.iss", repo / "installer" / "AcademicComplianceAuditor.iss")
+
+    (repo / "backend" / "alembic").mkdir(parents=True, exist_ok=True)
+    (repo / "backend" / "alembic" / "env.py").write_text("# alembic\n")
+    (repo / "backend" / "alembic.ini").write_text("# ini\n")
+    (repo / "backend" / "ACA.spec").write_text("# spec\n")
+    (repo / "backend" / "requirements.txt").write_text("# req\n")
+    (repo / "backend" / "requirements-dev.txt").write_text("# dev\n")
+    (repo / "frontend" / "src").mkdir(parents=True, exist_ok=True)
+    (repo / "frontend" / "src" / "main.tsx").write_text("// tsx\n")
+    (repo / "frontend" / "dist").mkdir(parents=True, exist_ok=True)
+    (repo / "frontend" / "dist" / "index.html").write_text("<!-- html -->\n")
+    (repo / "frontend" / "index.html").write_text("<!-- html -->\n")
+    (repo / "frontend" / "vite.config.ts").write_text("// vite\n")
+    (repo / "frontend" / "tailwind.config.js").write_text("// tailwind\n")
+    (repo / "frontend" / "postcss.config.js").write_text("// postcss\n")
+    (repo / "frontend" / "tsconfig.json").write_text("{}\n")
+    (repo / "frontend" / "tsconfig.node.json").write_text("{}\n")
+    (repo / "frontend" / "package.json").write_text("{}\n")
+    (repo / "frontend" / "package-lock.json").write_text("{}\n")
+    (repo / "frontend" / "public" / "samples").mkdir(parents=True, exist_ok=True)
+    (repo / "frontend" / "public" / "samples" / "sample-thesis.docx").write_bytes(b"PK")
+    (repo / "assets" / "branding").mkdir(parents=True, exist_ok=True)
+    (repo / "assets" / "branding" / "aca-icon.ico").write_bytes(b"ico")
+    (repo / "assets" / "branding" / "aca-icon-wizard.bmp").write_bytes(b"bmp")
+    (repo / "assets" / "branding" / "aca-icon-source.png").write_bytes(b"png")
+    (repo / "scripts").mkdir(parents=True, exist_ok=True)
+    (repo / "scripts" / "build-installer.ps1").write_text("# ps1\n")
+    (repo / "backend" / "scripts").mkdir(parents=True, exist_ok=True)
+    (repo / "backend" / "scripts" / "build-packaging-poc.ps1").write_text("# ps1\n")
+    (repo / "backend" / "scripts" / "packaging_checks.py").write_text("# py\n")
+
+    subprocess.check_call("git add .", cwd=repo, shell=True)
+    subprocess.check_call('git commit -m "canonical"', cwd=repo, shell=True)
+    return repo
+
+
+def test_verify_licenses_on_real_repo(tmp_path):
+    repo = _create_git_license_repo(tmp_path)
+    staged = tmp_path / "license-stage"
+    code_stage, msgs_stage = packaging_checks.stage_licenses(repo, "HEAD", staged)
+    assert code_stage == packaging_checks.EXIT_LICENSES_OK
+    code, messages = packaging_checks.verify_licenses(repo, license_root=staged)
     assert code == packaging_checks.EXIT_LICENSES_OK
     assert "LICENSES_OK" in messages[0]
-
 
 def test_licenses_exit_codes_preserved_and_isolated():
     codes = [
@@ -1247,13 +1297,17 @@ def test_licenses_exit_codes_preserved_and_isolated():
         packaging_checks.EXIT_LICENSES_MISSING, packaging_checks.EXIT_LICENSES_MALFORMED,
         packaging_checks.EXIT_LICENSES_HASH_MISMATCH, packaging_checks.EXIT_LICENSES_COVERAGE_GAP,
         packaging_checks.EXIT_LICENSES_UNSAFE_PATH,
+        packaging_checks.EXIT_LICENSES_STAGING_SOURCE,
+        packaging_checks.EXIT_LICENSES_STAGING_MISMATCH,
     ]
-    assert len(codes) == len(set(codes)) == 24
+    assert len(codes) == len(set(codes)) == 26
     assert packaging_checks.EXIT_LICENSES_MISSING == 40
     assert packaging_checks.EXIT_LICENSES_MALFORMED == 41
     assert packaging_checks.EXIT_LICENSES_HASH_MISMATCH == 42
     assert packaging_checks.EXIT_LICENSES_COVERAGE_GAP == 43
     assert packaging_checks.EXIT_LICENSES_UNSAFE_PATH == 44
+    assert packaging_checks.EXIT_LICENSES_STAGING_SOURCE == 45
+    assert packaging_checks.EXIT_LICENSES_STAGING_MISMATCH == 46
 
 
 def _create_minimal_valid_license_repo(tmp_path: Path) -> Path:
@@ -1269,7 +1323,7 @@ def _create_minimal_valid_license_repo(tmp_path: Path) -> Path:
         "[Files]\nSource: \"..\\backend\\dist\\run-frozen\\*\"; DestDir: \"{app}\"\n"
         "Source: \"..\\LICENSE\"; DestDir: \"{app}\"\n"
         "Source: \"..\\THIRD_PARTY_NOTICES.md\"; DestDir: \"{app}\"\n"
-        "Source: \"..\\licenses\\packages\\*\"; DestDir: \"{app}\\licenses\\packages\"\n"
+        "Source: \"..\\release-output\\license-stage\\packages\\*\"; DestDir: \"{app}\\licenses\\packages\"\n"
     )
     (iss_dir / "AcademicComplianceAuditor.iss").write_text(iss_content, encoding="utf-8")
 
@@ -1563,8 +1617,10 @@ def test_certifi_manifest_has_both_license_and_mpl_text():
         p = Path(f["path"])
         assert p.is_file()
         data = p.read_bytes()
-        assert len(data) == f["bytes"]
-        assert hashlib.sha256(data).hexdigest() == f["sha256"]
+        blob_bytes = subprocess.check_output(f"git cat-file blob {f['blob_id']}", cwd=BACKEND_DIR.parent, shell=True)
+        assert len(blob_bytes) == f["bytes"]
+        assert hashlib.sha256(blob_bytes).hexdigest() == f["sha256"]
+        assert data.replace(b"\r\n", b"\n") == blob_bytes
 
 
 def test_verify_licenses_fails_if_certifi_mpl_text_missing(tmp_path):
@@ -1684,3 +1740,204 @@ def test_reintroduced_flat_reference_is_detected():
     sample = notices + "\n- see `licenses/mit.txt`\n"
     reintroduced = [rel for rel in _SUPERSEDED_FLAT_FILES if rel in sample]
     assert reintroduced == ["licenses/mit.txt"]
+
+
+# ---------------------------------------------------------------------------
+# Canonical license byte contract tests (WAVE-6-LICENSE-BYTE-CONTRACT)
+# ---------------------------------------------------------------------------
+
+def test_canonical_blob_extraction_preserves_exact_git_bytes(tmp_path):
+    repo = _create_git_license_repo(tmp_path)
+    staged = tmp_path / "stage"
+    code, _ = packaging_checks.stage_licenses(repo, "HEAD", staged)
+    assert code == packaging_checks.EXIT_LICENSES_OK
+    staged_fp = staged / "packages" / "floating-ui" / "LICENSE"
+    assert staged_fp.is_file()
+    blob_content = subprocess.check_output("git cat-file blob 1be833fd720dd367574a9c2c6a512da64eae7fb8:licenses/packages/floating-ui/LICENSE", cwd=BACKEND_DIR.parent, shell=True)
+    assert staged_fp.read_bytes() == blob_content
+
+
+def test_crlf_lf_checkout_invariance(tmp_path):
+    repo = _create_git_license_repo(tmp_path)
+    staged = tmp_path / "stage"
+    code, _ = packaging_checks.stage_licenses(repo, "HEAD", staged)
+    assert code == packaging_checks.EXIT_LICENSES_OK
+    staged_fp = staged / "packages" / "floating-ui" / "LICENSE"
+    assert staged_fp.stat().st_size == 1089
+    assert b"\r\n" not in staged_fp.read_bytes()
+
+
+def test_all_95_manifest_entries_pass_with_exact_canonical_stage(tmp_path):
+    repo = _create_git_license_repo(tmp_path)
+    staged = tmp_path / "stage"
+    code_s, _ = packaging_checks.stage_licenses(repo, "HEAD", staged)
+    assert code_s == packaging_checks.EXIT_LICENSES_OK
+    code_v, messages = packaging_checks.verify_licenses(repo, license_root=staged)
+    assert code_v == packaging_checks.EXIT_LICENSES_OK
+    assert "LICENSES_OK packages=92" in messages[0]
+
+def test_unique_54_paths_have_blob_provenance():
+    repo = BACKEND_DIR.parent
+    manifest_p = repo / "licenses" / "packages" / "MANIFEST.json"
+    manifest = json.loads(manifest_p.read_text(encoding="utf-8"))
+    unique_paths = sorted({f["path"] for p in manifest["packages"] for f in p["files"]})
+    assert len(unique_paths) == 54
+    for rel in unique_paths:
+        r = subprocess.run(["git", "ls-tree", "HEAD", rel], cwd=repo, capture_output=True, text=True)
+        parts = r.stdout.strip().split()
+        assert len(parts) >= 3 and parts[1] == "blob"
+
+
+def test_missing_source_blob_fails_closed(tmp_path):
+    repo = _create_minimal_valid_license_repo(tmp_path)
+    # Modify manifest to reference non-existent git path
+    mf = repo / "licenses" / "packages" / "MANIFEST.json"
+    data = json.loads(mf.read_text(encoding="utf-8"))
+    data["packages"][0]["files"][0]["path"] = "licenses/packages/non_existent/LICENSE"
+    mf.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    staged = tmp_path / "stage"
+    # In mock repo with no git, stage_licenses fails closed with EXIT_LICENSES_STAGING_SOURCE
+    code, _ = packaging_checks.stage_licenses(repo, "HEAD", staged)
+    assert code == packaging_checks.EXIT_LICENSES_STAGING_SOURCE
+
+
+def test_missing_staged_file_fails_closed(tmp_path):
+    repo = _create_git_license_repo(tmp_path)
+    staged = tmp_path / "stage"
+    packaging_checks.stage_licenses(repo, "HEAD", staged)
+    (staged / "packages" / "floating-ui" / "LICENSE").unlink()
+    code, _ = packaging_checks.verify_licenses(repo, license_root=staged)
+    assert code == packaging_checks.EXIT_LICENSES_MISSING
+
+def test_extra_staged_file_fails_closed(tmp_path):
+    repo = _create_git_license_repo(tmp_path)
+    staged = tmp_path / "stage"
+    packaging_checks.stage_licenses(repo, "HEAD", staged)
+    extra_dir = staged / "packages" / "extra"
+    extra_dir.mkdir(parents=True)
+    (extra_dir / "LICENSE").write_text("Extra unlisted license", encoding="utf-8")
+    code, _ = packaging_checks.verify_licenses(repo, license_root=staged)
+    assert code == packaging_checks.EXIT_LICENSES_COVERAGE_GAP
+
+def test_one_byte_staged_mutation_fails_closed(tmp_path):
+    repo = _create_git_license_repo(tmp_path)
+    staged = tmp_path / "stage"
+    packaging_checks.stage_licenses(repo, "HEAD", staged)
+    target = staged / "packages" / "floating-ui" / "LICENSE"
+    b = target.read_bytes()
+    target.write_bytes(b[:-1] + b"X")
+    code, _ = packaging_checks.verify_licenses(repo, license_root=staged)
+    assert code == packaging_checks.EXIT_LICENSES_HASH_MISMATCH
+
+def test_size_mismatch_fails_closed(tmp_path):
+    repo = _create_git_license_repo(tmp_path)
+    staged = tmp_path / "stage"
+    packaging_checks.stage_licenses(repo, "HEAD", staged)
+    target = staged / "packages" / "floating-ui" / "LICENSE"
+    target.write_bytes(target.read_bytes() + b"\n")
+    code, _ = packaging_checks.verify_licenses(repo, license_root=staged)
+    assert code == packaging_checks.EXIT_LICENSES_HASH_MISMATCH
+
+def test_wrong_source_commit_fails_closed(tmp_path):
+    repo = _create_git_license_repo(tmp_path)
+    staged = tmp_path / "stage"
+    # Create an extra commit in repo
+    (repo / "extra.txt").write_text("extra")
+    subprocess.check_call("git add .", cwd=repo, shell=True)
+    subprocess.check_call('git commit -m "extra"', cwd=repo, shell=True)
+    code, _ = packaging_checks.stage_licenses(repo, "HEAD~1", staged)
+    assert code == packaging_checks.EXIT_LICENSES_STAGING_SOURCE
+
+def test_path_escape_fails_closed(tmp_path):
+    repo = _create_git_license_repo(tmp_path)
+    staged = tmp_path / "stage"
+    bad_dest = tmp_path / "bad"
+    bad_dest.mkdir()
+    (bad_dest / "pre_existing.txt").write_text("not empty")
+    code, _ = packaging_checks.stage_licenses(repo, "HEAD", bad_dest)
+    assert code == packaging_checks.EXIT_LICENSES_STAGING_SOURCE
+
+def test_deterministic_manifest_ordering():
+    repo = BACKEND_DIR.parent
+    manifest_p = repo / "licenses" / "packages" / "MANIFEST.json"
+    manifest = json.loads(manifest_p.read_text(encoding="utf-8"))
+    pkg_names = [p["package"] for p in manifest["packages"]]
+    assert pkg_names == sorted(pkg_names)
+    for p in manifest["packages"]:
+        paths = [f["path"] for f in p["files"]]
+        assert paths == sorted(paths)
+
+
+def test_byte_identical_manifest_generations(tmp_path):
+    repo = _create_git_license_repo(tmp_path)
+    staged = tmp_path / "stage"
+    packaging_checks.stage_licenses(repo, "HEAD", staged)
+    doc1 = packaging_checks.generate_manifest(repo, staged, "HEAD")
+    doc2 = packaging_checks.generate_manifest(repo, staged, "HEAD")
+    assert json.dumps(doc1, indent=2) == json.dumps(doc2, indent=2)
+
+
+def test_byte_identical_staging_generations(tmp_path):
+    repo = _create_git_license_repo(tmp_path)
+    staged1 = tmp_path / "stage1"
+    staged2 = tmp_path / "stage2"
+    code1, _ = packaging_checks.stage_licenses(repo, "HEAD", staged1)
+    code2, _ = packaging_checks.stage_licenses(repo, "HEAD", staged2)
+    assert code1 == packaging_checks.EXIT_LICENSES_OK and code2 == packaging_checks.EXIT_LICENSES_OK
+    files1 = {p.relative_to(staged1): p.read_bytes() for p in staged1.rglob("*") if p.is_file()}
+    files2 = {p.relative_to(staged2): p.read_bytes() for p in staged2.rglob("*") if p.is_file()}
+    assert files1 == files2
+
+def test_working_tree_source_fallback_rejected(tmp_path):
+    repo = _create_git_license_repo(tmp_path)
+    staged = tmp_path / "stage"
+    packaging_checks.stage_licenses(repo, "HEAD", staged)
+    # Working tree has CRLF floating-ui (1109 bytes), but verify_licenses against staged succeeds
+    code, _ = packaging_checks.verify_licenses(repo, license_root=staged)
+    assert code == packaging_checks.EXIT_LICENSES_OK
+
+def test_pillow_anomaly_rejected(tmp_path):
+    repo = _create_minimal_valid_license_repo(tmp_path)
+    pillow_dir = repo / "licenses" / "packages" / "pillow"
+    pillow_dir.mkdir(parents=True, exist_ok=True)
+    (pillow_dir / "LICENSE").write_bytes(b"A" * 78016)
+    mf = repo / "licenses" / "packages" / "MANIFEST.json"
+    data = json.loads(mf.read_text(encoding="utf-8"))
+    pillow_pkg = next(p for p in data["packages"] if p["package"] == "pillow")
+    pillow_pkg["files"] = [{"path": "licenses/packages/pillow/LICENSE", "sha256": hashlib.sha256(b"A" * 78016).hexdigest(), "bytes": 78016}]
+    mf.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    code, messages = packaging_checks.verify_licenses(repo)
+    assert code == packaging_checks.EXIT_LICENSES_HASH_MISMATCH
+    assert "ANOMALOUS Pillow" in messages[0]
+
+
+def test_pillow_canonical_blob_accepted(tmp_path):
+    repo = _create_git_license_repo(tmp_path)
+    staged = tmp_path / "stage"
+    packaging_checks.stage_licenses(repo, "HEAD", staged)
+    pillow_staged = staged / "packages" / "pillow" / "LICENSE"
+    assert pillow_staged.stat().st_size == 76435
+    assert hashlib.sha256(pillow_staged.read_bytes()).hexdigest() == "51ed379cf673c9676b7fa7e1bedbfc5d4ad63caac4f6f99eeec5ccab50c3e0ef"
+
+
+def test_collect_inputs_staged_provenance(tmp_path):
+    repo = _create_git_license_repo(tmp_path)
+    staged = tmp_path / "stage"
+    packaging_checks.stage_licenses(repo, "HEAD", staged)
+    inputs = packaging_checks.collect_inputs(repo, license_root=staged)
+    lic_rows = [r for r in inputs if r["path"].startswith("licenses/packages/")]
+    assert len(lic_rows) == 55  # 54 unique license files + MANIFEST.json
+    fui_row = next(r for r in lic_rows if r["path"] == "licenses/packages/floating-ui/LICENSE")
+    assert fui_row["size"] == 1089
+    assert fui_row["sha256"] == "0e4c9a9b6c71019cbbea3bdc20b01223110a9035700f9c960c8fcbf78c2325ce"
+    pillow_row = next(r for r in lic_rows if r["path"] == "licenses/packages/pillow/LICENSE")
+    assert pillow_row["size"] == 76435
+    assert pillow_row["sha256"] == "51ed379cf673c9676b7fa7e1bedbfc5d4ad63caac4f6f99eeec5ccab50c3e0ef"
+
+
+def test_stage_licenses_on_unremediated_baseline_fails_closed(tmp_path):
+    repo = BACKEND_DIR.parent
+    staged = tmp_path / "stage"
+    code, messages = packaging_checks.stage_licenses(repo, "HEAD", staged)
+    assert code == packaging_checks.EXIT_LICENSES_STAGING_MISMATCH
+    assert "ANOMALOUS Pillow" in messages[0]

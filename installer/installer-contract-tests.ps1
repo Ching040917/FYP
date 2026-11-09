@@ -71,7 +71,8 @@ Assert ($troubleSrc.Contains("authorized release channel")) "TROUBLESHOOTING nam
 Write-Host "=== Third-party license and notice delivery contract ==="
 Assert ($iss.Contains('Source: "..\LICENSE"; DestDir: "{app}"')) "Installer copies LICENSE to {app}"
 Assert ($iss.Contains('Source: "..\THIRD_PARTY_NOTICES.md"; DestDir: "{app}"')) "Installer copies THIRD_PARTY_NOTICES.md to {app}"
-Assert ($iss.Contains('Source: "..\licenses\packages\*"; DestDir: "{app}\licenses\packages"')) "Installer copies canonical license tree to {app}\licenses\packages"
+Assert ($iss.Contains('Source: "..\release-output\license-stage\packages\*"; DestDir: "{app}\licenses\packages"')) "Installer copies canonical license stage to {app}\licenses\packages"
+Assert (-not $iss.Contains('Source: "..\licenses\packages\*"')) "Installer does not use ordinary checkout license path"
 $manifestPath = Join-Path $RepoRoot "licenses\packages\MANIFEST.json"
 Assert (Test-Path $manifestPath) "Canonical MANIFEST.json exists"
 $manifestRaw = Get-Content $manifestPath -Raw -Encoding UTF8
@@ -80,14 +81,26 @@ Assert ($manifestJson.manifest_version -eq "1.0.0") "Manifest version is 1.0.0"
 Assert ($manifestJson.packages.Count -ge 49) "Manifest covers all runtime packages"
 $firstPkg = $manifestJson.packages[0]
 Assert ($null -ne $firstPkg.package -and $null -ne $firstPkg.files) "Manifest packages have required structure"
+$firstFile = $firstPkg.files[0]
+Assert ($firstFile.normalization_policy -eq "GIT_BLOB_BYTES_NO_CHECKOUT_TRANSFORM") "Manifest records canonical normalization policy"
+Assert ($null -ne $firstFile.source_commit -and $null -ne $firstFile.blob_id) "Manifest records source commit and blob ID"
+$pillowPkg = $manifestJson.packages | Where-Object { $_.package -eq "pillow" }
+if ($null -ne $pillowPkg) {
+    $pillowFile = $pillowPkg.files[0]
+    Assert ($pillowFile.bytes -ne 78016 -and $pillowFile.bytes -ne 78052) "Pillow anomalous bytes (78016/78052) are excluded from manifest"
+    Assert ($pillowFile.bytes -eq 76435) "Pillow canonical Git blob size (76435) is recorded in manifest"
+}
 $certifiPkg = $manifestJson.packages | Where-Object { $_.package -eq "certifi" }
 Assert ($null -ne $certifiPkg) "certifi package is registered in manifest"
 Assert ($certifiPkg.files.Count -eq 2) "certifi declares both LICENSE and MPL-2.0.txt"
 Assert (Test-Path (Join-Path $RepoRoot "licenses\packages\certifi\MPL-2.0.txt")) "certifi MPL-2.0.txt exists on disk"
 $buildInstallerScriptContent = Get-Content $BuildScript -Raw
 Assert ($buildInstallerScriptContent.Contains("verify-licenses")) "build-installer.ps1 invokes verify-licenses"
+Assert ($buildInstallerScriptContent.Contains("--license-root")) "build-installer.ps1 passes --license-root"
 $pocScript = Get-Content (Join-Path $RepoRoot "backend\scripts\build-packaging-poc.ps1") -Raw
 Assert ($pocScript.Contains("verify-licenses")) "build-packaging-poc.ps1 invokes verify-licenses"
+Assert ($pocScript.Contains("stage-licenses")) "build-packaging-poc.ps1 invokes stage-licenses"
+Assert ($pocScript.Contains("--license-root")) "build-packaging-poc.ps1 passes --license-root"
 
 Write-Host "=== Privileges and architecture ==="
 Assert ($iss.Contains("PrivilegesRequired=lowest")) "No administrator rights required (PrivilegesRequired=lowest)"
