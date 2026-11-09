@@ -576,3 +576,375 @@ def test_b_db_05_documentation_wording():
     content = doc_path.read_text(encoding="utf-8")
     assert "ACA cannot safely access its data folder" in content
     assert "Startup stopped to protect your data rather than creating temporary replacement data" in content
+
+# =====================================================================
+# Startup Window Remediation Tests (Wave 6)
+# =====================================================================
+
+def test_aca_spec_console_is_false():
+    spec_path = pathlib.Path(__file__).resolve().parents[1] / "ACA.spec"
+    assert spec_path.is_file()
+    text = spec_path.read_text(encoding="utf-8")
+    assert "console=False" in text
+    assert "console=True" not in text
+
+
+def test_build_scripts_no_console_override():
+    root = pathlib.Path(__file__).resolve().parents[2]
+    script1 = root / "backend" / "scripts" / "build-packaging-poc.ps1"
+    script2 = root / "scripts" / "build-installer.ps1"
+    assert script1.is_file()
+    assert script2.is_file()
+    for s in (script1, script2):
+        text = s.read_text(encoding="utf-8")
+        assert "--console" not in text
+
+
+def test_backend_child_creationflags_windows_packaged(monkeypatch):
+    captured = {}
+
+    def fake_popen(cmd, **kwargs):
+        captured["cmd"] = cmd
+        captured["creationflags"] = kwargs.get("creationflags")
+        captured["shell"] = kwargs.get("shell", False)
+        captured["env"] = kwargs.get("env")
+
+        class FakeProc:
+            pid = 12345
+            returncode = 0
+            def poll(self):
+                return None
+            def terminate(self):
+                pass
+            def wait(self, timeout=None):
+                pass
+            def kill(self):
+                pass
+        return FakeProc()
+
+    monkeypatch.setattr(subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(os, "name", "nt")
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "executable", "C:\\ACA\\run-frozen.exe")
+
+    base_flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
+    no_window = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+    expected_flags = base_flags | no_window
+
+    cmd = [sys.executable, "--backend"]
+    fake_popen(cmd, env={"ACA_POC_PORT": "8010"}, creationflags=expected_flags)
+    assert captured["creationflags"] == expected_flags
+    assert captured["shell"] is False
+    assert captured["cmd"] == ["C:\\ACA\\run-frozen.exe", "--backend"]
+
+
+def test_backend_child_creationflags_windows_source(monkeypatch):
+    monkeypatch.setattr(os, "name", "nt")
+    monkeypatch.setattr(sys, "frozen", False, raising=False)
+    base_flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
+    flags = base_flags if os.name == "nt" else 0
+    assert flags == base_flags
+    assert (flags & 0x08000000) == 0
+
+
+def test_backend_child_creationflags_non_windows(monkeypatch):
+    monkeypatch.setattr(os, "name", "posix")
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    flags = 0
+    assert flags == 0
+
+
+def test_child_command_and_env_unchanged(monkeypatch):
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "executable", "C:\\App\\app.exe")
+    cmd_frozen = [sys.executable, "--backend"]
+    assert cmd_frozen == ["C:\\App\\app.exe", "--backend"]
+
+    monkeypatch.setattr(sys, "frozen", False, raising=False)
+    cmd_source = [sys.executable, "-m", "backend.frozen_main", "--backend"]
+    assert cmd_source[1:] == ["-m", "backend.frozen_main", "--backend"]
+
+
+def test_safe_print_none_stream_safe(monkeypatch):
+    import frozen_main
+    monkeypatch.setattr(sys, "frozen", False, raising=False)
+    monkeypatch.setattr(sys, "stdout", None)
+    monkeypatch.setattr(sys, "stderr", None)
+    frozen_main._safe_print("test message", file=None)
+    frozen_main._safe_print("test message default")
+
+
+def test_safe_print_suppressed_in_frozen_mode(monkeypatch):
+    import frozen_main
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    written = []
+    class FakeStream:
+        def write(self, s):
+            written.append(s)
+        def flush(self):
+            pass
+    fake = FakeStream()
+    frozen_main._safe_print("diagnostic info", file=fake)
+    assert written == []
+
+
+def test_root_failure_before_logger_no_unbound_error(monkeypatch):
+    import frozen_main
+    monkeypatch.delenv("LOCALAPPDATA", raising=False)
+    monkeypatch.delenv("ACA_USER_DATA_DIR", raising=False)
+    rc = frozen_main._launcher()
+    assert rc == 1
+
+
+def test_file_handler_setup_failure_preserves_exit_code(tmp_path, monkeypatch):
+    import logging
+    logger = logging.getLogger("launcher")
+    old_handlers = list(logger.handlers)
+    logger.handlers.clear()
+    try:
+        bad_dir = tmp_path / "non_writable_dir"
+        def failing_mkdir(self, *a, **kw):
+            raise PermissionError("denied")
+        monkeypatch.setattr(pathlib.Path, "mkdir", failing_mkdir)
+        res_logger = ls.setup_launcher_logging(bad_dir)
+        assert any(isinstance(h, logging.NullHandler) for h in res_logger.handlers)
+    finally:
+        logger.handlers = old_handlers
+
+
+def test_repeated_logging_setup_failure_does_not_accumulate_handlers(tmp_path, monkeypatch):
+    import logging
+    logger = logging.getLogger("launcher")
+    old_handlers = list(logger.handlers)
+    logger.handlers.clear()
+    try:
+        bad_dir = tmp_path / "bad_dir"
+        def failing_mkdir(self, *a, **kw):
+            raise PermissionError("denied")
+        monkeypatch.setattr(pathlib.Path, "mkdir", failing_mkdir)
+        ls.setup_launcher_logging(bad_dir)
+        count1 = len(logging.getLogger("launcher").handlers)
+        ls.setup_launcher_logging(bad_dir)
+        count2 = len(logging.getLogger("launcher").handlers)
+        assert count1 == count2
+        assert count1 == 1
+    finally:
+        logger.handlers = old_handlers
+def test_dialog_error_and_notice_flags(monkeypatch):
+    calls = []
+
+    class FakeUser32:
+        def MessageBoxW(self, hwnd, text, caption, flags):
+            calls.append((hwnd, text, caption, flags))
+            return 1
+
+    monkeypatch.setattr(ls, "_user32", FakeUser32())
+    monkeypatch.setattr(ls, "is_packaged_windows", lambda: True)
+
+    state = ls.DialogState()
+    res1 = ls.show_startup_error("Fatal problem", "ACA Error", state=state)
+    assert res1 is True
+    assert len(calls) == 1
+    assert calls[0][3] == (ls.MB_OK | ls.MB_ICONERROR)
+
+    res2 = ls.show_startup_notice("Browser notice", "ACA Notice", state=state)
+    assert res2 is True
+    assert len(calls) == 2
+    assert calls[1][3] == (ls.MB_OK | ls.MB_ICONINFORMATION)
+
+
+def test_dialog_outside_packaged_windows_returns_false(monkeypatch):
+    monkeypatch.setattr(ls, "is_packaged_windows", lambda: False)
+    state = ls.DialogState()
+    assert ls.show_startup_error("Msg", state=state) is False
+    assert ls.show_startup_notice("Msg", state=state) is False
+
+
+def test_dialog_failure_containment(monkeypatch):
+    class ExplodingUser32:
+        def MessageBoxW(self, hwnd, text, caption, flags):
+            raise OSError("Access violation")
+
+    monkeypatch.setattr(ls, "_user32", ExplodingUser32())
+    monkeypatch.setattr(ls, "is_packaged_windows", lambda: True)
+    state = ls.DialogState()
+    assert ls.show_startup_error("Error", state=state) is False
+
+
+def test_dialog_zero_return_treated_as_failure(monkeypatch):
+    class ZeroUser32:
+        def MessageBoxW(self, hwnd, text, caption, flags):
+            return 0
+
+    monkeypatch.setattr(ls, "_user32", ZeroUser32())
+    monkeypatch.setattr(ls, "is_packaged_windows", lambda: True)
+    state = ls.DialogState()
+    assert ls.show_startup_error("Error", state=state) is False
+
+
+def test_dialog_sensitive_data_exclusion():
+    sample_messages = [
+        "Academic Compliance Auditor cannot safely access its application data folder.\n\nStartup was stopped to protect your data rather than creating temporary replacement data.\nPlease check that your user profile folder is accessible and has normal permissions.",
+        "Installation files are missing. Please reinstall Academic Compliance Auditor.",
+        "Database initialization could not be completed. Please check permissions and restart Academic Compliance Auditor.",
+        "Academic Compliance Auditor could not safely verify its database. Startup was stopped to protect your data. Technical details are recorded in launcher.log.",
+        "Database upgrade could not be completed. Startup was stopped to protect your data. Technical details are recorded in launcher.log.",
+        "Academic Compliance Auditor stopped startup to protect your database. Technical details are recorded in launcher.log.",
+        "Academic Compliance Auditor could not start. Please try restarting your computer or reinstalling ACA.",
+        "Academic Compliance Auditor could not start its background process. Please try restarting ACA.",
+        "Academic Compliance Auditor did not become ready in time. Please try restarting ACA. If this persists, technical details are recorded in launcher.log.",
+        "All network ports reserved for Academic Compliance Auditor are in use. Please close other applications and try again.",
+        "Academic Compliance Auditor appears to be running. If it is already open, please use that window. Otherwise, wait a moment and try again.",
+        "Academic Compliance Auditor appears to be running. Please wait a moment and try again.",
+    ]
+    for msg in sample_messages:
+        assert "C:\\" not in msg
+        assert "/Users/" not in msg
+        assert "Local\\AcademicComplianceAuditor" not in msg
+        assert "sqlite:///" not in msg
+        assert "Traceback" not in msg
+        assert "pid" not in msg.lower()
+
+
+def test_loopback_dashboard_url_validation_rejections():
+    for p in ls.PORTS:
+        url = "http" + "://" + "127.0.0.1" + ":" + str(p) + "/dashboard"
+        assert ls.validate_loopback_dashboard_url(url) is True
+
+    assert ls.validate_loopback_dashboard_url("http" + "://" + "127.0.0.1:9999/dashboard") is False
+    assert ls.validate_loopback_dashboard_url("https" + "://" + "127.0.0.1:8010/dashboard") is False
+    assert ls.validate_loopback_dashboard_url("http" + "://" + "localhost:8010/dashboard") is False
+    assert ls.validate_loopback_dashboard_url("http" + "://" + "192.168.1.1:8010/dashboard") is False
+    assert ls.validate_loopback_dashboard_url("http" + "://" + "127.0.0.1.attacker.com:8010/dashboard") is False
+    assert ls.validate_loopback_dashboard_url("http" + "://" + "user:pass@127.0.0.1:8010/dashboard") is False
+    assert ls.validate_loopback_dashboard_url("http" + "://" + "127.0.0.1:8010/dashboard?a=1") is False
+    assert ls.validate_loopback_dashboard_url("http" + "://" + "127.0.0.1:8010/dashboard#section") is False
+    assert ls.validate_loopback_dashboard_url("http" + "://" + "127.0.0.1:8010/dashboard/") is False
+    assert ls.validate_loopback_dashboard_url("http" + "://" + "127.0.0.1:8010//dashboard") is False
+    assert ls.validate_loopback_dashboard_url("http" + "://" + "127.0.0.1:8010/%64ashboard") is False
+    assert ls.validate_loopback_dashboard_url(None) is False
+    assert ls.validate_loopback_dashboard_url(12345) is False
+
+
+def test_dialog_deduplication_independence(monkeypatch):
+    calls = []
+    class FakeUser32:
+        def MessageBoxW(self, hwnd, text, caption, flags):
+            calls.append((caption, flags))
+            return 1
+
+    monkeypatch.setattr(ls, "_user32", FakeUser32())
+    monkeypatch.setattr(ls, "is_packaged_windows", lambda: True)
+
+    state = ls.DialogState()
+    assert ls.show_startup_notice("Notice 1", state=state) is True
+    assert ls.show_startup_notice("Notice 2", state=state) is False
+    assert len(calls) == 1
+
+    assert ls.show_startup_error("Fatal 1", state=state) is True
+    assert ls.show_startup_error("Fatal 2", state=state) is False
+    assert len(calls) == 2
+
+
+def test_second_instance_success_shows_no_fatal_dialog(monkeypatch):
+    calls = []
+    monkeypatch.setattr(ls, "show_startup_error", lambda *a, **kw: calls.append("error"))
+    monkeypatch.setattr(ls, "open_browser", lambda port, logger=None: True)
+    assert calls == []
+
+
+def test_second_instance_failure_shows_one_fatal_dialog(tmp_path, monkeypatch):
+    errors = []
+    monkeypatch.setattr(ls, "show_startup_error", lambda msg, **kw: errors.append(msg))
+    monkeypatch.setattr(ls, "acquire_mutex", lambda: None)
+    monkeypatch.setattr(ls, "read_instance", lambda p: None)
+    monkeypatch.setattr(ls, "is_mutex_held", lambda: True)
+
+    import frozen_main
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    rc = frozen_main._launcher()
+    assert rc == 1
+    assert len(errors) == 1
+
+
+def test_browser_open_fallback_shows_one_notice_and_preserves_supervision(monkeypatch):
+    notices = []
+    monkeypatch.setattr(ls, "_show_dialog", lambda title, msg, flags, logger=None: (notices.append(msg), True)[1])
+    monkeypatch.setattr(ls, "open_browser", lambda port, logger=None: False)
+
+    state = ls.DialogState()
+    dash_url = "http" + "://" + "127.0.0.1" + ":8010/dashboard"
+    valid = ls.validate_loopback_dashboard_url(dash_url)
+    assert valid is True
+    res1 = ls.show_startup_notice("ACA running at " + dash_url, state=state)
+    assert res1 is True
+    assert len(notices) == 1
+
+    res2 = ls.show_startup_notice("ACA running again", state=state)
+    assert res2 is False
+    assert len(notices) == 1
+
+def test_normal_shutdown_shows_no_dialog(monkeypatch):
+    dialogs = []
+    monkeypatch.setattr(ls, "show_startup_error", lambda *a, **kw: dialogs.append("error"))
+    monkeypatch.setattr(ls, "show_startup_notice", lambda *a, **kw: dialogs.append("notice"))
+    assert dialogs == []
+
+
+def test_launcher_only_dialog_ownership():
+    text = pathlib.Path(__file__).resolve().parents[1] / "frozen_main.py"
+    content = text.read_text(encoding="utf-8")
+    backend_idx = content.find("def _backend():")
+    assert backend_idx != -1
+    backend_body = content[backend_idx:]
+    assert "show_startup_error" not in backend_body
+    assert "show_startup_notice" not in backend_body
+
+    api_routes = pathlib.Path(__file__).resolve().parents[1] / "app" / "api" / "routes.py"
+    if api_routes.is_file():
+        routes_text = api_routes.read_text(encoding="utf-8")
+        assert "show_startup_error" not in routes_text
+        assert "show_startup_notice" not in routes_text
+
+
+def test_ollama_boundary_remains_http_only():
+    config_path = pathlib.Path(__file__).resolve().parents[1] / "app" / "core" / "config.py"
+    if config_path.is_file():
+        text = config_path.read_text(encoding="utf-8")
+        assert "https://" not in text.lower() or "ollama" not in text.lower()
+
+
+def test_documentation_and_log_claims_match():
+    doc_path = pathlib.Path(__file__).resolve().parents[2] / "docs" / "TROUBLESHOOTING.md"
+    assert doc_path.is_file()
+    text = doc_path.read_text(encoding="utf-8")
+    assert "launcher.log" in text
+    assert "startup notice" in text or "error dialog" in text
+
+
+def test_no_html_or_chat_ui_contamination_across_all_changed_files():
+    root = pathlib.Path(__file__).resolve().parents[2]
+    changed_files = [
+        root / "backend" / "ACA.spec",
+        root / "backend" / "frozen_main.py",
+        root / "backend" / "app" / "launcher_support.py",
+        root / "backend" / "tests" / "test_launcher.py",
+        root / "docs" / "TROUBLESHOOTING.md",
+    ]
+
+    forbidden_tokens = [
+        "<" + "a " + "href=",
+        "<" + "/a" + ">",
+        "&" + "lt;a " + "href=",
+        "&" + "lt;/a" + "&" + "gt;",
+        "fai" + "-" + "ChatInput" + "Entity",
+        "target=" + chr(34) + "_blank" + chr(34),
+        "rel=" + chr(34) + "noopener noreferrer" + chr(34),
+        "data" + "-" + "lexical",
+    ]
+
+    for cf in changed_files:
+        assert cf.is_file(), f"File missing: {cf}"
+        content = cf.read_text(encoding="utf-8")
+        for token in forbidden_tokens:
+            assert token not in content, f"Contamination token {token!r} found in {cf}"

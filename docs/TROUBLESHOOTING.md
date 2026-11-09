@@ -25,8 +25,8 @@ ACA also shows this message when a completed database upgrade could not be verif
 
 ### What to do
 
-1. Close the ACA window if it is still open.
-2. Open your application data folder — the location is printed in the ACA window and recorded in the launcher log.
+1. Technical details are recorded in launcher.log. If startup is stopped, ACA displays a short error dialog with safe recovery guidance.
+2. Open your application data folder as described in project documentation.
 3. Keep the whole folder as it is. Do not delete, rename or separate `audit.db`, `audit.db-wal`, `audit.db-shm` or `audit.db-journal`, and do not edit any of them by hand.
 4. Make a copy of the complete folder somewhere safe before you try any recovery step.
 5. Keep the `logs` folder for support or project-owner review.
@@ -54,7 +54,7 @@ ACA itself is running, but your web browser did not open automatically.
 
 ### What to do
 
-1. Open your web browser yourself and go to the Dashboard address shown in the ACA launcher window (it looks like `http://127.0.0.1:<port>/dashboard`).
+1. Open your web browser yourself and go to the Dashboard address shown in the startup notice or recorded in `logs/launcher.log` (it looks like `http://127.0.0.1:<port>/dashboard`).
 2. ACA uses the browser Windows has set as default. If no default browser is configured, set one in **Windows Settings > Apps > Default apps**, then start ACA again.
 
 The application keeps running while you do this — nothing is lost.

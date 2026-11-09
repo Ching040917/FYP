@@ -8,6 +8,7 @@ import os
 import sys
 import tempfile
 import time
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -21,7 +22,89 @@ LOG_MAX_BYTES = 1 * 1024 * 1024
 LOG_BACKUP_COUNT = 5
 
 _kernel32 = ctypes.windll.kernel32 if os.name == "nt" else None
+_user32 = ctypes.windll.user32 if os.name == "nt" else None
 
+MB_OK = 0x00000000
+MB_ICONERROR = 0x00000010
+MB_ICONINFORMATION = 0x00000040
+
+
+def is_packaged_windows() -> bool:
+    return os.name == "nt" and bool(getattr(sys, "frozen", False))
+
+
+def _safe_log(logger, level: int, msg: str, *args, **kwargs):
+    if logger is None:
+        return
+    try:
+        logger.log(level, msg, *args, **kwargs)
+    except Exception:
+        pass
+
+
+def validate_loopback_dashboard_url(url: str) -> bool:
+    if not isinstance(url, str) or not url:
+        return False
+    try:
+        parts = urllib.parse.urlsplit(url)
+    except Exception:
+        return False
+    if parts.scheme != "http":
+        return False
+    if parts.username or parts.password:
+        return False
+    if parts.hostname != "127.0.0.1":
+        return False
+    if parts.port not in PORTS:
+        return False
+    if parts.path != "/dashboard":
+        return False
+    if urllib.parse.unquote(parts.path) != "/dashboard":
+        return False
+    if parts.query or parts.fragment:
+        return False
+    expected = "http" + "://" + "127.0.0.1" + ":" + str(parts.port) + "/dashboard"
+    if url != expected:
+        return False
+    return True
+
+
+class DialogState:
+    __slots__ = ("fatal_shown", "notice_shown")
+
+    def __init__(self):
+        self.fatal_shown = False
+        self.notice_shown = False
+
+
+def _show_dialog(title: str, message: str, flags: int, logger=None) -> bool:
+    if not is_packaged_windows() or _user32 is None:
+        return False
+    try:
+        ret = _user32.MessageBoxW(0, str(message), str(title), flags)
+        if ret == 0:
+            _safe_log(logger, logging.WARNING, "dialog_call_failed title=%s", title)
+            return False
+        return True
+    except Exception as exc:
+        _safe_log(logger, logging.WARNING, "dialog_call_exception title=%s error=%s", title, type(exc).__name__)
+        return False
+
+
+def show_startup_error(message: str, title: str = "Academic Compliance Auditor", state: DialogState | None = None, logger=None) -> bool:
+    if state is not None:
+        if state.fatal_shown:
+            return False
+        state.fatal_shown = True
+    return _show_dialog(title, message, MB_OK | MB_ICONERROR, logger=logger)
+
+
+def show_startup_notice(message: str, title: str = "Academic Compliance Auditor", state: DialogState | None = None, logger=None) -> bool:
+    if state is not None:
+        if state.notice_shown:
+            return False
+        state.notice_shown = True
+    return _show_dialog(title, message, MB_OK | MB_ICONINFORMATION, logger=logger)
 
 class RootResolutionError(RuntimeError):
     """Raised when canonical user data root cannot be safely resolved or validated."""
@@ -179,11 +262,17 @@ def get_instance_path(root: Path) -> Path:
 
 
 def setup_launcher_logging(log_dir: Path):
-    log_dir.mkdir(parents=True, exist_ok=True)
     logger = logging.getLogger("launcher")
     logger.setLevel(logging.INFO)
     logger.propagate = False
-    if not logger.handlers:
+    for h in list(logger.handlers):
+        if isinstance(h, logging.StreamHandler) and not isinstance(h, logging.handlers.RotatingFileHandler):
+            logger.removeHandler(h)
+    if any(isinstance(h, logging.handlers.RotatingFileHandler) for h in logger.handlers):
+        return logger
+    fh = None
+    try:
+        log_dir.mkdir(parents=True, exist_ok=True)
         fh = logging.handlers.RotatingFileHandler(
             str(log_dir / "launcher.log"),
             maxBytes=LOG_MAX_BYTES,
@@ -191,7 +280,20 @@ def setup_launcher_logging(log_dir: Path):
             encoding="utf-8",
         )
         fh.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+        for h in list(logger.handlers):
+            if isinstance(h, logging.NullHandler):
+                logger.removeHandler(h)
         logger.addHandler(fh)
+    except Exception:
+        if fh and fh in logger.handlers:
+            logger.removeHandler(fh)
+        if fh:
+            try:
+                fh.close()
+            except Exception:
+                pass
+        if not any(isinstance(h, (logging.handlers.RotatingFileHandler, logging.NullHandler)) for h in logger.handlers):
+            logger.addHandler(logging.NullHandler())
     return logger
 
 
