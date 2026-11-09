@@ -42,31 +42,37 @@ def _safe_log(logger, level: int, msg: str, *args, **kwargs):
         pass
 
 
+class _SafeLogger(logging.LoggerAdapter):
+    """Keep launcher dependency logging from interrupting startup."""
+
+    def log(self, level, msg, *args, **kwargs):
+        _safe_log(self.logger, level, msg, *args, **kwargs)
+
+
 def validate_loopback_dashboard_url(url: str) -> bool:
-    if not isinstance(url, str) or not url:
+    if not isinstance(url, str):
         return False
     try:
+        if not url:
+            return False
         parts = urllib.parse.urlsplit(url)
-    except Exception:
+        port = parts.port
+        if (
+            parts.scheme != "http"
+            or parts.username is not None
+            or parts.password is not None
+            or parts.hostname != "127.0.0.1"
+            or port not in PORTS
+            or parts.path != "/dashboard"
+            or urllib.parse.unquote(parts.path) != "/dashboard"
+            or parts.query
+            or parts.fragment
+        ):
+            return False
+        expected = "http" + "://" + "127.0.0.1" + ":" + str(port) + "/dashboard"
+        return url == expected
+    except (TypeError, ValueError, UnicodeError):
         return False
-    if parts.scheme != "http":
-        return False
-    if parts.username or parts.password:
-        return False
-    if parts.hostname != "127.0.0.1":
-        return False
-    if parts.port not in PORTS:
-        return False
-    if parts.path != "/dashboard":
-        return False
-    if urllib.parse.unquote(parts.path) != "/dashboard":
-        return False
-    if parts.query or parts.fragment:
-        return False
-    expected = "http" + "://" + "127.0.0.1" + ":" + str(parts.port) + "/dashboard"
-    if url != expected:
-        return False
-    return True
 
 
 class DialogState:
@@ -77,9 +83,14 @@ class DialogState:
         self.notice_shown = False
 
 
-def _show_dialog(title: str, message: str, flags: int, logger=None) -> bool:
+def _show_dialog(title: str, message: str, flags: int, logger=None, state=None) -> bool:
     if not is_packaged_windows() or _user32 is None:
         return False
+    if state is not None:
+        category = "fatal_shown" if flags & MB_ICONERROR else "notice_shown"
+        if getattr(state, category):
+            return False
+        setattr(state, category, True)
     try:
         ret = _user32.MessageBoxW(0, str(message), str(title), flags)
         if ret == 0:
@@ -92,19 +103,11 @@ def _show_dialog(title: str, message: str, flags: int, logger=None) -> bool:
 
 
 def show_startup_error(message: str, title: str = "Academic Compliance Auditor", state: DialogState | None = None, logger=None) -> bool:
-    if state is not None:
-        if state.fatal_shown:
-            return False
-        state.fatal_shown = True
-    return _show_dialog(title, message, MB_OK | MB_ICONERROR, logger=logger)
+    return _show_dialog(title, message, MB_OK | MB_ICONERROR, logger=logger, state=state)
 
 
 def show_startup_notice(message: str, title: str = "Academic Compliance Auditor", state: DialogState | None = None, logger=None) -> bool:
-    if state is not None:
-        if state.notice_shown:
-            return False
-        state.notice_shown = True
-    return _show_dialog(title, message, MB_OK | MB_ICONINFORMATION, logger=logger)
+    return _show_dialog(title, message, MB_OK | MB_ICONINFORMATION, logger=logger, state=state)
 
 class RootResolutionError(RuntimeError):
     """Raised when canonical user data root cannot be safely resolved or validated."""

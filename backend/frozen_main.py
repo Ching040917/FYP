@@ -36,7 +36,7 @@ def _launcher():
         open_browser, create_job_object, assign_process_to_job,
         RootResolutionError, revalidate_child_approved_root,
         PORTS, SHUTDOWN_TIMEOUT, DialogState, show_startup_error,
-        show_startup_notice, validate_loopback_dashboard_url, _safe_log,
+        show_startup_notice, validate_loopback_dashboard_url, _safe_log, _SafeLogger,
     )
 
     dialog_state = DialogState()
@@ -44,9 +44,12 @@ def _launcher():
     try:
         approved_root = get_user_data_root()
     except RootResolutionError as e:
-        logger = logging.getLogger("launcher")
-        logger.setLevel(logging.INFO)
-        logger.info("root_resolution_failed category=%s", e.code)
+        try:
+            logger = logging.getLogger("launcher")
+            logger.setLevel(logging.INFO)
+        except Exception:
+            logger = None
+        _safe_log(logger, logging.INFO, "root_resolution_failed category=%s", e.code)
         dialog_msg = (
             "Academic Compliance Auditor cannot safely access its application data folder.\n\n"
             "Startup was stopped to protect your data rather than creating temporary replacement data.\n"
@@ -59,7 +62,10 @@ def _launcher():
         return 1
     root = approved_root.path
     log_dir = get_log_dir(root)
-    logger = setup_launcher_logging(log_dir)
+    try:
+        logger = _SafeLogger(setup_launcher_logging(log_dir), {})
+    except Exception:
+        logger = None
     inst_path = get_instance_path(root)
     mutex = acquire_mutex()
     if mutex is None:

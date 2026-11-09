@@ -600,69 +600,163 @@ def test_build_scripts_no_console_override():
         assert "--console" not in text
 
 
-def test_backend_child_creationflags_windows_packaged(monkeypatch):
-    captured = {}
-
-    def fake_popen(cmd, **kwargs):
-        captured["cmd"] = cmd
-        captured["creationflags"] = kwargs.get("creationflags")
-        captured["shell"] = kwargs.get("shell", False)
-        captured["env"] = kwargs.get("env")
-
-        class FakeProc:
-            pid = 12345
-            returncode = 0
-            def poll(self):
-                return None
-            def terminate(self):
-                pass
-            def wait(self, timeout=None):
-                pass
-            def kill(self):
-                pass
-        return FakeProc()
-
-    monkeypatch.setattr(subprocess, "Popen", fake_popen)
-    monkeypatch.setattr(os, "name", "nt")
-    monkeypatch.setattr(sys, "frozen", True, raising=False)
-    monkeypatch.setattr(sys, "executable", "C:\\ACA\\run-frozen.exe")
-
-    base_flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
-    no_window = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
-    expected_flags = base_flags | no_window
-
-    cmd = [sys.executable, "--backend"]
-    fake_popen(cmd, env={"ACA_POC_PORT": "8010"}, creationflags=expected_flags)
-    assert captured["creationflags"] == expected_flags
-    assert captured["shell"] is False
-    assert captured["cmd"] == ["C:\\ACA\\run-frozen.exe", "--backend"]
+def _isolate_launcher_environment(monkeypatch):
+    for name in (
+        "DATABASE_URL",
+        "PREVIEW_STORAGE_DIR",
+        "ACA_APPROVED_DATA_ROOT",
+        "ACA_APPROVED_DATA_ROOT_DEV",
+        "ACA_APPROVED_DATA_ROOT_INO",
+    ):
+        monkeypatch.delenv(name, raising=False)
 
 
-def test_backend_child_creationflags_windows_source(monkeypatch):
-    monkeypatch.setattr(os, "name", "nt")
-    monkeypatch.setattr(sys, "frozen", False, raising=False)
-    base_flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
-    flags = base_flags if os.name == "nt" else 0
-    assert flags == base_flags
-    assert (flags & 0x08000000) == 0
+def _run_launcher_child_spawn(tmp_path, monkeypatch, platform, frozen, browser_opens=True):
+    import logging
+    from types import SimpleNamespace
+    import frozen_main
+    from app import db_lifecycle
+    _isolate_launcher_environment(monkeypatch)
+
+    port = ls.PORTS[2]
+    root = ls.ApprovedRoot(tmp_path, 121, 343)
+    mutex = object()
+    events = []
+    calls = []
+    dialogs = []
+
+    class Child:
+        pid = 12345
+        returncode = 0
+
+        def poll(self):
+            events.append("poll")
+            return None if events.count("poll") == 1 else 0
+
+    child = Child()
+
+    class Job:
+        def close(self):
+            events.append("job_closed")
+
+    job = Job()
+    frontend = tmp_path / "frontend-dist"
+    frontend.mkdir()
+    (frontend / "index.html").write_text("test", encoding="utf-8")
+    monkeypatch.setattr(sys, "_MEIPASS", str(tmp_path), raising=False)
+    monkeypatch.setattr(sys, "frozen", frozen, raising=False)
+    monkeypatch.setenv("ACA_TEST_SENTINEL", "preserved")
+    monkeypatch.setattr(frozen_main, "os", SimpleNamespace(name=platform, environ=os.environ))
+    monkeypatch.setattr(
+        frozen_main, "signal",
+        SimpleNamespace(signal=lambda *_: None, SIGINT=2, SIGBREAK=21),
+    )
+
+    def popen(command, **kwargs):
+        calls.append((command, kwargs))
+        return child
+
+    monkeypatch.setattr(
+        frozen_main, "subprocess",
+        SimpleNamespace(Popen=popen, CREATE_NEW_PROCESS_GROUP=0x200, CREATE_NO_WINDOW=0x08000000),
+    )
+    monkeypatch.setattr(ls, "get_user_data_root", lambda: root)
+    monkeypatch.setattr(ls, "setup_launcher_logging", lambda _: logging.getLogger("launcher-spawn-test"))
+    monkeypatch.setattr(ls, "acquire_mutex", lambda: mutex)
+    monkeypatch.setattr(ls, "release_mutex", lambda value: events.append(("mutex_released", value)))
+    monkeypatch.setattr(ls, "PORTS", [port])
+    monkeypatch.setattr(ls, "create_job_object", lambda logger: job)
+    monkeypatch.setattr(
+        ls, "assign_process_to_job",
+        lambda actual_job, pid, logger: events.append(("assigned", actual_job, pid)) or True,
+    )
+    monkeypatch.setattr(ls, "check_health", lambda actual_port: actual_port == port)
+    monkeypatch.setattr(ls, "write_instance", lambda *args: events.append(("instance_written", args[1:])))
+    monkeypatch.setattr(ls, "remove_instance_if_owned", lambda *args: events.append(("instance_removed", args[1:])))
+    monkeypatch.setattr(
+        ls, "open_browser",
+        lambda actual_port, logger: events.append(("browser", actual_port)) or browser_opens,
+    )
+    monkeypatch.setattr(ls, "is_packaged_windows", lambda: True)
+    monkeypatch.setattr(
+        ls, "_user32",
+        SimpleNamespace(MessageBoxW=lambda hwnd, message, title, flags: dialogs.append((message, flags)) or 1),
+    )
+    monkeypatch.setattr(db_lifecycle, "inspect_state", lambda _: "verified")
+    monkeypatch.setattr(db_lifecycle, "startup_action", lambda _: "verify")
+    monkeypatch.setattr(db_lifecycle, "verify_after_init", lambda _: None)
+
+    assert frozen_main._launcher() == 0
+    assert len(calls) == 1
+    command, kwargs = calls[0]
+    expected_command = [sys.executable, "--backend"] if frozen else [
+        sys.executable, "-m", "backend.frozen_main", "--backend",
+    ]
+    assert command == expected_command
+    assert kwargs.get("shell", False) is False
+    assert not any(key in kwargs for key in ("cwd", "stdin", "stdout", "stderr"))
+    assert kwargs["env"]["ACA_APPROVED_DATA_ROOT"] == str(tmp_path)
+    assert kwargs["env"]["ACA_APPROVED_DATA_ROOT_DEV"] == "121"
+    assert kwargs["env"]["ACA_APPROVED_DATA_ROOT_INO"] == "343"
+    assert kwargs["env"]["ACA_POC_PORT"] == str(port)
+    assert kwargs["env"]["ACA_TEST_SENTINEL"] == "preserved"
+    assert not (kwargs["creationflags"] & 0x00000008)
+    assert ("assigned", job, child.pid) in events
+    assert ("browser", port) in events
+    assert ("mutex_released", mutex) in events
+    assert "job_closed" in events
+    assert events.count("poll") >= 3
+    return kwargs["creationflags"], port, events, dialogs
 
 
-def test_backend_child_creationflags_non_windows(monkeypatch):
-    monkeypatch.setattr(os, "name", "posix")
-    monkeypatch.setattr(sys, "frozen", True, raising=False)
-    flags = 0
+def test_backend_child_creationflags_windows_packaged(tmp_path, monkeypatch):
+    flags, _, _, dialogs = _run_launcher_child_spawn(tmp_path, monkeypatch, "nt", True)
+    assert flags == 0x08000200
+    assert dialogs == []
+
+
+def test_backend_child_creationflags_windows_source(tmp_path, monkeypatch):
+    flags, _, _, dialogs = _run_launcher_child_spawn(tmp_path, monkeypatch, "nt", False)
+    assert flags == 0x00000200
+    assert dialogs == []
+
+
+def test_backend_child_creationflags_non_windows(tmp_path, monkeypatch):
+    flags, _, _, dialogs = _run_launcher_child_spawn(tmp_path, monkeypatch, "posix", True)
     assert flags == 0
+    assert dialogs == []
 
 
-def test_child_command_and_env_unchanged(monkeypatch):
-    monkeypatch.setattr(sys, "frozen", True, raising=False)
+def test_child_command_and_env_unchanged(tmp_path, monkeypatch):
+    # The shared harness invokes _launcher and checks its captured Popen
+    # command, --backend, inherited environment, root identity, port and shell.
     monkeypatch.setattr(sys, "executable", "C:\\App\\app.exe")
-    cmd_frozen = [sys.executable, "--backend"]
-    assert cmd_frozen == ["C:\\App\\app.exe", "--backend"]
+    for frozen in (True, False):
+        case_path = tmp_path / str(frozen)
+        case_path.mkdir()
+        with monkeypatch.context() as case_patch:
+            flags, port, events, dialogs = _run_launcher_child_spawn(
+                case_path, case_patch, "nt", frozen,
+            )
+            assert flags == (0x08000200 if frozen else 0x00000200)
+            assert port == ls.PORTS[0]
+            assert events.count(("browser", port)) == 1
+            assert dialogs == []
 
-    monkeypatch.setattr(sys, "frozen", False, raising=False)
-    cmd_source = [sys.executable, "-m", "backend.frozen_main", "--backend"]
-    assert cmd_source[1:] == ["-m", "backend.frozen_main", "--backend"]
+
+def test_normal_shutdown_shows_no_dialog(tmp_path, monkeypatch):
+    # Both dialog kinds reach the recording MessageBoxW boundary in the
+    # harness; it also requires the real launcher to return success.
+    _, port, events, dialogs = _run_launcher_child_spawn(
+        tmp_path, monkeypatch, "nt", True,
+    )
+    assert dialogs == []
+    assert events.count("job_closed") == 1
+    assert sum(isinstance(event, tuple) and event[0] == "mutex_released"
+               for event in events) == 1
+    assert sum(isinstance(event, tuple) and event[0] == "instance_removed"
+               for event in events) == 1
+    assert ("browser", port) in events
 
 
 def test_safe_print_none_stream_safe(monkeypatch):
@@ -694,6 +788,154 @@ def test_root_failure_before_logger_no_unbound_error(monkeypatch):
     monkeypatch.delenv("ACA_USER_DATA_DIR", raising=False)
     rc = frozen_main._launcher()
     assert rc == 1
+
+
+def _root_failure_with_broken_logger(monkeypatch, dialog_fails=False):
+    import logging
+    from types import SimpleNamespace
+    import frozen_main
+
+    log_attempts = []
+    dialog_attempts = []
+
+    class BrokenLogger:
+        def setLevel(self, level):
+            pass
+
+        def log(self, level, message, *args, **kwargs):
+            log_attempts.append(message)
+            raise OSError("logging unavailable")
+
+    def reject_root():
+        raise ls.RootResolutionError("root_unavailable", "root unavailable")
+
+    def show_dialog(hwnd, message, title, flags):
+        dialog_attempts.append((message, flags))
+        if dialog_fails:
+            raise OSError("dialog unavailable")
+        return 1
+
+    monkeypatch.setattr(frozen_main, "logging", SimpleNamespace(
+        INFO=logging.INFO, getLogger=lambda _: BrokenLogger(),
+    ))
+    monkeypatch.setattr(ls, "get_user_data_root", reject_root)
+    monkeypatch.setattr(ls, "is_packaged_windows", lambda: True)
+    monkeypatch.setattr(ls, "_user32", SimpleNamespace(MessageBoxW=show_dialog))
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    assert frozen_main._launcher() == 1
+    assert len(dialog_attempts) == 1
+    assert dialog_attempts[0][1] == ls.MB_OK | ls.MB_ICONERROR
+    assert log_attempts
+
+
+def test_root_failure_dialog_survives_logger_failure(monkeypatch):
+    _root_failure_with_broken_logger(monkeypatch)
+
+
+def test_root_failure_preserves_exit_when_dialog_and_logging_fail(monkeypatch):
+    _root_failure_with_broken_logger(monkeypatch, dialog_fails=True)
+
+
+def _missing_frontend_with_logging_failure(tmp_path, monkeypatch, broken_null_handler):
+    import logging
+    from types import SimpleNamespace
+    import frozen_main
+
+    logger = logging.getLogger("launcher")
+    monkeypatch.setattr(logger, "handlers", [])
+    monkeypatch.setattr(logger, "level", logger.level)
+    monkeypatch.setattr(logger, "propagate", logger.propagate)
+
+    handler_attempts = []
+
+    class BrokenFileHandler(logging.handlers.RotatingFileHandler):
+        def __init__(self, *args, **kwargs):
+            handler_attempts.append("file")
+            raise OSError("file handler unavailable")
+
+    class BrokenNullHandler(logging.NullHandler):
+        def __init__(self):
+            raise OSError("null handler unavailable")
+
+    class LoggingProxy:
+        handlers = SimpleNamespace(RotatingFileHandler=BrokenFileHandler)
+        NullHandler = BrokenNullHandler if broken_null_handler else logging.NullHandler
+
+        def __getattr__(self, name):
+            return getattr(logging, name)
+
+    monkeypatch.setattr(ls, "logging", LoggingProxy())
+
+    dialogs = []
+    released = []
+    mutex = object()
+    monkeypatch.setattr(ls, "get_user_data_root", lambda: ls.ApprovedRoot(tmp_path, 121, 343))
+    monkeypatch.setattr(ls, "acquire_mutex", lambda: mutex)
+    monkeypatch.setattr(ls, "release_mutex", released.append)
+    monkeypatch.setattr(ls, "is_packaged_windows", lambda: True)
+    monkeypatch.setattr(
+        ls, "_user32",
+        SimpleNamespace(MessageBoxW=lambda hwnd, message, title, flags: dialogs.append(flags) or 1),
+    )
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "_MEIPASS", str(tmp_path), raising=False)
+    monkeypatch.setattr(sys, "executable", str(tmp_path / "run-frozen.exe"))
+
+    assert frozen_main._launcher() == 1
+    assert dialogs == [ls.MB_OK | ls.MB_ICONERROR]
+    assert released == [mutex]
+    assert handler_attempts == ["file"]
+    if not broken_null_handler:
+        assert any(isinstance(handler, logging.NullHandler) for handler in logger.handlers)
+
+
+def test_fatal_dialog_survives_file_handler_setup_failure(tmp_path, monkeypatch):
+    _missing_frontend_with_logging_failure(tmp_path, monkeypatch, False)
+
+
+def test_fatal_dialog_survives_null_handler_fallback_failure(tmp_path, monkeypatch):
+    _missing_frontend_with_logging_failure(tmp_path, monkeypatch, True)
+
+
+def test_job_failure_dialog_survives_dependency_logging_failure(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    import frozen_main
+    from app import db_lifecycle
+    _isolate_launcher_environment(monkeypatch)
+
+    class BrokenLogger:
+        def log(self, *args, **kwargs):
+            raise OSError("logging unavailable")
+
+    def fail_job(logger):
+        logger.info("job creation failed")
+        return None
+
+    frontend = tmp_path / "frontend-dist"
+    frontend.mkdir()
+    (frontend / "index.html").write_text("test", encoding="utf-8")
+    dialogs = []
+    released = []
+    mutex = object()
+    monkeypatch.setattr(ls, "get_user_data_root", lambda: ls.ApprovedRoot(tmp_path, 121, 343))
+    monkeypatch.setattr(ls, "setup_launcher_logging", lambda _: BrokenLogger())
+    monkeypatch.setattr(ls, "acquire_mutex", lambda: mutex)
+    monkeypatch.setattr(ls, "release_mutex", released.append)
+    monkeypatch.setattr(ls, "create_job_object", fail_job)
+    monkeypatch.setattr(ls, "is_packaged_windows", lambda: True)
+    monkeypatch.setattr(
+        ls, "_user32",
+        SimpleNamespace(MessageBoxW=lambda hwnd, message, title, flags: dialogs.append(flags) or 1),
+    )
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "_MEIPASS", str(tmp_path), raising=False)
+    monkeypatch.setattr(db_lifecycle, "inspect_state", lambda _: "verified")
+    monkeypatch.setattr(db_lifecycle, "startup_action", lambda _: "verify")
+    monkeypatch.setattr(db_lifecycle, "verify_after_init", lambda _: None)
+
+    assert frozen_main._launcher() == 1
+    assert dialogs == [ls.MB_OK | ls.MB_ICONERROR]
+    assert released == [mutex]
 
 
 def test_file_handler_setup_failure_preserves_exit_code(tmp_path, monkeypatch):
@@ -826,6 +1068,32 @@ def test_loopback_dashboard_url_validation_rejections():
     assert ls.validate_loopback_dashboard_url(12345) is False
 
 
+def test_loopback_dashboard_url_rejects_malformed_authorities_without_side_effects(monkeypatch):
+    events = []
+    monkeypatch.setattr(ls, "_safe_log", lambda *args, **kwargs: events.append("log"))
+    monkeypatch.setattr(ls, "_show_dialog", lambda *args, **kwargs: events.append("dialog"))
+    prefix = "http" + "://"
+    invalid_authorities = (
+        "127.0.0.1:not-a-port",
+        "127.0.0.1:-1",
+        "127.0.0.1:0",
+        "127.0.0.1:65536",
+        "127.0.0.1",
+        "",
+        "[::1",
+        "%31%32%37.0.0.1:8010",
+        "127.0.0.1%3a8010",
+    )
+    for authority in invalid_authorities:
+        assert ls.validate_loopback_dashboard_url(prefix + authority + "/dashboard") is False
+    class InvalidString(str):
+        def __bool__(self):
+            raise ValueError("malformed text")
+
+    assert ls.validate_loopback_dashboard_url(InvalidString("invalid")) is False
+    assert events == []
+
+
 def test_dialog_deduplication_independence(monkeypatch):
     calls = []
     class FakeUser32:
@@ -846,11 +1114,31 @@ def test_dialog_deduplication_independence(monkeypatch):
     assert len(calls) == 2
 
 
-def test_second_instance_success_shows_no_fatal_dialog(monkeypatch):
-    calls = []
-    monkeypatch.setattr(ls, "show_startup_error", lambda *a, **kw: calls.append("error"))
-    monkeypatch.setattr(ls, "open_browser", lambda port, logger=None: True)
-    assert calls == []
+def test_second_instance_success_shows_no_fatal_dialog(tmp_path, monkeypatch):
+    import logging
+    from types import SimpleNamespace
+    import frozen_main
+
+    browser_calls = []
+    dialogs = []
+    port = ls.PORTS[0]
+    monkeypatch.setattr(ls, "get_user_data_root", lambda: ls.ApprovedRoot(tmp_path, 121, 343))
+    monkeypatch.setattr(ls, "setup_launcher_logging", lambda _: logging.getLogger("launcher-reuse-test"))
+    monkeypatch.setattr(ls, "acquire_mutex", lambda: None)
+    monkeypatch.setattr(ls, "read_instance", lambda _: {"pid": 12345, "port": port})
+    monkeypatch.setattr(ls, "is_pid_running", lambda _: True)
+    monkeypatch.setattr(ls, "is_executable_match", lambda _: True)
+    monkeypatch.setattr(ls, "check_health", lambda _: True)
+    monkeypatch.setattr(ls, "open_browser", lambda actual_port, logger: browser_calls.append(actual_port) or True)
+    monkeypatch.setattr(ls, "is_packaged_windows", lambda: True)
+    monkeypatch.setattr(
+        ls, "_user32",
+        SimpleNamespace(MessageBoxW=lambda *args: dialogs.append(args) or 1),
+    )
+
+    assert frozen_main._launcher() == 0
+    assert browser_calls == [port]
+    assert dialogs == []
 
 
 def test_second_instance_failure_shows_one_fatal_dialog(tmp_path, monkeypatch):
@@ -867,28 +1155,14 @@ def test_second_instance_failure_shows_one_fatal_dialog(tmp_path, monkeypatch):
     assert len(errors) == 1
 
 
-def test_browser_open_fallback_shows_one_notice_and_preserves_supervision(monkeypatch):
-    notices = []
-    monkeypatch.setattr(ls, "_show_dialog", lambda title, msg, flags, logger=None: (notices.append(msg), True)[1])
-    monkeypatch.setattr(ls, "open_browser", lambda port, logger=None: False)
-
-    state = ls.DialogState()
-    dash_url = "http" + "://" + "127.0.0.1" + ":8010/dashboard"
-    valid = ls.validate_loopback_dashboard_url(dash_url)
-    assert valid is True
-    res1 = ls.show_startup_notice("ACA running at " + dash_url, state=state)
-    assert res1 is True
-    assert len(notices) == 1
-
-    res2 = ls.show_startup_notice("ACA running again", state=state)
-    assert res2 is False
-    assert len(notices) == 1
-
-def test_normal_shutdown_shows_no_dialog(monkeypatch):
-    dialogs = []
-    monkeypatch.setattr(ls, "show_startup_error", lambda *a, **kw: dialogs.append("error"))
-    monkeypatch.setattr(ls, "show_startup_notice", lambda *a, **kw: dialogs.append("notice"))
-    assert dialogs == []
+def test_browser_open_fallback_shows_one_notice_and_preserves_supervision(tmp_path, monkeypatch):
+    _, port, events, dialogs = _run_launcher_child_spawn(
+        tmp_path, monkeypatch, "nt", True, browser_opens=False,
+    )
+    assert len(dialogs) == 1
+    assert dialogs[0][1] == ls.MB_OK | ls.MB_ICONINFORMATION
+    assert str(port) in dialogs[0][0]
+    assert "poll" in events[events.index(("browser", port)) + 1:]
 
 
 def test_launcher_only_dialog_ownership():
