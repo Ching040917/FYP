@@ -619,7 +619,7 @@ def _run_launcher_child_spawn(tmp_path, monkeypatch, platform, frozen, browser_o
     _isolate_launcher_environment(monkeypatch)
 
     port = ls.PORTS[2]
-    root = ls.ApprovedRoot(tmp_path, 121, 343)
+    root = ls.ApprovedRoot(tmp_path, tmp_path.stat().st_dev, tmp_path.stat().st_ino)
     mutex = object()
     events = []
     calls = []
@@ -696,8 +696,8 @@ def _run_launcher_child_spawn(tmp_path, monkeypatch, platform, frozen, browser_o
     assert kwargs.get("shell", False) is False
     assert not any(key in kwargs for key in ("cwd", "stdin", "stdout", "stderr"))
     assert kwargs["env"]["ACA_APPROVED_DATA_ROOT"] == str(tmp_path)
-    assert kwargs["env"]["ACA_APPROVED_DATA_ROOT_DEV"] == "121"
-    assert kwargs["env"]["ACA_APPROVED_DATA_ROOT_INO"] == "343"
+    assert kwargs["env"]["ACA_APPROVED_DATA_ROOT_DEV"] == str(root.dev)
+    assert kwargs["env"]["ACA_APPROVED_DATA_ROOT_INO"] == str(root.ino)
     assert kwargs["env"]["ACA_POC_PORT"] == str(port)
     assert kwargs["env"]["ACA_TEST_SENTINEL"] == "preserved"
     assert not (kwargs["creationflags"] & 0x00000008)
@@ -1234,7 +1234,8 @@ def ownership_launcher(tmp_path, monkeypatch):
     def run(state="stale", *, cleanup_error=None, cleanup_noop=False,
             reacquire=True, held=False, first_owned=False, child_error=False,
             timeout=False, metadata_blocked=False, lose_ownership=False,
-            metadata_reappears=False):
+            metadata_reappears=False, child_exit=None, failure_category=None,
+            failure_categories=None, broken_logging=False):
         _isolate_launcher_environment(monkeypatch)
         events, logs, dialogs, releases = [], [], [], []
         instance = tmp_path / "instance.json"
@@ -1280,6 +1281,8 @@ def ownership_launcher(tmp_path, monkeypatch):
         class Logger:
             def log(self, level, message, *args, **kwargs):
                 logs.append(message % args if args else message)
+                if broken_logging:
+                    raise OSError("synthetic logging failure")
 
         class Child:
             pid = 12345
@@ -1288,7 +1291,9 @@ def ownership_launcher(tmp_path, monkeypatch):
 
             def poll(self):
                 self.polls += 1
-                if not timeout and self.polls > 1:
+                if self.forced_exit is not None:
+                    self.returncode = self.forced_exit
+                elif not timeout and self.polls > 1:
                     self.returncode = 0
                 return self.returncode
 
@@ -1316,6 +1321,15 @@ def ownership_launcher(tmp_path, monkeypatch):
             return Job()
 
         def popen(command, **kwargs):
+            child.polls = 0
+            child.returncode = None
+            categories = failure_categories if failure_categories is not None else [failure_category] * 3
+            selected = categories[sum(isinstance(event, tuple) and event[0] == "popen" for event in events)]
+            child.forced_exit = 3 if selected is not None else child_exit
+            if selected is not None:
+                from unittest.mock import patch
+                with patch.dict(os.environ, kwargs["env"], clear=True):
+                    assert ls.write_startup_failure(selected, approved_root)
             events.append(("popen", command, kwargs))
             if child_error:
                 raise OSError("simulated child failure")
@@ -1338,7 +1352,8 @@ def ownership_launcher(tmp_path, monkeypatch):
             frozen_main, "subprocess",
             SimpleNamespace(Popen=popen, CREATE_NEW_PROCESS_GROUP=0x200, CREATE_NO_WINDOW=0x08000000),
         )
-        monkeypatch.setattr(ls, "get_user_data_root", lambda: ls.ApprovedRoot(tmp_path, 121, 343))
+        approved_root = ls.ApprovedRoot(tmp_path, tmp_path.stat().st_dev, tmp_path.stat().st_ino)
+        monkeypatch.setattr(ls, "get_user_data_root", lambda: approved_root)
         monkeypatch.setattr(ls, "get_instance_path", lambda _: InstancePath())
         monkeypatch.setattr(ls, "setup_launcher_logging", lambda _: Logger())
         monkeypatch.setattr(ls, "acquire_mutex", acquire)
@@ -1416,8 +1431,8 @@ def test_confirmed_stale_recovery_continues_with_exclusive_mutex(ownership_launc
     assert len(popen) == 1
     assert popen[0][1] == [sys.executable, "--backend"]
     assert popen[0][2]["creationflags"] == 0x08000200
-    assert popen[0][2]["env"]["ACA_APPROVED_DATA_ROOT_DEV"] == "121"
-    assert popen[0][2]["env"]["ACA_APPROVED_DATA_ROOT_INO"] == "343"
+    assert popen[0][2]["env"]["ACA_APPROVED_DATA_ROOT_DEV"] == str(result.instance.parent.stat().st_dev)
+    assert popen[0][2]["env"]["ACA_APPROVED_DATA_ROOT_INO"] == str(result.instance.parent.stat().st_ino)
     assert popen[0][2]["env"]["ACA_POC_PORT"] == "8010"
     assert popen[0][2].get("shell", False) is False
     assert ("assigned", 12345) in result.events
@@ -1625,3 +1640,84 @@ def test_mutex_access_denial_does_not_mean_unheld(monkeypatch):
     from types import SimpleNamespace
     monkeypatch.setattr(ls, "_kernel32", SimpleNamespace(OpenMutexW=lambda *args: 0, GetLastError=lambda: 5))
     assert ls.is_mutex_held() is None
+
+
+@pytest.mark.parametrize("state,first_owned", [("new", True), ("stale", False)])
+def test_backend_logging_failure_is_one_fatal_without_port_retry(ownership_launcher, state, first_owned):
+    result = ownership_launcher(
+        state, first_owned=first_owned, child_exit=ls.BACKEND_LOGGING_FAILURE_EXIT_CODE,
+    )
+    assert result.rc == ls.BACKEND_LOGGING_FAILURE_EXIT_CODE
+    assert sum(isinstance(event, tuple) and event[0] == "popen" for event in result.events) == 1
+    assert not any(isinstance(event, tuple) and event[0] in ("browser", "write_instance", "health")
+                   for event in result.events)
+    assert len(result.dialogs) == 1
+    message, flags = result.dialogs[0]
+    assert flags == ls.MB_OK | ls.MB_ICONERROR
+    for sensitive in (str(result.instance), "12345", "8010", ls.MUTEX_NAME, "Traceback"):
+        assert sensitive not in message
+    assert any("backend_logging_init_failed" in entry for entry in result.logs)
+    assert result.events.count("job_close") == 1
+    assert result.releases == [result.mutex]
+
+
+@pytest.mark.parametrize("category", [
+    "DATABASE_RECONCILIATION_REFUSAL", "DATABASE_UPGRADE_OR_VERIFICATION_FAILURE",
+    "UNEXPECTED_STARTUP_FAILURE",
+])
+def test_explicit_startup_failure_stops_after_one_child(ownership_launcher, category):
+    result = ownership_launcher("new", first_owned=True, failure_category=category)
+    assert result.rc != 0
+    assert sum(isinstance(event, tuple) and event[0] == "popen" for event in result.events) == 1
+    assert not any(isinstance(event, tuple) and event[0] in ("browser", "write_instance") for event in result.events)
+    assert len(result.dialogs) == 1
+    message = result.dialogs[0][0]
+    assert "ports" not in message.lower()
+    assert "startup_failure category=" + category in result.logs
+    assert result.events.count("job_close") == 1
+    assert result.releases == [result.mutex]
+    assert not result.instance.exists()
+    for forbidden in ("alembic", "traceback", "sqlite:", str(result.instance.parent), "12345", "8010", ls.MUTEX_NAME):
+        assert forbidden.lower() not in message.lower()
+    if category.startswith("DATABASE_"):
+        assert "preserved" in message.lower()
+        assert "protect" in message.lower()
+        assert "troubleshooting" in message.lower()
+
+
+def test_proven_port_failure_can_advance_to_success(ownership_launcher):
+    result = ownership_launcher("new", first_owned=True, failure_categories=["PORT_UNAVAILABLE", None, None])
+    assert result.rc == 0
+    assert result.dialogs == []
+    assert sum(isinstance(event, tuple) and event[0] == "popen" for event in result.events) == 2
+    assert ("browser", 8011) in result.events
+
+
+def test_all_proven_port_failures_show_one_port_dialog(ownership_launcher):
+    result = ownership_launcher("new", first_owned=True, failure_category="PORT_UNAVAILABLE")
+    assert result.rc != 0
+    assert sum(isinstance(event, tuple) and event[0] == "popen" for event in result.events) == 3
+    assert len(result.dialogs) == 1
+    assert "ports" in result.dialogs[0][0].lower()
+    assert result.logs.count("startup_failure category=PORT_UNAVAILABLE") == 3
+    assert not any(isinstance(event, tuple) and event[0] == "browser" for event in result.events)
+
+
+def test_generic_exit_three_is_not_database_or_port_failure(ownership_launcher):
+    result = ownership_launcher("new", first_owned=True, child_exit=3)
+    assert result.rc != 0
+    assert sum(isinstance(event, tuple) and event[0] == "popen" for event in result.events) == 1
+    assert len(result.dialogs) == 1
+    assert "ports" not in result.dialogs[0][0].lower()
+    assert "data was preserved" not in result.dialogs[0][0].lower()
+    assert "startup_failure category=UNEXPECTED_STARTUP_FAILURE" in result.logs
+
+
+def test_reconciliation_dialog_survives_logging_failure(ownership_launcher):
+    result = ownership_launcher(
+        "new", first_owned=True, failure_category="DATABASE_RECONCILIATION_REFUSAL", broken_logging=True,
+    )
+    assert result.rc != 0
+    assert len(result.dialogs) == 1
+    assert "protect" in result.dialogs[0][0].lower()
+    assert sum(isinstance(event, tuple) and event[0] == "popen" for event in result.events) == 1

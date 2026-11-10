@@ -3,8 +3,13 @@ import ctypes
 import ctypes.wintypes
 import json
 import logging
+import logging.config
 import logging.handlers
 import os
+import secrets
+import stat
+from contextlib import ExitStack, contextmanager
+from dataclasses import dataclass
 import sys
 import tempfile
 import time
@@ -20,6 +25,7 @@ HEALTH_TIMEOUT = 15
 SHUTDOWN_TIMEOUT = 5
 LOG_MAX_BYTES = 1 * 1024 * 1024
 LOG_BACKUP_COUNT = 5
+BACKEND_LOGGING_FAILURE_EXIT_CODE = 78
 
 _kernel32 = ctypes.windll.kernel32 if os.name == "nt" else None
 _user32 = ctypes.windll.user32 if os.name == "nt" else None
@@ -256,6 +262,534 @@ def revalidate_child_approved_root() -> ApprovedRoot:
 
     return ApprovedRoot(norm_path, dev, ino)
 
+
+STARTUP_SCHEMA_VERSION = 1
+STARTUP_STATUS_MAX_BYTES = 1024
+STARTUP_FAILURE_CATEGORIES = frozenset({
+    "DATABASE_RECONCILIATION_REFUSAL",
+    "DATABASE_UPGRADE_OR_VERIFICATION_FAILURE",
+    "PORT_UNAVAILABLE",
+    "UNEXPECTED_STARTUP_FAILURE",
+})
+_STARTUP_FALLBACK = "UNEXPECTED_STARTUP_FAILURE"
+_STARTUP_RUNTIME = "runtime"
+
+
+@dataclass(frozen=True)
+class StartupAttempt:
+    path: Path
+    nonce: str
+    schema_version: int
+    _root_identity: tuple[int, int]
+    _runtime_identity: tuple[int, int]
+    _directory_identity: tuple[int, int]
+
+    def environment(self) -> dict[str, str]:
+        return {
+            "ACA_STARTUP_STATUS_PATH": str(self.path),
+            "ACA_STARTUP_ATTEMPT_NONCE": self.nonce,
+            "ACA_STARTUP_SCHEMA_VERSION": str(self.schema_version),
+        }
+
+
+def _startup_identity(st):
+    return st.st_dev, st.st_ino
+
+
+def _startup_check_stat(st, *, directory=False, private=False, allow_linked=False):
+    if (not (stat.S_ISDIR(st.st_mode) if directory else stat.S_ISREG(st.st_mode))
+            or stat.S_ISLNK(st.st_mode)
+            or getattr(st, "st_file_attributes", 0) & 0x400
+            or st.st_dev <= 0 or st.st_ino <= 0):
+        raise OSError("Unsafe startup protocol object")
+    if os.name != "nt" and private:
+        if st.st_uid != os.geteuid() or st.st_mode & 0o077:
+            raise OSError("Startup protocol object is not private")
+        if not directory and not allow_linked and st.st_nlink != 1:
+            raise OSError("Startup protocol file has unexpected links")
+
+
+def _startup_windows_api():
+    # Separate bindings: never alter the launcher's existing kernel32 helpers.
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    advapi = ctypes.WinDLL("advapi32", use_last_error=True)
+    kernel.CreateFileW.argtypes = [
+        ctypes.c_wchar_p, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_void_p,
+        ctypes.c_ulong, ctypes.c_ulong, ctypes.c_void_p,
+    ]
+    kernel.CreateFileW.restype = ctypes.c_void_p
+    kernel.CloseHandle.argtypes = [ctypes.c_void_p]
+    kernel.LocalFree.argtypes = [ctypes.c_void_p]
+    advapi.ConvertStringSecurityDescriptorToSecurityDescriptorW.argtypes = [
+        ctypes.c_wchar_p, ctypes.c_ulong, ctypes.POINTER(ctypes.c_void_p),
+        ctypes.POINTER(ctypes.c_ulong),
+    ]
+    advapi.ConvertSecurityDescriptorToStringSecurityDescriptorW.argtypes = [
+        ctypes.c_void_p, ctypes.c_ulong, ctypes.c_ulong,
+        ctypes.POINTER(ctypes.c_void_p), ctypes.POINTER(ctypes.c_ulong),
+    ]
+    advapi.GetNamedSecurityInfoW.argtypes = [
+        ctypes.c_wchar_p, ctypes.c_int, ctypes.c_ulong,
+        ctypes.POINTER(ctypes.c_void_p), ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_void_p), ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_void_p),
+    ]
+    advapi.GetNamedSecurityInfoW.restype = ctypes.c_ulong
+    advapi.OpenProcessToken.argtypes = [
+        ctypes.c_void_p, ctypes.c_ulong, ctypes.POINTER(ctypes.c_void_p),
+    ]
+    advapi.GetTokenInformation.argtypes = [
+        ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p, ctypes.c_ulong,
+        ctypes.POINTER(ctypes.c_ulong),
+    ]
+    advapi.ConvertSidToStringSidW.argtypes = [
+        ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p),
+    ]
+    kernel.GetCurrentProcess.restype = ctypes.c_void_p
+    return kernel, advapi
+
+
+@contextmanager
+def _startup_windows_descriptor():
+    kernel, advapi = _startup_windows_api()
+    token = ctypes.c_void_p()
+    if not advapi.OpenProcessToken(kernel.GetCurrentProcess(), 8, ctypes.byref(token)):
+        raise OSError("Startup token unavailable")
+    sid_text = ctypes.c_void_p()
+    descriptor = ctypes.c_void_p()
+    try:
+        size = ctypes.c_ulong()
+        advapi.GetTokenInformation(token, 1, None, 0, ctypes.byref(size))
+        if not size.value:
+            raise OSError("Startup token identity unavailable")
+        buffer = ctypes.create_string_buffer(size.value)
+        if not advapi.GetTokenInformation(token, 1, buffer, size, ctypes.byref(size)):
+            raise OSError("Startup token identity unavailable")
+        sid = ctypes.cast(buffer, ctypes.POINTER(ctypes.c_void_p))[0]
+        if not advapi.ConvertSidToStringSidW(sid, ctypes.byref(sid_text)):
+            raise OSError("Startup token identity unavailable")
+        user = ctypes.wstring_at(sid_text)
+        # Protected DACL: only this user, SYSTEM and administrators can mutate.
+        sddl = f"O:{user}D:P(A;OICI;FA;;;{user})(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)"
+        if not advapi.ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                sddl, 1, ctypes.byref(descriptor), None):
+            raise OSError("Startup security descriptor unavailable")
+        yield kernel, advapi, descriptor
+    finally:
+        if descriptor:
+            kernel.LocalFree(descriptor)
+        if sid_text:
+            kernel.LocalFree(sid_text)
+        kernel.CloseHandle(token)
+
+
+def _startup_windows_sddl(kernel, advapi, descriptor, information=5):
+    text = ctypes.c_void_p()
+    try:
+        if not advapi.ConvertSecurityDescriptorToStringSecurityDescriptorW(
+                descriptor, 1, information, ctypes.byref(text), None):
+            raise OSError("Startup permissions unavailable")
+        return ctypes.wstring_at(text)
+    finally:
+        if text:
+            kernel.LocalFree(text)
+
+
+def _startup_windows_private(path):
+    with _startup_windows_descriptor() as (kernel, advapi, expected):
+        actual = ctypes.c_void_p()
+        try:
+            if advapi.GetNamedSecurityInfoW(
+                    str(path), 1, 5, None, None, None, None, ctypes.byref(actual)):
+                raise OSError("Startup permissions unavailable")
+            if (_startup_windows_sddl(kernel, advapi, actual).replace("D:PAI", "D:P")
+                    != _startup_windows_sddl(kernel, advapi, expected)):
+                raise OSError("Startup directory is not private")
+        finally:
+            if actual:
+                kernel.LocalFree(actual)
+
+
+def _startup_windows_owned_file(path):
+    with _startup_windows_descriptor() as (kernel, advapi, expected):
+        actual = ctypes.c_void_p()
+        try:
+            if advapi.GetNamedSecurityInfoW(
+                    str(path), 1, 1, None, None, None, None, ctypes.byref(actual)):
+                raise OSError("Startup file ownership unavailable")
+            if (_startup_windows_sddl(kernel, advapi, actual, 1)
+                    != _startup_windows_sddl(kernel, advapi, expected, 1)):
+                raise OSError("Startup file has unexpected owner")
+        finally:
+            if actual:
+                kernel.LocalFree(actual)
+
+
+def _startup_mkdir(path, parent_fd=None):
+    if os.name != "nt":
+        os.mkdir(path.name, 0o700, dir_fd=parent_fd)
+        return
+    with _startup_windows_descriptor() as (kernel, _, descriptor):
+        class SecurityAttributes(ctypes.Structure):
+            _fields_ = [
+                ("length", ctypes.c_ulong), ("descriptor", ctypes.c_void_p),
+                ("inherit", ctypes.c_int),
+            ]
+        attributes = SecurityAttributes(ctypes.sizeof(SecurityAttributes), descriptor, 0)
+        kernel.CreateDirectoryW.argtypes = [
+            ctypes.c_wchar_p, ctypes.POINTER(SecurityAttributes),
+        ]
+        if not kernel.CreateDirectoryW(str(path), ctypes.byref(attributes)):
+            error = ctypes.get_last_error()
+            if error == 183:
+                raise FileExistsError("Startup directory already exists")
+            raise OSError("Startup directory creation failed")
+
+
+@contextmanager
+def _startup_directory(path, parent_fd=None, private=False):
+    """Pin each directory without following links; Windows pins deny rename."""
+    if os.name == "nt":
+        kernel, _ = _startup_windows_api()
+        handle = kernel.CreateFileW(
+            str(path), 0x80, 3, None, 3, 0x02200000, None,
+        )
+        if handle in (None, ctypes.c_void_p(-1).value):
+            raise OSError("Startup directory cannot be pinned")
+        try:
+            st = os.lstat(path)
+            _startup_check_stat(st, directory=True)
+            if private:
+                _startup_windows_private(path)
+            yield None, st
+        finally:
+            kernel.CloseHandle(handle)
+    else:
+        flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+        fd = os.open(path if parent_fd is None else path.name, flags, dir_fd=parent_fd)
+        try:
+            st = os.fstat(fd)
+            _startup_check_stat(st, directory=True, private=private)
+            yield fd, st
+        finally:
+            os.close(fd)
+
+
+@contextmanager
+def _startup_root(approved_root):
+    if not isinstance(approved_root, ApprovedRoot):
+        raise OSError("Startup root approval required")
+    path = approved_root.path
+    if (not isinstance(path, Path) or not path.is_absolute()
+            or path != Path(os.path.normpath(str(path)))):
+        raise OSError("Startup root path is not canonical")
+    with ExitStack() as stack:
+        parent_fd = None
+        current = Path(path.anchor)
+        parent_fd, st = stack.enter_context(_startup_directory(current))
+        for component in path.parts[1:]:
+            current /= component
+            parent_fd, st = stack.enter_context(_startup_directory(current, parent_fd))
+        if _startup_identity(st) != (approved_root.dev, approved_root.ino):
+            raise OSError("Startup root identity changed")
+        yield stack, parent_fd
+
+
+def _startup_validate_attempt(attempt, approved_root):
+    if (not isinstance(attempt, StartupAttempt)
+            or type(attempt.schema_version) is not int
+            or attempt.schema_version != STARTUP_SCHEMA_VERSION
+            or not isinstance(attempt.nonce, str) or len(attempt.nonce) != 64
+            or any(c not in "0123456789abcdef" for c in attempt.nonce)
+            or attempt._root_identity != (approved_root.dev, approved_root.ino)
+            or attempt.path != approved_root.path / _STARTUP_RUNTIME
+            / ("startup-" + attempt.nonce) / "status.json"):
+        raise OSError("Invalid startup attempt")
+
+
+@contextmanager
+def _startup_scope(attempt, approved_root):
+    _startup_validate_attempt(attempt, approved_root)
+    with _startup_root(approved_root) as (stack, root_fd):
+        runtime = attempt.path.parent.parent
+        runtime_fd, st = stack.enter_context(
+            _startup_directory(runtime, root_fd, private=True))
+        if _startup_identity(st) != attempt._runtime_identity:
+            raise OSError("Startup runtime identity changed")
+        directory_fd, st = stack.enter_context(
+            _startup_directory(attempt.path.parent, runtime_fd, private=True))
+        if _startup_identity(st) != attempt._directory_identity:
+            raise OSError("Startup attempt identity changed")
+        yield directory_fd
+
+
+def _startup_recheck_root(approved_root):
+    st = os.lstat(approved_root.path)
+    _startup_check_stat(st, directory=True)
+    if _startup_identity(st) != (approved_root.dev, approved_root.ino):
+        raise OSError("Startup root identity changed")
+
+
+def new_startup_attempt(approved_root: ApprovedRoot) -> StartupAttempt:
+    """Reserve a private nonce directory, leaving the final status path absent."""
+    with _startup_root(approved_root) as (stack, root_fd):
+        runtime = approved_root.path / _STARTUP_RUNTIME
+        try:
+            _startup_mkdir(runtime, root_fd)
+        except FileExistsError:
+            pass
+        runtime_fd, runtime_st = stack.enter_context(
+            _startup_directory(runtime, root_fd, private=True))
+        for _ in range(16):
+            nonce = secrets.token_hex(32)
+            directory = runtime / ("startup-" + nonce)
+            try:
+                _startup_mkdir(directory, runtime_fd)
+                break
+            except FileExistsError:
+                continue
+        else:
+            raise OSError("Startup attempt reservation failed")
+        with _startup_directory(directory, runtime_fd, private=True) as (_, st):
+            _startup_recheck_root(approved_root)
+            return StartupAttempt(
+                directory / "status.json", nonce, STARTUP_SCHEMA_VERSION,
+                (approved_root.dev, approved_root.ino),
+                _startup_identity(runtime_st), _startup_identity(st),
+            )
+
+
+def _startup_environment_attempt(approved_root):
+    path = Path(os.environ.get("ACA_STARTUP_STATUS_PATH", ""))
+    nonce = os.environ.get("ACA_STARTUP_ATTEMPT_NONCE", "")
+    if os.environ.get("ACA_STARTUP_SCHEMA_VERSION") != "1":
+        raise OSError("Invalid startup schema")
+    # No resolution: a supplied link must never become an approved real path.
+    candidate = StartupAttempt(path, nonce, 1, (approved_root.dev, approved_root.ino), (), ())
+    _startup_validate_attempt(candidate, approved_root)
+    with _startup_root(approved_root) as (stack, root_fd):
+        runtime_fd, runtime_st = stack.enter_context(
+            _startup_directory(path.parent.parent, root_fd, private=True))
+        _, directory_st = stack.enter_context(
+            _startup_directory(path.parent, runtime_fd, private=True))
+        return StartupAttempt(
+            path, nonce, 1, (approved_root.dev, approved_root.ino),
+            _startup_identity(runtime_st), _startup_identity(directory_st),
+        )
+
+
+def _startup_recheck_attempt(attempt, approved_root):
+    _startup_recheck_root(approved_root)
+    for path, identity in (
+            (attempt.path.parent.parent, attempt._runtime_identity),
+            (attempt.path.parent, attempt._directory_identity)):
+        st = os.lstat(path)
+        _startup_check_stat(st, directory=True, private=True)
+        if _startup_identity(st) != identity:
+            raise OSError("Startup directory identity changed")
+
+
+def _startup_stat(path, directory_fd):
+    return os.lstat(path) if os.name == "nt" else os.stat(
+        path.name, dir_fd=directory_fd, follow_symlinks=False)
+
+
+def _startup_unlink(path, directory_fd, identity, *, allow_linked=False):
+    st = _startup_stat(path, directory_fd)
+    _startup_check_stat(st, private=True, allow_linked=allow_linked)
+    if _startup_identity(st) != identity:
+        raise OSError("Startup file identity changed")
+    if os.name == "nt":
+        os.unlink(path)
+    else:
+        os.unlink(path.name, dir_fd=directory_fd)
+
+
+def write_startup_failure(category: str, approved_root=None) -> bool:
+    """Best effort only; no logging, exception text, or failure-outcome mutation.
+
+    Publish a complete fsynced sibling atomically without replacing any status:
+    Windows rename refuses an existing destination; POSIX link is no-clobber.
+    This is not authentication against another process running as this user.
+    """
+    temporary = None
+    temporary_identity = None
+    try:
+        if type(category) is not str or category not in STARTUP_FAILURE_CATEGORIES:
+            return False
+        if not all(os.environ.get(name) for name in (
+                "ACA_STARTUP_STATUS_PATH", "ACA_STARTUP_ATTEMPT_NONCE",
+                "ACA_STARTUP_SCHEMA_VERSION")):
+            return False
+        if approved_root is None:
+            approved_root = revalidate_child_approved_root()
+        attempt = _startup_environment_attempt(approved_root)
+        payload = json.dumps({
+            "schema_version": 1, "attempt_nonce": attempt.nonce, "category": category,
+        }, separators=(",", ":")).encode("ascii")
+        with _startup_scope(attempt, approved_root) as directory_fd:
+            try:
+                temporary = attempt.path.with_name(".pending-" + secrets.token_hex(32))
+                flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+                flags |= getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
+                fd = os.open(
+                    temporary if os.name == "nt" else temporary.name,
+                    flags, 0o600, **({} if os.name == "nt" else {"dir_fd": directory_fd}),
+                )
+                with os.fdopen(fd, "wb") as handle:
+                    temporary_identity = _startup_identity(os.fstat(handle.fileno()))
+                    handle.write(payload)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                st = _startup_stat(temporary, directory_fd)
+                _startup_check_stat(st, private=True)
+                if _startup_identity(st) != temporary_identity:
+                    raise OSError("Startup temporary identity changed")
+                _startup_recheck_attempt(attempt, approved_root)
+                if os.name == "nt":
+                    os.rename(temporary, attempt.path)
+                    temporary = None
+                else:
+                    os.link(
+                        temporary.name, attempt.path.name, src_dir_fd=directory_fd,
+                        dst_dir_fd=directory_fd, follow_symlinks=False,
+                    )
+                    _startup_unlink(
+                        temporary, directory_fd, temporary_identity, allow_linked=True)
+                    temporary = None
+                return True
+            finally:
+                if temporary is not None and temporary_identity is not None:
+                    _startup_unlink(
+                        temporary, directory_fd, temporary_identity, allow_linked=True)
+    except Exception:
+        return False
+
+
+def _startup_json_pairs(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("Duplicate startup field")
+        result[key] = value
+    return result
+
+
+
+def _startup_open_read(path, directory_fd):
+    if os.name != "nt":
+        return os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+                       dir_fd=directory_fd)
+    import msvcrt
+    kernel, _ = _startup_windows_api()
+    # Do not follow a final reparse point; deny concurrent writes and deletion.
+    handle = kernel.CreateFileW(str(path), 0x80000000, 1, None, 3, 0x00200000, None)
+    if handle in (None, ctypes.c_void_p(-1).value):
+        raise OSError("Startup record cannot be pinned")
+    try:
+        return msvcrt.open_osfhandle(handle, os.O_RDONLY | os.O_BINARY)
+    except Exception:
+        kernel.CloseHandle(handle)
+        raise
+
+def _startup_read(attempt, directory_fd):
+    before = _startup_stat(attempt.path, directory_fd)
+    _startup_check_stat(before, private=True)
+    if before.st_size > STARTUP_STATUS_MAX_BYTES:
+        raise ValueError("Startup record too large")
+    fd = _startup_open_read(attempt.path, directory_fd)
+    with os.fdopen(fd, "rb") as handle:
+        opened = os.fstat(handle.fileno())
+        _startup_check_stat(opened, private=True)
+        if os.name == "nt":
+            _startup_windows_owned_file(attempt.path)
+        if _startup_identity(opened) != _startup_identity(before):
+            raise OSError("Startup record identity changed")
+        payload = handle.read(STARTUP_STATUS_MAX_BYTES + 1)
+        after = os.fstat(handle.fileno())
+        if (len(payload) > STARTUP_STATUS_MAX_BYTES
+                or opened.st_size != after.st_size
+                or opened.st_mtime_ns != after.st_mtime_ns):
+            raise ValueError("Startup record changed or too large")
+    record = json.loads(payload, object_pairs_hook=_startup_json_pairs)
+    if (type(record) is not dict
+            or set(record) != {"schema_version", "attempt_nonce", "category"}
+            or type(record["schema_version"]) is not int or record["schema_version"] != 1
+            or type(record["attempt_nonce"]) is not str or record["attempt_nonce"] != attempt.nonce
+            or type(record["category"]) is not str
+            or record["category"] not in STARTUP_FAILURE_CATEGORIES):
+        raise ValueError("Invalid startup record")
+    return record["category"]
+
+
+def startup_failure_present(attempt: StartupAttempt, approved_root: ApprovedRoot) -> bool:
+    """Existence gate only, never read or parse while the child is running."""
+    with _startup_scope(attempt, approved_root) as directory_fd:
+        try:
+            _startup_stat(attempt.path, directory_fd)
+            return True
+        except FileNotFoundError:
+            return False
+
+
+def cleanup_startup_attempt(attempt: StartupAttempt, approved_root: ApprovedRoot):
+    """Remove only this reserved directory's safe regular files; fail closed."""
+    with _startup_scope(attempt, approved_root) as directory_fd:
+        # A pending file is ours only if its private directory and exact naming
+        # convention are intact. Never recurse or delete unknown entries.
+        names = os.listdir(attempt.path.parent if os.name == "nt" else directory_fd)
+        for name in names:
+            if name != "status.json" and not (
+                    name.startswith(".pending-") and len(name) == 73
+                    and all(c in "0123456789abcdef" for c in name[9:])):
+                raise OSError("Unknown startup attempt entry")
+        files = []
+        link_counts = {}
+        for name in names:
+            path = attempt.path.with_name(name)
+            st = _startup_stat(path, directory_fd)
+            _startup_check_stat(st, private=True, allow_linked=True)
+            if os.name == "nt":
+                _startup_windows_owned_file(path)
+            identity = _startup_identity(st)
+            files.append((path, st, identity))
+            link_counts[identity] = link_counts.get(identity, 0) + 1
+        # A killed POSIX publisher can leave final and pending as two links.
+        # Accept only links completely accounted for inside this owned directory.
+        for _, st, identity in files:
+            if st.st_nlink != link_counts[identity]:
+                raise OSError("Startup file has unowned links")
+        for path, _, identity in files:
+            _startup_recheck_attempt(attempt, approved_root)
+            _startup_unlink(path, directory_fd, identity, allow_linked=True)
+    # The private runtime is still identity checked and pinned for removal.
+    with _startup_root(approved_root) as (stack, root_fd):
+        runtime_fd, st = stack.enter_context(
+            _startup_directory(attempt.path.parent.parent, root_fd, private=True))
+        if _startup_identity(st) != attempt._runtime_identity:
+            raise OSError("Startup runtime identity changed")
+        st = _startup_stat(attempt.path.parent, runtime_fd)
+        _startup_check_stat(st, directory=True, private=True)
+        if _startup_identity(st) != attempt._directory_identity:
+            raise OSError("Startup attempt identity changed")
+        if os.name == "nt":
+            os.rmdir(attempt.path.parent)
+        else:
+            os.rmdir(attempt.path.parent.name, dir_fd=runtime_fd)
+
+
+def consume_startup_failure(attempt: StartupAttempt, approved_root: ApprovedRoot) -> str:
+    """Only call after child exit. Invalid/missing records never select a cause."""
+    category = _STARTUP_FALLBACK
+    try:
+        with _startup_scope(attempt, approved_root) as directory_fd:
+            category = _startup_read(attempt, directory_fd)
+            _startup_recheck_attempt(attempt, approved_root)
+    except (OSError, ValueError, TypeError, UnicodeError):
+        category = _STARTUP_FALLBACK
+    cleanup_startup_attempt(attempt, approved_root)
+    return category
+
 def get_log_dir(root: Path) -> Path:
     return root / "logs"
 
@@ -298,6 +832,34 @@ def setup_launcher_logging(log_dir: Path):
         if not any(isinstance(h, (logging.handlers.RotatingFileHandler, logging.NullHandler)) for h in logger.handlers):
             logger.addHandler(logging.NullHandler())
     return logger
+
+
+def setup_backend_logging(log_dir: Path):
+    """Configure rotating file diagnostics without probing GUI-mode stdio."""
+    log_dir.mkdir(parents=True, exist_ok=True)
+    logging.config.dictConfig({
+        "version": 1,
+        "disable_existing_loggers": False,
+        "formatters": {
+            "default": {"format": "%(asctime)s %(levelname)s %(name)s: %(message)s"},
+        },
+        "handlers": {
+            "backend_file": {
+                "class": "logging.handlers.RotatingFileHandler",
+                "formatter": "default",
+                "filename": str(log_dir / "backend.log"),
+                "maxBytes": LOG_MAX_BYTES,
+                "backupCount": LOG_BACKUP_COUNT,
+                "encoding": "utf-8",
+            },
+        },
+        "loggers": {
+            "uvicorn": {"handlers": ["backend_file"], "level": "INFO", "propagate": False},
+            "uvicorn.error": {"handlers": [], "level": "INFO", "propagate": True},
+            "uvicorn.access": {"handlers": [], "level": "INFO", "propagate": True},
+        },
+        "root": {"handlers": ["backend_file"], "level": "INFO"},
+    })
 
 
 def acquire_mutex():

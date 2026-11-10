@@ -54,7 +54,15 @@ async def startup():
     # 2. Initialize the database schema (create_all only). Existing databases are
     #    upgraded automatically by the packaged launcher preflight before this
     #    backend starts, so no manual Alembic step is required.
-    init_db()
+    try:
+        init_db()
+    except Exception:
+        try:
+            from app.launcher_support import write_startup_failure
+            write_startup_failure("DATABASE_UPGRADE_OR_VERIFICATION_FAILURE")
+        except Exception:
+            pass
+        raise
     cleanup_guided_outputs()
     # 3. Run startup reconciliation for abandoned `processing` rows from an
     #    earlier process. Enabled by default for the supported local
@@ -65,6 +73,11 @@ async def startup():
         try:
             reconcile_stale_audits(db, process_started_at, enabled=True)
         except Exception:
+            try:
+                from app.launcher_support import write_startup_failure
+                write_startup_failure("DATABASE_RECONCILIATION_REFUSAL")
+            except Exception:
+                pass
             # Migration/schema mismatch must fail startup rather than serve
             # against an incompatible database. Safe message — no paths,
             # stack traces, or document content.

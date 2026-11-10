@@ -37,7 +37,9 @@ def _launcher():
         RootResolutionError, revalidate_child_approved_root,
         PORTS, SHUTDOWN_TIMEOUT, DialogState, show_startup_error,
         show_startup_notice, validate_loopback_dashboard_url, _safe_log, _SafeLogger,
-        _verify_instance_write,
+        _verify_instance_write, BACKEND_LOGGING_FAILURE_EXIT_CODE,
+        new_startup_attempt, consume_startup_failure, cleanup_startup_attempt,
+        startup_failure_present,
     )
 
     dialog_state = DialogState()
@@ -280,6 +282,31 @@ def _launcher():
     last_error = None
     chosen_port = None
     proc = None
+    attempt = None
+
+    def refuse_startup(category, code=1):
+        try:
+            if attempt is not None:
+                cleanup_startup_attempt(attempt, approved_root)
+        except OSError:
+            category = "UNEXPECTED_STARTUP_FAILURE"
+            _safe_log(logger, logging.ERROR, "startup_status_cleanup_failed")
+        _safe_log(logger, logging.ERROR, "startup_failure category=%s", category)
+        if category in ("DATABASE_RECONCILIATION_REFUSAL", "DATABASE_UPGRADE_OR_VERIFICATION_FAILURE"):
+            message = (
+                "ACA could not safely open or verify your existing data. "
+                "Startup stopped to protect your data. Your existing data was preserved.\n\n"
+                "Close ACA and consult the troubleshooting recovery guidance or launcher logs for help."
+            )
+        else:
+            message = (
+                "Academic Compliance Auditor could not start its background process. "
+                "Please close ACA and consult the troubleshooting guidance or launcher logs for help."
+            )
+        show_startup_error(message, state=dialog_state, logger=logger)
+        job.close()
+        release_mutex(mutex)
+        return code
 
     for port in PORTS:
         env = os.environ.copy()
@@ -304,6 +331,8 @@ def _launcher():
             return refuse_instance("AMBIGUOUS_EXISTING_INSTANCE", "pre_spawn_ownership_unproven")
 
         try:
+            attempt = new_startup_attempt(approved_root)
+            env.update(attempt.environment())
             proc = subprocess.Popen(cmd, env=env, creationflags=creationflags)
             # Assign exact child to Job Object immediately
             if not assign_process_to_job(job, proc.pid, logger):
@@ -316,6 +345,7 @@ def _launcher():
                     except Exception:
                         pass
                 _safe_log(logger, logging.INFO, "job_assign_failed_abort port=%s", port)
+                cleanup_startup_attempt(attempt, approved_root)
                 dialog_msg = "Academic Compliance Auditor could not start its background process. Please try restarting ACA."
                 show_startup_error(dialog_msg, state=dialog_state, logger=logger)
                 _safe_print("ACA could not start. Please try again.")
@@ -323,6 +353,11 @@ def _launcher():
                 release_mutex(mutex)
                 return 1
         except Exception as e:
+            if attempt is not None:
+                try:
+                    cleanup_startup_attempt(attempt, approved_root)
+                except OSError:
+                    _safe_log(logger, logging.ERROR, "startup_status_cleanup_failed")
             _safe_log(logger, logging.INFO, "child_spawn_failed port=%s category=%s", port, type(e).__name__)
             dialog_msg = "Academic Compliance Auditor could not start its background process. Please try restarting ACA."
             show_startup_error(dialog_msg, state=dialog_state, logger=logger)
@@ -344,16 +379,55 @@ def _launcher():
                         proc.kill()
                     except Exception:
                         pass
+                try:
+                    cleanup_startup_attempt(attempt, approved_root)
+                except OSError:
+                    return refuse_startup("UNEXPECTED_STARTUP_FAILURE")
                 release_mutex(mutex)
+                job.close()
                 return 0
             if proc.poll() is not None:
+                proc.wait(timeout=SHUTDOWN_TIMEOUT)
                 _safe_log(logger, logging.INFO, "child_exited port=%s code=%s", port, proc.returncode)
+                if proc.returncode == BACKEND_LOGGING_FAILURE_EXIT_CODE:
+                    try:
+                        cleanup_startup_attempt(attempt, approved_root)
+                    except OSError:
+                        return refuse_startup("UNEXPECTED_STARTUP_FAILURE", BACKEND_LOGGING_FAILURE_EXIT_CODE)
+                    _safe_log(logger, logging.ERROR, "backend_logging_init_failed")
+                    show_startup_error(
+                        "Academic Compliance Auditor could not initialize background logging.\n\n"
+                        "Startup was stopped. Please check application data folder permissions and try again.",
+                        state=dialog_state, logger=logger,
+                    )
+                    job.close()
+                    release_mutex(mutex)
+                    return BACKEND_LOGGING_FAILURE_EXIT_CODE
                 break
             if check_health(port):
                 health_ok = True
                 break
             time.sleep(0.5)
         if health_ok:
+            if startup_failure_present(attempt, approved_root):
+                proc.terminate()
+                try:
+                    proc.wait(timeout=SHUTDOWN_TIMEOUT)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait(timeout=2)
+                try:
+                    category = consume_startup_failure(attempt, approved_root)
+                    attempt = None
+                except OSError:
+                    category = "UNEXPECTED_STARTUP_FAILURE"
+                return refuse_startup(category)
+            try:
+                cleanup_startup_attempt(attempt, approved_root)
+            except OSError:
+                proc.terminate()
+                proc.wait(timeout=SHUTDOWN_TIMEOUT)
+                return refuse_startup("UNEXPECTED_STARTUP_FAILURE")
             chosen_port = port
             _safe_log(logger, logging.INFO, "health_ok port=%s", port)
             break
@@ -367,8 +441,20 @@ def _launcher():
                 except Exception:
                     pass
             _safe_log(logger, logging.INFO, "health_timeout port=%s", port)
+            try:
+                cleanup_startup_attempt(attempt, approved_root)
+            except OSError:
+                return refuse_startup("UNEXPECTED_STARTUP_FAILURE")
             last_error = "health_timeout"
             break
+        try:
+            category = consume_startup_failure(attempt, approved_root)
+            attempt = None
+        except OSError:
+            return refuse_startup("UNEXPECTED_STARTUP_FAILURE")
+        if category != "PORT_UNAVAILABLE":
+            return refuse_startup(category)
+        _safe_log(logger, logging.INFO, "startup_failure category=PORT_UNAVAILABLE")
         last_error = "bind_failed"
         proc = None
         continue
@@ -471,17 +557,59 @@ def _launcher():
 
 
 def _backend():
-    from app.launcher_support import revalidate_child_approved_root, configure_launcher_environment
+    from app.launcher_support import (
+        revalidate_child_approved_root, configure_launcher_environment,
+        get_log_dir, setup_backend_logging, setup_launcher_logging, _safe_log,
+        write_startup_failure,
+        BACKEND_LOGGING_FAILURE_EXIT_CODE,
+    )
     approved_root = revalidate_child_approved_root()
     configure_launcher_environment(approved_root)
-    from app.main import app as fastapi_app
-    import uvicorn
-    port = int(os.environ.get("ACA_POC_PORT", "8010"))
-    uvicorn.run(fastapi_app, host="127.0.0.1", port=port, log_level="info")
+    frozen = bool(getattr(sys, "frozen", False))
+    if frozen:
+        log_dir = get_log_dir(approved_root.path)
+        try:
+            setup_backend_logging(log_dir)
+        except (OSError, ValueError, TypeError) as exc:
+            try:
+                logger = setup_launcher_logging(log_dir)
+            except Exception:
+                logger = None
+            _safe_log(logger, logging.ERROR, "backend_logging_init_failed category=%s", type(exc).__name__, exc_info=True)
+            return BACKEND_LOGGING_FAILURE_EXIT_CODE
+    bind_failure_owner = None
+    try:
+        import uvicorn
+        bind_failure_owner = uvicorn.Server.startup.__code__
+        from app.main import app as fastapi_app
+        port = int(os.environ.get("ACA_POC_PORT", "8010"))
+        uvicorn.run(
+            fastapi_app, host="127.0.0.1", port=port, log_level="info",
+            log_config=None if frozen else uvicorn.config.LOGGING_CONFIG,
+        )
+    except SystemExit as exc:
+        import errno
+        cause = exc.__context__
+        category = "UNEXPECTED_STARTUP_FAILURE"
+        # An errno in an unrelated lifespan failure does not prove a bind failure.
+        origin = exc.__traceback__
+        while origin is not None and origin.tb_next is not None:
+            origin = origin.tb_next
+        if (exc.code == 1 and origin is not None
+                and origin.tb_frame.f_code is bind_failure_owner
+                and isinstance(cause, OSError)
+                and (cause.errno == errno.EADDRINUSE or getattr(cause, "winerror", None) == 10048)):
+            category = "PORT_UNAVAILABLE"
+        write_startup_failure(category, approved_root)
+        return exc.code if isinstance(exc.code, int) and exc.code != 0 else 1
+    except Exception:
+        write_startup_failure("UNEXPECTED_STARTUP_FAILURE", approved_root)
+        _safe_log(logging.getLogger("uvicorn.error"), logging.ERROR, "backend_startup_failed category=UNEXPECTED_STARTUP_FAILURE")
+        return 1
 
 if __name__ == "__main__":
     if "--backend" in sys.argv:
-        _backend()
+        sys.exit(_backend())
     else:
         try:
             sys.exit(_launcher())
