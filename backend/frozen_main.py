@@ -37,6 +37,7 @@ def _launcher():
         RootResolutionError, revalidate_child_approved_root,
         PORTS, SHUTDOWN_TIMEOUT, DialogState, show_startup_error,
         show_startup_notice, validate_loopback_dashboard_url, _safe_log, _SafeLogger,
+        _verify_instance_write,
     )
 
     dialog_state = DialogState()
@@ -68,48 +69,111 @@ def _launcher():
         logger = None
     inst_path = get_instance_path(root)
     mutex = acquire_mutex()
-    if mutex is None:
+    instance_state = "AMBIGUOUS_EXISTING_INSTANCE"
+    reason = "metadata_invalid_or_missing"
+
+    def refuse_instance(state, category, message=(
+        "ACA may already be running, but the existing session could not be reached.\n\n"
+        "Close any existing ACA windows, wait a moment, and try again."
+    )):
+        _safe_log(logger, logging.WARNING, "existing_instance_state=%s category=%s", state, category)
+        show_startup_error(message, state=dialog_state, logger=logger)
+        _safe_print(message)
+        if mutex is not None:
+            release_mutex(mutex)
+        return 1
+
+    try:
         data = read_instance(inst_path)
-        # verified reuse: pid+exe+health all must pass
-        if data and is_pid_running(data["pid"]) and is_executable_match(data["pid"]) and check_health(data["port"]):
-            _safe_log(logger, logging.INFO, "second_launch_reuse port=%s pid=%s", data["port"], data["pid"])
-            if not open_browser(data["port"], logger):
-                dash_url = "http" + "://" + "127.0.0.1" + ":" + str(data["port"]) + "/dashboard"
-                if validate_loopback_dashboard_url(dash_url):
-                    _safe_log(logger, logging.INFO, "browser_open_fallback url=%s", dash_url)
-                    notice_msg = (
-                        "Academic Compliance Auditor is running, but the browser could not be opened automatically.\n\n"
-                        "Please open your browser and go to:\n"
-                        + dash_url
-                    )
-                    show_startup_notice(notice_msg, state=dialog_state, logger=logger)
+        if data:
+            running = is_pid_running(data["pid"])
+            if running is False:
+                instance_state = "CONFIRMED_STALE_INSTANCE"
+            elif running is True:
+                matches = is_executable_match(data["pid"])
+                if matches is False:
+                    instance_state = "CONFIRMED_STALE_INSTANCE"
+                elif matches is True:
+                    if check_health(data["port"]) is True:
+                        instance_state = "HEALTHY_EXISTING_INSTANCE"
+                    else:
+                        reason = "unreachable_existing_instance"
                 else:
-                    _safe_log(logger, logging.WARNING, "invalid_dashboard_url")
-                    notice_msg = (
-                        "Academic Compliance Auditor is running, but the browser could not be opened automatically.\n\n"
-                        "Please open your web browser and navigate to the ACA Dashboard."
-                    )
-                    show_startup_notice(notice_msg, state=dialog_state, logger=logger)
-                _safe_print("ACA is running at http://127.0.0.1:" + str(data["port"]) + "/dashboard")
-            return 0
-        if is_mutex_held():
-            _safe_log(logger, logging.INFO, "second_launch_held_invalid_metadata")
-            msg = "Academic Compliance Auditor appears to be running. If it is already open, please use that window. Otherwise, wait a moment and try again."
-            show_startup_error(msg, state=dialog_state, logger=logger)
-            _safe_print("ACA appears to be running. Please close the existing window and try again.")
-            return 1
-        # stale file but mutex free -> remove and retry
+                    reason = "executable_identity_unknown"
+            else:
+                reason = "process_state_unknown"
+        elif mutex:
+            try:
+                inst_path.lstat()
+            except FileNotFoundError:
+                instance_state = "NEW_INSTANCE"
+    except (OSError, TypeError, ValueError) as exc:
+        instance_state = "AMBIGUOUS_EXISTING_INSTANCE"
+        reason = type(exc).__name__
+    _safe_log(logger, logging.INFO, "existing_instance_state=%s", instance_state)
+
+    if instance_state == "HEALTHY_EXISTING_INSTANCE":
+        _safe_log(logger, logging.INFO, "second_launch_reuse port=%s pid=%s", data["port"], data["pid"])
+        if not open_browser(data["port"], logger):
+            dash_url = "http" + "://" + "127.0.0.1" + ":" + str(data["port"]) + "/dashboard"
+            if validate_loopback_dashboard_url(dash_url):
+                _safe_log(logger, logging.INFO, "browser_open_fallback url=%s", dash_url)
+                notice_msg = (
+                    "Academic Compliance Auditor is running, but the browser could not be opened automatically.\n\n"
+                    "Please open your browser and go to:\n"
+                    + dash_url
+                )
+                show_startup_notice(notice_msg, state=dialog_state, logger=logger)
+            else:
+                _safe_log(logger, logging.WARNING, "invalid_dashboard_url")
+                notice_msg = (
+                    "Academic Compliance Auditor is running, but the browser could not be opened automatically.\n\n"
+                    "Please open your web browser and navigate to the ACA Dashboard."
+                )
+                show_startup_notice(notice_msg, state=dialog_state, logger=logger)
+            _safe_print("ACA is running at http://127.0.0.1:" + str(data["port"]) + "/dashboard")
+        if mutex is not None:
+            release_mutex(mutex)
+        return 0
+    if instance_state == "AMBIGUOUS_EXISTING_INSTANCE":
+        return refuse_instance(instance_state, reason)
+    if instance_state == "CONFIRMED_STALE_INSTANCE":
+        if not mutex and is_mutex_held() is not False:
+            return refuse_instance("AMBIGUOUS_EXISTING_INSTANCE", "mutex_ownership_unproven")
         try:
-            inst_path.unlink(missing_ok=True)
-        except Exception:
+            if read_instance(inst_path) != data:
+                return refuse_instance("AMBIGUOUS_EXISTING_INSTANCE", "metadata_changed")
+            inst_path.unlink()
+            try:
+                inst_path.lstat()
+            except FileNotFoundError:
+                pass
+            else:
+                raise OSError("stale metadata still present")
+        except OSError as exc:
+            return refuse_instance(
+                "STALE_CLEANUP_FAILED", type(exc).__name__,
+                "ACA could not safely remove stale session metadata.\n\n"
+                "Close any existing ACA windows, wait a moment, and try again.",
+            )
+        if not mutex:
+            mutex = acquire_mutex()
+        if not mutex:
+            return refuse_instance("MUTEX_REACQUISITION_FAILED", "mutex_unavailable")
+        try:
+            inst_path.lstat()
+        except FileNotFoundError:
             pass
-        mutex = acquire_mutex()
-        if mutex is None:
-            _safe_log(logger, logging.INFO, "second_launch_held_after_stale_cleanup")
-            msg = "Academic Compliance Auditor appears to be running. Please wait a moment and try again."
-            show_startup_error(msg, state=dialog_state, logger=logger)
-            _safe_print("ACA appears to be running. Please try again.")
-            return 1
+        except OSError as exc:
+            return refuse_instance("AMBIGUOUS_EXISTING_INSTANCE", type(exc).__name__)
+        else:
+            return refuse_instance("AMBIGUOUS_EXISTING_INSTANCE", "metadata_reappeared")
+
+    if not mutex:
+        return refuse_instance("AMBIGUOUS_EXISTING_INSTANCE", "exclusive_ownership_unproven")
+    metadata_ready = _verify_instance_write(inst_path, logger)
+    if not metadata_ready:
+        return refuse_instance("AMBIGUOUS_EXISTING_INSTANCE", "metadata_write_unproven")
 
     _safe_log(logger, logging.INFO, "mutex_acquired")
     if getattr(sys, "frozen", False):
@@ -234,6 +298,10 @@ def _launcher():
                 creationflags = base_flags
         else:
             creationflags = 0
+
+        if not mutex or not metadata_ready or instance_state not in ("NEW_INSTANCE", "CONFIRMED_STALE_INSTANCE"):
+            job.close()
+            return refuse_instance("AMBIGUOUS_EXISTING_INSTANCE", "pre_spawn_ownership_unproven")
 
         try:
             proc = subprocess.Popen(cmd, env=env, creationflags=creationflags)

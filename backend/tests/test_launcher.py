@@ -1222,3 +1222,406 @@ def test_no_html_or_chat_ui_contamination_across_all_changed_files():
         content = cf.read_text(encoding="utf-8")
         for token in forbidden_tokens:
             assert token not in content, f"Contamination token {token!r} found in {cf}"
+
+
+@pytest.fixture
+def ownership_launcher(tmp_path, monkeypatch):
+    """Run real launcher control flow; all external operations are bounded."""
+    from types import SimpleNamespace
+    import frozen_main
+    from app import db_lifecycle
+
+    def run(state="stale", *, cleanup_error=None, cleanup_noop=False,
+            reacquire=True, held=False, first_owned=False, child_error=False,
+            timeout=False, metadata_blocked=False, lose_ownership=False,
+            metadata_reappears=False):
+        _isolate_launcher_environment(monkeypatch)
+        events, logs, dialogs, releases = [], [], [], []
+        instance = tmp_path / "instance.json"
+        original = json.dumps({"version": 1, "pid": 98765, "port": 8010})
+        if state != "new":
+            instance.write_text("invalid" if state == "invalid" else original, encoding="utf-8")
+        if metadata_blocked:
+            instance.with_suffix(".tmp").write_text("preserve", encoding="utf-8")
+
+        class InstancePath:
+            def read_text(self, **kwargs):
+                return instance.read_text(**kwargs)
+
+            def lstat(self):
+                return instance.lstat()
+
+            def with_suffix(self, suffix):
+                return instance.with_suffix(suffix)
+
+            def unlink(self):
+                events.append("unlink")
+                if cleanup_error is not None:
+                    raise cleanup_error("sensitive metadata path must not reach dialog")
+                if not cleanup_noop:
+                    instance.unlink()
+
+        class Mutex:
+            owned = True
+
+            def __bool__(self):
+                return self.owned
+
+        mutex = Mutex()
+
+        def acquire():
+            events.append("acquire")
+            if events.count("acquire") == 1:
+                return mutex if first_owned else None
+            if metadata_reappears:
+                instance.write_text(original, encoding="utf-8")
+            return mutex if reacquire else None
+
+        class Logger:
+            def log(self, level, message, *args, **kwargs):
+                logs.append(message % args if args else message)
+
+        class Child:
+            pid = 12345
+            returncode = None
+            polls = 0
+
+            def poll(self):
+                self.polls += 1
+                if not timeout and self.polls > 1:
+                    self.returncode = 0
+                return self.returncode
+
+            def terminate(self):
+                events.append("terminate")
+                self.returncode = 0
+
+            def wait(self, **kwargs):
+                events.append(("wait", kwargs))
+                return self.returncode
+
+            def kill(self):
+                events.append("kill")
+                self.returncode = 0
+
+        child = Child()
+
+        class Job:
+            def close(self):
+                events.append("job_close")
+
+        def create_job(logger):
+            if lose_ownership:
+                mutex.owned = False
+            return Job()
+
+        def popen(command, **kwargs):
+            events.append(("popen", command, kwargs))
+            if child_error:
+                raise OSError("simulated child failure")
+            return child
+
+        def health(port):
+            events.append(("health", port))
+            return not timeout and state != "unreachable"
+
+        frontend = tmp_path / "frontend-dist"
+        frontend.mkdir()
+        (frontend / "index.html").write_text("test", encoding="utf-8")
+        monkeypatch.setattr(sys, "frozen", True, raising=False)
+        monkeypatch.setattr(sys, "_MEIPASS", str(tmp_path), raising=False)
+        monkeypatch.setattr(frozen_main, "os", SimpleNamespace(name="nt", environ=os.environ))
+        monkeypatch.setattr(frozen_main, "signal", SimpleNamespace(signal=lambda *_: None, SIGINT=2, SIGBREAK=21))
+        clock = iter(range(1000))
+        monkeypatch.setattr(frozen_main, "time", SimpleNamespace(monotonic=lambda: next(clock), sleep=lambda _: None))
+        monkeypatch.setattr(
+            frozen_main, "subprocess",
+            SimpleNamespace(Popen=popen, CREATE_NEW_PROCESS_GROUP=0x200, CREATE_NO_WINDOW=0x08000000),
+        )
+        monkeypatch.setattr(ls, "get_user_data_root", lambda: ls.ApprovedRoot(tmp_path, 121, 343))
+        monkeypatch.setattr(ls, "get_instance_path", lambda _: InstancePath())
+        monkeypatch.setattr(ls, "setup_launcher_logging", lambda _: Logger())
+        monkeypatch.setattr(ls, "acquire_mutex", acquire)
+        monkeypatch.setattr(ls, "release_mutex", lambda handle: releases.append(handle))
+        monkeypatch.setattr(ls, "is_mutex_held", lambda: held)
+        monkeypatch.setattr(ls, "is_pid_running", lambda _: None if state == "unknown_pid" else state not in ("stale", "new"))
+        monkeypatch.setattr(ls, "is_executable_match", lambda _: None if state == "unknown_executable" else state != "mismatch")
+        monkeypatch.setattr(ls, "check_health", health)
+        monkeypatch.setattr(ls, "PORTS", [8010, 8011, 8012])
+        monkeypatch.setattr(ls, "create_job_object", create_job)
+        monkeypatch.setattr(ls, "assign_process_to_job", lambda job, pid, logger: events.append(("assigned", pid)) or True)
+        monkeypatch.setattr(ls, "write_instance", lambda *args: events.append(("write_instance", args[1:])))
+        monkeypatch.setattr(ls, "remove_instance_if_owned", lambda *args: events.append("remove_instance"))
+        monkeypatch.setattr(ls, "open_browser", lambda port, logger: events.append(("browser", port)) or True)
+        monkeypatch.setattr(ls, "is_packaged_windows", lambda: True)
+        monkeypatch.setattr(ls, "_user32", SimpleNamespace(
+            MessageBoxW=lambda hwnd, message, title, flags: dialogs.append((message, flags)) or 1,
+        ))
+        monkeypatch.setattr(db_lifecycle, "inspect_state", lambda _: "verified")
+        monkeypatch.setattr(db_lifecycle, "startup_action", lambda _: "verify")
+        monkeypatch.setattr(db_lifecycle, "verify_after_init", lambda _: None)
+        rc = frozen_main._launcher()
+        return SimpleNamespace(
+            rc=rc, events=events, logs=logs, dialogs=dialogs, releases=releases,
+            instance=instance, original=original, mutex=mutex,
+        )
+
+    return run
+
+
+def _assert_ownership_refusal(result, state):
+    assert result.rc == 1
+    assert len(result.dialogs) == 1
+    message, flags = result.dialogs[0]
+    assert flags == ls.MB_OK | ls.MB_ICONERROR
+    for sensitive in (str(result.instance), "98765", "8010", ls.MUTEX_NAME, "Traceback"):
+        assert sensitive not in message
+    assert any("existing_instance_state=" + state in entry for entry in result.logs)
+    assert not any(isinstance(event, tuple) and event[0] in ("popen", "browser", "write_instance")
+                   for event in result.events)
+
+
+def test_stale_cleanup_permission_error_fails_closed(ownership_launcher):
+    result = ownership_launcher(cleanup_error=PermissionError)
+    _assert_ownership_refusal(result, "STALE_CLEANUP_FAILED")
+    assert result.events.count("acquire") == 1
+    assert result.events.count("unlink") == 1
+    assert result.instance.read_text(encoding="utf-8") == result.original
+    assert any("PermissionError" in entry for entry in result.logs)
+    assert result.releases == []
+
+
+def test_stale_cleanup_oserror_fails_closed(ownership_launcher):
+    result = ownership_launcher(cleanup_error=OSError)
+    _assert_ownership_refusal(result, "STALE_CLEANUP_FAILED")
+    assert result.events.count("acquire") == 1
+    assert result.instance.read_text(encoding="utf-8") == result.original
+
+
+def test_stale_cleanup_must_confirm_absence(ownership_launcher):
+    result = ownership_launcher(cleanup_noop=True)
+    _assert_ownership_refusal(result, "STALE_CLEANUP_FAILED")
+    assert result.events.count("acquire") == 1
+    assert result.instance.exists()
+
+
+def test_confirmed_stale_recovery_continues_with_exclusive_mutex(ownership_launcher):
+    result = ownership_launcher()
+    assert result.rc == 0
+    assert result.dialogs == []
+    assert result.events.count("acquire") == 2
+    assert result.events.index("unlink") < result.events.index("acquire", 1)
+    assert not result.instance.exists()
+    popen = [event for event in result.events if isinstance(event, tuple) and event[0] == "popen"]
+    assert len(popen) == 1
+    assert popen[0][1] == [sys.executable, "--backend"]
+    assert popen[0][2]["creationflags"] == 0x08000200
+    assert popen[0][2]["env"]["ACA_APPROVED_DATA_ROOT_DEV"] == "121"
+    assert popen[0][2]["env"]["ACA_APPROVED_DATA_ROOT_INO"] == "343"
+    assert popen[0][2]["env"]["ACA_POC_PORT"] == "8010"
+    assert popen[0][2].get("shell", False) is False
+    assert ("assigned", 12345) in result.events
+    assert ("browser", 8010) in result.events
+    assert result.events.count("job_close") == 1
+    assert result.events.count("remove_instance") == 1
+    assert result.releases == [result.mutex]
+
+
+def test_definitive_executable_mismatch_allows_stale_recovery(ownership_launcher):
+    result = ownership_launcher("mismatch")
+    assert result.rc == 0
+    assert result.dialogs == []
+    assert result.events.count("unlink") == 1
+    assert result.events.count("acquire") == 2
+    assert not any(isinstance(event, tuple) and event == ("health", 8010)
+                   for event in result.events[:result.events.index("unlink")])
+    assert result.releases == [result.mutex]
+
+
+def test_healthy_instance_reuses_without_new_child(ownership_launcher):
+    result = ownership_launcher("healthy")
+    assert result.rc == 0
+    assert result.dialogs == []
+    assert result.events == ["acquire", ("health", 8010), ("browser", 8010)]
+    assert result.instance.read_text(encoding="utf-8") == result.original
+    assert result.releases == []
+
+
+def test_unreachable_matching_instance_is_ambiguous(ownership_launcher):
+    result = ownership_launcher("unreachable")
+    _assert_ownership_refusal(result, "AMBIGUOUS_EXISTING_INSTANCE")
+    assert "unlink" not in result.events
+    assert result.events.count("acquire") == 1
+    assert result.instance.read_text(encoding="utf-8") == result.original
+    assert any("unreachable_existing_instance" in entry for entry in result.logs)
+    assert result.releases == []
+
+
+def test_unreachable_instance_blocks_even_with_initial_mutex(ownership_launcher):
+    result = ownership_launcher("unreachable", first_owned=True)
+    _assert_ownership_refusal(result, "AMBIGUOUS_EXISTING_INSTANCE")
+    assert "unlink" not in result.events
+    assert result.instance.read_text(encoding="utf-8") == result.original
+    assert result.releases == [result.mutex]
+
+
+def test_unknown_process_state_cannot_authorize_cleanup(ownership_launcher):
+    result = ownership_launcher("unknown_pid")
+    _assert_ownership_refusal(result, "AMBIGUOUS_EXISTING_INSTANCE")
+    assert result.events == ["acquire"]
+    assert result.instance.read_text(encoding="utf-8") == result.original
+
+
+def test_unknown_executable_identity_cannot_authorize_cleanup(ownership_launcher):
+    result = ownership_launcher("unknown_executable")
+    _assert_ownership_refusal(result, "AMBIGUOUS_EXISTING_INSTANCE")
+    assert result.events == ["acquire"]
+    assert result.instance.read_text(encoding="utf-8") == result.original
+
+
+def test_invalid_metadata_is_ambiguous_not_proven_stale(ownership_launcher):
+    result = ownership_launcher("invalid")
+    _assert_ownership_refusal(result, "AMBIGUOUS_EXISTING_INSTANCE")
+    assert result.events == ["acquire"]
+    assert result.instance.read_text(encoding="utf-8") == "invalid"
+
+
+def test_stale_process_does_not_override_held_mutex(ownership_launcher):
+    result = ownership_launcher(held=True)
+    _assert_ownership_refusal(result, "AMBIGUOUS_EXISTING_INSTANCE")
+    assert "unlink" not in result.events
+    assert result.instance.read_text(encoding="utf-8") == result.original
+
+
+def test_stale_recovery_requires_successful_mutex_reacquisition(ownership_launcher):
+    result = ownership_launcher(reacquire=False)
+    _assert_ownership_refusal(result, "MUTEX_REACQUISITION_FAILED")
+    assert result.events == ["acquire", "unlink", "acquire"]
+    assert not result.instance.exists()
+    assert result.releases == []
+
+
+def test_metadata_reappearing_during_reacquisition_blocks_launch(ownership_launcher):
+    result = ownership_launcher(metadata_reappears=True)
+    _assert_ownership_refusal(result, "AMBIGUOUS_EXISTING_INSTANCE")
+    assert result.events == ["acquire", "unlink", "acquire"]
+    assert result.instance.read_text(encoding="utf-8") == result.original
+    assert result.releases == [result.mutex]
+
+
+def test_metadata_write_preflight_refuses_existing_temporary_file(ownership_launcher):
+    result = ownership_launcher("new", first_owned=True, metadata_blocked=True)
+    _assert_ownership_refusal(result, "AMBIGUOUS_EXISTING_INSTANCE")
+    assert result.instance.with_suffix(".tmp").read_text(encoding="utf-8") == "preserve"
+    assert result.releases == [result.mutex]
+
+
+def test_missing_exclusive_mutex_blocks_first_launch(ownership_launcher):
+    result = ownership_launcher("new")
+    _assert_ownership_refusal(result, "AMBIGUOUS_EXISTING_INSTANCE")
+    assert result.events == ["acquire"]
+    assert not result.instance.exists()
+
+
+def test_pre_spawn_gate_rechecks_exclusive_handle(ownership_launcher):
+    result = ownership_launcher("new", first_owned=True, lose_ownership=True)
+    _assert_ownership_refusal(result, "AMBIGUOUS_EXISTING_INSTANCE")
+    assert result.events == ["acquire", "job_close"]
+    assert any("pre_spawn_ownership_unproven" in entry for entry in result.logs)
+    assert result.releases == [result.mutex]
+
+
+def test_first_launch_keeps_governed_child_and_shutdown(ownership_launcher):
+    result = ownership_launcher("new", first_owned=True)
+    assert result.rc == 0
+    assert result.dialogs == []
+    assert result.events.count("acquire") == 1
+    assert "unlink" not in result.events
+    popen = next(event for event in result.events if isinstance(event, tuple) and event[0] == "popen")
+    assert popen[1] == [sys.executable, "--backend"]
+    assert popen[2]["creationflags"] == 0x08000200
+    assert ("assigned", 12345) in result.events
+    assert ("browser", 8010) in result.events
+    assert result.events.count("job_close") == 1
+    assert result.events.count("remove_instance") == 1
+    assert result.releases == [result.mutex]
+
+
+def test_recovered_stale_instance_later_spawn_failure_is_fatal(ownership_launcher):
+    result = ownership_launcher(child_error=True)
+    assert result.rc == 1
+    assert len(result.dialogs) == 1
+    assert result.dialogs[0][1] == ls.MB_OK | ls.MB_ICONERROR
+    assert "background process" in result.dialogs[0][0]
+    assert result.events.count("unlink") == 1
+    assert sum(isinstance(event, tuple) and event[0] == "popen" for event in result.events) == 1
+    assert not any(isinstance(event, tuple) and event[0] in ("browser", "write_instance") for event in result.events)
+    assert result.events.count("job_close") == 1
+    assert result.releases == [result.mutex]
+
+
+def test_recovered_stale_instance_readiness_timeout_is_fatal(ownership_launcher):
+    result = ownership_launcher(timeout=True)
+    assert result.rc == 1
+    assert len(result.dialogs) == 1
+    assert result.dialogs[0][1] == ls.MB_OK | ls.MB_ICONERROR
+    assert "ready in time" in result.dialogs[0][0]
+    assert result.events.count("acquire") == 2
+    assert result.events.count("unlink") == 1
+    assert result.events.count("terminate") == 1
+    assert sum(isinstance(event, tuple) and event[0] == "popen" for event in result.events) == 1
+    assert not any(isinstance(event, tuple) and event[0] in ("browser", "write_instance") for event in result.events)
+    assert result.events.count("job_close") == 1
+    assert result.releases == [result.mutex]
+
+
+def test_windows_process_access_denial_is_unknown(monkeypatch):
+    from types import SimpleNamespace
+    monkeypatch.setattr(ls, "_kernel32", SimpleNamespace(OpenProcess=lambda *args: 0, GetLastError=lambda: 5))
+    assert ls.is_pid_running(123) is None
+    assert ls.is_executable_match(123) is None
+
+
+def test_windows_invalid_pid_is_confirmed_absent(monkeypatch):
+    from types import SimpleNamespace
+    monkeypatch.setattr(ls, "_kernel32", SimpleNamespace(OpenProcess=lambda *args: 0, GetLastError=lambda: 87))
+    assert ls.is_pid_running(123) is False
+
+
+def test_windows_process_exit_state_must_be_observed(monkeypatch):
+    from types import SimpleNamespace
+    closed = []
+    def exit_code(handle, code):
+        code._obj.value = 0
+        return True
+    monkeypatch.setattr(ls, "_kernel32", SimpleNamespace(
+        OpenProcess=lambda *args: 9, GetExitCodeProcess=exit_code, CloseHandle=closed.append,
+    ))
+    assert ls.is_pid_running(123) is False
+    assert closed == [9]
+
+
+def test_windows_unreadable_exit_state_is_unknown(monkeypatch):
+    from types import SimpleNamespace
+    closed = []
+    monkeypatch.setattr(ls, "_kernel32", SimpleNamespace(
+        OpenProcess=lambda *args: 9, GetExitCodeProcess=lambda *args: False, CloseHandle=closed.append,
+    ))
+    assert ls.is_pid_running(123) is None
+    assert closed == [9]
+
+
+def test_windows_unreadable_executable_is_unknown(monkeypatch):
+    from types import SimpleNamespace
+    closed = []
+    monkeypatch.setattr(ls, "_kernel32", SimpleNamespace(
+        OpenProcess=lambda *args: 9, QueryFullProcessImageNameW=lambda *args: False, CloseHandle=closed.append,
+    ))
+    assert ls.is_executable_match(123) is None
+    assert closed == [9]
+
+
+def test_mutex_access_denial_does_not_mean_unheld(monkeypatch):
+    from types import SimpleNamespace
+    monkeypatch.setattr(ls, "_kernel32", SimpleNamespace(OpenMutexW=lambda *args: 0, GetLastError=lambda: 5))
+    assert ls.is_mutex_held() is None

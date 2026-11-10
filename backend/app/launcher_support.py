@@ -322,14 +322,34 @@ def release_mutex(handle):
         pass
 
 
-def is_mutex_held() -> bool:
+def is_mutex_held() -> bool | None:
     if _kernel32 is None:
         return False
     h = _kernel32.OpenMutexW(0x0001, False, ctypes.create_unicode_buffer(MUTEX_NAME))
     if h:
         _kernel32.CloseHandle(h)
         return True
-    return False
+    return False if _kernel32.GetLastError() == 2 else None
+
+
+def _verify_instance_write(path: Path, logger=None) -> bool:
+    """Check the governed atomic-write location without replacing metadata."""
+    tmp = path.with_suffix(".tmp")
+    created = False
+    try:
+        with tmp.open("x", encoding="utf-8") as stream:
+            created = True
+            stream.write("{}")
+        tmp.unlink()
+        return True
+    except OSError as exc:
+        _safe_log(logger, logging.WARNING, "instance_write_refused category=%s", type(exc).__name__)
+        if created:
+            try:
+                tmp.unlink()
+            except OSError as cleanup_exc:
+                _safe_log(logger, logging.WARNING, "instance_probe_cleanup_failed category=%s", type(cleanup_exc).__name__)
+        return False
 
 
 def write_instance(path: Path, pid: int, port: int):
@@ -366,39 +386,45 @@ def remove_instance_if_owned(path: Path, pid: int, port: int):
             pass
 
 
-def is_pid_running(pid: int) -> bool:
+def is_pid_running(pid: int) -> bool | None:
+    """Return None when process absence cannot be positively established."""
     if _kernel32 is not None:
         h = _kernel32.OpenProcess(0x1000, False, pid)
         if not h:
-            return False
-        _kernel32.CloseHandle(h)
-        return True
+            return False if _kernel32.GetLastError() == 87 else None
+        try:
+            code = ctypes.wintypes.DWORD()
+            if not _kernel32.GetExitCodeProcess(h, ctypes.byref(code)):
+                return None
+            return code.value == 259  # STILL_ACTIVE
+        finally:
+            _kernel32.CloseHandle(h)
     try:
         os.kill(pid, 0)
         return True
     except ProcessLookupError:
         return False
-    except PermissionError:
-        return True
+    except OSError:
+        return None
 
 
-def is_executable_match(pid: int) -> bool:
+def is_executable_match(pid: int) -> bool | None:
+    """Unknown identity must not authorize deletion or another backend."""
     if _kernel32 is None or os.name != "nt":
-        return True
+        return None
+    h = _kernel32.OpenProcess(0x1000, False, pid)
+    if not h:
+        return None
     try:
-        h = _kernel32.OpenProcess(0x1000, False, pid)
-        if not h:
-            return False
-        buf = ctypes.create_unicode_buffer(1024)
-        size = ctypes.wintypes.DWORD(1024)
-        ok = _kernel32.QueryFullProcessImageNameW(h, 0, buf, ctypes.byref(size))
+        buf = ctypes.create_unicode_buffer(32768)
+        size = ctypes.wintypes.DWORD(len(buf))
+        if not _kernel32.QueryFullProcessImageNameW(h, 0, buf, ctypes.byref(size)):
+            return None
+        return os.path.normcase(os.path.realpath(buf.value)) == os.path.normcase(os.path.realpath(sys.executable))
+    except OSError:
+        return None
+    finally:
         _kernel32.CloseHandle(h)
-        if not ok:
-            return True
-        name = buf.value.lower()
-        return "run-frozen" in name or "python" in name
-    except Exception:
-        return True
 
 
 # ---- Job Object (Windows only; no-op elsewhere) ----
