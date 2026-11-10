@@ -10,6 +10,9 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import vm from 'node:vm'
+import ts from 'typescript'
+import { api } from '../src/services/api.ts'
 
 import {
   LOCAL_MODEL_COPY,
@@ -118,14 +121,43 @@ test('the download action opens the confirmation instead of starting a job', () 
   assert.match(cardSrc, /onConfirm=\{\(\) => void startDownload\(\)\}/)
 })
 
-test('the start API is only reachable through startDownload', () => {
-  const calls = apiSrc.match(/startLocalModelDownload/g) ?? []
-  assert.equal(calls.length, 1, 'exactly one client method definition')
-  // In the card, the only start call is inside the confirmed handler.
-  const cardCalls = cardSrc.match(/api\.startLocalModelDownload\(\)/g) ?? []
-  assert.equal(cardCalls.length, 1)
-  const startFn = cardSrc.slice(cardSrc.indexOf('const startDownload = React.useCallback'))
-  assert.ok(startFn.indexOf('api.startLocalModelDownload()') < startFn.indexOf('}, [downloadBusy'))
+test('the start API is only reachable through startDownload', async () => {
+  // Execute the production confirmation callback, not a copy of its logic.
+  const source = ts.createSourceFile('readiness-card.tsx', cardSrc, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+  function findStart(node: ts.Node): ts.Node | undefined {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) &&
+        node.name.text === 'startDownload' && node.initializer && ts.isCallExpression(node.initializer)) {
+      return node.initializer.arguments[0]
+    }
+    return ts.forEachChild(node, findStart)
+  }
+  const callback = findStart(source)
+  assert.ok(callback)
+  const consentToken = 'test-only-consent-token'
+  const { promise: consent, resolve: grantConsent } = Promise.withResolvers<{ consent_token: string; model_name: string }>()
+  const calls: unknown[][] = []
+  const state: [string, boolean][] = []
+  const startDownload = vm.runInNewContext(`(${callback.getText(source)})`, {
+    downloadBusy: false,
+    download: null,
+    isDownloadActive,
+    api: {
+      requestLocalModelDownloadConsent: () => { calls.push(['consent']); return consent },
+      startLocalModelDownload: async (...args: unknown[]) => { calls.push(['start', ...args]) },
+    },
+    refreshDownloadStatus: async () => { calls.push(['status']) },
+    setDownloadBusy: (value: boolean) => { state.push(['busy', value]) },
+    setConfirmOpen: (value: boolean) => { state.push(['confirm', value]) },
+    setDownloadHidden: (value: boolean) => { state.push(['hidden', value]) },
+    setDownloadStartFailed: (value: boolean) => { state.push(['failed', value]) },
+  })
+  assert.equal(calls.length, 0, 'no download request before confirmation')
+  const pending = startDownload()
+  assert.deepEqual(calls, [['consent']], 'starting must await the backend-issued token')
+  grantConsent({ consent_token: consentToken, model_name: 'test-model:fixture' })
+  await pending
+  assert.deepEqual(calls, [['consent'], ['start', consentToken], ['status']])
+  assert.deepEqual(state, [['busy', true], ['confirm', false], ['hidden', false], ['failed', false], ['busy', false]])
 })
 
 test('confirmation copy carries the mandated wording', () => {
@@ -361,9 +393,20 @@ test('no raw exception or backend text reaches the panel', () => {
   assert.ok(!/catch \(/.test(panelSrc))
 })
 
-test('the start route is called without parameters', () => {
-  assert.match(apiSrc, /async startLocalModelDownload\(\): Promise<void>/)
-  assert.match(apiSrc, /setup\/local-model\/download`,\r?\n\s+\{ method: 'POST' \}/)
+test('the start route sends only the consent token', async (t) => {
+  const consentToken = 'test-only-consent-token'
+  const fetch = t.mock.method(globalThis, 'fetch', async () => new Response(null, { status: 200 }))
+  await api.startLocalModelDownload(consentToken)
+  assert.equal(fetch.mock.callCount(), 1)
+  const [url, init] = fetch.mock.calls[0].arguments
+  assert.equal(url, '/api/setup/local-model/download')
+  assert.ok(init?.signal instanceof AbortSignal)
+  assert.deepEqual(init, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ consent_token: consentToken }),
+    signal: init.signal,
+  })
 })
 
 test('a 409 is treated as already-running rather than an error', () => {
