@@ -2268,8 +2268,8 @@ function CitationSection({
             Human verification required
           </span>
         </div>
-        <details className="mt-2 rounded-md border border-border bg-card">
-          <summary className="cursor-pointer select-none px-3 py-2 text-[13px] font-medium text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary">
+        <details className="mt-3 rounded-md border border-ai-assisted/40 bg-card">
+          <summary className="min-h-[44px] cursor-pointer select-none rounded-md bg-ai-assisted/10 px-3 py-3 text-[13px] font-semibold text-ai-assisted hover:bg-ai-assisted/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary">
             Show AI-assisted guidance
           </summary>
           <div className="space-y-2 border-t border-border px-3 py-2">
@@ -2336,6 +2336,7 @@ function CitationSection({
           <Quote className="mr-1 h-3 w-3" aria-hidden="true" /> AI-assisted
         </Badge>
       </div>
+      <p className="mt-1 text-[13px] leading-[19px] text-muted-foreground">Runs locally with Ollama</p>
       {body}
     </section>
   )

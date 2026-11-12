@@ -1301,6 +1301,10 @@ def run_static_rules_engine(
     rendered-preview mapping. It exists only when a preview was produced;
     without it the Reference List new-page rule has no rendered evidence and
     stays silent rather than guessing.
+
+    Production audit execution never supplies it. Rendered-preview evidence
+    is navigation-only, so a stored preview can neither enable nor broaden a
+    rule and the finding inventory is identical with or without a preview.
     """
     doc = parse_document(file_bytes)
     preset = config if config is not None else settings.PRESET

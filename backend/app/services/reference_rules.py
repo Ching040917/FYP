@@ -496,6 +496,9 @@ def run_reference_rules(
     rendered-page mapping ({paragraph_index: 1-based page}); without it the
     new-page rule has no rendered evidence and stays silent, which is the
     honest answer rather than a guess.
+
+    Production audit execution never supplies it: preview mapping is
+    navigation evidence only, so it must not change the rule inventory.
     """
     bounds = reference_section_bounds(paragraphs)
     if bounds is None:

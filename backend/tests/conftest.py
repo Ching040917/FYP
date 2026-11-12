@@ -29,6 +29,20 @@ from app.config import settings, PresetConfig
 from app.main import app
 from app.api import routes as api_routes
 
+@pytest.fixture(autouse=True)
+def _isolate_rendered_preview(monkeypatch, tmp_path):
+    """API tests never invoke host LibreOffice or touch real user previews.
+
+    Preview tests opt into conversion explicitly; converter integration tests
+    call the service directly and retain their real-LibreOffice coverage.
+    """
+    def unavailable(_bytes):
+        raise api_routes.DocxConversionError("libreoffice_unavailable")
+
+    monkeypatch.setattr(api_routes, "convert_docx_to_pdf", unavailable)
+    monkeypatch.setattr(settings, "PREVIEW_STORAGE_DIR", str(tmp_path / "previews"))
+
+
 
 @pytest.fixture(autouse=True)
 def _restore_logging_state():

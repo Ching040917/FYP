@@ -52,7 +52,7 @@ A matching checksum shows your copy is the build that was published. It is not a
 
 Two optional components add features but are never required. Deterministic audits work fully without them, and ACA never installs third-party software: you stay in control.
 
-- **LibreOffice** — in ACA v1.0.0, fresh rendered-page previews and physical page location mapping are disabled so that uploaded DOCX bytes never reach disk; extracted-text preview and paragraph-level evidence linking remain available for every audit. When LibreOffice is missing, the Dashboard's **System Readiness** card offers **Download LibreOffice**, which opens the official LibreOffice website. Install it yourself, then click **Check again**.
+- **LibreOffice** — enables optional local PDF page previews and physical page mapping for new validated audits. Conversion uses a current-user-only temporary DOCX and isolated profile, removed before the rendered PDF is accepted; the original is not retained as a source file. Extracted-text evidence remains available if rendering fails. When LibreOffice is missing, the Dashboard's **System Readiness** card offers **Download LibreOffice**, which opens the official LibreOffice website. Install it yourself, then click **Check again**.
 - **Ollama** — enables optional **Local AI Citation Guidance** (APA 7 in-text citation formatting suggestions only), and is not required for deterministic document auditing, formatting findings, extracted-text preview, Guided Fixes, PDF report export, or Audit History. When Ollama is missing, the card offers **Download Ollama**. When Ollama is installed but its model is missing, the card offers **Download optional model**, which asks your own Ollama service to fetch that model — only after you confirm in a dialog. The download needs an internet connection, several gigabytes of storage, and may take time. **Copy installation command** remains available if you prefer to run `ollama pull` yourself.
 
 ACA cannot reliably stop an Ollama model download once it has started, so there is no Cancel button; closing the progress view may leave Ollama downloading in the background.
@@ -85,7 +85,7 @@ All ACA data is stored locally in your user profile:
 %LOCALAPPDATA%\AcademicComplianceAuditor\
 ```
 
-This folder contains your audit history database, database backups, rendered page previews, and logs. The original DOCX files you audit are **not** stored — they are processed in memory and discarded (see [Privacy](PRIVACY.md)).
+This folder contains your audit history database, database backups, rendered page previews, and logs. Original DOCX files are **not retained as source files**. Optional local rendering uses a protected temporary copy, which must be deleted before conversion succeeds; abnormal shutdown or cleanup failure can leave temporary data (see [Privacy](PRIVACY.md)).
 
 To permanently remove all local data, delete this folder **after** uninstalling. Back it up first if you might need your history later.
 

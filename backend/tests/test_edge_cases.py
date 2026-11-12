@@ -325,7 +325,7 @@ def test_one_valid_docx_after_rejection_creates_exactly_one_audit(
     from app.api import routes
     from app.services import document_parser
 
-    converter = Mock(side_effect=routes.DocxConversionError("libreoffice_missing"))
+    converter = Mock(side_effect=routes.DocxConversionError("libreoffice_unavailable"))
     monkeypatch.setattr(routes, "convert_docx_to_pdf", converter)
     rejected = client.post(
         "/api/audit",
@@ -349,9 +349,9 @@ def test_one_valid_docx_after_rejection_creates_exactly_one_audit(
     record = state["audit_records"]["rows"][0]
     assert record["document_sha256"] == hashlib.sha256(valid).hexdigest()
     assert record["profile_snapshot"] == accepted.json()["profile_snapshot"]
-    converter.assert_not_called()
+    converter.assert_called_once_with(valid)
     assert record["rendered_preview_status"] == "UNAVAILABLE"
-    assert record["rendered_preview_error"] == "preview_disabled"
+    assert record["rendered_preview_error"] == "libreoffice_missing"
     assert record["paragraph_page_mapping"] is None
 
 

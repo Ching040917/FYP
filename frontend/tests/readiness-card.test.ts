@@ -8,6 +8,10 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import React from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
+import vm from 'node:vm'
+import ts from 'typescript'
 import {
   adaptReadiness,
   overallHeadline,
@@ -17,6 +21,8 @@ import {
   requiredActionNeededCount,
 } from '../src/lib/readiness.ts'
 import { api } from '../src/services/api.ts'
+import { LOCAL_MODEL_COPY } from '../src/lib/local-model-download.ts'
+import { SETUP_COPY } from '../src/lib/setup-paths.ts'
 
 function readyPayload() {
   return {
@@ -316,6 +322,125 @@ test('readiness-card source exposes required a11y + progressive-disclosure marke
   assert.ok(src.includes('Hide details'))
   assert.ok(src.includes('min-h-[44px]'))
   assert.ok(src.includes('fetchingRef.current')) // duplicate-request guard
+})
+
+/** Render the production card with readiness already loaded; effects do not run
+ * during server rendering, so no readiness or download request is made here. */
+function readinessView(payload: unknown, state = 'loaded') {
+  const { readFileSync } = requireNode('node:fs')
+  const { resolve } = requireNode('node:path')
+  const source = readFileSync(resolve('src/components/dashboard/readiness-card.tsx'), 'utf8')
+  const compiled = ts.transpileModule(source, { compilerOptions: {
+    module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true,
+  } }).outputText
+  // Card hooks: load state, model, expanded, refresh flags, download state/flags.
+  const values: unknown[] = [state, payload ? adaptReadiness(payload) : null, false, false, false, null, false, false, false, false]
+  let cursor = 0
+  let setupClick: (() => void) | undefined
+  const exports: Record<string, React.ComponentType> = {}
+  vm.runInNewContext(compiled, { exports, require(name: string) {
+    if (name === 'react') return {
+      ...React,
+      useState(initial: unknown) {
+        const index = cursor++
+        if (index >= values.length) return React.useState(initial)
+        return [values[index], (next: unknown) => {
+          values[index] = typeof next === 'function' ? next(values[index]) : next
+        }]
+      },
+    }
+    if (name === 'react/jsx-runtime') return requireNode(name)
+    if (name.includes('/lib/utils')) return { cn: (...parts: string[]) => parts.join(' ') }
+    for (const lib of ['readiness', 'setup-paths', 'local-model-download']) {
+      if (name.endsWith(`/lib/${lib}`)) return requireNode(resolve(`src/lib/${lib}.ts`))
+    }
+    if (name === 'lucide-react') return new Proxy({}, { get: () => () => null })
+    if (name.endsWith('/ui/button')) return {
+      Button({ children, onClick, variant: _variant, size: _size, ...props }: React.ButtonHTMLAttributes<HTMLButtonElement> & { variant?: string; size?: string }) {
+        if (children === 'View Local AI setup') setupClick = onClick as (() => void) | undefined
+        return React.createElement('button', props, children)
+      },
+    }
+    return new Proxy({}, { get: () => ({ children, ...props }: { children?: React.ReactNode }) =>
+      React.createElement('div', props, children) })
+  } })
+  return {
+    render() {
+      cursor = 0
+      return renderToStaticMarkup(React.createElement(exports.ReadinessCard))
+    },
+    expandSetup() {
+      assert.ok(setupClick, 'the rendered setup control must have an action')
+      setupClick()
+    },
+  }
+}
+
+for (const [ollama, localModel, expected] of [
+  ['ready', 'ready', 'Ready'],
+  ['ready', 'unavailable', 'Setup required'],
+  ['unavailable', 'unknown', 'Unavailable'],
+  ['optional', 'optional', 'Disabled'],
+  ['unknown', 'unknown', 'Unavailable'],
+  ['misconfigured', 'ready', 'Unavailable'],
+  ['ready', 'unknown', 'Unavailable'],
+] as const) {
+  test(`collapsed Local AI row reports ${expected} for ${ollama}/${localModel}`, () => {
+    const payload = readyPayload()
+    payload.components = payload.components.map((row) => ({
+      ...row, state: row.id === 'ollama' ? ollama : row.id === 'local_model' ? localModel : row.state,
+    }))
+    const view = readinessView(payload)
+    const html = view.render()
+    assert.match(html, /Local AI<span role="status"[^>]*>/)
+    assert.ok(html.includes(`>${expected}</span>`), html)
+    assert.match(html, /<button[^>]*aria-expanded="false"[^>]*>View Local AI setup<\/button>/)
+    assert.doesNotMatch(html, /id="readiness-details"/)
+  })
+}
+
+test('Local AI setup expands existing details without starting a model download', () => {
+  const payload = readyPayload()
+  payload.components.find((row) => row.id === 'local_model')!.state = 'unavailable'
+  const view = readinessView(payload)
+  view.render()
+  view.expandSetup()
+  const html = view.render()
+  assert.match(html, /id="readiness-details"/)
+  assert.match(html, /aria-controls="readiness-details"/)
+  assert.ok(html.includes(LOCAL_MODEL_COPY.downloadAction))
+  assert.ok(html.includes(LOCAL_MODEL_COPY.scope))
+  assert.ok(html.includes(LOCAL_MODEL_COPY.accuracy))
+  assert.ok(html.includes(SETUP_COPY.model.body))
+  assert.ok(!html.includes(LOCAL_MODEL_COPY.confirmTitle), 'setup expansion must not open download consent')
+})
+
+test('missing or failed readiness never claims Local AI is ready or enables setup', () => {
+  for (const state of ['checking', 'error']) {
+    const html = readinessView(null, state).render()
+    assert.match(html, />Unavailable<\/span>/)
+    assert.match(html, /<button[^>]*disabled=""[^>]*>View Local AI setup<\/button>/)
+  }
+})
+
+test('model download action appears only for Ollama ready and model confirmed missing', () => {
+  for (const [ollama, localModel, downloadAllowed] of [
+    ['ready', 'unavailable', true],
+    ['unavailable', 'unavailable', false],
+    ['unknown', 'unavailable', false],
+    ['optional', 'optional', false],
+    ['ready', 'ready', false],
+    ['ready', 'unknown', false],
+  ] as const) {
+    const payload = readyPayload()
+    payload.components = payload.components.map((row) => ({
+      ...row, state: row.id === 'ollama' ? ollama : row.id === 'local_model' ? localModel : row.state,
+    }))
+    const view = readinessView(payload)
+    view.render()
+    view.expandSetup()
+    assert.equal(view.render().includes(LOCAL_MODEL_COPY.downloadAction), downloadAllowed, `${ollama}/${localModel}`)
+  }
 })
 
 // ESM wrapper — repo tests run under "type": "module".

@@ -56,6 +56,16 @@ import { cn } from '../../lib/utils'
 
 type CardState = 'checking' | 'loaded' | 'error'
 
+/** Summarize only confirmed Local AI readiness; never infer an installed model. */
+function localAiStatus(model: ReadinessModel | null): string {
+  const ollama = model?.rows.find((row) => row.id === 'ollama')
+  const localModel = model?.rows.find((row) => row.id === 'local_model')
+  if (ollama?.state === 'optional' && localModel?.state === 'optional') return 'Disabled'
+  if (ollama?.state === 'ready' && localModel?.state === 'ready') return 'Ready'
+  if (ollama?.state === 'ready' && localModel?.state === 'unavailable') return 'Setup required'
+  return 'Unavailable'
+}
+
 export function ReadinessCard({
   onReadinessChange: onReadinessChangeProp,
   expandSignal = 0,
@@ -325,6 +335,29 @@ export function ReadinessCard({
               </Button>
             </div>
       </CardHeader>
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-border pt-3">
+        <div className="min-w-0">
+          <p className="flex flex-wrap items-center gap-2 text-sm font-medium text-foreground">
+            Local AI
+            <span role="status" className="rounded border border-border bg-input/20 px-2 py-0.5 text-xs">
+              {localAiStatus(model)}
+            </span>
+          </p>
+          <p className="mt-1 text-xs text-muted-foreground">Optional citation guidance. Runs locally with Ollama.</p>
+        </div>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="min-h-[44px] border-border text-foreground"
+          disabled={!showViewDetails}
+          aria-expanded={expanded}
+          aria-controls={expanded ? detailsId : undefined}
+          onClick={() => setExpanded(true)}
+        >
+          View Local AI setup
+        </Button>
+      </div>
       {state === 'error' && (
         <div role="alert" className="mt-3 rounded-md border border-border bg-input/20 px-3 py-2.5 text-sm">
           <p className="flex items-start gap-1.5 text-muted-foreground">

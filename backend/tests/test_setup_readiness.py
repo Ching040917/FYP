@@ -184,8 +184,9 @@ async def test_libreoffice_probe_error_becomes_unknown():
 async def test_preview_wording_honest_provisional():
     payload = await compute_readiness(probes())
     msg = by_id(payload)["rendered_preview"]["message"]
-    assert msg.startswith("Previously rendered page data can be displayed.")
-    assert "Fresh rendered-page previews are disabled" in msg
+    assert msg.startswith("Rendered-page preview support is available.")
+    assert "confirmed during an audit" in msg
+    assert "disabled" not in msg
     assert "proven" not in msg.lower()
 
 

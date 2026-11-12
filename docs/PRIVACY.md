@@ -4,14 +4,16 @@ ACA is a local-first application: your documents and audit results stay on your 
 
 ## Does ACA keep my original DOCX?
 
-**No.** Your original DOCX file is processed in memory and is never saved to disk as a document file. The file is read once for the audit (formatting checks and section extraction), then discarded. To audit the same document again, you upload it again.
+**ACA does not retain the original DOCX as a source file.** Upload validation, parsing and audit checks use in-memory bytes. If local LibreOffice is available, ACA then creates one short-lived DOCX copy under a random name in an operating-system temporary directory secured to the current user only. The isolated LibreOffice profile, conversion output and scratch files stay in that directory. Conversion must remove the directory before ACA accepts its rendered PDF. The original file on your computer is never modified. To audit the same document again, upload it again.
 
-ACA does keep *derived* information from the audit: findings, locations, expected and actual values, paragraph text used as evidence, section metadata, your formatting profile snapshot, citation suggestions, and document statistics. In ACA v1.0.0, page-rendered preview via LibreOffice conversion is disabled to ensure zero temporary document copies are written to disk; extracted-text preview is the active preview mode. Generated PDF audit reports and explicitly downloaded corrected DOCX copies are separate, user-requested outputs. A corrected DOCX copy is written to temporary local storage before download and deleted on a best-effort basis when you download it or after its 15-minute one-use link expires; cleanup is opportunistic, so a copy may remain briefly until the next cleanup run.
+ACA does keep *derived* information from the audit: findings, locations, expected and actual values, paragraph text used as evidence, section metadata, your formatting profile snapshot, citation suggestions, document statistics, and a successfully rendered PDF preview with physical-page mapping. Conversion, privacy or cleanup failures make page preview unavailable without blocking the audit; extracted-text evidence remains available. Generated PDF audit reports and explicitly downloaded corrected DOCX copies are separate, user-requested outputs. A corrected DOCX copy is written to temporary local storage before download and deleted on a best-effort basis when you download it or after its 15-minute one-use link expires; cleanup is opportunistic, so a copy may remain briefly until the next cleanup run.
+
+Temporary conversion copies are deleted on ordinary success, conversion failure, timeout, and supported cancellation/interruption paths. A forced application termination, power loss, operating-system fault or locked file can prevent cleanup. ACA never treats an observed cleanup failure as successful conversion. This is deletion, not guaranteed forensic erasure: temporary data may survive in filesystem recovery data, paging, or device backups. Such copies are not saved in Audit History; treat the current user's temporary storage as sensitive after an abnormal shutdown.
 
 ## What information is stored locally?
 
 - Your audit history: scores, findings, citation issues, paragraph evidence, profile snapshots, and document statistics.
-- In-memory extracted-text preview (stored as paragraph blocks in your local database). Generated page-preview PDFs are unavailable in v1.0.0 to prevent temporary document writes.
+- Extracted-text paragraph blocks in the local database, and successfully generated page-preview PDFs in `rendered-previews\`. Neither is the original DOCX.
 - Automatic database backups created before upgrades.
 - Diagnostic logs (start-up, port selection, health checks, safe error categories — never document text).
 - Browser storage: your saved custom profiles, current profile selection, an unsaved profile draft if you close the editor mid-edit, and whether you dismissed the first-run guidance.
@@ -30,7 +32,7 @@ Inside: `audit.db` (audit history database), `backups\` (verified backups, up to
 
 **Core audits never send your document or findings anywhere.** Deterministic formatting and citation checks run entirely offline on your machine. ACA is bound to your computer only (`127.0.0.1`) and is not reachable from other machines.
 
-ACA bundles a synthetic sample thesis (`sample-thesis.docx`) generated with `python-docx`. The sample action loads this bundled file through the app's loopback-only server and automatically audits it using your selected profile, without Internet access. It contains only synthetic academic text and planted formatting variations, not Owner or user document data. This shipped sample is separate from uploaded DOCX files, which remain processed in memory without page-rendering conversion.
+ACA bundles a synthetic sample thesis (`sample-thesis.docx`) generated with `python-docx`. The sample action loads this bundled file through the app's loopback-only server and automatically audits it using your selected profile, without Internet access. It contains only synthetic academic text and planted formatting variations, not Owner or user document data. It uses the same private temporary local-rendering path as an uploaded DOCX.
 
 Internet access happens only when you explicitly choose an optional action:
 
@@ -52,12 +54,12 @@ Local AI citation guidance uses the Ollama service installed on your own machine
 
 When enabled, ACA strictly restricts all AI guidance requests to verified loopback origins (`127.0.0.1`, `localhost`, or `[::1]`) on plain HTTP without user credentials, subpaths, queries, or fragments. HTTP redirects are rejected (`follow_redirects=False`) to prevent any redirection off loopback. Any non-loopback, LAN, or remote host configuration fails closed: citation snippets are never transmitted, guidance becomes unavailable, and deterministic audit scores and findings complete unaffected.
 
-When an audit has confirmed citation findings and a verified loopback host is configured, ACA sends only the relevant citation snippets and finding context to your local Ollama service — never the full document as a file. Reference List entries and bibliography text are never sent to the model, and the citation comparison itself runs without it. Results stay on your machine.
+When an audit has confirmed eligible citation findings and a verified loopback host is configured, ACA sends only the existing minimum in-text citation snippet (the finding's actual value) and finding context to your local Ollama service — never the uploaded DOCX file, the full document body, a rendered PDF, or Reference List/bibliography text. The citation comparison itself runs without the model. This existing snippet guidance is optional; improved Local AI visibility does not expand eligibility or the data sent. Results stay on your machine.
 
 No cloud AI provider is included in ACA. There is no external AI API key to configure, no provider selection, and no cloud opt-in; no document text, citation context, prompt, or finding is ever transmitted to a third-party AI service. Local AI requests go only to your own verified loopback Ollama service.
 ## What happens when I delete an audit?
 
-Deleting an audit from History or the Audit Workspace permanently removes that audit's records, findings, citation issues, and document blocks. Deletion cannot be undone from within ACA.
+Deleting an audit from History or the Audit Workspace permanently removes that audit's records, findings, citation issues, and document blocks, and attempts to delete its stored rendered PDF. A missing or locked PDF does not block audit deletion; a locked preview may remain in local storage. Deletion cannot be undone from within ACA.
 
 One caveat: automatic database backups (kept in `backups\`) may still contain an older copy of the database that includes the deleted audit. Treat the `backups\` folder as sensitive — it is not automatically purged when you delete an audit.
 

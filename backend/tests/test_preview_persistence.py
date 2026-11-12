@@ -8,6 +8,7 @@ existing files are never overwritten; the original DOCX is never stored;
 logs stay free of paths/content; tests use temp storage only.
 """
 import io
+import hashlib
 import threading
 import uuid
 
@@ -45,8 +46,9 @@ def preview_root(tmp_path, monkeypatch):
 
 @pytest.fixture
 def converter_ok(monkeypatch):
-    monkeypatch.setattr(api_routes, "convert_docx_to_pdf", lambda _bytes: _make_pdf(page_count=2))
-    return _make_pdf(page_count=2)
+    pdf_bytes = _make_pdf(page_count=2)
+    monkeypatch.setattr(api_routes, "convert_docx_to_pdf", lambda _bytes: pdf_bytes)
+    return pdf_bytes
 
 
 def _converter_raising(monkeypatch, category):
@@ -74,22 +76,30 @@ def _audit_row(test_engine, audit_id):
 # success path
 # ---------------------------------------------------------------------------
 
-def test_post_upload_leaves_preview_unavailable_without_disk_write(client, docx_factory, preview_root, test_engine):
+def test_post_upload_persists_validated_preview(client, docx_factory, preview_root, test_engine, converter_ok, monkeypatch):
+    monkeypatch.setattr(api_routes, "compute_paragraph_page_mapping", lambda *args, **kwargs: {"0": 1})
     resp = _post(client, docx_factory)
     assert resp.status_code == 200
     audit_id = resp.json()["audit_id"]
 
     final = preview_root / f"{audit_id}.pdf"
-    assert not final.exists()
+    assert final.read_bytes() == converter_ok
     assert not (preview_root / ".tmp").exists() or list((preview_root / ".tmp").iterdir()) == []
 
     row = _audit_row(test_engine, audit_id)
-    assert row.rendered_preview_status == "UNAVAILABLE"
-    assert row.rendered_preview_error == "preview_disabled"
-    assert row.rendered_preview_sha256 is None
-    assert row.rendered_preview_size is None
-    assert row.rendered_preview_pages is None
-    assert row.rendered_preview_converted_at is None
+    assert row.rendered_preview_status == "AVAILABLE"
+    assert row.rendered_preview_error is None
+    assert row.rendered_preview_sha256 == hashlib.sha256(converter_ok).hexdigest()
+    assert row.rendered_preview_size == len(converter_ok)
+    assert row.rendered_preview_pages == 2
+    assert row.rendered_preview_converted_at is not None
+    served = client.get(f"/api/audit/{audit_id}/rendered-preview")
+    assert served.status_code == 200
+    assert served.content == converter_ok
+    history = client.get(f"/api/audit/{audit_id}").json()
+    assert history["paragraph_page_mapping"] == {"0": 1}
+    assert any(item["id"] == audit_id for item in client.get("/api/audits").json())
+    assert client.get(f"/api/audit/{audit_id}/rendered-preview").content == converter_ok
 
 # ---------------------------------------------------------------------------
 # failure modes — audit must still complete
@@ -101,6 +111,8 @@ def test_post_upload_leaves_preview_unavailable_without_disk_write(client, docx_
     ("conversion_failed", "conversion_failed"),
     ("invalid_docx", "conversion_failed"),
     ("invalid_pdf", "conversion_failed"),
+    ("privacy_failed", "conversion_failed"),
+    ("cleanup_failed", "conversion_failed"),
 ])
 def test_conversion_failures_audit_still_completes(
     client, docx_factory, preview_root, monkeypatch, test_engine, category, expected_error,
@@ -113,7 +125,7 @@ def test_conversion_failures_audit_still_completes(
 
     row = _audit_row(test_engine, audit_id)
     assert row.rendered_preview_status == "UNAVAILABLE"
-    assert row.rendered_preview_error == "preview_disabled"
+    assert row.rendered_preview_error == expected_error
     for field in ("rendered_preview_sha256", "rendered_preview_size",
                   "rendered_preview_pages", "rendered_preview_converted_at"):
         assert getattr(row, field) is None
@@ -133,7 +145,7 @@ def test_persistence_failure_audit_still_completes(
     audit_id = resp.json()["audit_id"]
     row = _audit_row(test_engine, audit_id)
     assert row.rendered_preview_status == "UNAVAILABLE"
-    assert row.rendered_preview_error == "preview_disabled"
+    assert row.rendered_preview_error == "persistence_failed"
     assert not (preview_root / f"{audit_id}.pdf").exists()
 
 
@@ -145,7 +157,7 @@ def test_error_category_always_in_allowed_set(
     resp = _post(client, docx_factory)
     assert resp.status_code == 200
     row = _audit_row(test_engine, resp.json()["audit_id"])
-    assert row.rendered_preview_error in ("preview_disabled", *preview_storage.PREVIEW_ERRORS)
+    assert row.rendered_preview_error in preview_storage.PREVIEW_ERRORS
 
 
 # ---------------------------------------------------------------------------
@@ -227,7 +239,7 @@ def test_existing_final_file_not_overwritten(client, docx_factory, preview_root,
 
     row = _audit_row(test_engine, str(fixed))
     assert row.rendered_preview_status == "UNAVAILABLE"
-    assert row.rendered_preview_error == "preview_disabled"
+    assert row.rendered_preview_error == "persistence_failed"
     # original file untouched, no temp leftovers
     assert (preview_root / f"{fixed}.pdf").read_bytes() == original
     if (preview_root / ".tmp").exists():
@@ -285,7 +297,7 @@ def test_concurrent_audits_use_isolated_files(client_file_db, docx_factory, prev
     ids = [r for r in results if r]
     assert len(set(ids)) == 4
     files = {p.name for p in preview_root.glob("*.pdf")}
-    assert files == set()
+    assert files == {f"{audit_id}.pdf" for audit_id in ids}
     assert not (preview_root / ".tmp").exists() or list((preview_root / ".tmp").iterdir()) == []
 
 

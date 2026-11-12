@@ -86,6 +86,8 @@ _CONVERTER_ERROR_MAP = {
     "timeout": "timeout",
     "conversion_failed": "conversion_failed",
     "invalid_pdf": "conversion_failed",
+    "privacy_failed": "conversion_failed",
+    "cleanup_failed": "conversion_failed",
 }
 
 
@@ -190,12 +192,24 @@ async def audit_document(
     preview_pdf_bytes: bytes | None = None
 
     try:
-        # In ACA v1.0.0, rendered PDF conversion for uploaded DOCX documents is disabled
-        # to enforce ACA's hard privacy constraint: uploaded document bytes are processed
-        # strictly in memory and are never passed to LibreOffice or written to temporary
-        # disk files. Extracted-text preview remains available as the active preview mode.
+        # Parsing above must complete before LibreOffice can see document bytes.
+        # Conversion only returns after deleting its private temporary DOCX.
         audit.rendered_preview_status = preview_storage.PREVIEW_STATUS_UNAVAILABLE
-        audit.rendered_preview_error = "preview_disabled"
+        try:
+            preview_pdf_bytes = convert_docx_to_pdf(file_bytes)
+            metadata = preview_storage.store_pdf(audit.id, preview_pdf_bytes)
+            preview_pdf_written = True
+            audit.rendered_preview_status = metadata.status
+            audit.rendered_preview_error = None
+            audit.rendered_preview_sha256 = metadata.sha256
+            audit.rendered_preview_size = metadata.size
+            audit.rendered_preview_pages = metadata.pages
+            audit.rendered_preview_converted_at = metadata.converted_at
+        except Exception as exc:
+            preview_pdf_bytes = None
+            audit.rendered_preview_error = _preview_error_category(exc)
+            logger.info("rendered preview audit=%s status=UNAVAILABLE error=%s",
+                        audit.id, audit.rendered_preview_error)
         # ---- Section boundary metadata (PoC) — persisted with the audit ----
         # Captured from the DOCX at creation time so GET / refresh / History
         # keep it (never reconstructed from PDF text after the DOCX is gone).
@@ -207,9 +221,9 @@ async def audit_document(
         # physical pages. NULL for historical/unavailable cases. Never stores
         # document text; never fails the audit.
         #
-        # Computed BEFORE the rules run because the Reference List new-page
-        # rule is the one rule that needs rendered evidence: without this
-        # mapping it could only ever stay silent.
+        # Navigation-only evidence: this mapping drives page labels and
+        # finding→page jumps. It is NEVER handed to the rules engine, so a
+        # stored preview can neither enable nor broaden an audit rule.
         try:
             if preview_pdf_bytes is not None and audit.rendered_preview_status == preview_storage.PREVIEW_STATUS_AVAILABLE:
                 audit.paragraph_page_mapping = compute_paragraph_page_mapping(
@@ -231,11 +245,8 @@ async def audit_document(
         layout_violations = run_static_rules_engine(
             file_bytes,
             config=EffectiveProfileConfig(profile_snapshot),
-            page_mapping=(
-                audit.paragraph_page_mapping
-                if isinstance(audit.paragraph_page_mapping, dict)
-                else None
-            ),
+            # Rendered-preview evidence is navigation-only: never rule input.
+            page_mapping=None,
         )
 
         # ---- Authoritative scoring with per-category breakdown ----

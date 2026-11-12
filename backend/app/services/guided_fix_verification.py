@@ -63,7 +63,11 @@ def verify_reaudit(audit, source_bytes: bytes, fixed_bytes: bytes, selected):
         snapshot = snapshot_from_dict(audit.profile_snapshot)
         config = EffectiveProfileConfig(snapshot)
         source_mapping = audit.paragraph_page_mapping if isinstance(audit.paragraph_page_mapping, dict) else None
-        before = run_static_rules_engine(source_bytes, config=config, page_mapping=source_mapping)
+        # Same evidence boundary as POST /api/audit: the persisted audit ran
+        # without rendered-preview rule evidence, so the source baseline must
+        # run without it too. Passing the stored preview mapping here would
+        # make a preview look like a missing/new finding.
+        before = run_static_rules_engine(source_bytes, config=config, page_mapping=None)
         if _evidence(before) != _evidence(audit.violations):
             raise GuidedFixFailed('persisted audit differs from current deterministic baseline')
         before_score = calculate_weighted_score_detailed(before)
@@ -103,7 +107,9 @@ def verify_reaudit(audit, source_bytes: bytes, fixed_bytes: bytes, selected):
                     )
                     if evidence.state in (PAGE_START_UNAVAILABLE, PAGE_START_UNCERTAIN):
                         raise GuidedFixFailed('reference page evidence unresolved')
-        after = run_static_rules_engine(fixed_bytes, config=config, page_mapping=fixed_mapping)
+        # Identical boundary for the re-audit: preview page evidence is
+        # navigation-only, so it can neither add nor remove a rule finding.
+        after = run_static_rules_engine(fixed_bytes, config=config, page_mapping=None)
         before_ev, after_ev = _evidence(before), _evidence(after)
         selected_positions = set()
         for f in selected:

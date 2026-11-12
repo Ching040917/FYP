@@ -427,11 +427,20 @@ def test_hanging_indent_current_required_and_occurrence_count(client, owner_audi
 
 
 def test_new_page_current_and_required_values(client, owner_audit):
-    """REFERENCE_SECTION_NEW_PAGE is omitted because upload-time page mapping is absent."""
+    """REFERENCE_SECTION_NEW_PAGE stays silent even when preview mapping exists.
+
+    Rendered-preview page mapping is navigation evidence only. This fixture
+    converts and maps (navigation data is present), yet the profile-enabled
+    new-page rule must still emit nothing — otherwise restoring the preview
+    would silently broaden the published rule inventory.
+    """
     get = client.get(f"/api/audit/{owner_audit}").json()
+    mapping = get.get("paragraph_page_mapping")
+    # Navigation evidence exists: the fixture rendered a 2-page preview.
+    assert isinstance(mapping, dict) and mapping
+    # ...and it is not rule evidence: the enabled rule stays silent.
     new_page = [v for v in get["violations"] if v["rule_code"] == "REFERENCE_SECTION_NEW_PAGE"]
-    assert len(new_page) == 0, "Page-dependent rule must not be emitted without physical page mapping"
-    assert get.get("paragraph_page_mapping") is None
+    assert len(new_page) == 0, "Page-dependent rule must not be emitted from preview evidence"
 
 def test_heading_bold_current_and_required_values(client, owner_audit):
     get = client.get(f"/api/audit/{owner_audit}").json()["violations"]

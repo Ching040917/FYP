@@ -18,7 +18,7 @@ In the left intake panel, drag a `.docx` file into the upload area or click to b
 
 No document? Use **Try with the sample thesis** to see ACA work on a bundled example.
 
-Documents are processed locally on your machine. Your original DOCX file is read once for the audit and is not kept as a source file — to audit it again later, upload it again.
+Documents are processed locally on your machine. Your original DOCX is not kept as a source file — to audit it again later, upload it again. Optional LibreOffice page rendering uses a short-lived, current-user-only temporary copy and isolated profile; the copy must be cleaned up before a preview is accepted. See [Privacy](PRIVACY.md) for abnormal-shutdown and deletion limits.
 
 ## 4. Select a Formatting Profile
 
@@ -275,10 +275,11 @@ Delete an audit from History or the Audit Workspace. **Deletion is permanent** �
 
 Optional components extend ACA but are never required — core audits work without them.
 
-**LibreOffice** (historically rendered page data only — fresh rendered previews are disabled in ACA v1.0.0):
+**LibreOffice** (optional local rendered PDF pages and physical-page mapping for new audits):
 
 - When LibreOffice is missing, the System readiness card shows **Download LibreOffice**, which opens the official LibreOffice website (`https://www.libreoffice.org/download/`) in your browser. LibreOffice is third-party software with its own terms and privacy policies.
 - Install it yourself, then click **Check again** — no restart needed.
+- After safe DOCX parsing, ACA renders locally using a current-user-only temporary DOCX copy and isolated profile, deleted before the preview is accepted. Missing or failed conversion leaves extracted-text evidence available and does not fail the audit. Successfully stored PDF previews remain available after refresh and in History. LibreOffice's layout can differ from Word.
 
 **Ollama and its model** (optional **Local AI Citation Guidance**):
 
