@@ -334,7 +334,9 @@ export function ProfileEditor() {
       const main = document.querySelector<HTMLElement>('main')
       if (!main) return
       if (!main.hasAttribute('tabindex')) main.tabIndex = -1
-      main.scrollIntoView({ block: 'start', behavior: 'instant' })
+      if (main.id !== 'dashboard-main' && main.id !== 'history-main') {
+        main.scrollIntoView({ block: 'start', behavior: 'instant' })
+      }
       main.focus({ preventScroll: true })
     })
   }, [])
@@ -368,6 +370,11 @@ export function ProfileEditor() {
   const editingExistingRef = React.useRef(false)
   const savingRef = React.useRef(false)
   const [storeHealth, setStoreHealth] = React.useState<StoreLoadResult | null>(null)
+  const [storageCheckFailed, setStorageCheckFailed] = React.useState(false)
+  const [storageChecking, setStorageChecking] = React.useState(false)
+  const storageRetryFrame = React.useRef<number | null>(null)
+  const storageRetryButton = React.useRef<HTMLButtonElement>(null)
+  const storageStatus = React.useRef<HTMLParagraphElement>(null)
   const [externalConflict, setExternalConflict] = React.useState(false)
   const [saveBusy, setSaveBusy] = React.useState(false)
   const summaryRef = React.useRef<HTMLDivElement>(null)
@@ -447,11 +454,42 @@ export function ProfileEditor() {
     }).catch(() => { if (!cancelled) setLoadStatus({ state: 'error' }) })
     return () => {
       cancelled = true
+      if (storageRetryFrame.current !== null) {
+        cancelAnimationFrame(storageRetryFrame.current)
+        storageRetryFrame.current = null
+      }
       const currentAdapter = adapterRef.current
       if (currentAdapter && 'destroy' in currentAdapter && typeof currentAdapter.destroy === 'function') currentAdapter.destroy()
       adapterRef.current = null
     }
   }, [readStore])
+
+  const retryStorage = () => {
+    if (storageRetryFrame.current !== null || savingRef.current) return
+    setStorageChecking(true)
+    // The capability check is synchronous. Let the browser paint the busy state first.
+    storageRetryFrame.current = requestAnimationFrame(() => {
+      storageRetryFrame.current = requestAnimationFrame(() => {
+        storageRetryFrame.current = null
+        const replacement = createBrowserStoreAdapter()
+        if (replacement) {
+          const old = adapterRef.current
+          if (old && 'destroy' in old && typeof old.destroy === 'function') old.destroy()
+          adapterRef.current = replacement
+          setAdapterVersion((version) => version + 1)
+        }
+        const result = readStore(adapterRef.current!)
+        setStorageCheckFailed(!replacement)
+        setStorageChecking(false)
+        if (replacement?.withExclusiveWrite && result.ok && !result.readonly &&
+            document.activeElement === storageRetryButton.current) {
+          requestAnimationFrame(() => {
+            if (document.activeElement === document.body) storageStatus.current?.focus({ preventScroll: true })
+          })
+        }
+      })
+    })
+  }
 
   React.useEffect(() => {
     if (!dirty || !draft || !recoveryChecked.current || recoveryBlocked || pendingRecovery) return
@@ -688,8 +726,8 @@ export function ProfileEditor() {
   })
 
   const focusErrorTarget = (field: string) => {
-    const id = FIELD_TO_INPUT_ID[field] ?? 'profile-retained-data'
-    const element = document.getElementById(id) ?? document.getElementById('profile-retained-data')
+    const id = FIELD_TO_INPUT_ID[field] ?? 'editor-heading'
+    const element = document.getElementById(id) ?? document.getElementById('editor-heading')
     if (!element) return
     for (let parent = element.parentElement; parent; parent = parent.parentElement) {
       if (parent instanceof HTMLDetailsElement) parent.open = true
@@ -707,7 +745,7 @@ export function ProfileEditor() {
     ).map((error) => [error.field, error.message])))
     requestAnimationFrame(() => {
       for (const error of errors) {
-        const target = document.getElementById(FIELD_TO_INPUT_ID[error.field] ?? 'profile-retained-data') ?? document.getElementById('profile-retained-data')
+        const target = document.getElementById(FIELD_TO_INPUT_ID[error.field] ?? 'editor-heading')
         for (let parent = target?.parentElement; parent; parent = parent.parentElement) {
           if (parent instanceof HTMLDetailsElement) parent.open = true
         }
@@ -719,7 +757,7 @@ export function ProfileEditor() {
   const finalPayload = draft ? buildSavePayload(draft, uiState) : null
 
   const saveProfile = async (): Promise<boolean> => {
-    if (!draft || !envelope || !finalPayload || savingRef.current || !dirty) return false
+    if (!draft || !envelope || !finalPayload || savingRef.current || storageRetryFrame.current !== null || !dirty) return false
     const expectedRevision = baseRevisionRef.current
     const candidate = structuredClone(finalPayload)
     const candidateDraft = { ...draft, payload: candidate }
@@ -761,13 +799,15 @@ export function ProfileEditor() {
       if (!write.ok) {
         readStore(adapterRef.current!)
         if (write.reason === 'stale-revision') setExternalConflict(true)
+        else if (write.reason === 'write-failed' || write.reason === 'unavailable') setStorageCheckFailed(true)
         setOpStatusSafe({ kind: 'error', message: write.reason === 'stale-revision'
           ? 'Validated, but not saved: another tab changed the saved profiles. Your complete draft is retained.'
-          : `Validated, but not saved to this browser (${write.reason}). Your draft is retained; recheck storage and retry.` })
+          : 'Validated, but not saved to this browser. Your draft is retained. Check the saving message above and try again.' })
         return false
       }
       setEnvelope(write.envelope)
       setStoreHealth({ ok: true, envelope: write.envelope, recovered: false, readonly: false, firstRun: false })
+      setStorageCheckFailed(false)
       baseRevisionRef.current = write.envelope.revision
       replacementConsentRef.current = false
       editingExistingRef.current = true
@@ -873,6 +913,7 @@ export function ProfileEditor() {
       }
       setEnvelope(result.envelope)
       setStoreHealth({ ok: true, envelope: result.envelope, recovered: false, readonly: false, firstRun: false })
+      setStorageCheckFailed(false)
       if (draft && !editingExistingRef.current) baseRevisionRef.current = result.envelope.revision
       else if (draft) setExternalConflict(true)
       setPendingReset(false)
@@ -985,6 +1026,9 @@ export function ProfileEditor() {
 
   const hasCustomProfiles = (envelope?.profiles.length ?? 0) > 0
   const lastSavedProfile = envelope?.profiles.find((profile) => profile.id === editingId)
+  const storageReady = Boolean(storeHealth?.ok && !storeHealth.readonly &&
+    adapterRef.current?.persistent && adapterRef.current.withExclusiveWrite && !storageCheckFailed)
+  const reviewedProfile = reviewedLatest?.profiles.find((profile) => profile.id === editingId)
   const selectedBuiltin = builtins.find((b) => b.profileId === editingId)
   const citationModel = citationUi ?? DEFAULT_CITATION_MATCHING
   const referenceModel = referencesUi ?? EMPTY_REFERENCES_UI
@@ -1013,9 +1057,7 @@ export function ProfileEditor() {
               Custom Profile Editor
             </h1>
             <p className="mt-2 max-w-2xl text-sm leading-[21px] text-muted-foreground">
-              View the built-in document requirements and create your own saved custom
-              profiles. Custom profiles are stored only on this device and are saved
-              only after backend validation.
+              View the built-in document requirements and create your own custom profiles.
             </p>
           </div>
           <Button
@@ -1046,42 +1088,39 @@ export function ProfileEditor() {
           </div>
         )}
 
-        {storeHealth && (
-          <div role="status" className="mt-4 space-y-2 rounded-md border border-border bg-input/20 p-3 text-sm">
-            {!adapterRef.current?.persistent
-              ? <p>Browser storage is unavailable. This is an in-session draft only, not saved on this device or available for upload.</p>
-              : !storeHealth.ok
-                ? <p>{storeHealth.reason === 'both-corrupted'
-                  ? 'The saved profile store has no usable copy. Corrupt data is retained; ordinary Save cannot overwrite it.'
-                  : storeHealth.reason === 'unsupported-version'
-                    ? 'This profile store uses an unsupported newer version and is read-only. Its bytes are retained; reset and persistent writes are unavailable.'
-                    : 'Saved profile storage cannot be read. Your draft remains in this tab; nothing is saved.'}</p>
-                : storeHealth.readonly
-                  ? <p>This profile store was written by a newer version. It is read-only; existing bytes will not be downgraded.</p>
-                  : storeHealth.recovered
-                    ? <p>Recovered saved profiles from the supported recovery copy. Review them before making further changes.</p>
-                    : <p>Profiles are saved only in this browser, after validation and a successful persistent write. No server storage or sync.</p>}
-            {storeHealth.ok && Boolean(storeHealth.damagedCopies?.length) && (
-              <p>A damaged {storeHealth.damagedCopies!.join(' and ')} browser copy was detected. The usable profiles are shown; damaged bytes have been retained rather than automatically reset.</p>
-            )}
-            {adapterRef.current?.persistent && !adapterRef.current.withExclusiveWrite && (
-              <p>Conflict-safe writes are unavailable in this browser. You may read and draft, but cannot persist changes.</p>
-            )}
-            <Button type="button" variant="outline" onClick={() => {
-              const replacement = createBrowserStoreAdapter()
-              if (replacement) {
-                const old = adapterRef.current
-                if (old && 'destroy' in old && typeof old.destroy === 'function') old.destroy()
-                adapterRef.current = replacement
-              }
-              readStore(adapterRef.current!)
-              setAdapterVersion((version) => version + 1)
-            }}>Recheck browser storage</Button>
-            {!storeHealth.ok && storeHealth.reason === 'both-corrupted' && adapterRef.current?.persistent && (
-              <Button type="button" variant="outline" onClick={() => { setOpStatusSafe({ kind: 'idle' }); setPendingReset(true) }} disabled={saveBusy}>Reset corrupt profile store</Button>
-            )}
-          </div>
-        )}
+        <div className="mt-4 space-y-2 rounded-md border border-border bg-input/20 p-3 text-sm">
+          <p ref={storageStatus} role="status" aria-atomic="true" tabIndex={-1}
+            className={cn('rounded-sm focus:outline-none focus:ring-2 focus:ring-ring', storeHealth && !storageReady && !storageChecking && 'text-destructive')}>
+            {!storeHealth || storageChecking
+              ? 'Checking whether custom profiles can be saved…'
+              : storageReady
+                ? 'Custom profiles are saved on this device after validation.'
+                : 'Custom profiles cannot be saved in this browser. Check browser storage permissions and try again.'}
+          </p>
+          {storeHealth && !storeHealth.ok && storeHealth.reason === 'both-corrupted' && (
+            <p>The saved profile store has no usable copy. Your existing data is kept unless you choose to reset it.</p>
+          )}
+          {storeHealth && ((!storeHealth.ok && storeHealth.reason === 'unsupported-version') ||
+            (storeHealth.ok && storeHealth.readonly)) && (
+            <p>The saved profile store uses an unsupported newer version and is read-only. Use a newer version of ACA to make changes.</p>
+          )}
+          {storeHealth?.ok && storeHealth.recovered && (
+            <p>Saved profiles were recovered from a backup. Review them before making changes.</p>
+          )}
+          {storeHealth?.ok && Boolean(storeHealth.damagedCopies?.length) && (
+            <p>A saved copy was damaged. The usable profiles are shown; the damaged copy was not reset.</p>
+          )}
+          {storeHealth && (!storageReady || storageChecking) && (
+            <Button ref={storageRetryButton} type="button" variant="outline"
+              aria-disabled={storageChecking || saveBusy} aria-busy={storageChecking}
+              className="min-h-[44px] aria-disabled:opacity-60" onClick={retryStorage}>
+              {storageChecking ? 'Checking…' : 'Try again'}
+            </Button>
+          )}
+          {storeHealth && !storeHealth.ok && storeHealth.reason === 'both-corrupted' && adapterRef.current?.persistent && (
+            <Button type="button" variant="outline" onClick={() => { setOpStatusSafe({ kind: 'idle' }); setPendingReset(true) }} disabled={saveBusy || storageChecking}>Reset corrupt profile store</Button>
+          )}
+        </div>
 
         {externalConflict && (
           <section aria-label="Saved profile conflict" className="mt-4 space-y-3 rounded-md border border-warning bg-input/20 p-3 text-sm">
@@ -1111,9 +1150,23 @@ export function ProfileEditor() {
             </div>
             {reviewedLatest && (
               <div className="space-y-2">
-                <p>Reviewed saved revision: {reviewedLatest.revision}. Compare both complete configurations before replacing.</p>
-                <details><summary>Latest saved profile</summary><pre className="max-h-64 overflow-auto whitespace-pre-wrap break-all text-xs">{JSON.stringify(reviewedLatest.profiles.find((profile) => profile.id === editingId) ?? 'Profile removed in another tab', null, 2)}</pre></details>
-                <details><summary>Your unsaved candidate</summary><pre className="max-h-64 overflow-auto whitespace-pre-wrap break-all text-xs">{JSON.stringify(finalPayload, null, 2)}</pre></details>
+                <p>Review the saved profile and your draft below. If you continue and save, your entire draft replaces the saved version, including any settings not shown here.</p>
+                {reviewedProfile ? (
+                  <details>
+                    <summary>Latest saved profile</summary>
+                    <p className="font-medium">{reviewedProfile.name}</p>
+                    {reviewedProfile.description && <p>{reviewedProfile.description}</p>}
+                    <ul className="list-disc pl-5">{summarizeProfile(reviewedProfile.payload).lines.map((line) => <li key={line}>{line}</li>)}</ul>
+                  </details>
+                ) : <p>The saved profile is no longer available.</p>}
+                {draft && finalPayload && (
+                  <details>
+                    <summary>Your unsaved draft</summary>
+                    <p className="font-medium">{draft.name || 'Unnamed profile'}</p>
+                    {draft.description && <p>{draft.description}</p>}
+                    <ul className="list-disc pl-5">{summarizeProfile(finalPayload).lines.map((line) => <li key={line}>{line}</li>)}</ul>
+                  </details>
+                )}
                 {(!editingExistingRef.current || reviewedLatest.profiles.some((profile) => profile.id === editingId)) && (
                   <Button type="button" variant="outline" onClick={acceptReviewedRevision}>Use draft against reviewed revision</Button>
                 )}
@@ -1128,7 +1181,7 @@ export function ProfileEditor() {
             <ul className="mt-2 list-disc space-y-1 pl-5 text-sm">
               {errorEntries.map(({ field, message }) => (
                 <li key={field} id={`validation-${field.replace(/\./g, '-')}`}>
-                  <a href={`#${FIELD_TO_INPUT_ID[field] ?? 'profile-retained-data'}`} className="text-destructive underline" onClick={(event) => { event.preventDefault(); focusErrorTarget(field) }}>{message}</a>
+                  <a href={`#${FIELD_TO_INPUT_ID[field] ?? 'editor-heading'}`} className="text-destructive underline" onClick={(event) => { event.preventDefault(); focusErrorTarget(field) }}>{message}</a>
                 </li>
               ))}
             </ul>
@@ -1617,19 +1670,27 @@ export function ProfileEditor() {
                       {(() => {
                         const raw = draft.payload.role_policy
                         if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
-                          return <p className="mt-2 text-sm">Recorded policy: {raw === undefined ? 'Not supplied' : JSON.stringify(raw)}</p>
+                          return <p className="mt-2 text-sm">Recorded policy: {raw === undefined ? 'Not supplied' : 'Not recognized'}</p>
                         }
                         const policy = raw as Record<string, unknown>
                         const roles = policy.exempt_roles
+                        const eligibility = policy.table_eligibility
+                        const eligibilityLabel = eligibility === 'administrative' ? 'Administrative'
+                          : eligibility === 'scholarly' ? 'Scholarly'
+                          : eligibility === 'both' ? 'Administrative and scholarly'
+                          : eligibility === undefined ? 'Not supplied' : 'Not recognized'
                         return (
                           <div className="mt-2 space-y-2 text-sm">
-                            <p>Recorded table eligibility (not an enforcement control): {policy.table_eligibility === undefined ? 'Not supplied' : JSON.stringify(policy.table_eligibility)}</p>
+                            <p>Recorded table eligibility (not an enforcement control): {eligibilityLabel}</p>
                             {roles === undefined ? <p>Recorded exemptions: Not supplied</p>
                               : Array.isArray(roles) ? roles.length === 0 ? <p>Recorded exemptions: Empty list</p> : (
                                 <ul aria-label="Recorded formatting exemptions" className="list-disc space-y-1 pl-5">
-                                  {roles.map((role, index) => <li key={index}>{typeof role === 'string' ? recordedRoleLabel(role) : `Unrecognized role value: ${JSON.stringify(role)}`}</li>)}
+                                  {roles.map((role, index) => {
+                                    const label = typeof role === 'string' ? recordedRoleLabel(role) : ''
+                                    return <li key={index}>{!label || label.startsWith('Unrecognized role:') ? 'Unrecognized role' : label}</li>
+                                  })}
                                 </ul>
-                              ) : <p>Unrecognized exemption collection: {JSON.stringify(roles)}</p>}
+                              ) : <p>Recorded exemptions: Not recognized</p>}
                           </div>
                         )
                       })()}
@@ -1733,7 +1794,9 @@ export function ProfileEditor() {
                             if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null
                             const font = raw as Record<string, unknown>
                             if ((font.font_family == null) === (font.font_size_pt == null)) return null
-                            return <p className="mt-2 text-xs leading-relaxed text-muted-foreground">Recorded independent body font requirement: family {JSON.stringify(font.font_family ?? null)}, size {JSON.stringify(font.font_size_pt ?? null)} pt. This form is retained read-only even while the paired-font control appears Off; validation still applies. Choose paired font settings explicitly to replace it.</p>
+                            const value = typeof font.font_family === 'string' ? font.font_family
+                              : typeof font.font_size_pt === 'number' ? `${font.font_size_pt} pt` : 'Not recognized'
+                            return <p className="mt-2 text-xs leading-relaxed text-muted-foreground">Recorded independent body font requirement: {value}. This requirement is retained even while the paired-font control appears Off; validation still applies. Choose paired font settings explicitly to replace it.</p>
                           })()}
                           {bodyUi?.fontEnabled && (
                             <div className="mt-3 space-y-2" id="body-font-pairs" role="group" aria-label="Accepted font-and-size pairs">
@@ -1961,7 +2024,6 @@ export function ProfileEditor() {
                           </p>
                           <p className="mt-0.5 text-xs leading-[16px] text-muted-foreground">
                             First-line indentation checking is not available in this version.
-                            {' '}Stored value (retained, Not checked): {JSON.stringify((draft.payload.body as Record<string, unknown> | undefined)?.first_line_indent_in ?? null)} in.
                           </p>
                         </div>
                       </div>
@@ -2027,7 +2089,9 @@ export function ProfileEditor() {
                             if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null
                             const font = raw as Record<string, unknown>
                             if ((font.font_family == null) === (font.font_size_pt == null)) return null
-                            return <p className="mt-2 text-xs leading-relaxed text-muted-foreground">Recorded independent heading font requirement: family {JSON.stringify(font.font_family ?? null)}, size {JSON.stringify(font.font_size_pt ?? null)} pt. It is retained read-only, not disabled by the pair editor’s projection; validation still applies. Choose explicit paired font settings to replace it.</p>
+                            const value = typeof font.font_family === 'string' ? font.font_family
+                              : typeof font.font_size_pt === 'number' ? `${font.font_size_pt} pt` : 'Not recognized'
+                            return <p className="mt-2 text-xs leading-relaxed text-muted-foreground">Recorded independent heading font requirement: {value}. This requirement is retained even while the paired-font control appears Off; validation still applies. Choose paired font settings explicitly to replace it.</p>
                           })()}
                           {headingUi?.fontBehavior === 'explicit' && (
                             <div className="mt-3 space-y-2">
@@ -3082,12 +3146,6 @@ export function ProfileEditor() {
                         </div>
                       )
                     })()}
-
-                    <details className="rounded-md border border-border p-3">
-                      <summary id="profile-retained-data" tabIndex={-1} className="scroll-mt-24 cursor-pointer text-sm font-medium focus:outline-none focus:ring-2 focus:ring-ring">Retained original profile data (read-only)</summary>
-                      <p className="mt-2 text-xs text-muted-foreground">Unedited values, unsupported settings and nested metadata are retained. A displayed default is not a correction. Unknown data must pass validation before replacing any confirmed save.</p>
-                      <pre className="mt-2 max-h-72 overflow-auto whitespace-pre-wrap break-all text-xs">{JSON.stringify(draft.payload, null, 2)}</pre>
-                    </details>
                     </fieldset>
 
                     {/* Action bar — in flow (never floats over content) */}
@@ -3132,7 +3190,7 @@ export function ProfileEditor() {
                             <Button
                               type="button"
                               onClick={() => void saveProfile()}
-                              aria-disabled={saveBusy || !dirty}
+                              aria-disabled={saveBusy || storageChecking || !dirty}
                               className="bg-primary text-primary-foreground hover:bg-primary/90 min-h-[44px]"
                             >
                               {opStatus.kind === 'validating' ? (

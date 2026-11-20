@@ -1,10 +1,21 @@
-import { createBrowserRouter } from 'react-router-dom'
+import { useLayoutEffect, type ReactNode } from 'react'
+import { createBrowserRouter, useLocation, useNavigationType } from 'react-router-dom'
 import { Landing } from '../pages/Landing'
 import { Dashboard } from '../pages/Dashboard'
 import { AuditPage } from '../pages/AuditPage'
 import { HistoryPage } from '../pages/HistoryPage'
 import { ProfileEditor } from '../pages/ProfileEditor'
 import { AuditRouteErrorBoundary } from '../components/AuditRouteErrorBoundary'
+
+/** Reset forward navigation to the two index pages without taking over browser Back. */
+function IndexPage({ children }: { children: ReactNode }) {
+  const { key, hash } = useLocation()
+  const navigationType = useNavigationType()
+  useLayoutEffect(() => {
+    if (navigationType !== 'POP' && !hash) window.scrollTo({ top: 0, left: 0, behavior: 'instant' })
+  }, [key, hash, navigationType])
+  return children
+}
 
 /**
  * Flat route map — no shared Layout wrapper.
@@ -21,8 +32,8 @@ import { AuditRouteErrorBoundary } from '../components/AuditRouteErrorBoundary'
  */
 export const router = createBrowserRouter([
   { path: '/', element: <Landing /> },
-  { path: '/dashboard', element: <Dashboard /> },
-  { path: '/history', element: <HistoryPage /> },
+  { path: '/dashboard', element: <IndexPage><Dashboard /></IndexPage> },
+  { path: '/history', element: <IndexPage><HistoryPage /></IndexPage> },
   { path: '/profiles/custom', element: <ProfileEditor /> },
   {
     path: '/audit/:auditId',

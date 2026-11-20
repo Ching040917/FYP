@@ -46,6 +46,8 @@ Names must be nonblank and unique after trimming and case-insensitive
 comparison. Descriptions are optional, up to 500 characters. Validation shows
 linked errors above the editor and beside the affected fields. Disabled
 requirements retain their configured values but are not enforced.
+Saved settings that the editor cannot change are kept internally and still
+subject to validation.
 
 Leaving a dirty draft, switching profiles, creating another profile, or deleting
 the edited profile offers **Save and continue**, **Discard changes**, or
@@ -65,10 +67,10 @@ rebased or overwritten. Review the latest saved version, then explicitly reload
 it or authorize your draft against the reviewed revision. A profile deleted
 elsewhere cannot be resurrected by saving an old draft.
 
-Storage failures, recovery failures, damaged data, and newer unsupported store
-versions are disclosed. Memory-only fallback never claims a persistent save.
-Persistent writes require browser storage and Web Locks; when either is
-unavailable, retain the draft and resolve the reported browser limitation.
+The editor checks on opening whether custom profiles can be saved on this device.
+If saving is unavailable, check the browser's storage permissions and use
+**Try again**. A draft is not a saved profile. Recovery failures, damaged data,
+and newer unsupported store versions are disclosed separately.
 Damaged stored bytes are not silently overwritten on load. Unrecoverable data
 requires an explicit reset; newer-version data is not reset or overwritten by
 this editor.

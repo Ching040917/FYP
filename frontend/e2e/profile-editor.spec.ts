@@ -6,6 +6,9 @@ import { test, expect, type Page } from '@playwright/test'
 import { evidenceShot, annotate } from './helpers'
 import { AxeBuilder } from '@axe-core/playwright'
 
+const storageReady = 'Custom profiles are saved on this device after validation.'
+const storageUnavailable = 'Custom profiles cannot be saved in this browser. Check browser storage permissions and try again.'
+
 test.describe('custom profile editor @a11y', () => {
   test('keyboard submission focuses a linked error summary and its links expose the invalid control', async ({ page }, testInfo) => {
     annotate(testInfo, {
@@ -309,26 +312,75 @@ test.describe('complete grouped editor lifecycle', () => {
     await expect(page.getByText(/Validated, but not saved to this browser/)).toBeVisible()
     await expect(page.locator('#profile-name')).toHaveValue('Must not claim saved')
     expect(await page.evaluate(() => localStorage.getItem('custom-profiles:active'))).toBe(before)
+    await expect(page.getByRole('status').filter({ hasText: storageUnavailable })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Try again', exact: true })).toBeEnabled()
     await expect(page.getByText('Custom profile saved', { exact: true })).toHaveCount(0)
   })
 
-  test('unavailable local storage is explicit and never exposes a confirmed saved option', async ({ page }) => {
+  test('storage retry announces busy and failure, runs one real check, and restores saving when available', async ({ page }) => {
     await page.addInitScript(() => {
+      const probe = { blocked: true, calls: 0, busy: [] as string[][] }
+      Reflect.set(window, 'profileStorageTest', probe)
       const original = Storage.prototype.setItem
-      Storage.prototype.setItem = function(key, value) {
-        if (this === localStorage) throw new DOMException('Synthetic unavailable storage', 'SecurityError')
+      Storage.prototype.setItem = function (key, value) {
+        if (key === 'custom-profiles:probe') {
+          probe.calls++
+          if (probe.blocked) throw new DOMException('Storage denied by test', 'SecurityError')
+        }
         return original.call(this, key, value)
       }
     })
     await page.goto('/profiles/custom')
-    await expect(page.getByText(/in-session draft only/)).toBeVisible()
-    await page.getByRole('button', { name: 'Copy SUC Academic Report', exact: true }).click()
-    await page.getByRole('button', { name: 'Save custom profile', exact: true }).click()
-    await expect(page.getByText(/Validated, but not saved to this browser/)).toBeVisible()
-    await expect(page.getByText('Custom profile saved', { exact: true })).toHaveCount(0)
-    expect(await page.evaluate(() => localStorage.getItem('custom-profiles:active'))).toBeNull()
-  })
+    const status = page.getByRole('status').filter({ hasText: /custom profiles/i })
+    const retry = page.getByRole('button', { name: 'Try again', exact: true })
+    await expect(status).toHaveText(storageUnavailable)
+    await expect(retry).toBeEnabled()
+    await expect(page.getByRole('button', { name: 'Recheck browser storage' })).toHaveCount(0)
+    const axe = await new AxeBuilder({ page }).analyze()
+    expect(axe.violations.filter(({ impact }) => impact === 'serious' || impact === 'critical')).toEqual([])
 
+    await page.getByRole('button', { name: 'Copy SUC Academic Report', exact: true }).click()
+    const name = page.locator('#profile-name')
+    await name.fill('Retry preserves draft')
+    const save = page.getByRole('button', { name: 'Save custom profile', exact: true })
+    await save.click()
+    await expect(page.getByText(/Validated, but not saved to this browser/)).toBeVisible()
+    expect(await page.evaluate(() => localStorage.getItem('custom-profiles:active'))).toBeNull()
+
+    const initialCalls = await page.evaluate(() => Reflect.get(window, 'profileStorageTest').calls)
+    expect(initialCalls).toBeGreaterThan(0)
+    await retry.evaluate((button) => {
+      const status = button.parentElement!.querySelector('[role="status"]')!
+      const observer = new MutationObserver(() => {
+        if (button.getAttribute('aria-busy') !== 'true') return
+        Reflect.get(window, 'profileStorageTest').busy.push([
+          button.textContent, button.getAttribute('aria-disabled'), status.textContent,
+        ])
+        button.click() // Deliberate second activation during the same retry.
+      })
+      observer.observe(button, { attributes: true, attributeFilter: ['aria-busy'] })
+    })
+    await retry.focus()
+    await expect(retry).toBeFocused()
+    await page.keyboard.press('Enter')
+    await expect.poll(() => page.evaluate(() => Reflect.get(window, 'profileStorageTest').calls)).toBe(initialCalls + 1)
+    await expect(status).toHaveText(storageUnavailable)
+    await expect(retry).toBeEnabled()
+    await expect(retry).toBeFocused()
+    expect(await page.evaluate(() => Reflect.get(window, 'profileStorageTest').busy)).toEqual([
+      ['Checking…', 'true', 'Checking whether custom profiles can be saved…'],
+    ])
+
+    await page.evaluate(() => { Reflect.get(window, 'profileStorageTest').blocked = false })
+    await page.keyboard.press('Space')
+    await expect(status).toHaveText(storageReady)
+    await expect(status).toBeFocused()
+    await expect(retry).toHaveCount(0)
+    expect(await page.evaluate(() => Reflect.get(window, 'profileStorageTest').calls)).toBe(initialCalls + 2)
+    await expect(name).toHaveValue('Retry preserves draft')
+    await save.click()
+    await expect(page.getByText('Custom profile saved', { exact: true })).toBeVisible()
+  })
   test('Reference regular-heading requirement is expressible and disabled values survive Save', async ({ page }) => {
     await page.goto('/profiles/custom')
     await page.getByRole('button', { name: 'Copy SUC Academic Report', exact: true }).click()
@@ -416,6 +468,16 @@ test('legacy payload-only and malformed draft recovery remain quarantined until 
 
 test('successful Save preserves copy requirements and synchronizes wrapper identity and metadata', async ({ page }) => {
   await page.goto('/profiles/custom')
+  const retainedMetadata = { provenance: { labels: ['not-a-visible-profile-field'] }, retained: true }
+  await page.route('**/api/formatting-profiles/apa7-student-paper/payload', async (route) => {
+    const response = await route.fetch()
+    const body = await response.json()
+    body.profile.heading.level_1 = { ...body.profile.heading.level_1, retained_metadata: retainedMetadata }
+    await route.fulfill({ response, json: body })
+  })
+  await expect(page.getByRole('status').filter({ hasText: storageReady })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Recheck browser storage' })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Try again', exact: true })).toHaveCount(0)
   const [response] = await Promise.all([
     page.waitForResponse(incoming => /\/formatting-profiles\/[^/]+\/payload$/.test(new URL(incoming.url()).pathname) && incoming.ok()),
     page.getByRole('button', { name: 'Copy APA 7 Student Paper', exact: true }).click(),
@@ -433,6 +495,18 @@ test('successful Save preserves copy requirements and synchronizes wrapper ident
   for (const key of ['body', 'heading', 'references', 'role_policy', 'captions', 'lists', 'margins', 'profile_version']) {
     expect(saved.payload[key]).toEqual(copiedSource[key])
   }
+  expect(saved.payload.heading.level_1.retained_metadata).toEqual(retainedMetadata)
+  await page.reload()
+  await page.getByRole('button', { name: 'Edit', exact: true }).click()
+  const editor = page.getByRole('main')
+  await expect(editor.getByText('Retained original profile data (read-only)')).toHaveCount(0)
+  await expect(editor.locator('pre')).toHaveCount(0)
+  expect(await editor.textContent()).not.toContain(saved.id)
+  expect(await editor.textContent()).not.toContain('not-a-visible-profile-field')
+  await page.locator('#profile-name').fill('Edited lossless copy')
+  await page.getByRole('button', { name: 'Save custom profile', exact: true }).click()
+  await expect(page.getByText('Custom profile saved', { exact: true })).toBeVisible()
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem('custom-profiles:active')!).profiles[0].payload.heading.level_1.retained_metadata)).toEqual(retainedMetadata)
 })
 
 test('selected deletion persists the namespaced fallback and moves focus to a surviving target', async ({ page }) => {

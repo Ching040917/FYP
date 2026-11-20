@@ -1,8 +1,8 @@
 /**
  * Landing page — concise editorial entry point (Build 6).
  *
- * Presents the Academic Compliance Auditor as a local-first, read-only
- * academic document inspection tool. No live dashboard embeds, no
+ * Presents the Academic Compliance Auditor as a local-first tool for academic
+ * document review that preserves the original. No live dashboard embeds, no
  * marketing statistics, no decorative animation. The static product
  * preview is example data and never touches the backend.
  *
@@ -12,7 +12,6 @@
 
 import { Link } from 'react-router-dom'
 import {
-  ArrowRight,
   ClipboardCheck,
   FileText,
   History,
@@ -176,16 +175,16 @@ export function Landing() {
             <li>
               <span className="font-medium">Review findings and correction guidance.</span>{' '}
               <span className="text-muted-foreground">
-                Each finding shows expected and actual values with read-only guidance. The
+                Each finding shows expected and actual values with correction guidance. The
                 original document is never modified.
               </span>
             </li>
           </ol>
         </section>
 
-        {/* ────────────── Local-first and read-only ────────────── */}
+        {/* ────────────── Local-first and original-preserving ────────────── */}
         <section id="privacy" className="border-b border-border py-10 md:py-12">
-          <h2 className="text-section-title text-foreground">Local-first and read-only</h2>
+          <h2 className="text-section-title text-foreground">Local-first and original-preserving</h2>
           <dl className="mt-5 grid grid-cols-1 gap-x-8 gap-y-4 sm:grid-cols-2">
             <PrivacyRow
               icon={ShieldCheck}
@@ -199,8 +198,8 @@ export function Landing() {
             />
             <PrivacyRow
               icon={FileText}
-              label="Read-only document review"
-              detail="Your .docx is loaded into memory and never overwritten or rewritten."
+              label="Original document preserved"
+              detail="Your original DOCX is preserved. Eligible fixes require review and are written to a separate corrected copy."
             />
             <PrivacyRow
               icon={History}
@@ -211,39 +210,16 @@ export function Landing() {
         </section>
 
         {/* ────────────── Scope and limitations ────────────── */}
-        <section id="scope" className="border-b border-border py-10 md:py-12">
+        <section id="scope" className="py-10 md:py-12">
           <h2 className="text-section-title text-foreground">Scope and limitations</h2>
           <ul className="mt-5 list-disc space-y-2 pl-5 text-sm leading-[21px] text-muted-foreground">
             <li>Supported format is .docx only — no PDF or LaTeX.</li>
             <li>No plagiarism detection.</li>
             <li>No full grammar correction.</li>
             <li>No complete reference-list verification.</li>
-            <li>No automatic document rewriting.</li>
+            <li>No uncontrolled or in-place document rewriting. Eligible fixes require review and create a separate corrected copy.</li>
             <li>AI-assisted suggestions may require human review.</li>
           </ul>
-        </section>
-
-        {/* ────────────── Final action ────────────── */}
-        <section className="py-10 md:py-12">
-          <h2 className="text-section-title text-foreground">Start an audit</h2>
-          <p className="mt-2 max-w-2xl text-[13px] leading-[19px] text-muted-foreground">
-            Open the Dashboard to upload a document and review the compliance summary.
-          </p>
-          <div className="mt-5 flex flex-wrap gap-3">
-            <Link
-              to="/dashboard"
-              className="inline-flex h-9 items-center gap-2 rounded-md bg-primary px-4 text-sm font-medium text-white transition-colors hover:bg-primary/90"
-            >
-              Open Dashboard
-              <ArrowRight className="h-4 w-4" aria-hidden="true" />
-            </Link>
-            <Link
-              to="/history"
-              className="inline-flex h-9 items-center gap-2 rounded-md border border-border px-4 text-sm font-medium text-foreground transition-colors hover:bg-accent"
-            >
-              View audit history
-            </Link>
-          </div>
         </section>
       </main>
 

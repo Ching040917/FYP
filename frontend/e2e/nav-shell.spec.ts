@@ -123,3 +123,74 @@ test.describe('navigation + responsive shell @responsive', () => {
     })
   }
 })
+
+test('Landing keeps the principal links and footer without a second audit CTA', async ({ page }) => {
+  await page.goto('/')
+  await expect(page.getByRole('heading', { name: 'Start an audit', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('link', { name: 'Open Dashboard', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('link', { name: 'Start an audit', exact: true })).toHaveCount(1)
+  await expect(page.getByRole('link', { name: 'View audit history', exact: true })).toHaveCount(1)
+  await expect(page.getByText('No uncontrolled or in-place document rewriting. Eligible fixes require review and create a separate corrected copy.', { exact: true })).toBeVisible()
+})
+
+test('Landing explains how eligible fixes preserve the original', async ({ page }) => {
+  await page.goto('/')
+  const privacy = page.locator('#privacy')
+  await expect(privacy.getByRole('heading', { name: 'Local-first and original-preserving', exact: true })).toBeVisible()
+  await expect(privacy.getByText('Original document preserved', { exact: true })).toBeVisible()
+  await expect(privacy.getByText('Your original DOCX is preserved. Eligible fixes require review and are written to a separate corrected copy.', { exact: true })).toBeVisible()
+})
+
+for (const route of ['/dashboard', '/history', '/profiles/custom']) {
+  test(`shared footer on ${route} describes guided corrections without changing the original`, async ({ page }) => {
+    await page.goto(route)
+    const footer = page.getByRole('contentinfo')
+    await expect(footer.getByText(/Detection, location, and guided corrections while preserving the original document\./)).toBeVisible()
+    await expect(footer.getByText('Local-first processing · original document preserved', { exact: true })).toBeVisible()
+    await expect(footer.getByText(/suggestions only|never rewriting|read-only document review/i)).toHaveCount(0)
+  })
+}
+
+test('retained Dashboard and History links start at the top and preserve browser Back', async ({ page }) => {
+  await page.goto('/')
+  const footer = page.getByRole('contentinfo')
+  const scrollY = () => page.evaluate(() => window.scrollY)
+  const destination = [
+    { name: 'Dashboard', path: '/dashboard', main: '#dashboard-main' },
+    { name: 'History', path: '/history', main: '#history-main' },
+  ]
+
+  for (const entry of destination) {
+    const link = footer.getByRole('link', { name: entry.name, exact: true })
+    await link.scrollIntoViewIfNeeded()
+    await expect.poll(scrollY).toBeGreaterThan(400)
+    const previousScroll = await scrollY()
+    if (entry.name === 'Dashboard') {
+      await link.focus()
+      await expect(link).toBeFocused()
+      expect(await link.evaluate(el => getComputedStyle(el).outlineStyle)).not.toBe('none')
+      await page.keyboard.press('Enter')
+    } else {
+      await link.click()
+    }
+    await expect(page).toHaveURL(new RegExp(`${entry.path}$`))
+    await expect(page.locator(entry.main)).toBeVisible()
+    await expect.poll(scrollY).toBe(0)
+    await page.goBack()
+    await expect(page).toHaveURL(/\/$/)
+    await expect.poll(scrollY).toBe(previousScroll)
+  }
+
+  await page.getByRole('link', { name: 'Start an audit', exact: true }).click()
+  await expect(page).toHaveURL(/\/dashboard$/)
+  await expect.poll(scrollY).toBe(0)
+  await footer.getByRole('link', { name: 'History', exact: true }).click()
+  await expect(page).toHaveURL(/\/history$/)
+  await expect.poll(scrollY).toBe(0)
+  await page.goBack()
+  await page.goBack()
+  await expect(page).toHaveURL(/\/$/)
+  await page.getByRole('link', { name: 'View audit history', exact: true }).click()
+  await expect(page).toHaveURL(/\/history$/)
+  await expect.poll(scrollY).toBe(0)
+})

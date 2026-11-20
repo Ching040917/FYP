@@ -28,7 +28,7 @@ export function AppFooter() {
               <span className="font-semibold text-on-surface">Academic Compliance Auditor</span>
             </div>
             <p className="text-sm text-on-surface-variant max-w-md leading-relaxed">
-              A privacy-preserving, local-first auditing platform built for the high-stakes environment of academic work. Detection, location, and suggestions only — never rewriting.
+              A privacy-preserving, local-first auditing platform built for the high-stakes environment of academic work. Detection, location, and guided corrections while preserving the original document.
             </p>
           </div>
           <div>
@@ -52,7 +52,7 @@ export function AppFooter() {
           <p className="font-mono">
             © 2026 Ching Qing Yang. All rights reserved.
           </p>
-          <p className="font-mono">Local-first processing · read-only document review</p>
+          <p className="font-mono">Local-first processing · original document preserved</p>
         </div>
       </div>
     </footer>
