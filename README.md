@@ -23,7 +23,7 @@ The project separates repeatable document checks from optional model-generated e
 
 ## Download Academic Evaluation Build
 
-The academic-evaluation installer will be available from the repository’s Releases page after publication.
+Open the [Academic Evaluation Release](https://github.com/Ching040917/FYP/releases/tag/v1.0.0-academic-evaluation) to download the Windows installer.
 
 **Installer:** `ACA-FYP-UX-Updated-Private-Evaluation-Setup.exe`
 
