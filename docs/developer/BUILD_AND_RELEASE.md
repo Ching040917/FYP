@@ -115,13 +115,13 @@ The build script prints the SHA-256 of the produced installer. To regenerate or 
 Get-FileHash release-output/AcademicComplianceAuditor-Setup-1.0.0.exe -Algorithm SHA256
 ```
 
-**Every rebuild produces a new checksum.** Never hard-code a checksum into documentation; distribute it only alongside the specific installer build it covers (see [Installation](../INSTALLATION.md) for the user-facing verification steps).
+**Every rebuild produces a new checksum.** Publish a checksum only for the exact installer it covers. If the README lists a checksum, it must match the specific published asset, not a local rebuild. See [Installation](../INSTALLATION.md) for verification steps.
 
 ## Release Governance and Residual Disclosures
 
 - `release-output/` is **gitignored**. The Setup EXE is never committed to the repository.
-- Official installer artifacts may be provided through an authorized release channel **for controlled release-candidate validation only**. Public distribution of an unsigned installer is **not** authorized: code signing is required before any public distribution.
-- **Code signing is not applied to release-candidate builds.** An unsigned build is not public-release ready and must not be described as one; a signed build is required before any public distribution. Windows may display an *Unknown publisher* or Microsoft Defender SmartScreen warning on user machines — state this honestly in every release communication.
+- **Owner decision (2026-11-22):** ACA is a non-commercial final-year project. The Owner authorizes the verified unsigned Windows installer as a GitHub prerelease for academic demonstration and evaluation by supervisors, examiners and invited participants. Use the binary's source commit for the tag and publish its verified checksum with the asset.
+- State that the installer is unsigned, that Windows may show an *Unknown Publisher* or Microsoft Defender SmartScreen warning, and that the build is not production-ready. Disclose existing-install update validation and incomplete full clean-machine acceptance. Code signing is not required for this bounded prerelease; it remains recommended for future production, commercial or general-public distribution. This decision does not authorize those uses.
 - **Row 18 remains BLOCKED**: Under Owner decision D-08 Option 1, database schema upgrades are proven via test fixtures (`pre_migration_v0_db.sqlite`), but no historical prior installer binary exists to anchor an executable-level upgrade test. Acceptance matrix Row 18 remains BLOCKED; installer-to-installer upgrade acceptance is not claimed.
 - **Residual limitations**:
   - `package_index_availability: EXTERNAL_RESIDUAL` (installation relies on package index availability; offline rebuild is not claimed).

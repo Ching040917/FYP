@@ -1,6 +1,8 @@
 # Release Checklist — Academic Compliance Auditor
 
-Complete every section before publishing a packaged Windows release. An unsigned build is for controlled release-candidate validation only and must never be published publicly: code signing is required before any public distribution. Each checkbox must be verified against the current source, tests, or a frozen build — never assumed.
+This checklist records the full Windows release-acceptance scope. Verify each claim against the current source, tests or frozen build; do not mark unverified items as passed.
+
+**Academic-evaluation exception (2026-11-22):** The Owner authorizes the verified unsigned Windows installer as a GitHub prerelease for non-commercial academic demonstration and evaluation. This is not production-ready or full clean-machine acceptance; uncompleted checklist items remain open. Publish the exact asset and its SHA-256, and disclose the unsigned/SmartScreen warning and validation limits. See [Release Governance and Residual Disclosures](../developer/BUILD_AND_RELEASE.md#release-governance-and-residual-disclosures) for scope and signing guidance.
 
 ## Repository
 
@@ -75,8 +77,8 @@ Complete every section before publishing a packaged Windows release. An unsigned
 ## Release artifact
 
 - [ ] Version recorded (expected: 1.0.0).
-- [ ] Installer name follows convention (`AcademicComplianceAuditor-Setup-1.0.0.exe`).
-- [ ] SHA-256 checksum computed and published with every official installer (never hard-coded in documentation; the checksum is regenerated for every rebuild).
+- [ ] Installer filename matches the verified artifact. The standard build output is `AcademicComplianceAuditor-Setup-1.0.0.exe`; the approved academic-evaluation asset is `ACA-FYP-UX-Updated-Private-Evaluation-Setup.exe`.
+- [ ] SHA-256 checksum computed and published with the specific verified installer; never reuse the checksum for a rebuild.
 - [ ] Clean Windows VM validation performed (no dev tools installed).
 - [ ] Unsigned-installer disclosure present in README, INSTALLATION and `LICENSE`, and stated factually.
 - [ ] User-data location `%LOCALAPPDATA%\AcademicComplianceAuditor\` documented.
@@ -96,13 +98,13 @@ Complete every section before publishing a packaged Windows release. An unsigned
 - [ ] Install/upgrade preserves `%LOCALAPPDATA%\AcademicComplianceAuditor` user data.
 - [ ] Uninstall preserves user data by default (no optional data deletion offered; documented manual cleanup).
 - [ ] Setup EXE SHA-256 recorded; unsigned status stated honestly.
-- [ ] `release-output/` is gitignored; Setup EXE is not committed or published.
+- [ ] `release-output/` is gitignored; no Setup EXE is committed. Only the exact verified installer is uploaded for the approved academic-evaluation prerelease.
 - [ ] Manual end-user checklist maintained (`docs/evaluation/END_USER_INSTALLATION_TEST.md`).
 
 ## Not implemented (do not claim)
 
-- Code signing in the current build — an unsigned build is for controlled RC validation only, and a signed build is required before any public distribution.
+- Code signing in the current build. The dated exception above applies only to the academic-evaluation prerelease.
 - Automatic updater.
-- A published download URL or GitHub Release (none exists at this baseline).
+- A published download URL or GitHub Release did not exist at the original checklist baseline. See the [README](../../README.md#download-academic-evaluation-build) for current availability.
 - Multi-user or LAN deployment.
 - Mobile execution.

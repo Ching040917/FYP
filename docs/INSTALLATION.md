@@ -12,9 +12,9 @@ This guide is for ordinary Windows users installing the packaged ACA application
 
 ## 2. Get the Installer
 
-Official ACA installers are provided through an authorized release channel for controlled evaluation and release-candidate validation. An unsigned build is not a public release and must not be distributed publicly; a signed build is required before any public distribution. Obtain ACA only through an authorized release channel, and verify its published SHA-256 before running it.
+Obtain the Windows installer only through the authorized channel listed in the [README](../README.md#download-academic-evaluation-build). The Owner has authorized an unsigned GitHub prerelease for non-commercial academic demonstration and evaluation by supervisors, examiners and invited participants. It is not production-ready. Validation covered an existing-install update, not full clean-machine acceptance.
 
-The file is named `AcademicComplianceAuditor-Setup-1.0.0.exe`. Do not run an installer obtained from anywhere else.
+The evaluation asset is named `ACA-FYP-UX-Updated-Private-Evaluation-Setup.exe`. Verify its published SHA-256 before running it.
 
 ## 3. Verify the Published SHA-256 Checksum
 
@@ -24,7 +24,7 @@ Every official installer release is published with its SHA-256 checksum. Verify 
 2. Run (adjust the path to where you saved the installer):
 
    ```powershell
-   Get-FileHash "C:\Users\Public\Downloads\AcademicComplianceAuditor-Setup-1.0.0.exe" -Algorithm SHA256
+   Get-FileHash "$HOME\Downloads\ACA-FYP-UX-Updated-Private-Evaluation-Setup.exe" -Algorithm SHA256
    ```
 
 3. Compare the `SHA256` value shown with the published checksum for that installer. If they match (ignoring upper/lower case), your copy matches the published artifact. If they differ, do not run the installer — obtain a fresh copy through the authorized release channel.
@@ -33,7 +33,7 @@ A matching checksum shows your copy is the build that was published. It is not a
 
 ## 4. Install ACA
 
-1. Double-click `AcademicComplianceAuditor-Setup-1.0.0.exe`.
+1. Double-click `ACA-FYP-UX-Updated-Private-Evaluation-Setup.exe`.
 2. If Windows shows an *Unknown publisher* or SmartScreen warning, see [Troubleshooting](TROUBLESHOOTING.md) — you do not need to disable any Windows security feature.
 3. Follow the wizard. The default settings are correct for most users:
    - ACA installs per-user (no administrator rights), to
@@ -46,7 +46,7 @@ A matching checksum shows your copy is the build that was published. It is not a
 - Open **ACA** from the **Windows Start Menu** (look for *Academic Compliance Auditor*). A desktop shortcut also works if you created one.
 - After a short start-up, your web browser opens automatically at ACA's Dashboard. ACA uses the browser Windows already uses as default — if Edge is your default browser, Edge opens.
 - Starting ACA a second time while it is already running reuses the running instance instead of starting a duplicate.
-- Closing the ACA window stops ACA cleanly. Closing your browser does not stop ACA — close the ACA application window when you are finished.
+- Use the ACA application window to close ACA; closing your browser does not stop it. Graceful in-application shutdown was not independently verified for this evaluation build.
 
 ## 6. Optional Features
 

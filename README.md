@@ -1,281 +1,126 @@
 # Academic Compliance Auditor
 
-Academic Compliance Auditor (ACA) is a Windows application that reviews academic DOCX documents for formatting and APA 7 citation issues. All checks run locally on your machine. Findings are guidance for your own review — ACA does not guarantee institutional acceptance or complete academic compliance.
+Academic Compliance Auditor (ACA) is a local Windows application for auditing academic DOCX documents against a selected profile. Deterministic rules produce findings and a compliance score. The app shows evidence in a document preview, with rendered pages when LibreOffice is available. Bounded Guided Fixes can produce a separate corrected copy, and optional local Ollama guidance can explain eligible citation findings. Neither changes the original document.
 
-## Download
+## Academic Project
 
-Academic Compliance Auditor is a school Final Year Project (FYP) project. Its source repository is publicly viewable, and ACA remains proprietary software with all rights reserved.
+- **Project title:** A Hybrid Architecture for Automated Academic Compliance Auditing
+- **Version:** 1.0.0
+- **Purpose:** Non-commercial final-year project for academic demonstration and evaluation by supervisors, examiners and invited evaluators.
 
-Installer: `AcademicComplianceAuditor-Setup-1.0.0.exe`
+The project separates repeatable document checks from optional model-generated explanations. To see the workflow before using your own document, open the Audit Dashboard, select **Try with the sample thesis**, and run the audit. Open a finding to compare the detected and required values and see the evidence ACA could locate. The score represents the selected profile's enabled scored checks; it is not a grade or an assurance of institutional acceptance.
 
-Official installers are provided through an authorized release channel. Unsigned builds are limited to controlled release-candidate validation and are not public releases; a signed build is required before any public distribution.
+## Key Features
 
-Please note:
+- Audit DOCX formatting and supported APA 7 citation checks with deterministic rules.
+- Review a compliance score and categorised findings.
+- Compare detected **Current** values with **Required** values where available.
+- Inspect rendered page evidence through local LibreOffice.
+- Reopen audits from History and export a PDF report.
+- Review and confirm eligible Guided Fixes to produce a separate corrected DOCX.
+- Preserve the original DOCX throughout the audit and correction workflows.
+- Request optional Local AI citation guidance through Ollama.
 
-- Every official installer release is published with its SHA-256 checksum. Verify the checksum before running the installer, and do not run an installer whose checksum you cannot verify.
-- The installer is unsigned, so Windows may display an *Unknown publisher* or Microsoft Defender SmartScreen warning. This is expected. See [Troubleshooting](docs/TROUBLESHOOTING.md).
-- ACA proprietary terms are in [LICENSE](LICENSE); third-party notices are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+## Download Academic Evaluation Build
 
-## Quick Start
+The academic-evaluation installer will be available from the repository’s Releases page after publication.
 
-1. Obtain the installer only from an authorized release channel, and verify its published SHA-256 before running it.
-2. Double-click the Setup EXE.
-3. Complete the installation — per-user, no administrator rights needed.
-4. Open ACA from the Windows Start Menu.
-5. Upload a DOCX document or use the bundled synthetic sample document. The sample is loaded from the app on your own computer and works without Internet access.
-   Encrypted or password-protected documents cannot be audited; remove password
-   protection in Word and try again.
-   Invalid or damaged DOCX files are rejected without creating an Audit or History
-   entry. Open the file in Word, save it again as a `.docx` file, and try again.
-6. Review findings and export the PDF report.
+**Installer:** `ACA-FYP-UX-Updated-Private-Evaluation-Setup.exe`
 
-Python and Node.js are not required.
+**SHA-256:** `59e71fd7b21a850c2a33b4e4c0fdb02ca4f37eccbdb205054cddaee949d6f101`
 
-![Academic Compliance Auditor Dashboard showing System Readiness, setup guidance, and the DOCX audit upload area.](docs/images/aca-dashboard.png)
+> **Unsigned academic evaluation build.** Windows may display an **Unknown Publisher** or **Microsoft Defender SmartScreen** warning. This build is for **non-commercial academic evaluation only**. It is not a production or commercial release.
 
-## Review Findings with Page Evidence
+Before running the installer, compare its SHA-256 with the value above. Do not run a file whose checksum you cannot verify. The Windows installer does not require a separate Python or Node.js installation. Obtain LibreOffice and Ollama separately if you want to try those optional features; the installer does not contain either application or the Ollama model.
 
-After an audit, ACA shows what it found and why:
+## Quick Start from Source
 
-- Identifies supported formatting and citation issues, grouped by severity.
-- Shows the value found in your document and the required value (Current and Required).
-- Links supported body findings to extracted text in the Document Preview, with paragraph-level evidence highlights. Structural reviews identify stored section/story definitions without a visual region.
-- Produces a PDF report you can save or share.
+Use **Python 3.12**, Node.js **22.13+ in the 22.x line or 24.x**, and **npm 10+**. From the repository root, open a Windows PowerShell terminal for the backend:
 
-![Academic Compliance Auditor workspace showing compact findings, Document Preview with inline Evidence details, and read-only Current and Required values.](docs/images/aca-audit-workspace.png)
+```powershell
+cd backend
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+Copy-Item .env.example .env
+python -m alembic upgrade head
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
 
-### Guided Fix downloads
+Copy `.env.example` only on initial setup; keep an existing `.env`. The development defaults use a local SQLite database and a loopback Ollama address. Do not point development migrations at a database used by the packaged application.
 
-Closing Guided Fixes or switching audits discards any late download response;
-it cannot save a corrected copy or update the current workflow. Download links
-remain one-use: if the server already consumed a discarded request, repeat
-Review and Apply from the unchanged original document to obtain a new link.
-Download progress is announced only while the current request is pending.
-Closing or restarting Guided Fixes clears obsolete notices; reopening does not
-replay a previous Download or availability announcement.
+From the repository root in a **second** PowerShell terminal:
 
-### Guided Fix quantities and locations
+```powershell
+cd frontend
+npm install
+npm run dev
+```
 
-Selection, Review and verified results distinguish findings from affected
-locations. One grouped finding can affect several text locations within the
-same paragraph. Selection totals count shared paragraph/run targets once;
-the 20-finding limit and all safety checks remain unchanged. Incomplete location
-metadata is shown as **Location count unavailable**, not a guessed quantity.
-Before/after re-audit rows identify one finding and label its occurrence count;
-repeated paragraph labels are displayed once without changing that count.
+Keep both terminals open and browse to `http://localhost:5173`. The Dashboard should be ready to audit even if optional components are absent. Use the synthetic sample to check the source setup without supplying a personal document.
 
+### Architecture
 
-### Font Guided Fix safety
+The React frontend uses Vite in development and calls a local FastAPI backend. The backend applies deterministic rules to the DOCX and stores completed audit results in SQLite so History can reopen them. If available, LibreOffice renders pages locally; the app can still show extracted text if rendering is unavailable. The separate Local AI action uses loopback Ollama to explain supported findings after approval, without taking part in the rules or scoring.
 
-Existing `FONT_CONSISTENCY` and `FONT_SIZE` corrections now require supported
-plain-ASCII text, explicit agreeing direct font-family slots, and an unambiguous
-used character/paragraph-style and document-default chain. Inherited font
-declarations, themes, alternate-slot conflicts, script/bidi controls, unsupported
-structures and malformed evidence remain manual—even when direct formatting
-might override them. Ordinary Word templates may therefore offer fewer automatic
-corrections. ACA never removes inherited formatting to make an uploaded file
-eligible.
+## Optional Local AI
 
-Both operations independently use the audit's immutable saved Profile Snapshot,
-not the current Profile editor. Size requirements and Current evidence must be
-exact integer half-points: 12pt and 12.5pt are representable; 12.005pt and 12.25pt
-remain manual before Apply is offered. Family corrections change only the three
-authorized direct family slots; size corrections change only the direct size.
-Every selected run's raw saved output is checked exactly after reopening, before
-package preservation, corrected-file re-audit and the separate one-use Download.
-A mixed safe/unsafe selection is refused as a whole.
+The deterministic audit, score and findings work without Local AI. To try guidance, run Ollama locally with the verified `qwen3.5:4b` model. ACA asks for explicit consent before requesting guidance for an eligible finding or starting an optional in-app model download. You can decline and keep using the audit results.
 
-The original DOCX, saved Audit, Snapshot, History, PDF, scoring and categories
-remain unchanged. This certifies eligible OOXML settings, not installed-font
-availability, font substitution, arbitrary-script rendering or Word pagination.
-No candidate was added; these font checks do not certify the whole Guided Fix set.
+Local AI provides explanatory guidance only. It does not detect, add or remove findings, determine scores, or edit the DOCX. It cannot verify that a source exists, that a bibliography entry is correct, or that a DOI is accurate. Check the original sources before acting on suggestions.
 
-In Review, Tab can focus the details area, marked by an inset focus ring.
-When its content overflows, use the arrow keys, Page Up/Page Down or Home/End
-to scroll it; Tab continues to the existing review actions.
+## Guided Fix Safety
 
-### Line-spacing Guided Fix safety
+Guided Fixes are optional and limited to changes ACA can verify. Open the corrected file in your authoring application and inspect it before using it for submission.
 
-Existing `LINE_SPACING` corrections require a nonempty plain main-story body
-paragraph, qualifying Appendix prose, or an individually addressed Reference
-entry with an enabled saved requirement. Only explicit canonical positive
-`w:line` integers with `w:lineRule="auto"` qualify. The used paragraph-style and
-document-default graph must be unambiguous and contain no inherited line
-declarations or linked styles. Numbering, wrappers, section boundaries,
-competing spacing controls, snap-to-grid settings and any main-document grid
-remain manual. Ordinary Word templates may therefore lose automatic
-availability; ACA never clears those settings to make an upload eligible.
+- Only eligible findings can enter the Guided Fix workflow.
+- Review the proposed changes and explicitly confirm before applying them.
+- Download a separate corrected DOCX.
+- The original DOCX is preserved.
+- ACA reopens and verifies the output before offering the download.
+- Correct unsupported findings manually.
 
-The audit's immutable saved Profile Snapshot independently supplies the
-requirement, not the current Profile editor or a hardcoded heading default.
-Saved decimal multipliers must be exactly representable in integer 240ths of a
-line: 1.5, 1.15 and 1.0125 qualify; 1.501 and 1.333 do not. Legacy v1/v2
-Reference requirements remain manual because their saved payload has no resolved
-enforcement toggle. Loadable legacy body requirements use the same safety gates.
+## Screenshots
 
-Confirmed Review preserves the detector's literal Current/Required strings only
-after proving multiplier units and source identity. Exact, atLeast, absolute,
-inherited, missing and malformed evidence cannot reach a successful Review.
-Unsupported absolute findings may still show a provisional numeric Current
-before upload; refusal does not change their client-side candidate classification.
+### Audit Dashboard
 
-Only the selected `line`/`lineRule` attributes change. Every selected paragraph
-is independently reopened and checked for the exact required raw integer and
-literal `auto`, with paragraph text, physical run boundaries and fresh role
-matched against pristine original bytes. No getter tolerance, rounding, implicit
-rule or detector silence certifies the output. Mixed safe/unsafe selections are
-refused atomically. Unchanged package preservation and deterministic re-audit
-must pass before storage and the separate one-use Download; missing required
-rendered-page evidence remains a refusal.
+![Audit Dashboard showing readiness, the selected profile, and the DOCX upload area.](docs/images/aca-evaluation-dashboard.png)
 
-The original DOCX, Audit, Snapshot, History, PDF, scoring and categories remain
-unchanged. This certifies eligible encoded settings, not Word rendering or
-physical pagination. It is not a complete Guided Fix freeze or release approval.
+### Rendered Page Preview
 
-### Before/after paragraph spacing Guided Fix safety
+![Sample audit showing a rendered page and the selected finding's Current and Required values.](docs/images/aca-evaluation-rendered-preview.png)
 
-Existing `SPACE_BEFORE` and `SPACE_AFTER` corrections require an explicit,
-readable direct point setting and an unambiguous used paragraph-style and
-document-default chain. Review and Apply reject selected-side line-unit
-controls, active automatic spacing, active contextual spacing, numbering-owned
-paragraphs and malformed or otherwise unprovable evidence. Valid explicit false
-flags may override valid inherited true flags; malformed inherited controls
-remain manual even when shadowed. Unrelated opposite-side controls are preserved.
+### Local Ollama Guidance
 
-Requirements come from the saved Snapshot and must be exactly representable in
-twentieths of a point (twips) within 0–240 pt. For example, 6.05pt is eligible
-but 6.00000000001pt and 6.01pt stay manual rather than being rounded. The
-persisted Current value must exactly match the direct source attribute; a
-source-to-requirement difference of 20 twips or less stays manual even if the
-float-based detector reported a finding. Explicit zero is valid and is written
-as `"0"`.
-
-The reopened copy is checked against the original source, saved requirement,
-reviewed targets and raw selected attributes. Separately selected properties
-are independently verified; other spacing attributes and controls are
-preserved. Simple fields, paragraph-level section properties and ambiguous
-bookmarks remain manual. A mixed safe/unsafe selection is rejected as a whole.
-These checks certify the point **setting**, not an exact rendered gap; document
-grids and snap-to-grid are preserved. The original DOCX, saved audit, Snapshot,
-History and PDF remain unchanged.
-
-The before/after-spacing hardening alone does not establish complete Guided Fix
-release closure. Malformed DOCX issues remain independent.
-
-### Ambient aggregate re-audit hardening
-
-Unselected ambient Reference and citation aggregate findings can accompany
-unrelated, eligible Guided Fixes even when their stored paragraph indexes are
-capped at 10. Re-audit compares the available locations and total occurrence
-counts, and still rejects new or worsened findings. Selected findings must have
-complete target locations; Reference-specific entry aggregate rules remain
-manual-only. No Guided Fix candidate rules were added.
-
-### Guided Fix package safety
-
-Review refuses corrections for digitally signed, protected or write-protected,
-and macro-bearing packages, including macro-bearing files renamed `.docx`.
-Correct the selected findings manually in Word; the original remains unchanged.
-Unsigned, unprotected, macro-free DOCX files remain subject to the existing
-rule-specific Review, preservation and re-audit checks. Guided Fix does not execute
-macros or claim to preserve signatures or macro parts in corrected copies.
-Audit-only availability does not certify macro trust or safety. Native `.docm`
-uploads remain unsupported; encrypted-upload handling is separate work.
-
-### Reference List heading bold Guided Fix
-
-Guided Fixes can make a verified Reference List heading **Bold** or **Not bold**
-according to the audit's saved Profile Snapshot. Review identifies one affected
-heading paragraph and confirms every nonempty direct text segment, including
-whitespace-only segments. Only its direct bold values change; wording,
-alignment, Reference entries, shared styles and empty runs remain unchanged.
-
-This correction is unavailable when the heading is ambiguous, its direct bold
-evidence is inherited, mixed or unresolved, or its structure is unsupported.
-Signed, protected and macro-enabled packages are also unavailable for this
-correction. Follow the manual guidance instead; ACA does not guess or partially
-correct the heading.
-
-Apply verifies every target segment, package preservation and a corrected-file
-re-audit before offering the separate, one-use Download. The original DOCX,
-saved Audit, Snapshot, History and PDF remain unchanged. Inspect the corrected
-copy in your authoring application before submission; auditing it again requires
-an explicit upload.
-
-### Optional Header, Footer and Page Number reviews
-
-Custom Profiles can independently enable **Check Header requirements**,
-**Check Footer requirements**, and **Check Page Number requirements**. All
-three default to Off (**Not checked**); Built-in Profiles remain unchanged.
-Page Number placement can be Header, Footer or Either without enabling a
-Header or Footer content requirement.
-
-These checks inspect each section's stored **Normal-pages** definition,
-including effective inherited definitions. They do not inspect first-page
-or even-page definitions or verify rendered visibility, numbering or sequence.
-A resolved PAGE field satisfies the Page Number requirement; typed digits
-and total-page fields do not. Missing/empty definitions and insufficient
-supported evidence produce **Manual review** findings with no score deduction.
-When the section's first rendered page can be proven, selecting a review
-opens that page with **Page-level structural evidence**, but no exact
-Header/Footer highlight or rectangle. Otherwise, **Structural evidence only**
-shows **Rendered page could not be determined** and preserves the current
-preview page. Corrections remain manual in Word; Local AI and Guided Fixes
-are unavailable for these findings.
-History and PDF reports retain the settings and findings saved with the audit.
-
-### Optional Reference DOI presentation check
-
-Custom Profiles can enable **Check Reference DOI format**; it is Off by default
-and Built-in Profiles remain unchanged. When enabled, the selected profile requires
-the visible format `https://doi.org/<doi>`. ACA reports only definite legacy
-presentations such as `doi:` or `http://doi.org/`, once per affected Reference entry.
-
-This offline check uses an ACA-supported conservative lexical subset, not complete
-DOI syntax or APA 7 validation. Canonical, absent, ambiguous, unsupported and
-multiple-candidate text stays silent; hidden hyperlink targets are ignored.
-ACA does not verify DOI registration or resolution, require a DOI, rewrite the
-document, or offer an automatic correction. Current values retain source spelling.
-
-
-## Optional Features
-
-Two optional components extend ACA, but neither is required:
-
-- **Page-rendered preview and LibreOffice:** With local LibreOffice installed, new validated audits can generate PDF page previews and physical page mapping. Rendering uses a random, short-lived DOCX copy in a current-user-only temporary directory with an isolated LibreOffice profile; conversion must clean it up before its PDF is accepted. The original is not retained as a source file. Missing LibreOffice, conversion, privacy, cleanup or storage failures leave extracted-text preview available and do not block the audit. See [Privacy](docs/PRIVACY.md) for abnormal-shutdown and deletion limits.
-- **Ollama** enables optional **Local AI Citation Guidance** — suggestions for APA 7 in-text citation formatting only. It is strictly restricted to verified loopback connections (`127.0.0.1`, `localhost`, `[::1]`); remote LAN/cloud hosts are rejected for privacy. It is never a full academic review, never rewrites or corrects your DOCX, and every suggestion needs your own review.
-
-Core deterministic audits — document checks, formatting findings, extracted-text preview, Guided Fixes, PDF report export, and Audit History — remain available without either component. When an optional component is missing, setup actions appear in the Dashboard's **System Readiness** card. ACA never installs third-party software; the only download it can start is the optional citation-guidance model, after you explicitly confirm it.
+![Sample citation finding with explanatory guidance completed via local Ollama.](docs/images/aca-evaluation-local-guidance.png)
 
 ## Documentation
 
-**User documentation**
-
 - [Installation](docs/INSTALLATION.md)
 - [User Guide](docs/USER_GUIDE.md)
-- [Troubleshooting](docs/TROUBLESHOOTING.md)
-- [Privacy](docs/PRIVACY.md)
-- [Known Limitations](docs/KNOWN_LIMITATIONS.md)
+- [Architecture](#architecture)
+- [Privacy and Security](docs/PRIVACY.md)
+- [Testing](docs/developer/DEVELOPER_SETUP.md#tests-and-checks)
+- [Developer Documentation](docs/developer/DEVELOPER_SETUP.md)
+- [Guided Fix Reference](docs/GUIDED_FIX_REFERENCE.md)
+- [THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES.md)
 
-**Developer documentation**
+## Verified Evaluation
 
-- [Developer Setup](docs/developer/DEVELOPER_SETUP.md)
-- [Build and Release](docs/developer/BUILD_AND_RELEASE.md)
-- [Technical Troubleshooting](docs/developer/TECHNICAL_TROUBLESHOOTING.md)
+- The representative synthetic sample scored **62/100** with **11 findings: five major and six minor**.
+- Finding detail, rendered preview, History reopen and PDF export passed in the installed evaluation. Local Ollama guidance with `qwen3.5:4b` passed after explicit consent.
+- Recorded source checks: **1,109 frontend tests passed**. Earlier backend validation recorded **4,380 passed**, **two baseline-existing packaging-test failures**, and **four skipped**.
 
-**Evaluation documentation** (for the project owner and evaluators)
+## Limitations
 
-- [Release Checklist](docs/evaluation/RELEASE_CHECKLIST.md)
-- [End-User Installation Test](docs/evaluation/END_USER_INSTALLATION_TEST.md)
+- DOCX input only. The automated checks do not cover every institutional requirement.
+- Rendered page preview requires LibreOffice; optional Local AI requires Ollama and `qwen3.5:4b`.
+- The installer is unsigned. Validation covered an **existing-install update only**; complete clean-machine 24-scenario acceptance was not completed.
+- Graceful in-application shutdown was not independently verified.
+- ACA does not provide complete bibliographic or DOI verification.
 
-**Other**
+## Licence and Distribution
 
-- [Third-Party Notices](THIRD_PARTY_NOTICES.md)
+ACA is published as a non-commercial academic final-year project. The evaluation installer is provided for educational demonstration and evaluation. Third-party components remain subject to their respective licences. See [THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES.md).
 
-## License Status
-
-ACA is proprietary software. Copyright is held by the ACA copyright holder and all rights are reserved.
-
-The source repository is publicly viewable. Aside from the limited rights granted by GitHub's Terms of Service and applicable law, public availability grants no permission to modify, redistribute or republish ACA. You may download, install and use unmodified official installer releases; modification, redistribution, repackaging, sublicensing and commercial resale are not permitted.
-
-Operative terms: [LICENSE](LICENSE). Third-party licenses: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Complete third-party notice delivery inside the package remains pending B-LIC-03 and B-LIC-04.
+ACA remains proprietary, with all rights reserved. The operative distribution terms are in [LICENSE](LICENSE).
